@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: carscanr-backend
+    runtime: docker
+    rootDir: backend
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: LOG_LEVEL
+        value: info
+      - key: ALLOW_MOCK_FALLBACKS
+        value: "false"
+      - key: AUTH_DEV_BYPASS_ENABLED
+        value: "false"
+      - key: CORS_ORIGIN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: VISION_PROVIDER
+        value: openai
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: VEHICLE_SPECS_PROVIDER
+        value: marketcheck
+      - key: VEHICLE_VALUE_PROVIDER
+        value: marketcheck
+      - key: VEHICLE_LISTINGS_PROVIDER
+        value: marketcheck
+      - key: MARKETCHECK_API_KEY
+        sync: false
+      - key: MARKETCHECK_BASE_URL
+        value: https://api.marketcheck.com
+      - key: MARKETCHECK_VALUE_RADIUS_MILES
+        value: "100"
+      - key: PROVIDER_SPECS_CACHE_TTL_HOURS
+        value: "720"
+      - key: PROVIDER_VALUES_CACHE_TTL_HOURS
+        value: "24"
+      - key: PROVIDER_LISTINGS_CACHE_TTL_HOURS
+        value: "6"
