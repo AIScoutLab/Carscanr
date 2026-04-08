@@ -7,7 +7,7 @@ services:
     autoDeploy: false
     envVars:
       - key: APP_ENV
-        value: production
+        value: preview
       - key: NODE_ENV
         value: production
       - key: HOST

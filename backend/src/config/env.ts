@@ -11,6 +11,36 @@ dotenv.config();
 const providerSchema = z.enum(["mock", "marketcheck"]);
 const appEnvSchema = z.enum(["local", "preview", "production"]);
 
+function booleanEnv(defaultValue: boolean) {
+  return z.preprocess((value) => {
+    if (value === undefined || value === null || value === "") {
+      return undefined;
+    }
+
+    if (typeof value === "boolean") {
+      return value;
+    }
+
+    if (typeof value === "number") {
+      return value !== 0;
+    }
+
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+
+      if (["true", "1", "yes", "y", "on"].includes(normalized)) {
+        return true;
+      }
+
+      if (["false", "0", "no", "n", "off"].includes(normalized)) {
+        return false;
+      }
+    }
+
+    return value;
+  }, z.boolean().default(defaultValue));
+}
+
 const envSchema = z.object({
   PORT: z.coerce.number().default(4000),
   HOST: z.string().default("0.0.0.0"),
@@ -18,11 +48,11 @@ const envSchema = z.object({
   APP_ENV: appEnvSchema.default(process.env.NODE_ENV === "production" ? "production" : "local"),
   LOG_LEVEL: z.string().default("info"),
   CORS_ORIGIN: z.string().default("*"),
-  ALLOW_MOCK_FALLBACKS: z.coerce.boolean().default(process.env.NODE_ENV === "production" ? false : true),
+  ALLOW_MOCK_FALLBACKS: booleanEnv(process.env.NODE_ENV === "production" ? false : true),
   SUPABASE_URL: z.string().url().or(z.literal("")).default(""),
   SUPABASE_SERVICE_ROLE_KEY: z.string().default(""),
   SUPABASE_JWT_SECRET: z.string().default(""),
-  AUTH_DEV_BYPASS_ENABLED: z.coerce.boolean().default(false),
+  AUTH_DEV_BYPASS_ENABLED: booleanEnv(false),
   AUTH_DEV_BYPASS_USER_ID: z.string().default("demo-user"),
   AUTH_DEV_BYPASS_EMAIL: z.string().email().default("demo@example.com"),
   UPLOAD_MAX_FILE_SIZE_BYTES: z.coerce.number().default(5 * 1024 * 1024),
@@ -47,6 +77,18 @@ const envSchema = z.object({
 });
 
 const parsedEnv = envSchema.parse(process.env);
+
+function logStartupEnvDiagnostics(env: typeof parsedEnv) {
+  console.info(
+    "[startup-env]",
+    JSON.stringify({
+      appEnv: env.APP_ENV,
+      nodeEnv: env.NODE_ENV,
+      authDevBypassEnabled: env.AUTH_DEV_BYPASS_ENABLED,
+      allowMockFallbacks: env.ALLOW_MOCK_FALLBACKS,
+    }),
+  );
+}
 
 function isHostedLikeAppEnv(appEnv: z.infer<typeof appEnvSchema>) {
   return appEnv === "preview" || appEnv === "production";
@@ -118,6 +160,8 @@ function validateEnv(env: typeof parsedEnv) {
 
   return env;
 }
+
+logStartupEnvDiagnostics(parsedEnv);
 
 export const env = validateEnv(parsedEnv);
 
