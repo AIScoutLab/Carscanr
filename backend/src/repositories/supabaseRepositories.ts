@@ -1,5 +1,6 @@
 import { SupabaseClient } from "@supabase/supabase-js";
 import { AppError } from "../errors/appError.js";
+import { logger } from "../lib/logger.js";
 import {
   ProviderApiUsageLogRecord,
   VehicleListingsCacheRow,
@@ -42,6 +43,8 @@ import {
 } from "./interfaces.js";
 
 type DbClient = SupabaseClient<any, "public", any>;
+const USAGE_COUNTERS_TABLE = "usage_counters";
+const LIFETIME_USAGE_DATE = "1970-01-01";
 
 function requireData<T>(value: T | null, message: string): T {
   if (value == null) {
@@ -438,6 +441,67 @@ function usageToRow(record: UsageCounterRecord) {
     last_scan_at: record.lastScanAt ?? null,
     recent_attempt_timestamps: record.recentAttemptTimestamps,
   };
+}
+
+type SupabaseErrorLike = {
+  message?: string;
+  code?: string;
+  details?: string;
+  hint?: string;
+};
+
+function serializeSupabaseError(error: SupabaseErrorLike | null | undefined) {
+  if (!error) return undefined;
+  return {
+    message: error.message ?? null,
+    code: error.code ?? null,
+    details: error.details ?? null,
+    hint: error.hint ?? null,
+  };
+}
+
+function isMissingColumnError(error: SupabaseErrorLike | null | undefined, columnName: string) {
+  if (!error?.message) return false;
+  return error.message.toLowerCase().includes(`column "${columnName.toLowerCase()}"`);
+}
+
+function usageToLegacyRow(record: UsageCounterRecord) {
+  return {
+    id: record.id,
+    user_id: record.userId,
+    date: record.date,
+    // Legacy schemas only had scan_count, so keep lifetime records usable there.
+    scan_count: record.date === LIFETIME_USAGE_DATE ? record.totalScans : record.scanCount,
+    last_scan_at: record.lastScanAt ?? null,
+    recent_attempt_timestamps: record.recentAttemptTimestamps,
+  };
+}
+
+function buildUsageCounterErrorDetails(input: {
+  operation: string;
+  filters?: Record<string, unknown>;
+  error: SupabaseErrorLike | null | undefined;
+  compatibilityMode?: "modern" | "legacy";
+}) {
+  return {
+    table: USAGE_COUNTERS_TABLE,
+    operation: input.operation,
+    compatibilityMode: input.compatibilityMode ?? "modern",
+    filters: input.filters ?? {},
+    supabase: serializeSupabaseError(input.error),
+  };
+}
+
+function logUsageCounterError(input: {
+  operation: string;
+  filters?: Record<string, unknown>;
+  error: SupabaseErrorLike | null | undefined;
+  compatibilityMode?: "modern" | "legacy";
+}) {
+  logger.error(
+    buildUsageCounterErrorDetails(input),
+    "Usage counter Supabase operation failed",
+  );
 }
 
 function visionDebugToRow(record: VisionDebugRecord) {
@@ -1152,7 +1216,33 @@ export class SupabaseImageCacheRepository implements ImageCacheRepository {
       .select("*")
       .eq("image_key", imageKey)
       .maybeSingle();
-    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load image cache entry.", error);
+    if (error) {
+      logger.error(
+        {
+          label: "IMAGE_CACHE_QUERY_THROW",
+          table: "image_cache",
+          operation: "select",
+          filters: { image_key: imageKey },
+          supabase: serializeSupabaseError(error),
+        },
+        "IMAGE_CACHE_QUERY_THROW",
+      );
+      logger.error(
+        {
+          table: "image_cache",
+          operation: "select",
+          filters: { image_key: imageKey },
+          supabase: serializeSupabaseError(error),
+        },
+        "Image cache Supabase query failed",
+      );
+      throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load image cache entry.", {
+        table: "image_cache",
+        operation: "select",
+        filters: { image_key: imageKey },
+        supabase: serializeSupabaseError(error),
+      });
+    }
     return data ? mapImageCacheRow(data) : null;
   }
 
@@ -1162,7 +1252,23 @@ export class SupabaseImageCacheRepository implements ImageCacheRepository {
       .upsert(imageCacheToRow(record), { onConflict: "image_key" })
       .select("*")
       .single();
-    if (error) throw new AppError(500, "SUPABASE_UPSERT_FAILED", "Failed to persist image cache entry.", error);
+    if (error) {
+      logger.error(
+        {
+          table: "image_cache",
+          operation: "upsert",
+          filters: { image_key: record.imageKey },
+          supabase: serializeSupabaseError(error),
+        },
+        "Image cache Supabase upsert failed",
+      );
+      throw new AppError(500, "SUPABASE_UPSERT_FAILED", "Failed to persist image cache entry.", {
+        table: "image_cache",
+        operation: "upsert",
+        filters: { image_key: record.imageKey },
+        supabase: serializeSupabaseError(error),
+      });
+    }
     return mapImageCacheRow(requireData(data, "Image cache upsert returned no row."));
   }
 
@@ -1171,7 +1277,23 @@ export class SupabaseImageCacheRepository implements ImageCacheRepository {
       target_image_key: imageKey,
       target_last_accessed_at: lastAccessedAt,
     });
-    if (error) throw new AppError(500, "SUPABASE_UPDATE_FAILED", "Failed to update image cache access stats.", error);
+    if (error) {
+      logger.error(
+        {
+          table: "image_cache",
+          operation: "rpc:increment_image_cache_hit",
+          filters: { image_key: imageKey },
+          supabase: serializeSupabaseError(error),
+        },
+        "Image cache hit update failed",
+      );
+      throw new AppError(500, "SUPABASE_UPDATE_FAILED", "Failed to update image cache access stats.", {
+        table: "image_cache",
+        operation: "rpc:increment_image_cache_hit",
+        filters: { image_key: imageKey },
+        supabase: serializeSupabaseError(error),
+      });
+    }
   }
 
   async listRecent(limit: number): Promise<ImageCacheRecord[]> {
@@ -1180,7 +1302,23 @@ export class SupabaseImageCacheRepository implements ImageCacheRepository {
       .select("*")
       .order("updated_at", { ascending: false })
       .limit(limit);
-    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load recent image cache entries.", error);
+    if (error) {
+      logger.error(
+        {
+          table: "image_cache",
+          operation: "select-recent",
+          filters: { limit },
+          supabase: serializeSupabaseError(error),
+        },
+        "Image cache recent query failed",
+      );
+      throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load recent image cache entries.", {
+        table: "image_cache",
+        operation: "select-recent",
+        filters: { limit },
+        supabase: serializeSupabaseError(error),
+      });
+    }
     return (data ?? []).map(mapImageCacheRow);
   }
 }
@@ -1190,38 +1328,131 @@ export class SupabaseUsageCountersRepository implements UsageCountersRepository 
 
   async findByUserAndDate(userId: string, date: string): Promise<UsageCounterRecord | null> {
     const { data, error } = await this.client
-      .from("usage_counters")
+      .from(USAGE_COUNTERS_TABLE)
       .select("*")
       .eq("user_id", userId)
       .eq("date", date)
       .maybeSingle();
-    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load usage counter.", error);
+    if (error) {
+      logUsageCounterError({
+        operation: "select",
+        filters: { user_id: userId, date },
+        error,
+      });
+      throw new AppError(
+        500,
+        "SUPABASE_QUERY_FAILED",
+        "Failed to load usage counter.",
+        buildUsageCounterErrorDetails({
+          operation: "select",
+          filters: { user_id: userId, date },
+          error,
+        }),
+      );
+    }
     return data ? mapUsageRow(data) : null;
   }
 
   async findLifetimeByUser(userId: string): Promise<UsageCounterRecord | null> {
     const { data, error } = await this.client
-      .from("usage_counters")
+      .from(USAGE_COUNTERS_TABLE)
       .select("*")
       .eq("user_id", userId)
-      .eq("date", "1970-01-01")
+      .eq("date", LIFETIME_USAGE_DATE)
       .maybeSingle();
-    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load lifetime usage counter.", error);
+    if (error) {
+      logUsageCounterError({
+        operation: "select",
+        filters: { user_id: userId, date: LIFETIME_USAGE_DATE },
+        error,
+      });
+      throw new AppError(
+        500,
+        "SUPABASE_QUERY_FAILED",
+        "Failed to load lifetime usage counter.",
+        buildUsageCounterErrorDetails({
+          operation: "select",
+          filters: { user_id: userId, date: LIFETIME_USAGE_DATE },
+          error,
+        }),
+      );
+    }
     return data ? mapUsageRow(data) : null;
   }
 
   async upsert(record: UsageCounterRecord): Promise<UsageCounterRecord> {
-    const { data, error } = await this.client
-      .from("usage_counters")
+    const modernOperation = await this.client
+      .from(USAGE_COUNTERS_TABLE)
       .upsert(usageToRow(record), { onConflict: "user_id,date" })
       .select("*")
       .single();
-    if (error) throw new AppError(500, "SUPABASE_UPSERT_FAILED", "Failed to persist usage counter.", error);
-    return mapUsageRow(requireData(data, "Usage upsert returned no row."));
+    if (!modernOperation.error) {
+      return mapUsageRow(requireData(modernOperation.data, "Usage upsert returned no row."));
+    }
+
+    logUsageCounterError({
+      operation: "upsert",
+      filters: { user_id: record.userId, date: record.date },
+      error: modernOperation.error,
+      compatibilityMode: "modern",
+    });
+
+    if (isMissingColumnError(modernOperation.error, "total_scans")) {
+      logger.warn(
+        {
+          table: USAGE_COUNTERS_TABLE,
+          operation: "upsert",
+          filters: { user_id: record.userId, date: record.date },
+          missingColumn: "total_scans",
+        },
+        "Retrying usage counter upsert against legacy schema without total_scans",
+      );
+
+      const legacyOperation = await this.client
+        .from(USAGE_COUNTERS_TABLE)
+        .upsert(usageToLegacyRow(record), { onConflict: "user_id,date" })
+        .select("*")
+        .single();
+
+      if (!legacyOperation.error) {
+        return mapUsageRow(requireData(legacyOperation.data, "Legacy usage upsert returned no row."));
+      }
+
+      logUsageCounterError({
+        operation: "upsert",
+        filters: { user_id: record.userId, date: record.date },
+        error: legacyOperation.error,
+        compatibilityMode: "legacy",
+      });
+
+      throw new AppError(
+        500,
+        "SUPABASE_UPSERT_FAILED",
+        "Failed to persist usage counter.",
+        buildUsageCounterErrorDetails({
+          operation: "upsert",
+          filters: { user_id: record.userId, date: record.date },
+          error: legacyOperation.error,
+          compatibilityMode: "legacy",
+        }),
+      );
+    }
+
+    throw new AppError(
+      500,
+      "SUPABASE_UPSERT_FAILED",
+      "Failed to persist usage counter.",
+      buildUsageCounterErrorDetails({
+        operation: "upsert",
+        filters: { user_id: record.userId, date: record.date },
+        error: modernOperation.error,
+        compatibilityMode: "modern",
+      }),
+    );
   }
 
   async upsertLifetime(record: UsageCounterRecord): Promise<UsageCounterRecord> {
-    return this.upsert({ ...record, date: "1970-01-01" });
+    return this.upsert({ ...record, date: LIFETIME_USAGE_DATE });
   }
 }
 

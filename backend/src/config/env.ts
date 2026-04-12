@@ -170,6 +170,15 @@ export function isHostedAppEnv() {
 }
 
 export function getStartupDiagnostics() {
+  const supabaseHost = env.SUPABASE_URL
+    ? (() => {
+        try {
+          return new URL(env.SUPABASE_URL).host;
+        } catch {
+          return "invalid-supabase-url";
+        }
+      })()
+    : null;
   return {
     nodeEnv: env.NODE_ENV,
     appEnv: env.APP_ENV,
@@ -178,6 +187,7 @@ export function getStartupDiagnostics() {
     allowMockFallbacks: env.ALLOW_MOCK_FALLBACKS,
     authDevBypassEnabled: env.AUTH_DEV_BYPASS_ENABLED,
     supabaseConfigured: Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY && env.SUPABASE_JWT_SECRET),
+    supabaseHost,
     openAIConfigured: Boolean(env.OPENAI_API_KEY),
     visionProvider: env.VISION_PROVIDER,
     vehicleProviders: {

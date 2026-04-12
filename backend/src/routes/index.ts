@@ -8,7 +8,7 @@ import { UnlockController } from "../controllers/unlockController.js";
 import { UsageController } from "../controllers/usageController.js";
 import { VehicleController } from "../controllers/vehicleController.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { authMiddleware } from "../middleware/auth.js";
+import { authMiddleware, optionalAuthMiddleware } from "../middleware/auth.js";
 import { rateLimit } from "../middleware/rateLimit.js";
 import { validate } from "../middleware/validate.js";
 import {
@@ -46,24 +46,26 @@ const usageController = new UsageController(usageService);
 export function buildApiRouter() {
   const router = express.Router();
 
-  router.use(authMiddleware);
-
+  router.use(optionalAuthMiddleware);
   router.post(
     "/scan/identify",
     rateLimit({ windowMs: 60 * 1000, max: env.SCAN_RATE_LIMIT_PER_MIN, keyPrefix: "scan-identify" }),
     upload.single("image"),
     asyncHandler(scanController.identify),
   );
+  router.get("/usage/today", asyncHandler(usageController.getToday));
+  router.get("/vehicle/search", validate(vehicleSearchQuerySchema, "query"), asyncHandler(vehicleController.search));
+  router.get("/vehicle/specs", validate(vehicleSpecsQuerySchema, "query"), asyncHandler(vehicleController.getSpecs));
+  router.get("/vehicle/value", validate(vehicleValueQuerySchema, "query"), asyncHandler(vehicleController.getValue));
+  router.get("/vehicle/listings", validate(vehicleListingsQuerySchema, "query"), asyncHandler(vehicleController.getListings));
+
+  router.use(authMiddleware);
   router.post(
     "/scan/premium",
     rateLimit({ windowMs: 60 * 1000, max: env.SCAN_RATE_LIMIT_PER_MIN, keyPrefix: "scan-premium" }),
     upload.single("image"),
     asyncHandler(scanController.premium),
   );
-  router.get("/vehicle/search", validate(vehicleSearchQuerySchema, "query"), asyncHandler(vehicleController.search));
-  router.get("/vehicle/specs", validate(vehicleSpecsQuerySchema, "query"), asyncHandler(vehicleController.getSpecs));
-  router.get("/vehicle/value", validate(vehicleValueQuerySchema, "query"), asyncHandler(vehicleController.getValue));
-  router.get("/vehicle/listings", validate(vehicleListingsQuerySchema, "query"), asyncHandler(vehicleController.getListings));
   router.post("/garage/save", validate(garageSaveSchema, "body"), asyncHandler(garageController.save));
   router.get("/garage/list", asyncHandler(garageController.list));
   router.delete("/garage/:id", validate(garageDeleteParamsSchema, "params"), asyncHandler(garageController.delete));
@@ -81,7 +83,6 @@ export function buildApiRouter() {
     validate(unlockUseSchema, "body"),
     asyncHandler(unlockController.useUnlock),
   );
-  router.get("/usage/today", asyncHandler(usageController.getToday));
 
   return router;
 }

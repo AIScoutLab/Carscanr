@@ -39,6 +39,30 @@ export class UsageService {
     unlockedVehicleIds: string[];
   }> {
     try {
+      if (userId.startsWith("guest:")) {
+        const record = await this.ensureLifetimeRecord(userId);
+        const scansUsed = record.totalScans;
+        const scansRemaining = Math.max(FREE_LIFETIME_SCAN_LIMIT - scansUsed, 0);
+        return {
+          userId,
+          plan: "free",
+          isPro: false,
+          scansUsed,
+          scansRemaining,
+          limitType: "lifetime" as const,
+          limit: FREE_LIFETIME_SCAN_LIMIT,
+          scansUsedToday: scansUsed,
+          dailyScanLimit: FREE_LIFETIME_SCAN_LIMIT,
+          scansRemainingToday: scansRemaining,
+          abuseWindowLimit: env.ABUSE_MAX_SCAN_ATTEMPTS_PER_10_MIN,
+          freeUnlocksTotal: 5,
+          freeUnlocksUsed: 0,
+          freeUnlocksRemaining: 5,
+          unlockedVehicleCount: 0,
+          unlockedVehicleIds: [],
+        };
+      }
+
       const plan = await this.subscriptionService.getActivePlan(userId);
       const record = await this.ensureLifetimeRecord(userId);
       const unlockStatus = await this.unlockService.getStatus(userId);
@@ -108,10 +132,14 @@ export class UsageService {
   }
 
   async incrementScanUsage(userId: string) {
-    const plan = await this.subscriptionService.getActivePlan(userId);
     const record = await this.ensureLifetimeRecord(userId);
-    if (plan === "free") {
+    if (userId.startsWith("guest:")) {
       record.totalScans += 1;
+    } else {
+      const plan = await this.subscriptionService.getActivePlan(userId);
+      if (plan === "free") {
+        record.totalScans += 1;
+      }
     }
     record.lastScanAt = new Date().toISOString();
     await repositories.usageCounters.upsertLifetime(record);

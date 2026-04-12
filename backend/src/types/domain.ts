@@ -202,6 +202,7 @@ export type AuthContext = {
   userId: string;
   email?: string;
   plan: UserPlan;
+  isGuest?: boolean;
 };
 
 export type CanonicalVehicleRecord = {
