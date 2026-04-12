@@ -1,5 +1,5 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
-import { Colors, Motion, Radius, Typography } from "@/constants/theme";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Colors, Radius, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
 
 type Props = {
@@ -8,7 +8,7 @@ type Props = {
 
 export function ProLockCard({ onPress }: Props) {
   return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.card, pressed && styles.pressed]}>
+    <TouchableOpacity accessibilityRole="button" onPress={onPress} style={styles.card} activeOpacity={0.86}>
       <View style={styles.blur}>
         <View style={styles.eyebrowPill}>
           <Text style={styles.eyebrow}>Pro insights</Text>
@@ -26,7 +26,7 @@ export function ProLockCard({ onPress }: Props) {
           <Text style={styles.cta}>Unlock Pro</Text>
         </View>
       </View>
-    </Pressable>
+    </TouchableOpacity>
   );
 }
 
@@ -35,7 +35,6 @@ const styles = StyleSheet.create({
     ...cardStyles.secondary,
     overflow: "hidden",
   },
-  pressed: { transform: [{ scale: Motion.pressInScale }] },
   blur: {
     padding: 20,
     gap: 12,

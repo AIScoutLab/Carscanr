@@ -129,18 +129,6 @@ function mergeUsageStatus(usage: SubscriptionStatus, overrides?: Partial<Subscri
 
 export const subscriptionService = {
   async getStatus(): Promise<SubscriptionStatus> {
-    if (!(await authService.getAccessToken())) {
-      status = applyPlanOverride({
-        ...defaultSubscriptionStatus,
-        isActive: false,
-        provider: "placeholder",
-        productId: null,
-        willAutoRenew: false,
-        lastVerifiedAt: null,
-        purchaseAvailable: false,
-      });
-      return status;
-    }
     try {
       const usage = await scanService.getUsage();
       status = mergeUsageStatus(usage, {
@@ -221,16 +209,39 @@ export const subscriptionService = {
     const user = await authService.getCurrentUser();
     const token = await authService.getAccessToken();
     if (!token) {
-      if (__DEV__) {
-        console.log("[subscription] unlock attempt blocked (no auth token)");
-      }
       const unlockState = await loadFreeUnlockState(user?.id ?? "guest");
+      const alreadyUnlocked = unlockState.unlockedVehicleIds.includes(vehicleId);
+      if (alreadyUnlocked) {
+        return {
+          ok: true,
+          state: unlockState,
+          remaining: Math.max(0, FREE_UNLOCKS_LIMIT - unlockState.used),
+          limit: FREE_UNLOCKS_LIMIT,
+          alreadyUnlocked: true,
+        };
+      }
+
+      if (unlockState.used >= FREE_UNLOCKS_LIMIT) {
+        return {
+          ok: false,
+          state: unlockState,
+          remaining: 0,
+          limit: FREE_UNLOCKS_LIMIT,
+          alreadyUnlocked: false,
+        };
+      }
+
+      const nextState = {
+        used: unlockState.used + 1,
+        unlockedVehicleIds: [...unlockState.unlockedVehicleIds, vehicleId],
+      };
+      await saveFreeUnlockState(user?.id ?? "guest", nextState);
       return {
-        ok: false,
-        state: unlockState,
-        remaining: Math.max(0, FREE_UNLOCKS_LIMIT - unlockState.used),
+        ok: true,
+        state: nextState,
+        remaining: Math.max(0, FREE_UNLOCKS_LIMIT - nextState.used),
         limit: FREE_UNLOCKS_LIMIT,
-        alreadyUnlocked: unlockState.unlockedVehicleIds.includes(vehicleId),
+        alreadyUnlocked: false,
       };
     }
     if (!user?.id) {
@@ -291,6 +302,9 @@ export const subscriptionService = {
   },
 
   async purchaseSubscription(): Promise<SubscriptionActionResult> {
+    if (!(await authService.getAccessToken())) {
+      throw new Error("Sign in to manage subscriptions and restore purchases across devices.");
+    }
     await wait(400);
     if (status.plan === "pro" && status.provider === "backend") {
       return {
@@ -308,6 +322,9 @@ export const subscriptionService = {
   },
 
   async restorePurchases(): Promise<SubscriptionActionResult> {
+    if (!(await authService.getAccessToken())) {
+      throw new Error("Sign in to restore purchases across devices.");
+    }
     await wait(500);
     if (status.plan === "pro" && status.provider === "backend") {
       return {
@@ -325,6 +342,9 @@ export const subscriptionService = {
   },
 
   async cancelSubscription(): Promise<SubscriptionActionResult> {
+    if (!(await authService.getAccessToken())) {
+      throw new Error("Sign in to manage your subscription.");
+    }
     const record = await apiRequest<BackendSubscriptionRecord>({
       path: "/api/subscription/cancel",
       method: "POST",

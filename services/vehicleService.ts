@@ -113,12 +113,15 @@ export const vehicleService = {
     const [vehicle, valuation, listings] = await Promise.all([
       apiRequest<BackendVehicle>({
         path: `/api/vehicle/specs?vehicleId=${encodeURIComponent(id)}`,
+        authRequired: false,
       }),
       apiRequest<BackendValuation>({
         path: `/api/vehicle/value?vehicleId=${encodeURIComponent(id)}&zip=60610&mileage=25000&condition=good`,
+        authRequired: false,
       }).catch(() => null),
       apiRequest<BackendListing[]>({
         path: `/api/vehicle/listings?vehicleId=${encodeURIComponent(id)}&zip=60610&radiusMiles=50`,
+        authRequired: false,
       }).catch(() => []),
     ]);
 
@@ -133,6 +136,7 @@ export const vehicleService = {
 
     const vehicles = await apiRequest<BackendVehicle[]>({
       path: `/api/vehicle/search?${params.toString()}`,
+      authRequired: false,
     });
 
     return vehicles.map((vehicle) => mapVehicle(vehicle));
@@ -141,6 +145,7 @@ export const vehicleService = {
   async getValue(vehicleId: string, zip: string, mileage: string, condition: string): Promise<ValuationResult> {
     const valuation = await apiRequest<BackendValuation>({
       path: `/api/vehicle/value?vehicleId=${encodeURIComponent(vehicleId)}&zip=${encodeURIComponent(zip)}&mileage=${encodeURIComponent(mileage)}&condition=${encodeURIComponent(condition)}`,
+      authRequired: false,
     });
     return mapValuation(valuation);
   },
@@ -148,6 +153,7 @@ export const vehicleService = {
   async getListings(vehicleId: string, zip: string): Promise<ListingResult[]> {
     const listings = await apiRequest<BackendListing[]>({
       path: `/api/vehicle/listings?vehicleId=${encodeURIComponent(vehicleId)}&zip=${encodeURIComponent(zip)}&radiusMiles=50`,
+      authRequired: false,
     });
     return mapListings(listings);
   },

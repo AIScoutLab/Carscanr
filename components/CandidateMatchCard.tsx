@@ -1,5 +1,5 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
-import { Colors, Motion, Typography } from "@/constants/theme";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Colors, Typography } from "@/constants/theme";
 import { VehicleCandidate } from "@/types";
 import { confidenceTone, formatConfidence } from "@/lib/utils";
 import { cardStyles } from "@/design/patterns";
@@ -11,7 +11,12 @@ type Props = {
 
 export function CandidateMatchCard({ candidate, onPress }: Props) {
   return (
-    <Pressable style={({ pressed }) => [styles.card, pressed && styles.pressed]} onPress={onPress}>
+    <TouchableOpacity
+      style={styles.card}
+      onPress={onPress}
+      activeOpacity={0.86}
+      accessibilityRole="button"
+    >
       <View style={styles.body}>
         <View style={styles.row}>
           <View style={styles.copy}>
@@ -25,13 +30,12 @@ export function CandidateMatchCard({ candidate, onPress }: Props) {
         </View>
         <Text style={styles.tapHint}>Tap to use this match</Text>
       </View>
-    </Pressable>
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   card: { ...cardStyles.secondary, padding: 14 },
-  pressed: { transform: [{ scale: Motion.pressInScale }] },
   body: { gap: 10 },
   row: { flexDirection: "row", gap: 12, alignItems: "center" },
   copy: { flex: 1, gap: 4 },

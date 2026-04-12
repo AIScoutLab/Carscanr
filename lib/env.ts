@@ -57,10 +57,34 @@ export function isSupabaseMobileConfigured() {
 }
 
 export function getSupabaseMobileConfigError() {
-  if (isSupabaseMobileConfigured()) {
-    return null;
+  if (!isValidHttpUrl(mobileEnv.supabaseUrl) || isPlaceholderValue(mobileEnv.supabaseUrl)) {
+    return "Supabase mobile auth is not configured. Set a valid EXPO_PUBLIC_SUPABASE_URL for this build.";
   }
-  return "Supabase mobile auth is not configured. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY for this build.";
+  if (isPreviewLikeMobileEnv() && !mobileEnv.supabaseUrl.startsWith("https://")) {
+    return "EXPO_PUBLIC_SUPABASE_URL must use HTTPS for preview and production builds.";
+  }
+  if (isPlaceholderValue(mobileEnv.supabaseAnonKey)) {
+    return "Supabase mobile auth is not configured. Set EXPO_PUBLIC_SUPABASE_ANON_KEY for this build.";
+  }
+  return null;
+}
+
+export function getMobileStartupConfigError() {
+  try {
+    getApiBaseUrlOrThrow();
+  } catch (error) {
+    return error instanceof Error ? error.message : "Missing or invalid EXPO_PUBLIC_API_BASE_URL.";
+  }
+
+  return getSupabaseMobileConfigError();
+}
+
+export function assertMobileStartupConfig() {
+  const configError = getMobileStartupConfigError();
+
+  if (configError) {
+    throw new Error(configError);
+  }
 }
 
 export function getApiBaseUrlOrThrow() {

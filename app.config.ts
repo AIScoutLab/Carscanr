@@ -1,5 +1,6 @@
 import type { ExpoConfig } from "expo/config";
 
+const easProjectId = process.env.EXPO_PUBLIC_EAS_PROJECT_ID || "6e7cd5a8-7f65-44ce-88a8-3d1a3f589cc6";
 const appEnv = process.env.EXPO_PUBLIC_APP_ENV === "preview" || process.env.EXPO_PUBLIC_APP_ENV === "production"
   ? process.env.EXPO_PUBLIC_APP_ENV
   : "local";
@@ -16,11 +17,10 @@ const config: ExpoConfig = {
   version: "1.0.0",
   orientation: "portrait",
   userInterfaceStyle: "light",
-  icon: "./assets/app-icon-square.png",
-  runtimeVersion: {
-    policy: "appVersion",
-  },
+  icon: "./icon-1024.png",
+  runtimeVersion: "1.0.1",
   updates: {
+    url: `https://u.expo.dev/${easProjectId}`,
     fallbackToCacheTimeout: 0,
   },
   plugins: [
@@ -39,7 +39,7 @@ const config: ExpoConfig = {
   extra: {
     appEnv,
     eas: {
-      projectId: process.env.EXPO_PUBLIC_EAS_PROJECT_ID,
+      projectId: easProjectId,
     },
   },
   ios: {

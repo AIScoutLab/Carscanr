@@ -1,7 +1,7 @@
 import { router, useLocalSearchParams } from "expo-router";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Animated, Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { AppContainer } from "@/components/AppContainer";
 import { BackButton } from "@/components/BackButton";
 import { CandidateMatchCard } from "@/components/CandidateMatchCard";
@@ -19,6 +19,7 @@ import { Colors, Radius, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
 import { useSubscription } from "@/hooks/useSubscription";
 import { generateVehicleInsight } from "@/lib/vehicleInsights";
+import { authService } from "@/services/authService";
 import { garageService } from "@/services/garageService";
 import { scanService } from "@/services/scanService";
 import { vehicleService } from "@/services/vehicleService";
@@ -156,6 +157,7 @@ export default function ScanResultScreen() {
 
   useEffect(() => {
     console.log("[scan-result] params", params);
+    console.log("[scan-result] mounted", { scanId, imageUri: params.imageUri });
     Animated.parallel([
       Animated.timing(screenOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
       Animated.timing(screenTranslate, { toValue: 0, duration: 200, useNativeDriver: true }),
@@ -188,6 +190,9 @@ export default function ScanResultScreen() {
         setLoading(false);
       }
     });
+    return () => {
+      console.log("[scan-result] unmounted", { scanId });
+    };
   }, [scanId]);
 
 
@@ -368,6 +373,10 @@ export default function ScanResultScreen() {
   if (loading) {
     return (
       <AppContainer scroll={false} contentContainerStyle={styles.loadingWrap}>
+        <View style={styles.debugBanner}>
+          <Text style={styles.debugBannerTitle}>RESULT SCREEN LOADED</Text>
+          <Text style={styles.debugBannerBody}>Loading result for scanId: {scanId ?? "missing"}</Text>
+        </View>
         <ActivityIndicator size="large" color={Colors.accent} />
         <Text style={styles.loadingText}>Loading scan result</Text>
       </AppContainer>
@@ -377,6 +386,10 @@ export default function ScanResultScreen() {
   if (!scan || !normalized) {
     return (
       <AppContainer>
+        <View style={styles.debugBanner}>
+          <Text style={styles.debugBannerTitle}>RESULT SCREEN LOADED</Text>
+          <Text style={styles.debugBannerBody}>Result error for scanId: {scanId ?? "missing"}</Text>
+        </View>
         <EmptyState title="Scan unavailable" description={error ?? "We couldn’t load that scan result."} />
       </AppContainer>
     );
@@ -384,6 +397,14 @@ export default function ScanResultScreen() {
 
   const saveToGarage = async () => {
     try {
+      console.log("[tap] result-save-to-garage", { vehicleId: normalized.identifiedVehicle.id });
+      if (!(await authService.getAccessToken())) {
+        Alert.alert("Sign in required", "Sign in to save vehicles to your Garage and keep them across devices.", [
+          { text: "Not now", style: "cancel" },
+          { text: "Sign In", onPress: () => router.push("/auth?mode=sign-in") },
+        ]);
+        return;
+      }
       if (!normalized.identifiedVehicle.id || !normalized.imageUri) {
         throw new Error("Missing vehicle details.");
       }
@@ -395,6 +416,7 @@ export default function ScanResultScreen() {
   };
 
   const useCandidate = (candidateId: string) => {
+    console.log("[tap] result-use-candidate", { candidateId });
     router.push(`/vehicle/${candidateId}`);
   };
 
@@ -417,6 +439,10 @@ export default function ScanResultScreen() {
             { opacity: screenOpacity, transform: [{ translateY: screenTranslate }] },
           ]}
         >
+          <View style={styles.debugBanner}>
+            <Text style={styles.debugBannerTitle}>RESULT SCREEN LOADED</Text>
+            <Text style={styles.debugBannerBody}>scanId: {normalized.id ?? "missing"} | mode: full result</Text>
+          </View>
           <BackButton fallbackHref="/(tabs)/scan" label="Scan" />
           {normalized.imageUri ? <Image source={{ uri: normalized.imageUri }} style={styles.image} /> : null}
           {usage ? (
@@ -437,6 +463,7 @@ export default function ScanResultScreen() {
                   style={styles.primaryCard}
                   onPress={() => {
                     if (bestMatch.id) {
+                      console.log("[tap] result-best-match-open", { vehicleId: bestMatch.id });
                       router.push(`/vehicle/${bestMatch.id}`);
                     }
                   }}
@@ -487,24 +514,18 @@ export default function ScanResultScreen() {
                       <PrimaryButton
                         label={isUnlocking ? "Applying unlock..." : "Use 1 Free Unlock"}
                         onPress={async () => {
-                          if (!normalized?.imageUri) return;
-                          try {
-                            const premium = await scanService.identifyPremium(normalized.imageUri);
-                            setScan(premium.result);
-                            const normalizedScan = normalizeScanForResult(premium.result);
-                            setNormalized(normalizedScan);
+                          console.log("[tap] result-use-free-unlock", { vehicleId: bestMatch.id });
+                          if (!bestMatch.id) return;
+                          const success = await useFreeUnlockForVehicle(bestMatch.id);
+                          if (success) {
                             await refreshStatus();
-                            if (normalizedScan.identifiedVehicle.id) {
-                              router.push(`/vehicle/${normalizedScan.identifiedVehicle.id}`);
-                            }
-                          } catch (err) {
-                            console.log("[scan-result] premium scan failed", err);
+                            router.push(`/vehicle/${bestMatch.id}`);
                           }
                         }}
                         disabled={!bestMatch.id || isUnlocking}
                       />
                     ) : null}
-                    <PrimaryButton label="Unlock Pro" secondary onPress={() => router.push("/paywall")} />
+                    <PrimaryButton label="Unlock Pro" secondary onPress={() => { console.log("[tap] result-unlock-pro"); router.push("/paywall"); }} />
                   </View>
                 </>
               ))
@@ -546,6 +567,7 @@ export default function ScanResultScreen() {
             secondary
             onPress={() => {
               if (bestMatch.id) {
+                console.log("[tap] result-open-full-detail", { vehicleId: bestMatch.id });
                 router.push(`/vehicle/${bestMatch.id}`);
               }
             }}
@@ -615,6 +637,17 @@ const styles = StyleSheet.create({
   previewHeading: { ...Typography.heading, color: Colors.textStrong },
   previewBody: { ...Typography.body, color: Colors.textMuted },
   notRight: { ...Typography.caption, color: Colors.textMuted, textAlign: "center" },
+  debugBanner: {
+    backgroundColor: "#DCFCE7",
+    borderColor: "#86EFAC",
+    borderWidth: 1,
+    borderRadius: Radius.lg,
+    padding: 12,
+    gap: 4,
+    marginBottom: 12,
+  },
+  debugBannerTitle: { ...Typography.bodyStrong, color: Colors.textStrong },
+  debugBannerBody: { ...Typography.caption, color: Colors.text },
   loadingWrap: { flex: 1, justifyContent: "center", alignItems: "center", gap: 12 },
   loadingText: { ...Typography.body, color: Colors.textMuted },
 });

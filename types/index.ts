@@ -124,3 +124,14 @@ export type AuthUser = {
   email: string;
   fullName: string;
 };
+
+export type AuthSignUpResult =
+  | {
+      outcome: "signed_in";
+      user: AuthUser;
+    }
+  | {
+      outcome: "confirmation_required";
+      user: AuthUser | null;
+      message: string;
+    };

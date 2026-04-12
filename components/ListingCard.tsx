@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { Animated, Image, Pressable, StyleSheet, Text, View } from "react-native";
-import { Colors, Motion, Radius, Typography } from "@/constants/theme";
+import { Animated, Image, StyleSheet, Text, View } from "react-native";
+import { Colors, Radius, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
 import { ListingResult } from "@/types";
 
@@ -25,13 +25,7 @@ export function ListingCard({ listing, isBest = false }: { listing: ListingResul
 
   return (
     <Animated.View style={{ opacity, transform: [{ translateY }] }}>
-      <Pressable
-        style={({ pressed }) => [
-          styles.card,
-          isBest && styles.bestCard,
-          pressed && styles.pressed,
-        ]}
-      >
+      <View style={[styles.card, isBest && styles.bestCard]}>
         <View style={styles.imageWrap}>
           <Image source={{ uri: listing.imageUrl }} style={styles.image} />
           <View style={styles.imageOverlay} />
@@ -46,7 +40,7 @@ export function ListingCard({ listing, isBest = false }: { listing: ListingResul
             <Text style={styles.matchValue}>{matchLabel}</Text>
           </View>
         </View>
-      </Pressable>
+      </View>
     </Animated.View>
   );
 }
@@ -63,10 +57,6 @@ const styles = StyleSheet.create({
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 10 },
     elevation: 4,
-  },
-  pressed: {
-    opacity: 0.96,
-    transform: [{ scale: Motion.pressInScale }],
   },
   imageWrap: { backgroundColor: Colors.cardAlt },
   image: { width: "100%", height: 168 },

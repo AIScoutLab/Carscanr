@@ -1,5 +1,6 @@
 import { PropsWithChildren } from "react";
-import { SafeAreaView, ScrollView, StyleSheet, ViewStyle } from "react-native";
+import { ScrollView, StyleSheet, View, ViewStyle } from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "@/constants/theme";
 
 type Props = PropsWithChildren<{
@@ -8,16 +9,33 @@ type Props = PropsWithChildren<{
 }>;
 
 export function AppContainer({ children, scroll = true, contentContainerStyle }: Props) {
+  const insets = useSafeAreaInsets();
+  const contentPadding = {
+    paddingTop: Math.max(insets.top, 8) + 12,
+    paddingBottom: Math.max(insets.bottom, 12) + 16,
+    paddingHorizontal: 20,
+  } satisfies ViewStyle;
+
   if (scroll) {
     return (
-      <SafeAreaView style={styles.safeArea}>
-        <ScrollView style={styles.scroll} contentContainerStyle={[styles.content, contentContainerStyle]} showsVerticalScrollIndicator={false}>
+      <SafeAreaView style={styles.safeArea} edges={["top", "right", "bottom", "left"]}>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={[styles.content, contentPadding, contentContainerStyle]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
           {children}
         </ScrollView>
       </SafeAreaView>
     );
   }
-  return <SafeAreaView style={[styles.safeArea, styles.content, contentContainerStyle]}>{children}</SafeAreaView>;
+
+  return (
+    <SafeAreaView style={styles.safeArea} edges={["top", "right", "bottom", "left"]}>
+      <View style={[styles.content, contentPadding, contentContainerStyle]}>{children}</View>
+    </SafeAreaView>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -29,8 +47,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    paddingHorizontal: 16,
-    paddingVertical: 20,
     gap: 20,
   },
 });

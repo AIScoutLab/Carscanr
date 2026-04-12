@@ -46,12 +46,14 @@ export default function PaywallScreen() {
       <PrimaryButton
         label={primaryLabel}
         onPress={async () => {
+          console.log("[tap] paywall-primary", { backendProActive, hasPro, isLoading, isPurchasing });
           if (backendProActive) {
             router.back();
             return;
           }
           try {
             const result = await purchasePro();
+            console.log("[paywall] purchase result", { outcome: result.outcome, provider: result.status.provider, plan: result.status.plan });
             if (result.outcome === "verified" || result.outcome === "restored" || result.status.provider === "backend") {
               router.replace("/pro-activated");
             }
@@ -61,7 +63,7 @@ export default function PaywallScreen() {
         }}
         disabled={isLoading || isPurchasing}
       />
-      <PrimaryButton label="Keep Free Access" secondary onPress={() => router.back()} />
+      <PrimaryButton label="Keep Free Access" secondary onPress={() => { console.log("[tap] paywall-keep-free"); router.back(); }} />
       {feedbackMessage ? <Text style={styles.feedback}>{feedbackMessage}</Text> : null}
       {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
       {!hasPro ? <Text style={styles.footnote}>Cancel anytime</Text> : null}

@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { Colors, Radius, Typography } from "@/constants/theme";
 
 type Props = {
@@ -13,9 +13,9 @@ export function SegmentedTabBar({ tabs, activeTab, onChange }: Props) {
       {tabs.map((tab) => {
         const active = activeTab === tab;
         return (
-          <Pressable key={tab} style={[styles.tab, active && styles.activeTab]} onPress={() => onChange(tab)}>
+          <TouchableOpacity key={tab} style={[styles.tab, active && styles.activeTab]} onPress={() => onChange(tab)} activeOpacity={0.86} accessibilityRole="button">
             <Text style={[styles.label, active && styles.activeLabel]}>{tab}</Text>
-          </Pressable>
+          </TouchableOpacity>
         );
       })}
     </View>

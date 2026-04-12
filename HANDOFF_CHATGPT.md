@@ -1,6 +1,6 @@
 # CarScanr Handoff For ChatGPT
 
-Update this file after meaningful product, auth, environment, backend, or deployment changes so the next session starts from the current truth.
+Update this file after meaningful product, auth, environment, deployment, or TestFlight changes so the next session starts from the current truth.
 
 ## Project Summary
 
@@ -16,27 +16,79 @@ Product goal:
 - App shows specs, value, listings, and Garage history
 - Free vs Pro subscription model gates premium access
 
-## Current Launch-Prep State
+## Current State Snapshot
 
-The repo is now set up for a production-like preview flow instead of a laptop-only dev loop.
+### Mobile / Expo
 
-### What is now true
+- The app uses dynamic Expo config through [app.config.ts](/Users/mattbrillman/Car_Identifier/app.config.ts)
+- EAS is linked to the existing Expo project `@eus090474/carscanr`
+- The active EAS project ID is `6e7cd5a8-7f65-44ce-88a8-3d1a3f589cc6`
+- Expo Updates is configured manually for bare workflow
+- `runtimeVersion` is manually pinned to `"1.0.0"` because bare workflow cannot use runtime policy objects
+- The app icon is currently sourced from [icon-1024.png](/Users/mattbrillman/Car_Identifier/icon-1024.png)
+- The iOS native icon asset at [ios/CarIdentifier/Images.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png](/Users/mattbrillman/Car_Identifier/ios/CarIdentifier/Images.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png) has been replaced with that same file
 
-- Mobile auth now uses real Supabase email/password auth by default
-- Supabase mobile sessions persist and restore on app launch
-- Backend requests use real bearer tokens from the mobile Supabase session
-- Shared mobile API client blocks protected requests when signed out
-- Mobile environment handling now distinguishes `local`, `preview`, and `production`
-- `EXPO_PUBLIC_PLAN_OVERRIDE` is now local-only and ignored outside local mode
-- Preview/production-style mobile builds now expect a public HTTPS backend URL
-- Backend environment handling now distinguishes `APP_ENV=local|preview|production`
-- Backend startup now fails fast for unsafe preview/production configs
-- Backend startup logs and `/health` expose non-secret diagnostics for hosted verification
-- Backend mock fallbacks are now local-only and explicitly gated by env
-- Dev auth bypass is now local-only and blocked outside local mode
-- Scan flow no longer defaults to a mock-only path for normal scans
-- Backend tests were updated to use real image buffers so the scan path exercises actual preprocessing
-- EAS profiles now drive environment selection instead of requiring source edits
+### Backend / Render
+
+- Backend env parsing was hardened in [backend/src/config/env.ts](/Users/mattbrillman/Car_Identifier/backend/src/config/env.ts)
+- Render preview config is defined in [render.yaml](/Users/mattbrillman/Car_Identifier/render.yaml)
+- Hosted preview/production deploys now fail fast when unsafe env values are set
+- Startup logs include non-secret env diagnostics for hosted verification
+
+### Release / TestFlight
+
+- TestFlight builds were previously white-screening because production env values were not present in EAS and startup/session errors were being swallowed
+- Root startup config validation and visible fallback UI are now in place
+- Startup route restoration no longer fails silently to `null`
+- The onboarding screen still has an unresolved production/TestFlight issue: `Start Free` and `Sign In` were reported as visually present but non-functional on device even after multiple tap hardening passes
+- The latest attempted fix for onboarding moved the CTAs outside the main scroll area and changed navigation to explicit top-level `/auth` routing
+
+## Important Files
+
+### Mobile
+
+- [app.config.ts](/Users/mattbrillman/Car_Identifier/app.config.ts)
+- [eas.json](/Users/mattbrillman/Car_Identifier/eas.json)
+- [app/_layout.tsx](/Users/mattbrillman/Car_Identifier/app/_layout.tsx)
+- [app/index.tsx](/Users/mattbrillman/Car_Identifier/app/index.tsx)
+- [app/(onboarding)/index.tsx](/Users/mattbrillman/Car_Identifier/app/(onboarding)/index.tsx)
+- [app/(auth)/index.tsx](/Users/mattbrillman/Car_Identifier/app/(auth)/index.tsx)
+- [app/auth.tsx](/Users/mattbrillman/Car_Identifier/app/auth.tsx)
+- [app/onboarding.tsx](/Users/mattbrillman/Car_Identifier/app/onboarding.tsx)
+- [app/(tabs)/profile.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/profile.tsx)
+- [app/(tabs)/scan.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/scan.tsx)
+- [app/paywall.tsx](/Users/mattbrillman/Car_Identifier/app/paywall.tsx)
+- [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx)
+- [components/AppContainer.tsx](/Users/mattbrillman/Car_Identifier/components/AppContainer.tsx)
+- [components/PrimaryButton.tsx](/Users/mattbrillman/Car_Identifier/components/PrimaryButton.tsx)
+- [components/BackButton.tsx](/Users/mattbrillman/Car_Identifier/components/BackButton.tsx)
+- [components/CandidateMatchCard.tsx](/Users/mattbrillman/Car_Identifier/components/CandidateMatchCard.tsx)
+- [components/ListingCard.tsx](/Users/mattbrillman/Car_Identifier/components/ListingCard.tsx)
+- [components/PaywallCard.tsx](/Users/mattbrillman/Car_Identifier/components/PaywallCard.tsx)
+- [components/ProLockCard.tsx](/Users/mattbrillman/Car_Identifier/components/ProLockCard.tsx)
+- [components/SamplePhotoPickerSheet.tsx](/Users/mattbrillman/Car_Identifier/components/SamplePhotoPickerSheet.tsx)
+- [components/ScanUsageMeter.tsx](/Users/mattbrillman/Car_Identifier/components/ScanUsageMeter.tsx)
+- [components/SegmentedTabBar.tsx](/Users/mattbrillman/Car_Identifier/components/SegmentedTabBar.tsx)
+- [components/VehicleCard.tsx](/Users/mattbrillman/Car_Identifier/components/VehicleCard.tsx)
+- [lib/env.ts](/Users/mattbrillman/Car_Identifier/lib/env.ts)
+- [lib/supabase.ts](/Users/mattbrillman/Car_Identifier/lib/supabase.ts)
+- [services/authService.ts](/Users/mattbrillman/Car_Identifier/services/authService.ts)
+- [services/apiClient.ts](/Users/mattbrillman/Car_Identifier/services/apiClient.ts)
+- [.env.example](/Users/mattbrillman/Car_Identifier/.env.example)
+
+### Backend
+
+- [backend/src/config/env.ts](/Users/mattbrillman/Car_Identifier/backend/src/config/env.ts)
+- [backend/src/server.ts](/Users/mattbrillman/Car_Identifier/backend/src/server.ts)
+- [backend/src/app.ts](/Users/mattbrillman/Car_Identifier/backend/src/app.ts)
+- [backend/src/middleware/auth.ts](/Users/mattbrillman/Car_Identifier/backend/src/middleware/auth.ts)
+- [backend/src/lib/auth.ts](/Users/mattbrillman/Car_Identifier/backend/src/lib/auth.ts)
+- [backend/src/lib/providerRegistry.ts](/Users/mattbrillman/Car_Identifier/backend/src/lib/providerRegistry.ts)
+- [backend/src/lib/repositoryRegistry.ts](/Users/mattbrillman/Car_Identifier/backend/src/lib/repositoryRegistry.ts)
+- [backend/src/services/scanService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/scanService.ts)
+- [backend/Dockerfile](/Users/mattbrillman/Car_Identifier/backend/Dockerfile)
+- [backend/.env.example](/Users/mattbrillman/Car_Identifier/backend/.env.example)
+- [render.yaml](/Users/mattbrillman/Car_Identifier/render.yaml)
 
 ## Environment Model
 
@@ -46,7 +98,7 @@ Use when developing against your laptop:
 
 - Mobile: `EXPO_PUBLIC_APP_ENV=local`
 - Backend: `APP_ENV=local`
-- `EXPO_PUBLIC_API_BASE_URL` may be `http://localhost:4000` or LAN IP
+- `EXPO_PUBLIC_API_BASE_URL` may be local HTTP
 - `ALLOW_MOCK_FALLBACKS=true` is allowed if needed
 - `AUTH_DEV_BYPASS_ENABLED=true` is allowed only here
 - `EXPO_PUBLIC_PLAN_OVERRIDE` may be used only here
@@ -69,150 +121,253 @@ Use for launch-ready hosted behavior:
 
 - Mobile: `EXPO_PUBLIC_APP_ENV=production`
 - Backend: `APP_ENV=production`
-- Same hosted assumptions as preview, but with production credentials and app metadata
+- Same hosted assumptions as preview, but with production credentials and release app metadata
 
-## Important Files
+## Mobile Config Truth
 
-### Mobile
+### Current Expo config
 
-- [app.config.ts](/Users/mattbrillman/Car_Identifier/app.config.ts)
-- [eas.json](/Users/mattbrillman/Car_Identifier/eas.json)
-- [app/(auth)/index.tsx](/Users/mattbrillman/Car_Identifier/app/(auth)/index.tsx)
-- [app/(tabs)/profile.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/profile.tsx)
-- [lib/env.ts](/Users/mattbrillman/Car_Identifier/lib/env.ts)
-- [lib/supabase.ts](/Users/mattbrillman/Car_Identifier/lib/supabase.ts)
-- [services/authService.ts](/Users/mattbrillman/Car_Identifier/services/authService.ts)
-- [services/apiClient.ts](/Users/mattbrillman/Car_Identifier/services/apiClient.ts)
-- [services/scanService.ts](/Users/mattbrillman/Car_Identifier/services/scanService.ts)
-- [services/subscriptionService.ts](/Users/mattbrillman/Car_Identifier/services/subscriptionService.ts)
-- [features/subscription/SubscriptionProvider.tsx](/Users/mattbrillman/Car_Identifier/features/subscription/SubscriptionProvider.tsx)
-- [features/subscription/planOverride.ts](/Users/mattbrillman/Car_Identifier/features/subscription/planOverride.ts)
-- [.env.example](/Users/mattbrillman/Car_Identifier/.env.example)
+[app.config.ts](/Users/mattbrillman/Car_Identifier/app.config.ts) currently resolves:
 
-### Backend
+- `slug: "carscanr"`
+- `scheme: "carscanr"`
+- `version: "1.0.0"`
+- `icon: "./icon-1024.png"`
+- `runtimeVersion: "1.0.0"`
+- `updates.url: https://u.expo.dev/6e7cd5a8-7f65-44ce-88a8-3d1a3f589cc6`
+- `extra.eas.projectId = 6e7cd5a8-7f65-44ce-88a8-3d1a3f589cc6`
 
-- [backend/src/config/env.ts](/Users/mattbrillman/Car_Identifier/backend/src/config/env.ts)
-- [backend/src/server.ts](/Users/mattbrillman/Car_Identifier/backend/src/server.ts)
-- [backend/src/app.ts](/Users/mattbrillman/Car_Identifier/backend/src/app.ts)
-- [backend/src/middleware/auth.ts](/Users/mattbrillman/Car_Identifier/backend/src/middleware/auth.ts)
-- [backend/src/lib/auth.ts](/Users/mattbrillman/Car_Identifier/backend/src/lib/auth.ts)
-- [backend/src/lib/repositoryRegistry.ts](/Users/mattbrillman/Car_Identifier/backend/src/lib/repositoryRegistry.ts)
-- [backend/src/lib/providerRegistry.ts](/Users/mattbrillman/Car_Identifier/backend/src/lib/providerRegistry.ts)
-- [backend/src/services/scanService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/scanService.ts)
-- [backend/src/services/usageService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/usageService.ts)
-- [backend/Dockerfile](/Users/mattbrillman/Car_Identifier/backend/Dockerfile)
-- [backend/.env.example](/Users/mattbrillman/Car_Identifier/backend/.env.example)
-- [render.yaml](/Users/mattbrillman/Car_Identifier/render.yaml)
+It also varies:
 
-## Current API / Auth Behavior
+- app name between local/preview via `EXPO_PUBLIC_APP_ENV`
+- iOS bundle identifier between preview and non-preview
+- iOS build number via `EXPO_PUBLIC_IOS_BUILD_NUMBER`
 
-- `/api/*` routes still require auth
-- In local mode, dev bypass tokens can still work if `AUTH_DEV_BYPASS_ENABLED=true`
-- In preview/production-style mode, backend auth expects real Supabase bearer tokens
-- If Supabase auth/persistence config is missing in preview/production-style mode, backend startup now fails fast instead of drifting into a fake-safe mode
-- Signed-out mobile users now stop before protected requests are sent
-- Profile screen still shows lightweight debug info such as whether a token is present and which API base URL is in use
+### EAS config
 
-## Backend Deployment Readiness
+[eas.json](/Users/mattbrillman/Car_Identifier/eas.json) currently:
 
-### Public deploy path
+- uses remote app version source
+- sets `EXPO_PUBLIC_APP_ENV=local` for `development`
+- sets `EXPO_PUBLIC_APP_ENV=preview` for `preview`
+- sets `EXPO_PUBLIC_APP_ENV=production` for `production`
+- no longer includes empty `EXPO_PUBLIC_PLAN_OVERRIDE` values
 
-The intended hosted path is:
+### Bare workflow updates config
 
-1. Deploy `backend/` using [render.yaml](/Users/mattbrillman/Car_Identifier/render.yaml)
-2. Fill env vars from [backend/.env.example](/Users/mattbrillman/Car_Identifier/backend/.env.example)
-3. Verify [backend health](/Users/mattbrillman/Car_Identifier/backend/src/app.ts) through `/health`
-4. Point mobile `EXPO_PUBLIC_API_BASE_URL` to that public HTTPS URL
-5. Build a preview app with EAS
+Because the app is in bare workflow:
 
-### Startup diagnostics
+- `runtimeVersion` must stay a manual string
+- policy-based `runtimeVersion` objects are not valid here
+- [ios/CarIdentifier/Supporting/Expo.plist](/Users/mattbrillman/Car_Identifier/ios/CarIdentifier/Supporting/Expo.plist) was updated by `eas update:configure`
 
-Startup logs and `/health` now expose:
+## Production Env Handling
 
-- `NODE_ENV`
-- `APP_ENV`
-- `allowMockFallbacks`
-- `authDevBypassEnabled`
-- `supabaseConfigured`
-- `openAIConfigured`
-- `visionProvider`
-- active vehicle provider selection
-- whether mock repositories are active
+### Required mobile env vars
 
-No secrets are logged.
+The app now expects these public env vars to exist for preview/production builds:
 
-### Guardrails now enforced
+- `EXPO_PUBLIC_API_BASE_URL`
+- `EXPO_PUBLIC_SUPABASE_URL`
+- `EXPO_PUBLIC_SUPABASE_ANON_KEY`
 
-Preview/production-style backend startup fails if:
+Important:
 
-- `SUPABASE_URL` is missing
-- `SUPABASE_SERVICE_ROLE_KEY` is missing
-- `SUPABASE_JWT_SECRET` is missing
-- `AUTH_DEV_BYPASS_ENABLED=true`
-- `ALLOW_MOCK_FALLBACKS=true`
-- `VISION_PROVIDER=mock`
-- any vehicle provider is `mock`
-- MarketCheck is selected without `MARKETCHECK_API_KEY`
-- OpenAI vision is selected without `OPENAI_API_KEY`
+- Local [`.env`](/Users/mattbrillman/Car_Identifier/.env) is not enough for TestFlight or EAS production builds
+- These must be set in the Expo/EAS environment for the relevant build environment
 
-## Mobile Auth State
+### Mobile startup validation
 
-### Current behavior
+[lib/env.ts](/Users/mattbrillman/Car_Identifier/lib/env.ts) now:
 
-- `authService` now uses the real Supabase client instead of local synthetic `dev-session:*` tokens
+- normalizes `EXPO_PUBLIC_APP_ENV`
+- validates API base URL format
+- requires HTTPS for preview/production builds
+- validates that Supabase mobile config is not placeholder data
+- throws a visible startup error instead of failing silently
+
+[app/_layout.tsx](/Users/mattbrillman/Car_Identifier/app/_layout.tsx) now:
+
+- logs `ENV CHECK` with non-secret values
+- throws if `EXPO_PUBLIC_API_BASE_URL` is missing
+- calls `assertMobileStartupConfig()`
+- renders a visible `Configuration error - missing API settings` screen if config is invalid
+- wraps the app in [ErrorBoundary](/Users/mattbrillman/Car_Identifier/components/ErrorBoundary.tsx)
+
+[app/index.tsx](/Users/mattbrillman/Car_Identifier/app/index.tsx) now:
+
+- restores onboarding/session state asynchronously
+- shows a visible loading card while restoring
+- shows a visible `Startup error` card if initialization fails
+- logs startup route restore failures
+- routes to explicit top-level `/auth` or `/onboarding` instead of grouped route paths
+
+## Auth And Routing State
+
+### Current auth behavior
+
+- Mobile auth uses the real Supabase client
 - Sign in uses `supabase.auth.signInWithPassword`
 - Sign up uses `supabase.auth.signUp`
 - Session restore uses `supabase.auth.getSession`
 - Sign out uses `supabase.auth.signOut`
-- Supabase auth storage is backed by AsyncStorage
-- Session changes reset local scan/subscription caches
+- Auth state is persisted via AsyncStorage-backed Supabase storage
 
-### Important limitation
+### Explicit route aliases
 
-If your Supabase project requires email confirmation on sign-up, a new account may not get an immediate session. The current UI handles this honestly by surfacing a confirmation message instead of pretending the account is signed in.
+Two top-level alias routes now exist:
 
-## Subscription State
+- [app/auth.tsx](/Users/mattbrillman/Car_Identifier/app/auth.tsx)
+- [app/onboarding.tsx](/Users/mattbrillman/Car_Identifier/app/onboarding.tsx)
 
-- Subscription status scaffolding still exists
-- StoreKit / RevenueCat is still not wired
-- Purchase and restore actions are now explicitly honest placeholders instead of syncing fake dev receipts
-- Cancel still calls the backend subscription cancel route
-- `EXPO_PUBLIC_PLAN_OVERRIDE` remains available for local-only UI testing
+These were added because grouped route navigation such as `/(auth)` and `/(onboarding)` was suspected to be flaky in release/TestFlight flows when routing from startup or onboarding.
 
-## OpenAI / Vision State
+## Onboarding Status
 
-- Normal scan flow no longer defaults to a mock-only code path
-- Scan requests now run through the main cached/provider-backed pipeline
-- In local mode, mock fallback is still allowed when `ALLOW_MOCK_FALLBACKS=true`
-- In preview/production-style mode, provider failures now surface as real failures instead of silently downgrading to mock
-- OpenAI quota/billing problems are still a real preview/launch blocker if `VISION_PROVIDER=openai`
+### Current onboarding implementation
 
-## Preview / Live-Like Testing Path
+[app/(onboarding)/index.tsx](/Users/mattbrillman/Car_Identifier/app/(onboarding)/index.tsx) currently:
 
-Use this flow for realistic testing:
+- uses `AppContainer scroll={false}`
+- renders the feature cards in a dedicated `ScrollView`
+- renders the CTA area outside that `ScrollView`
+- uses local `TouchableOpacity` controls for `Start Free` and `Sign In`
+- sets the small top label to `CarScanr Pro`
+- keeps the footer in a separate wrapper with `pointerEvents="none"`
+- logs each CTA tap plus pre-navigation events
+- writes `hasSeenOnboarding=true` to AsyncStorage before routing
+- navigates to `/auth` with `mode=sign-up` or `mode=sign-in`
 
-1. Deploy the backend publicly with Render
-2. Set hosted backend env vars:
-   - `APP_ENV=preview`
-   - `NODE_ENV=production`
-   - `ALLOW_MOCK_FALLBACKS=false`
-   - `AUTH_DEV_BYPASS_ENABLED=false`
-   - real `SUPABASE_*`
-   - real `OPENAI_API_KEY`
-   - real `MARKETCHECK_API_KEY`
-3. Confirm `/health`
-4. Set mobile env vars:
-   - `EXPO_PUBLIC_APP_ENV=preview`
-   - `EXPO_PUBLIC_API_BASE_URL=https://your-public-backend`
-   - `EXPO_PUBLIC_SUPABASE_URL=...`
-   - `EXPO_PUBLIC_SUPABASE_ANON_KEY=...`
-5. Build:
-   - `npm run eas:build:preview`
-6. Install the preview build on device
-7. Sign in with a real Supabase-backed account
-8. Exercise scan, usage, garage, listings, and auth flows against the hosted backend
+### Exact CTA tap path
 
-## Local Run Commands
+`Start Free`:
+
+- logs `[tap] onboarding-start-free-button`
+- logs `[tap] onboarding-start-free`
+- attempts to persist `hasSeenOnboarding`
+- logs `[onboarding] navigating to auth`
+- calls `router.replace({ pathname: "/auth", params: { mode: "sign-up" } })`
+
+`Sign In`:
+
+- logs `[tap] onboarding-sign-in-button`
+- logs `[tap] onboarding-sign-in`
+- attempts to persist `hasSeenOnboarding`
+- logs `[onboarding] navigating to auth`
+- calls `router.replace({ pathname: "/auth", params: { mode: "sign-in" } })`
+
+### Current unresolved issue
+
+Despite multiple fixes, the user still reported that `Start Free` and `Sign In` did nothing in TestFlight on a real iPhone.
+
+Work already attempted:
+
+- shared button component hardened from `Pressable` to `TouchableOpacity`
+- onboarding CTAs moved out of the main scroll area
+- CTA section isolated with explicit spacing and z-order
+- footer made non-interactive via `pointerEvents="none"`
+- grouped auth route replaced with explicit top-level `/auth`
+- tap logging added before async work and before navigation
+
+This issue is still considered open until a fresh release build confirms the new explicit-route version works on device.
+
+## Tap Audit State
+
+A broad tap audit was done across the app.
+
+### Hardened components
+
+These components were changed from `Pressable` to `TouchableOpacity` or equivalent safer tap handling:
+
+- [components/PrimaryButton.tsx](/Users/mattbrillman/Car_Identifier/components/PrimaryButton.tsx)
+- [components/BackButton.tsx](/Users/mattbrillman/Car_Identifier/components/BackButton.tsx)
+- [components/CandidateMatchCard.tsx](/Users/mattbrillman/Car_Identifier/components/CandidateMatchCard.tsx)
+- [components/VehicleCard.tsx](/Users/mattbrillman/Car_Identifier/components/VehicleCard.tsx)
+- [components/PaywallCard.tsx](/Users/mattbrillman/Car_Identifier/components/PaywallCard.tsx)
+- [components/ProLockCard.tsx](/Users/mattbrillman/Car_Identifier/components/ProLockCard.tsx)
+- [components/ScanUsageMeter.tsx](/Users/mattbrillman/Car_Identifier/components/ScanUsageMeter.tsx)
+- [components/SegmentedTabBar.tsx](/Users/mattbrillman/Car_Identifier/components/SegmentedTabBar.tsx)
+- [components/SamplePhotoPickerSheet.tsx](/Users/mattbrillman/Car_Identifier/components/SamplePhotoPickerSheet.tsx)
+
+### Other tap fixes
+
+- [components/AppContainer.tsx](/Users/mattbrillman/Car_Identifier/components/AppContainer.tsx) now uses `keyboardShouldPersistTaps="handled"` when scrollable
+- [app/(auth)/index.tsx](/Users/mattbrillman/Car_Identifier/app/(auth)/index.tsx) moved fragile text taps to explicit touchables
+- [app/(tabs)/profile.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/profile.tsx) moved fragile text taps to explicit touchables
+- [components/ListingCard.tsx](/Users/mattbrillman/Car_Identifier/components/ListingCard.tsx) was changed from a dead tappable card to a plain `View` because it had no `onPress`
+
+### Remaining lower-risk tap surfaces
+
+Some controls still use `Pressable` in less critical paths, including local-state toggles and non-launch actions. Those were not the primary reported TestFlight failure.
+
+## Backend Config Truth
+
+### Render config
+
+[render.yaml](/Users/mattbrillman/Car_Identifier/render.yaml) currently defines preview-style hosted values:
+
+- `APP_ENV=preview`
+- `NODE_ENV=production`
+- `ALLOW_MOCK_FALLBACKS="false"`
+- `AUTH_DEV_BYPASS_ENABLED="false"`
+- `VISION_PROVIDER=openai`
+- all vehicle providers set to `marketcheck`
+
+### Boolean env parsing fix
+
+[backend/src/config/env.ts](/Users/mattbrillman/Car_Identifier/backend/src/config/env.ts) no longer uses `z.coerce.boolean()` for critical booleans.
+
+Instead it uses a custom parser so:
+
+- `"false"` parses to `false`
+- `"0"` parses to `false`
+- unset values do not accidentally become `true`
+
+This fixed the earlier Render startup bug where string env values such as `"false"` were being treated as truthy.
+
+### Backend startup diagnostics
+
+Backend startup now logs:
+
+- `APP_ENV`
+- `NODE_ENV`
+- parsed `AUTH_DEV_BYPASS_ENABLED`
+- parsed `ALLOW_MOCK_FALLBACKS`
+
+No secrets are logged.
+
+### Hosted guardrails
+
+Preview/production-style backend startup now fails if:
+
+- `AUTH_DEV_BYPASS_ENABLED=true`
+- `ALLOW_MOCK_FALLBACKS=true`
+- `SUPABASE_URL` is missing
+- `SUPABASE_SERVICE_ROLE_KEY` is missing
+- `SUPABASE_JWT_SECRET` is missing
+- `VISION_PROVIDER=mock`
+- a hosted vehicle provider is still `mock`
+- MarketCheck is enabled without `MARKETCHECK_API_KEY`
+- OpenAI vision is enabled without `OPENAI_API_KEY`
+
+## Icon State
+
+### Current icon files
+
+- Source image provided by user: [Icon.png](/Users/mattbrillman/Car_Identifier/Icon.png)
+- Current app icon file in use: [icon-1024.png](/Users/mattbrillman/Car_Identifier/icon-1024.png)
+- Intermediate files also exist:
+  - [assets/app-icon-clean.png](/Users/mattbrillman/Car_Identifier/assets/app-icon-clean.png)
+  - [icon-cropped-source.png](/Users/mattbrillman/Car_Identifier/icon-cropped-source.png)
+  - [icon-safe-crop.png](/Users/mattbrillman/Car_Identifier/icon-safe-crop.png)
+
+### Important context
+
+The original [Icon.png](/Users/mattbrillman/Car_Identifier/Icon.png) had built-in white margin. `icon-1024.png` was created by cropping and scaling the existing image rather than redesigning it.
+
+If the icon still looks wrong in a future build, the next debugging target should be the asset artwork itself or additional native icon slots, not the Expo config path, because the config and the primary 1024 native asset have already been updated.
+
+## Useful Commands
 
 ### Mobile
 
@@ -234,33 +389,28 @@ npm run typecheck
 cd backend && npm run typecheck
 ```
 
-### Backend tests
+### Backend build
 
 ```bash
-cd backend
-npm test
+cd backend && npm run build
 ```
 
-## Remaining True Launch Blockers
+### EAS build
 
-- StoreKit / RevenueCat integration is still missing
-- App Store purchase verification is not truly live
-- OpenAI billing/quota must be healthy for real hosted scan behavior
-- Render or another public backend host still has to be configured with real env vars
-- Production monitoring, analytics, and crash reporting are still not wired
-- Final release validation on real devices/TestFlight still remains
+```bash
+eas build -p ios
+```
 
-## Most Recent Launch-Prep Upgrade
+### EAS submit
 
-This pass implemented:
+```bash
+eas submit -p ios
+```
 
-- mobile env separation via `EXPO_PUBLIC_APP_ENV`
-- backend env separation via `APP_ENV`
-- real Supabase mobile auth/session handling
-- protected-request enforcement in the shared API client
-- local-only dev plan override behavior
-- stricter backend startup validation
-- hosted backend diagnostics through startup logs and `/health`
-- preview/production guardrails against mock/dev auth fallbacks
-- honest subscription placeholder behavior
-- EAS preview/production env-driven readiness
+## Most Important Open Items
+
+- Verify whether the latest explicit `/auth` onboarding navigation fix actually resolves the broken TestFlight CTA issue on device
+- If onboarding is still broken after a fresh build, inspect release logs from the phone for the added onboarding tap messages to determine whether taps fire and navigation no-ops, or whether touches never reach the handlers
+- RevenueCat / StoreKit purchase flow is still not truly wired for launch-grade subscriptions
+- Production monitoring and crash reporting are still missing
+- Final end-to-end release validation on real devices is still needed

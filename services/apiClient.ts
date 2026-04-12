@@ -9,6 +9,7 @@ export type ApiRequest<TBody = unknown> = {
   headers?: Record<string, string>;
   formData?: FormData;
   authRequired?: boolean;
+  timeoutMs?: number;
 };
 
 export type ApiEnvelope<T, TMeta = Record<string, unknown>> =
@@ -50,9 +51,19 @@ let lastAuthDebug: {
   sentAuthHeader: boolean;
   baseUrl: string | undefined;
 } | null = null;
+let lastRequestDebug: {
+  url: string;
+  path: string;
+  method: HttpMethod;
+  timeoutMs: number;
+  startedAt: string;
+} | null = null;
 
 export function getApiAuthDebug() {
   return lastAuthDebug;
+}
+export function getLastApiRequestDebug() {
+  return lastRequestDebug;
 }
 const RETRY_DELAYS_MS = [250, 800];
 const REQUEST_TIMEOUT_MS = 20000;
@@ -73,7 +84,12 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = R
           // best effort
         }
       }
-      reject(new ApiRequestError("Request timed out. Check your network connection and try again."));
+      reject(
+        new ApiRequestError("Request timed out. Check your network connection and try again.", {
+          code: "REQUEST_TIMEOUT",
+          details: { timeoutMs },
+        }),
+      );
     }, timeoutMs);
   });
   const fetchPromise = fetch(url, { ...options, signal: controller?.signal }).finally(() => {
@@ -95,6 +111,12 @@ function isRetriable(status?: number) {
 async function parseEnvelope<T, TMeta = Record<string, unknown>>(response: Response): Promise<ApiEnvelope<T, TMeta>> {
   const text = await response.text();
   if (!text) {
+    if (!response.ok) {
+      throw new ApiRequestError(`Backend returned status ${response.status} with an empty response body.`, {
+        code: "EMPTY_ERROR_RESPONSE",
+        details: { status: response.status },
+      });
+    }
     throw new Error("Backend returned an empty response.");
   }
 
@@ -102,6 +124,12 @@ async function parseEnvelope<T, TMeta = Record<string, unknown>>(response: Respo
   try {
     payload = JSON.parse(text);
   } catch {
+    if (!response.ok) {
+      throw new ApiRequestError(`Backend returned status ${response.status} with invalid JSON: ${text.slice(0, 180)}`, {
+        code: "INVALID_ERROR_RESPONSE",
+        details: { status: response.status, text },
+      });
+    }
     throw new Error("Backend returned invalid JSON.");
   }
 
@@ -127,12 +155,19 @@ export async function apiRequest<TResponse>({
   headers,
   formData,
   authRequired = true,
+  timeoutMs = REQUEST_TIMEOUT_MS,
 }: ApiRequest): Promise<TResponse> {
   let lastError: Error | null = null;
   const accessToken = await authService.getAccessToken();
-  if (__DEV__) {
-    console.log(`[api] ${method} ${path} auth=${accessToken ? "yes" : "no"} base=${API_BASE_URL || "unset"}`);
-  }
+  const requestUrl = buildUrl(path);
+  lastRequestDebug = {
+    url: requestUrl,
+    path,
+    method,
+    timeoutMs,
+    startedAt: new Date().toISOString(),
+  };
+  console.log(`[api] ${method} ${path} auth token present: ${accessToken ? "yes" : "no"} base=${API_BASE_URL || "unset"} url=${requestUrl} timeoutMs=${timeoutMs}`);
 
   if (authRequired && !accessToken) {
     lastAuthDebug = {
@@ -154,7 +189,7 @@ export async function apiRequest<TResponse>({
         sentAuthHeader: Boolean(accessToken),
         baseUrl: API_BASE_URL,
       };
-      const response = await fetchWithTimeout(buildUrl(path), {
+      const response = await fetchWithTimeout(requestUrl, {
         method,
         headers: formData
           ? {
@@ -167,7 +202,7 @@ export async function apiRequest<TResponse>({
               ...headers,
             },
         body: formData ?? (body ? JSON.stringify(body) : undefined),
-      });
+      }, timeoutMs);
 
       const envelope = await parseEnvelope<TResponse>(response);
 
@@ -179,7 +214,7 @@ export async function apiRequest<TResponse>({
           await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
           continue;
         }
-        throw new ApiRequestError(message, envelope.success ? undefined : { code: envelope.error.code, details: envelope.error.details });
+        throw new ApiRequestError(message, envelope.success ? { details: { status: response.status } } : { code: envelope.error.code, details: { status: response.status, body: envelope.error.details } });
       }
 
       if (!envelope.success) {
@@ -189,9 +224,19 @@ export async function apiRequest<TResponse>({
       return envelope.data as TResponse;
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
-        lastError = new ApiRequestError("Request timed out. Check your network connection and try again.");
+        lastError = new ApiRequestError("Request timed out. Check your network connection and try again.", {
+          code: "REQUEST_TIMEOUT",
+          details: { timeoutMs, path },
+        });
+      } else if (error instanceof ApiRequestError && error.code === "REQUEST_TIMEOUT") {
+        lastError = error;
+      } else if (error instanceof ApiRequestError && error.code === "AUTH_REQUIRED") {
+        lastError = error;
       } else {
         lastError = error instanceof Error ? normalizeTransportError(error, path) : new Error("Unknown API request error.");
+      }
+      if (lastError instanceof ApiRequestError && (lastError.code === "REQUEST_TIMEOUT" || lastError.code === "AUTH_REQUIRED")) {
+        break;
       }
       if (attempt < RETRY_DELAYS_MS.length) {
         await sleep(RETRY_DELAYS_MS[attempt]);
@@ -210,12 +255,19 @@ export async function apiRequestEnvelope<TResponse, TMeta = Record<string, unkno
   headers,
   formData,
   authRequired = true,
+  timeoutMs = REQUEST_TIMEOUT_MS,
 }: ApiRequest): Promise<ApiSuccessEnvelope<TResponse, TMeta>> {
   let lastError: Error | null = null;
   const accessToken = await authService.getAccessToken();
-  if (__DEV__) {
-    console.log(`[api] ${method} ${path} auth=${accessToken ? "yes" : "no"} base=${API_BASE_URL || "unset"}`);
-  }
+  const requestUrl = buildUrl(path);
+  lastRequestDebug = {
+    url: requestUrl,
+    path,
+    method,
+    timeoutMs,
+    startedAt: new Date().toISOString(),
+  };
+  console.log(`[api] ${method} ${path} auth token present: ${accessToken ? "yes" : "no"} base=${API_BASE_URL || "unset"} url=${requestUrl} timeoutMs=${timeoutMs}`);
 
   if (authRequired && !accessToken) {
     lastAuthDebug = {
@@ -237,7 +289,7 @@ export async function apiRequestEnvelope<TResponse, TMeta = Record<string, unkno
         sentAuthHeader: Boolean(accessToken),
         baseUrl: API_BASE_URL,
       };
-      const response = await fetchWithTimeout(buildUrl(path), {
+      const response = await fetchWithTimeout(requestUrl, {
         method,
         headers: formData
           ? {
@@ -250,7 +302,7 @@ export async function apiRequestEnvelope<TResponse, TMeta = Record<string, unkno
               ...headers,
             },
         body: formData ?? (body ? JSON.stringify(body) : undefined),
-      });
+      }, timeoutMs);
 
       const envelope = await parseEnvelope<TResponse, TMeta>(response);
 
@@ -262,7 +314,7 @@ export async function apiRequestEnvelope<TResponse, TMeta = Record<string, unkno
           await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
           continue;
         }
-        throw new ApiRequestError(message, envelope.success ? undefined : { code: envelope.error.code, details: envelope.error.details });
+        throw new ApiRequestError(message, envelope.success ? { details: { status: response.status } } : { code: envelope.error.code, details: { status: response.status, body: envelope.error.details } });
       }
 
       if (!envelope.success) {
@@ -272,9 +324,19 @@ export async function apiRequestEnvelope<TResponse, TMeta = Record<string, unkno
       return envelope as ApiSuccessEnvelope<TResponse, TMeta>;
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
-        lastError = new ApiRequestError("Request timed out. Check your network connection and try again.");
+        lastError = new ApiRequestError("Request timed out. Check your network connection and try again.", {
+          code: "REQUEST_TIMEOUT",
+          details: { timeoutMs, path },
+        });
+      } else if (error instanceof ApiRequestError && error.code === "REQUEST_TIMEOUT") {
+        lastError = error;
+      } else if (error instanceof ApiRequestError && error.code === "AUTH_REQUIRED") {
+        lastError = error;
       } else {
         lastError = error instanceof Error ? normalizeTransportError(error, path) : new Error("Unknown API request error.");
+      }
+      if (lastError instanceof ApiRequestError && (lastError.code === "REQUEST_TIMEOUT" || lastError.code === "AUTH_REQUIRED")) {
+        break;
       }
       if (attempt < RETRY_DELAYS_MS.length) {
         await sleep(RETRY_DELAYS_MS[attempt]);

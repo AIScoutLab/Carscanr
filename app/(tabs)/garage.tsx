@@ -3,12 +3,14 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { AppContainer } from "@/components/AppContainer";
 import { EmptyState } from "@/components/EmptyState";
+import { PrimaryButton } from "@/components/PrimaryButton";
 import { ScanUsageMeter } from "@/components/ScanUsageMeter";
 import { UpgradePromptCard } from "@/components/UpgradePromptCard";
 import { VehicleCard } from "@/components/VehicleCard";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { filterGarageItems } from "@/features/garage/garageFilters";
 import { useSubscription } from "@/hooks/useSubscription";
+import { authService } from "@/services/authService";
 import { garageService } from "@/services/garageService";
 import { GarageItem } from "@/types";
 
@@ -18,18 +20,31 @@ export default function GarageScreen() {
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [requiresAuth, setRequiresAuth] = useState(false);
   const { status: usage } = useSubscription();
 
   useEffect(() => {
-    garageService
-      .list()
-      .then((result) => {
-        setItems(result);
-        setError(null);
-      })
-      .catch((err) => {
-        setItems([]);
-        setError(err instanceof Error ? err.message : "Garage unavailable.");
+    authService
+      .getAccessToken()
+      .then((token) => {
+        if (!token) {
+          setRequiresAuth(true);
+          setItems([]);
+          setError("Sign in to view your Garage and saved vehicle history.");
+          return;
+        }
+
+        return garageService
+          .list()
+          .then((result) => {
+            setRequiresAuth(false);
+            setItems(result);
+            setError(null);
+          })
+          .catch((err) => {
+            setItems([]);
+            setError(err instanceof Error ? err.message : "Garage unavailable.");
+          });
       })
       .finally(() => {
         setLoading(false);
@@ -61,6 +76,12 @@ export default function GarageScreen() {
           <ActivityIndicator size="large" color={Colors.accent} />
           <Text style={styles.loadingText}>Loading your garage</Text>
         </View>
+      ) : requiresAuth ? (
+        <View style={styles.authCard}>
+          <Text style={styles.authTitle}>Sign in to use Garage</Text>
+          <Text style={styles.authBody}>Garage saves, synced history, restore across devices, and account management all live behind your account.</Text>
+          <PrimaryButton label="Sign In" onPress={() => router.push("/auth?mode=sign-in")} />
+        </View>
       ) : filtered.length === 0 ? (
         <EmptyState
           title="No saved vehicles yet"
@@ -90,4 +111,7 @@ const styles = StyleSheet.create({
   filterLabelActive: { color: "#FFFFFF" },
   loadingWrap: { backgroundColor: Colors.card, borderRadius: Radius.xl, padding: 24, alignItems: "center", gap: 12 },
   loadingText: { ...Typography.body, color: Colors.textMuted },
+  authCard: { backgroundColor: Colors.card, borderRadius: Radius.xl, padding: 24, gap: 12 },
+  authTitle: { ...Typography.heading, color: Colors.text },
+  authBody: { ...Typography.body, color: Colors.textMuted },
 });

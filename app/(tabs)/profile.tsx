@@ -1,5 +1,5 @@
 import { router } from "expo-router";
-import { Alert, StyleSheet, Text, View } from "react-native";
+import { Alert, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useCallback, useEffect, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import { AppContainer } from "@/components/AppContainer";
@@ -7,6 +7,7 @@ import { PaywallCard } from "@/components/PaywallCard";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { useSubscription } from "@/hooks/useSubscription";
+import { supabase } from "@/lib/supabase";
 import { authService } from "@/services/authService";
 import { getApiAuthDebug } from "@/services/apiClient";
 import { AuthUser } from "@/types";
@@ -15,10 +16,12 @@ export default function ProfileScreen() {
   const { status, isLoading, isRestoring, isCancelling, feedbackMessage, errorMessage, restorePurchases, cancelPro } = useSubscription();
   const [user, setUser] = useState<AuthUser | null>(authService.getCurrentUserSync());
   const [tokenPresent, setTokenPresent] = useState(false);
+  const [sessionDetected, setSessionDetected] = useState(false);
   const [apiDebug, setApiDebug] = useState(getApiAuthDebug());
 
   const refreshAuthSnapshot = async () => {
-    const [nextUser, token] = await Promise.all([authService.getCurrentUser(), authService.getAccessToken()]);
+    const [{ data }, nextUser, token] = await Promise.all([supabase.auth.getSession(), authService.getCurrentUser(), authService.getAccessToken()]);
+    setSessionDetected(Boolean(data.session));
     setUser(nextUser);
     setTokenPresent(Boolean(token));
     setApiDebug(getApiAuthDebug());
@@ -41,6 +44,7 @@ export default function ProfileScreen() {
         <Text style={styles.name}>{user ? user.fullName : "Guest"}</Text>
         <Text style={styles.meta}>{user ? user.email : "Sign in to sync your account"}</Text>
         <View style={styles.debugBlock}>
+          <Text style={styles.debugLine}>Session detected: {sessionDetected ? "yes" : "no"}</Text>
           <Text style={styles.debugLine}>Auth status: {user ? "Signed In" : "Guest"}</Text>
           <Text style={styles.debugLine}>Token present: {tokenPresent ? "Yes" : "No"}</Text>
           <Text style={styles.debugLine}>Current email: {user?.email ?? "None"}</Text>
@@ -63,15 +67,19 @@ export default function ProfileScreen() {
           label={isRestoring ? "Checking App Store..." : "Restore Purchases"}
           secondary
           onPress={() => {
+            console.log("[tap] profile-restore-purchases");
             restorePurchases().catch(() => undefined);
           }}
           disabled={isRestoring}
         />
         {status?.plan === "pro" ? (
-          <Text
-            style={[styles.linkText, isCancelling && styles.linkTextDisabled]}
+          <TouchableOpacity
+            activeOpacity={0.86}
+            accessibilityRole="button"
+            disabled={isCancelling}
             onPress={() => {
               if (isCancelling) return;
+              console.log("[tap] profile-cancel-pro");
               Alert.alert("Cancel Pro", "Move this account back to the free plan?", [
                 { text: "Keep Pro", style: "cancel" },
                 {
@@ -84,8 +92,10 @@ export default function ProfileScreen() {
               ]);
             }}
           >
-            {isCancelling ? "Cancelling Pro..." : "Cancel Pro"}
-          </Text>
+            <Text style={[styles.linkText, isCancelling && styles.linkTextDisabled]}>
+              {isCancelling ? "Cancelling Pro..." : "Cancel Pro"}
+            </Text>
+          </TouchableOpacity>
         ) : null}
         {feedbackMessage ? <Text style={styles.helper}>{feedbackMessage}</Text> : null}
         {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
@@ -98,16 +108,17 @@ export default function ProfileScreen() {
             label="Sign Out"
             secondary
             onPress={() => {
+              console.log("[tap] profile-sign-out");
               authService
                 .signOut()
                 .then(() => {
-                  router.replace("/(auth)");
+                  router.replace("/auth" as never);
                 })
                 .catch(() => undefined);
             }}
           />
         ) : (
-          <PrimaryButton label="Sign In" onPress={() => router.replace("/(auth)")} />
+          <PrimaryButton label="Sign In" onPress={() => { console.log("[tap] profile-sign-in"); router.replace("/auth" as never); }} />
         )}
       </View>
     </AppContainer>

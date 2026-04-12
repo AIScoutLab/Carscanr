@@ -1,6 +1,6 @@
 import { LinearGradient } from "expo-linear-gradient";
-import { Pressable, StyleSheet, Text, View } from "react-native";
-import { Colors, Motion, Radius, Typography } from "@/constants/theme";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Colors, Radius, Typography } from "@/constants/theme";
 import { shadow } from "@/design/tokens";
 import { SubscriptionStatus } from "@/types";
 
@@ -17,7 +17,7 @@ export function PaywallCard({
       : "Unlimited vehicle scans";
 
   return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => pressed && styles.pressed}>
+    <TouchableOpacity accessibilityRole="button" onPress={onPress} activeOpacity={0.86}>
       <LinearGradient colors={["#0F172A", "#1E293B"]} style={styles.card}>
         <Text style={styles.eyebrow}>CarScanr Pro</Text>
         <Text style={styles.title}>Unlock CarScanr Pro</Text>
@@ -27,13 +27,12 @@ export function PaywallCard({
         </View>
         <Text style={styles.footer}>Cancel anytime</Text>
       </LinearGradient>
-    </Pressable>
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   card: { borderRadius: Radius.xl, padding: 24, gap: 10, ...shadow.cardStrong },
-  pressed: { transform: [{ scale: Motion.pressInScale }] },
   eyebrow: { ...Typography.caption, color: "rgba(255,255,255,0.75)" },
   title: { ...Typography.title, color: "#FFFFFF" },
   price: { ...Typography.heading, color: "#F8F0D0" },

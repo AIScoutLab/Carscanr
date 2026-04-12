@@ -1,5 +1,5 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
-import { Colors, Motion, Radius, Typography } from "@/constants/theme";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Colors, Radius, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
 import { SubscriptionStatus } from "@/types";
 
@@ -57,9 +57,9 @@ export function ScanUsageMeter({
       <Text style={styles.note}>{note}</Text>
       {supportingText ? <Text style={styles.supporting}>{supportingText}</Text> : null}
       {status.plan === "free" && ctaLabel && onCtaPress ? (
-        <Pressable onPress={onCtaPress} accessibilityRole="button" style={({ pressed }) => pressed && styles.pressed}>
+        <TouchableOpacity onPress={onCtaPress} accessibilityRole="button" activeOpacity={0.86}>
           <Text style={styles.cta}>{ctaLabel}</Text>
-        </Pressable>
+        </TouchableOpacity>
       ) : null}
     </View>
   );
@@ -78,5 +78,4 @@ const styles = StyleSheet.create({
   note: { ...Typography.caption, color: Colors.textMuted },
   supporting: { ...Typography.caption, color: Colors.textSoft },
   cta: { ...Typography.caption, color: Colors.accent, fontWeight: "700" },
-  pressed: { transform: [{ scale: Motion.pressInScale }] },
 });

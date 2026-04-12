@@ -1,7 +1,6 @@
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { subscriptionService } from "@/services/subscriptionService";
-import { authService } from "@/services/authService";
 import { SubscriptionActionResult, SubscriptionStatus } from "@/types";
 
 type SubscriptionContextValue = {
@@ -155,24 +154,35 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let active = true;
     const hydrate = async () => {
-      const token = await authService.getAccessToken();
-      if (!token) {
+      try {
+        setErrorMessage(null);
+        const nextStatus = await subscriptionService.getStatus();
+        const unlockState = await subscriptionService.getFreeUnlockState();
+        if (!active) return;
+        setStatus(nextStatus);
+        setFreeUnlocksUsed(unlockState.used);
+        setFreeUnlocksRemaining(unlockState.remaining);
+        setFreeUnlocksLimit(unlockState.limit);
+        setUnlockedVehicleIds(unlockState.unlockedVehicleIds);
+      } catch (error) {
         if (!active) return;
         setStatus(defaultSubscriptionStatus);
         setFreeUnlocksUsed(0);
         setFreeUnlocksRemaining(5);
         setFreeUnlocksLimit(5);
         setUnlockedVehicleIds([]);
-        setIsLoading(false);
-        return;
+        setErrorMessage(error instanceof Error ? error.message : "Unable to refresh your plan right now.");
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
       }
-      await refreshStatus();
     };
     hydrate().catch(() => undefined);
     return () => {
       active = false;
     };
-  }, [refreshStatus]);
+  }, []);
 
   const value = useMemo(
     () => ({

@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Href, router } from "expo-router";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { Colors, Radius, Typography } from "@/constants/theme";
 
 type Props = {
@@ -10,6 +10,7 @@ type Props = {
 
 export function BackButton({ fallbackHref, label = "Back" }: Props) {
   const handlePress = () => {
+    console.log("[tap] back-button", { fallbackHref });
     if (typeof router.canGoBack === "function" && router.canGoBack()) {
       router.back();
       return;
@@ -20,10 +21,10 @@ export function BackButton({ fallbackHref, label = "Back" }: Props) {
 
   return (
     <View style={styles.wrap}>
-      <Pressable style={styles.button} onPress={handlePress}>
+      <TouchableOpacity style={styles.button} onPress={handlePress} activeOpacity={0.86} accessibilityRole="button">
         <Ionicons name="chevron-back" size={18} color={Colors.text} />
         <Text style={styles.label}>{label}</Text>
-      </Pressable>
+      </TouchableOpacity>
     </View>
   );
 }

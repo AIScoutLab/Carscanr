@@ -1,8 +1,10 @@
 import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { getVehicleImage } from "@/constants/vehicleImages";
 import { applyPlanOverride } from "@/features/subscription/planOverride";
+import { getApiBaseUrlOrThrow } from "@/lib/env";
 import { authService } from "@/services/authService";
-import { apiRequest, apiRequestEnvelope } from "@/services/apiClient";
+import { guestSessionService } from "@/services/guestSessionService";
+import { ApiRequestError, apiRequest, apiRequestEnvelope } from "@/services/apiClient";
 import { ScanResult, SubscriptionStatus, VehicleCandidate } from "@/types";
 import * as FileSystem from "expo-file-system";
 
@@ -17,6 +19,15 @@ let mutableUnlockStatus = {
 };
 
 const MAX_UPLOAD_BYTES = 4.8 * 1024 * 1024;
+const BACKEND_WAKE_TIMEOUT_MS = 45000;
+const IDENTIFY_TIMEOUT_MS = 60000;
+
+type IdentifyStageLogger = (stage: string, payload?: unknown) => void;
+type BackendHealthResponse = {
+  status: string;
+  environment: string;
+  appEnv: string;
+};
 
 type BackendUsageResponse = {
   userId: string;
@@ -98,6 +109,10 @@ function getUploadFileName(imageUri: string) {
   return lastSegment && lastSegment.length > 0 ? lastSegment : `scan-${Date.now()}.jpg`;
 }
 
+function getIdentifyEndpointUrl() {
+  return `${getApiBaseUrlOrThrow()}/api/scan/identify`;
+}
+
 async function assertUploadSize(imageUri: string) {
   try {
     const info = await FileSystem.getInfoAsync(imageUri, { size: true });
@@ -105,6 +120,10 @@ async function assertUploadSize(imageUri: string) {
       throw new Error("This photo is too large to upload. Try a smaller image or crop the photo.");
     }
   } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("too large")) {
+      throw error;
+    }
     if (__DEV__) {
       console.log("[scan-service] upload size check skipped", error instanceof Error ? error.message : error);
     }
@@ -207,16 +226,12 @@ export const scanService = {
 
   async getUsage(): Promise<SubscriptionStatus> {
     const token = await authService.getAccessToken();
-    if (!token) {
-      if (__DEV__) {
-        console.log("[scan-service] usage skipped (no auth token)");
-      }
-      mutableUsage = { ...defaultSubscriptionStatus };
-      return mutableUsage;
-    }
     try {
+      const guestId = token ? null : await guestSessionService.getGuestId();
       const usage = await apiRequest<BackendUsageResponse>({
         path: "/api/usage/today",
+        authRequired: false,
+        headers: guestId ? { "x-carscanr-guest-id": guestId } : undefined,
       });
       mutableUsage = mapUsage(usage);
       return mutableUsage;
@@ -225,15 +240,26 @@ export const scanService = {
     }
   },
 
-  async identifyVehicle(imageUri: string): Promise<ScanResult> {
+  async identifyVehicle(imageUri: string, options?: { onStage?: IdentifyStageLogger; timeoutMs?: number }): Promise<ScanResult> {
     if (typeof imageUri !== "string" || imageUri.length === 0) {
       throw new Error("Image URI is missing.");
     }
-    if (!(await authService.getAccessToken())) {
-      throw new Error("Sign in to scan vehicles.");
-    }
+    const accessToken = await authService.getAccessToken();
+    const guestId = accessToken ? null : await guestSessionService.getGuestId();
+    const identifyTimeoutMs = options?.timeoutMs ?? IDENTIFY_TIMEOUT_MS;
+    const identifyUrl = getIdentifyEndpointUrl();
     await assertUploadSize(imageUri);
-    const usage = await scanService.getUsage();
+    const usage = mutableUsage;
+    options?.onStage?.("form-data creation start", { imageUri });
+    const fileInfo = await FileSystem.getInfoAsync(imageUri, { size: true });
+    if (__DEV__) {
+      console.log("[scan-service] preparing identify upload", {
+        imageUri,
+        fileExists: fileInfo.exists,
+        fileSize: fileInfo.exists && typeof fileInfo.size === "number" ? fileInfo.size : null,
+      });
+    }
+
     const formData = new FormData();
     formData.append(
       "image",
@@ -243,11 +269,51 @@ export const scanService = {
         type: "image/jpeg",
       } as any,
     );
+    options?.onStage?.("form-data creation end", {
+      imageUri,
+      fileSize: fileInfo.exists && typeof fileInfo.size === "number" ? fileInfo.size : null,
+    });
 
-    const response = await apiRequestEnvelope<BackendScanResponse>({
-      path: "/api/scan/identify",
-      method: "POST",
-      formData,
+    options?.onStage?.("request url", { url: identifyUrl });
+    options?.onStage?.("request timeout", { timeoutMs: identifyTimeoutMs });
+    options?.onStage?.("health wake-up start", { url: `${getApiBaseUrlOrThrow()}/health`, timeoutMs: BACKEND_WAKE_TIMEOUT_MS });
+    try {
+      await apiRequest<BackendHealthResponse>({
+        path: "/health",
+        authRequired: false,
+        headers: guestId ? { "x-carscanr-guest-id": guestId } : undefined,
+        timeoutMs: BACKEND_WAKE_TIMEOUT_MS,
+      });
+      options?.onStage?.("health wake-up success", { statusCode: 200 });
+    } catch (error) {
+      options?.onStage?.("health wake-up failure", error instanceof Error ? error.message : "Unknown health check error");
+      if (error instanceof ApiRequestError && error.code === "REQUEST_TIMEOUT") {
+        throw new ApiRequestError("The backend took too long to wake up. Please try again.", {
+          code: "BACKEND_WAKE_TIMEOUT",
+          details: { timeoutMs: BACKEND_WAKE_TIMEOUT_MS, url: `${getApiBaseUrlOrThrow()}/health` },
+        });
+      }
+      throw error;
+    }
+
+    options?.onStage?.("identify request start", { url: identifyUrl, timeoutMs: identifyTimeoutMs });
+    let response;
+    try {
+      response = await apiRequestEnvelope<BackendScanResponse>({
+        path: "/api/scan/identify",
+        method: "POST",
+        formData,
+        authRequired: false,
+        headers: guestId ? { "x-carscanr-guest-id": guestId } : undefined,
+        timeoutMs: identifyTimeoutMs,
+      });
+    } catch (error) {
+      options?.onStage?.("identify request failure", error instanceof Error ? error.message : "Unknown identify request error");
+      throw error;
+    }
+    options?.onStage?.("identify request success", {
+      provider: response.meta?.provider,
+      requestId: response.requestId,
     });
 
     if (response.meta?.provider) {
@@ -255,6 +321,17 @@ export const scanService = {
     }
 
     const result = mapScanResponse(response.data, imageUri, usage);
+    options?.onStage?.("parsed response", {
+      scanId: result.id,
+      candidateCount: result.candidates.length,
+    });
+    if (__DEV__) {
+      console.log("[scan-service] identify success", {
+        scanId: result.id,
+        imageUri: result.imageUri,
+        candidateCount: result.candidates.length,
+      });
+    }
     mutableRecentScans = [result, ...mutableRecentScans.filter((entry) => entry.id !== result.id)].slice(0, 6);
     mutableUsage = await scanService.getUsage();
     return result;

@@ -23,7 +23,10 @@ type ScanFailureStage =
   | "USAGE_WRITE";
 
 function serializeScanError(error: unknown) {
-  const baseError = error instanceof Error ? error : new Error("Unknown scan service error.");
+  const baseError =
+    error instanceof Error
+      ? error
+      : new Error(typeof error === "string" ? error : `Non-Error thrown: ${safeSerializeUnknown(error)}`);
   const appError = error instanceof AppError ? error : null;
   const details = appError?.details;
   const hint = details && typeof details === "object" && "hint" in details ? (details as { hint?: unknown }).hint : undefined;
@@ -36,10 +39,16 @@ function serializeScanError(error: unknown) {
   };
 }
 
+function safeSerializeUnknown(value: unknown) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
 function stageFailureMessage(stage: ScanFailureStage) {
   switch (stage) {
-    case "CACHE_LOOKUP":
-      return "Cache lookup failed";
     case "VISION_REQUEST":
       return "Vision request failed";
     case "IMAGE_PROCESSING":
@@ -56,6 +65,8 @@ function stageFailureMessage(stage: ScanFailureStage) {
       return "Entitlement check failed";
     case "USAGE_CHECK":
       return "Usage check failed";
+    case "CACHE_LOOKUP":
+      return "Vision request failed";
   }
 }
 
@@ -172,6 +183,19 @@ export class ScanService {
           visualHash,
           width: processed.width,
           height: processed.height,
+          onDegradedToLiveVision: () => {
+            logger.error(
+              {
+                label: "CACHE_LOOKUP_DEGRADED_TO_LIVE_VISION",
+                scanId,
+                userId: input.auth.userId,
+                imageKey,
+                multipartFilePresent: input.imageBuffer.length > 0,
+              },
+              "CACHE_LOOKUP_DEGRADED_TO_LIVE_VISION",
+            );
+            stage = "VISION_REQUEST";
+          },
         });
       }
       logIdentifyStage("CACHE_LOOKUP", "success", {
@@ -338,8 +362,15 @@ export class ScanService {
       visualHash: string;
       width: number;
       height: number;
+      onDegradedToLiveVision?: () => void;
     },
   ): Promise<VisionProviderResult> {
+    let degradedToLiveVision = false;
+    const markDegradedToLiveVision = () => {
+      if (degradedToLiveVision) return;
+      degradedToLiveVision = true;
+      input.onDegradedToLiveVision?.();
+    };
     // Pipeline order: image key -> visual hash -> cached analysis -> OpenAI.
     const analysisKey = buildAnalysisKey({
       analysisType: "vision_identify",
@@ -386,9 +417,16 @@ export class ScanService {
       };
     }
 
-    const cachedAnalysis = await this.analysisCacheService.findAnalysisByKey(analysisKey);
+    const cachedAnalysis = await this.tryFindAnalysisCacheEntry(analysisKey, {
+      scanId,
+      source: "analysis-key",
+      imageKey: input.imageKey,
+    });
     if (cachedAnalysis?.status === "completed" && cachedAnalysis.resultJson) {
-      await this.analysisCacheService.markAnalysisAccessed(analysisKey);
+      await this.tryMarkAnalysisCacheAccess(analysisKey, {
+        scanId,
+        source: "analysis-key",
+      });
       const normalized = normalizeVisionResult(cachedAnalysis.resultJson as VisionResult);
       return {
         normalized,
@@ -398,9 +436,15 @@ export class ScanService {
     }
 
     if (cachedAnalysis?.status === "processing") {
-      const waited = await this.analysisCacheService.waitForAnalysis(analysisKey);
+      const waited = await this.tryWaitForAnalysisCache(analysisKey, {
+        scanId,
+        source: "analysis-wait",
+      });
       if (waited?.status === "completed" && waited.resultJson) {
-        await this.analysisCacheService.markAnalysisAccessed(analysisKey);
+        await this.tryMarkAnalysisCacheAccess(analysisKey, {
+          scanId,
+          source: "analysis-wait",
+        });
         const normalized = normalizeVisionResult(waited.resultJson as VisionResult);
         return {
           normalized,
@@ -410,23 +454,35 @@ export class ScanService {
       }
     }
 
-    const inserted = await this.analysisCacheService.beginProcessing({
-      analysisKey,
-      analysisType: "vision_identify",
-      identityType: "image_key",
-      identityValue: input.imageKey,
-      imageKey: input.imageKey,
-      visualHash: input.visualHash,
-      promptVersion: "v1",
-      modelName: env.OPENAI_VISION_MODEL,
-      costEstimate: null,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-    });
+    const inserted = await this.tryBeginAnalysisProcessing(
+      {
+        analysisKey,
+        analysisType: "vision_identify",
+        identityType: "image_key",
+        identityValue: input.imageKey,
+        imageKey: input.imageKey,
+        visualHash: input.visualHash,
+        promptVersion: "v1",
+        modelName: env.OPENAI_VISION_MODEL,
+        costEstimate: null,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      },
+      {
+        scanId,
+        source: "analysis-begin",
+      },
+    );
 
     if (!inserted) {
-      const waited = await this.analysisCacheService.waitForAnalysis(analysisKey);
+      const waited = await this.tryWaitForAnalysisCache(analysisKey, {
+        scanId,
+        source: "analysis-begin-wait",
+      });
       if (waited?.status === "completed" && waited.resultJson) {
-        await this.analysisCacheService.markAnalysisAccessed(analysisKey);
+        await this.tryMarkAnalysisCacheAccess(analysisKey, {
+          scanId,
+          source: "analysis-begin-wait",
+        });
         const normalized = normalizeVisionResult(waited.resultJson as VisionResult);
         return {
           normalized,
@@ -434,22 +490,38 @@ export class ScanService {
           provider: "cache:analysis_wait",
         };
       }
-      logger.warn({ scanId, analysisKey }, "Analysis already in progress; returning fallback preview.");
-      if (!env.ALLOW_MOCK_FALLBACKS) {
-        throw new AppError(503, "VISION_ANALYSIS_PENDING", "Vehicle analysis is still processing. Please retry in a moment.");
-      }
-      return providers.fallbackVisionProvider.identifyFromImage({
-        imageBuffer: input.processedBuffer,
-        mimeType: input.processedMime,
-        fileName: input.imageUrl.split("/").pop(),
-      });
+      logger.warn(
+        {
+          scanId,
+          analysisKey,
+          imageKey: input.imageKey,
+        },
+        "Analysis cache unavailable or already processing; continuing to live vision provider",
+      );
     }
 
     try {
+      markDegradedToLiveVision();
+      logger.error(
+        {
+          label: "LIVE_VISION_REQUEST_START",
+          scanId,
+          userId: input.auth.userId,
+          imageKey: input.imageKey,
+          imageSourceType: "multipart-upload",
+          multipartFilePresent: input.imageBuffer.length > 0,
+        },
+        "LIVE_VISION_REQUEST_START",
+      );
       const result = await providers.visionProvider.identifyFromImage({
         imageBuffer: input.processedBuffer,
         mimeType: input.processedMime,
         fileName: input.imageUrl.split("/").pop(),
+      });
+      logIdentifyStage("VISION_REQUEST", "success", {
+        scanId,
+        userId: input.auth.userId,
+        provider: result.provider,
       });
       const normalized = normalizeVisionResult(result.normalized);
       const vehicleKey = buildVehicleKey({
@@ -460,12 +532,20 @@ export class ScanService {
         vehicleType: normalized.vehicle_type,
       });
 
-      await this.analysisCacheService.completeAnalysis(analysisKey, normalized, {
-        costEstimate: null,
-        vehicleKey,
-        imageKey: input.imageKey,
-        visualHash: input.visualHash,
-      });
+      await this.tryCompleteAnalysisCache(
+        analysisKey,
+        normalized,
+        {
+          costEstimate: null,
+          vehicleKey,
+          imageKey: input.imageKey,
+          visualHash: input.visualHash,
+        },
+        {
+          scanId,
+          source: "analysis-complete",
+        },
+      );
       await this.tryUpsertImageCache(
         {
           id: cachedImage?.id ?? crypto.randomUUID(),
@@ -488,6 +568,7 @@ export class ScanService {
       );
       return { ...result, normalized };
     } catch (error) {
+      markDegradedToLiveVision();
       logger.warn(
         {
           scanId,
@@ -498,9 +579,13 @@ export class ScanService {
         },
         "Vision provider failed, falling back",
       );
-      await this.analysisCacheService.failAnalysis(
+      await this.tryFailAnalysisCache(
         analysisKey,
         error instanceof Error ? error.message : "Unknown vision provider error.",
+        {
+          scanId,
+          source: "analysis-fail",
+        },
       );
       const rawFailureResponse =
         error instanceof AppError && error.details && typeof error.details === "object"
@@ -532,6 +617,17 @@ export class ScanService {
         throw error;
       }
 
+      logger.error(
+        {
+          label: "IDENTIFY_STAGE",
+          stage: "VISION_REQUEST",
+          event: "success",
+          scanId,
+          userId: input.auth.userId,
+          provider: "fallback",
+        },
+        "IDENTIFY_STAGE",
+      );
       return providers.fallbackVisionProvider.identifyFromImage({
         imageBuffer: input.processedBuffer,
         mimeType: input.processedMime,
@@ -620,9 +716,14 @@ export class ScanService {
       promptVersion: "v1",
       modelName: env.OPENAI_VISION_MODEL,
     });
-    const cachedAnalysis = await this.analysisCacheService.findAnalysisByKey(analysisKey);
+    const cachedAnalysis = await this.tryFindAnalysisCacheEntry(analysisKey, {
+      source: "cache-only-analysis-key",
+      imageKey: input.imageKey,
+    });
     if (cachedAnalysis?.status === "completed" && cachedAnalysis.resultJson) {
-      await this.analysisCacheService.markAnalysisAccessed(analysisKey);
+      await this.tryMarkAnalysisCacheAccess(analysisKey, {
+        source: "cache-only-analysis-key",
+      });
       const normalized = normalizeVisionResult(cachedAnalysis.resultJson as VisionResult);
       return {
         normalized,
@@ -755,6 +856,174 @@ export class ScanService {
           details: error instanceof AppError ? error.details : undefined,
         },
         "Skipping image cache persistence after successful identify result",
+      );
+    }
+  }
+
+  private async tryFindAnalysisCacheEntry(
+    analysisKey: string,
+    context: {
+      scanId?: string;
+      source: string;
+      imageKey?: string;
+    },
+  ) {
+    try {
+      return await this.analysisCacheService.findAnalysisByKey(analysisKey);
+    } catch (error) {
+      logger.warn(
+        {
+          scanId: context.scanId,
+          cacheLookupSource: context.source,
+          analysisKey,
+          imageKey: context.imageKey,
+          reason: error instanceof Error ? error.message : "Unknown cached analysis lookup error",
+          details: error instanceof AppError ? error.details : undefined,
+        },
+        "Cached analysis lookup failed; continuing with uploaded image data",
+      );
+      return null;
+    }
+  }
+
+  private async tryMarkAnalysisCacheAccess(
+    analysisKey: string,
+    context: {
+      scanId?: string;
+      source: string;
+    },
+  ) {
+    try {
+      await this.analysisCacheService.markAnalysisAccessed(analysisKey);
+    } catch (error) {
+      logger.warn(
+        {
+          scanId: context.scanId,
+          cacheLookupSource: context.source,
+          analysisKey,
+          reason: error instanceof Error ? error.message : "Unknown cached analysis access update error",
+          details: error instanceof AppError ? error.details : undefined,
+        },
+        "Skipping cached analysis hit update after lookup failure",
+      );
+    }
+  }
+
+  private async tryWaitForAnalysisCache(
+    analysisKey: string,
+    context: {
+      scanId?: string;
+      source: string;
+    },
+  ) {
+    try {
+      return await this.analysisCacheService.waitForAnalysis(analysisKey);
+    } catch (error) {
+      logger.warn(
+        {
+          scanId: context.scanId,
+          cacheLookupSource: context.source,
+          analysisKey,
+          reason: error instanceof Error ? error.message : "Unknown cached analysis wait error",
+          details: error instanceof AppError ? error.details : undefined,
+        },
+        "Cached analysis wait failed; continuing with uploaded image data",
+      );
+      return null;
+    }
+  }
+
+  private async tryBeginAnalysisProcessing(
+    input: {
+      analysisKey: string;
+      analysisType: string;
+      identityType?: string | null;
+      identityValue?: string | null;
+      vin?: string | null;
+      vinKey?: string | null;
+      vehicleKey?: string | null;
+      listingKey?: string | null;
+      imageKey?: string | null;
+      visualHash?: string | null;
+      promptVersion: string;
+      modelName: string;
+      costEstimate?: number | null;
+      expiresAt?: string | null;
+    },
+    context: {
+      scanId?: string;
+      source: string;
+    },
+  ) {
+    try {
+      return await this.analysisCacheService.beginProcessing(input);
+    } catch (error) {
+      logger.warn(
+        {
+          scanId: context.scanId,
+          cacheLookupSource: context.source,
+          analysisKey: input.analysisKey,
+          imageKey: input.imageKey,
+          reason: error instanceof Error ? error.message : "Unknown cached analysis begin error",
+          details: error instanceof AppError ? error.details : undefined,
+        },
+        "Cached analysis begin failed; continuing with uploaded image data",
+      );
+      return null;
+    }
+  }
+
+  private async tryCompleteAnalysisCache(
+    analysisKey: string,
+    resultJson: unknown,
+    updates: {
+      costEstimate?: number | null;
+      vehicleKey?: string | null;
+      imageKey?: string | null;
+      visualHash?: string | null;
+    },
+    context: {
+      scanId?: string;
+      source: string;
+    },
+  ) {
+    try {
+      await this.analysisCacheService.completeAnalysis(analysisKey, resultJson, updates);
+    } catch (error) {
+      logger.warn(
+        {
+          scanId: context.scanId,
+          cacheLookupSource: context.source,
+          analysisKey,
+          imageKey: updates.imageKey,
+          reason: error instanceof Error ? error.message : "Unknown cached analysis completion error",
+          details: error instanceof AppError ? error.details : undefined,
+        },
+        "Skipping cached analysis completion after successful identify result",
+      );
+    }
+  }
+
+  private async tryFailAnalysisCache(
+    analysisKey: string,
+    errorText: string,
+    context: {
+      scanId?: string;
+      source: string;
+    },
+  ) {
+    try {
+      await this.analysisCacheService.failAnalysis(analysisKey, errorText);
+    } catch (error) {
+      logger.warn(
+        {
+          scanId: context.scanId,
+          cacheLookupSource: context.source,
+          analysisKey,
+          reason: error instanceof Error ? error.message : "Unknown cached analysis fail-update error",
+          details: error instanceof AppError ? error.details : undefined,
+        },
+        "Skipping cached analysis failure update after provider error",
       );
     }
   }

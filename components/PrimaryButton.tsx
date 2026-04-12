@@ -1,5 +1,5 @@
-import { Pressable, StyleSheet, Text } from "react-native";
-import { Colors, Motion, Typography } from "@/constants/theme";
+import { StyleSheet, Text, TouchableOpacity } from "react-native";
+import { Colors, Typography } from "@/constants/theme";
 import { buttonStyles } from "@/design/patterns";
 
 type Props = {
@@ -11,18 +11,19 @@ type Props = {
 
 export function PrimaryButton({ label, onPress, secondary = false, disabled = false }: Props) {
   return (
-    <Pressable
-      style={({ pressed }) => [
+    <TouchableOpacity
+      activeOpacity={0.86}
+      style={[
         styles.button,
         secondary && styles.secondary,
         disabled && styles.disabled,
-        pressed && styles.pressed,
       ]}
       onPress={onPress}
       disabled={disabled}
+      accessibilityRole="button"
     >
       <Text style={[styles.label, secondary && styles.secondaryLabel]}>{label}</Text>
-    </Pressable>
+    </TouchableOpacity>
   );
 }
 
@@ -30,7 +31,6 @@ const styles = StyleSheet.create({
   button: buttonStyles.primary,
   secondary: buttonStyles.secondary,
   disabled: { opacity: 0.6 },
-  pressed: { transform: [{ scale: Motion.pressInScale }] },
   label: { ...Typography.bodyStrong, color: "#FFFFFF" },
   secondaryLabel: { color: Colors.text },
 });

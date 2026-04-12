@@ -1,11 +1,15 @@
 import { Session, User } from "@supabase/supabase-js";
 import { getSupabaseMobileConfigError, supabase } from "@/lib/supabase";
-import { AuthUser } from "@/types";
+import { mobileEnv } from "@/lib/env";
+import { AuthSignUpResult, AuthUser } from "@/types";
 
 type AuthSession = {
   user: AuthUser;
   accessToken: string;
 };
+
+const authEmailRedirectUrl = "carscanr://auth";
+const resetPasswordRedirectUrl = "carscanr://reset-password";
 
 let currentSession: AuthSession | null = null;
 let hasLoadedInitialSession = false;
@@ -55,8 +59,17 @@ function authConfigError() {
   return new Error(getSupabaseMobileConfigError() ?? "Supabase mobile auth is not configured.");
 }
 
+function getSupabaseTargetLabel() {
+  try {
+    return new URL(mobileEnv.supabaseUrl).origin;
+  } catch {
+    return mobileEnv.supabaseUrl || "invalid-supabase-url";
+  }
+}
+
 function normalizeAuthError(error: unknown, fallbackMessage: string) {
   const message = error instanceof Error ? error.message : fallbackMessage;
+  const lowered = message.toLowerCase();
   if (message.toLowerCase().includes("invalid login credentials")) {
     return new Error("Invalid email or password.");
   }
@@ -65,6 +78,20 @@ function normalizeAuthError(error: unknown, fallbackMessage: string) {
   }
   if (message.toLowerCase().includes("password should be")) {
     return new Error(message);
+  }
+  if (lowered.includes("network request failed") || lowered.includes("fetch failed") || lowered.includes("load failed")) {
+    return new Error(`Unable to reach Supabase auth at ${getSupabaseTargetLabel()}. Check internet access, HTTPS configuration, and that the Supabase project URL is reachable from this build.`);
+  }
+  if (
+    lowered.includes("error sending confirmation email") ||
+    lowered.includes("email could not be sent") ||
+    lowered.includes("smtp") ||
+    lowered.includes("rate limit")
+  ) {
+    return new Error("Account created, but the verification email could not be sent. Check Supabase email settings, SMTP configuration, and rate limits.");
+  }
+  if (lowered.includes("invalid url")) {
+    return new Error(`Supabase URL is invalid for this build: ${getSupabaseTargetLabel()}.`);
   }
   return new Error(message || fallbackMessage);
 }
@@ -126,6 +153,32 @@ async function loadSession() {
   return currentSession;
 }
 
+async function syncSessionFromSupabase() {
+  ensureAuthListener();
+
+  const configError = getSupabaseMobileConfigError();
+  if (configError) {
+    currentSession = null;
+    hasLoadedInitialSession = true;
+    if (__DEV__) {
+      console.log(`[auth] ${configError}`);
+    }
+    return null;
+  }
+
+  const { data, error } = await supabase.auth.getSession();
+  if (error) {
+    throw normalizeAuthError(error, "Unable to restore your session.");
+  }
+
+  currentSession = mapSession(data.session);
+  hasLoadedInitialSession = true;
+  if (__DEV__) {
+    console.log(`[auth] supabase session sync=${currentSession ? "present" : "missing"}`);
+  }
+  return currentSession;
+}
+
 export const authService = {
   async signIn(email: string, password: string): Promise<AuthUser> {
     ensureAuthListener();
@@ -134,6 +187,10 @@ export const authService = {
     }
 
     const normalizedEmail = normalizeEmail(email);
+    console.log("[auth] sign-in request start", {
+      target: "supabase",
+      supabaseHost: getSupabaseTargetLabel(),
+    });
     const { data, error } = await supabase.auth.signInWithPassword({
       email: normalizedEmail,
       password,
@@ -154,17 +211,22 @@ export const authService = {
     return session.user;
   },
 
-  async signUp(email: string, password: string): Promise<AuthUser> {
+  async signUp(email: string, password: string): Promise<AuthSignUpResult> {
     ensureAuthListener();
     if (getSupabaseMobileConfigError()) {
       throw authConfigError();
     }
 
     const normalizedEmail = normalizeEmail(email);
+    console.log("[auth] sign-up request start", {
+      target: "supabase",
+      supabaseHost: getSupabaseTargetLabel(),
+    });
     const { data, error } = await supabase.auth.signUp({
       email: normalizedEmail,
       password,
       options: {
+        emailRedirectTo: authEmailRedirectUrl,
         data: {
           full_name: deriveDisplayName(normalizedEmail),
         },
@@ -177,13 +239,61 @@ export const authService = {
 
     const session = mapSession(data.session);
     if (!session) {
-      throw new Error("Account created. Check your email to confirm the account, then sign in.");
+      return {
+        outcome: "confirmation_required",
+        user: data.user ? mapSupabaseUser(data.user) : null,
+        message: "Account created. Check your email to verify your account.",
+      };
     }
 
     currentSession = session;
     hasLoadedInitialSession = true;
     await resetClientAuthState();
-    return session.user;
+    return {
+      outcome: "signed_in",
+      user: session.user,
+    };
+  },
+
+  async resetPassword(email: string): Promise<void> {
+    ensureAuthListener();
+    if (getSupabaseMobileConfigError()) {
+      throw authConfigError();
+    }
+
+    const normalizedEmail = normalizeEmail(email);
+    console.log("[auth] password-reset request start", {
+      target: "supabase",
+      supabaseHost: getSupabaseTargetLabel(),
+    });
+
+    const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+      redirectTo: resetPasswordRedirectUrl,
+    });
+
+    if (error) {
+      throw normalizeAuthError(error, "Unable to send password reset email.");
+    }
+  },
+
+  async updatePassword(nextPassword: string): Promise<void> {
+    ensureAuthListener();
+    if (getSupabaseMobileConfigError()) {
+      throw authConfigError();
+    }
+
+    const trimmedPassword = nextPassword.trim();
+    if (!trimmedPassword) {
+      throw new Error("Enter a new password to continue.");
+    }
+
+    const { error } = await supabase.auth.updateUser({
+      password: trimmedPassword,
+    });
+
+    if (error) {
+      throw normalizeAuthError(error, "Unable to update your password.");
+    }
   },
 
   async signOut(): Promise<void> {
@@ -198,10 +308,8 @@ export const authService = {
   },
 
   async getAccessToken(): Promise<string | null> {
-    const token = (await loadSession())?.accessToken ?? null;
-    if (__DEV__) {
-      console.log(`[auth] accessToken ${token ? "present" : "missing"}`);
-    }
+    const token = (await syncSessionFromSupabase())?.accessToken ?? (await loadSession())?.accessToken ?? null;
+    console.log(`[auth] accessToken present: ${token ? "yes" : "no"}`);
     return token;
   },
 

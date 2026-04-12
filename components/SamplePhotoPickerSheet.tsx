@@ -1,4 +1,4 @@
-import { Modal, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Modal, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { Colors, Radius, Shadows, Typography } from "@/constants/theme";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { SampleScanPhoto } from "@/features/scan/useScanActions";
@@ -23,7 +23,7 @@ export function SamplePhotoPickerSheet({
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.backdrop}>
-        <Pressable style={styles.scrim} onPress={onClose} />
+        <TouchableOpacity style={styles.scrim} onPress={onClose} activeOpacity={1} />
         <View style={styles.sheet}>
           <View style={styles.handle} />
           <Text style={styles.title}>Choose a photo source</Text>
@@ -35,14 +35,14 @@ export function SamplePhotoPickerSheet({
               {samples.map((sample) => {
                 const isLoading = loadingSampleId === sample.id;
                 return (
-                  <Pressable key={sample.id} style={styles.card} onPress={() => onSelectSample(sample.id)}>
+                  <TouchableOpacity key={sample.id} style={styles.card} onPress={() => onSelectSample(sample.id)} activeOpacity={0.86} accessibilityRole="button">
                     <Image source={{ uri: sample.previewUrl }} style={styles.image} />
                     <View style={styles.cardBody}>
                       <Text style={styles.cardTitle}>{sample.title}</Text>
                       <Text style={styles.cardSubtitle}>{sample.subtitle}</Text>
                       <Text style={styles.cardCta}>{isLoading ? "Preparing sample..." : "Use this photo"}</Text>
                     </View>
-                  </Pressable>
+                  </TouchableOpacity>
                 );
               })}
             </ScrollView>
