@@ -256,6 +256,7 @@ Vehicle detail for canonical matches now has three important product fixes in pr
     - exact canonical fields
     - trim stripped
     - model family fallback
+    - nearby year fallback
 - Listings lookup:
   - [backend/src/services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/vehicleService.ts) now logs:
     - `LISTINGS_LOOKUP_START`
@@ -263,6 +264,21 @@ Vehicle detail for canonical matches now has three important product fixes in pr
     - `LISTINGS_LOOKUP_SUCCESS`
     - `LISTINGS_LOOKUP_EMPTY`
     - `LISTINGS_LOOKUP_FAILURE`
+  - [backend/src/controllers/vehicleController.ts](/Users/mattbrillman/Car_Identifier/backend/src/controllers/vehicleController.ts) now also wraps `/api/vehicle/value` and `/api/vehicle/listings` in shared-logger `try/catch` so Render should log the real failure even if the crash happens before provider request logging
+  - full service pipelines are now wrapped, not just the provider loop
+  - `requestId` is now passed from controller into value/listings services so service-level logs can be correlated directly with the HTTP 500 request
+  - guaranteed `VALUE_LOOKUP_QUERY` / `LISTINGS_LOOKUP_QUERY` logs now happen for cache-read setup as well as provider-request execution
+  - repository-level cache read failures now log with:
+    - `VALUE_CACHE_QUERY_FAILURE`
+    - `LISTINGS_CACHE_QUERY_FAILURE`
+  - likely previous pre-query crash area was before `*_LOOKUP_QUERY`, especially cache access / descriptor generation in:
+    - `getValue()` around the cache read path in [backend/src/services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/vehicleService.ts)
+    - `getListings()` around the cache read path in [backend/src/services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/vehicleService.ts)
+  - listings lookup now also retries broader variants:
+    - exact canonical fields
+    - trim stripped
+    - model family fallback
+    - nearby year fallback
   - canonical listings lookup now retries with the same broader vehicle variants before returning empty
 - Detail image priority:
   - [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx) now passes `imageUri` and `scanId` into the vehicle detail route

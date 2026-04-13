@@ -76,10 +76,34 @@ function buildVehicleLookupVariants(vehicle: VehicleRecord | null) {
     });
   }
 
+  if (vehicle.year > 1981) {
+    variants.push({
+      ...vehicle,
+      year: vehicle.year - 1,
+      trim: "",
+    });
+  }
+
+  variants.push({
+    ...vehicle,
+    year: vehicle.year + 1,
+    trim: "",
+  });
+
   return variants.filter(
     (variant, index, array) =>
       array.findIndex((entry) => `${entry.year}|${entry.make}|${entry.model}|${entry.trim}` === `${variant.year}|${variant.make}|${variant.model}|${variant.trim}`) === index,
   );
+}
+
+function getErrorDetails(error: unknown) {
+  return {
+    message: error instanceof Error ? error.message : "Unknown vehicle service error",
+    stack: error instanceof Error ? error.stack : undefined,
+    code: typeof error === "object" && error && "code" in error ? (error as { code?: unknown }).code : undefined,
+    details: typeof error === "object" && error && "details" in error ? (error as { details?: unknown }).details : undefined,
+    hint: typeof error === "object" && error && "hint" in error ? (error as { hint?: unknown }).hint : undefined,
+  };
 }
 
 async function fireAndForgetCleanup(endpointType: "specs" | "values" | "listings") {
@@ -285,80 +309,101 @@ export class VehicleService {
   }
 
   async getValue(input: {
+    requestId?: string;
     vehicleId: string;
     zip: string;
     mileage: number;
     condition: string;
   }): Promise<CachedServiceResult<ValuationRecord>> {
-    const currentIso = nowIso();
-    const isLiveVehicle = Boolean(parseLiveVehicleId(input.vehicleId));
-    const vehicle = isLiveVehicle ? null : await resolveStoredVehicleRecordById(input.vehicleId);
-    logger.error(
-      {
-        label: "VALUE_LOOKUP_START",
-        vehicleId: input.vehicleId,
-        vehicleFound: Boolean(vehicle),
-        year: vehicle?.year ?? null,
-        make: vehicle?.make ?? null,
-        model: vehicle?.model ?? null,
-        trim: vehicle?.trim ?? null,
-        bodyStyle: vehicle?.bodyStyle ?? null,
-        zip: input.zip,
-        mileage: input.mileage,
-        condition: input.condition,
-      },
-      "VALUE_LOOKUP_START",
-    );
-    const descriptor = buildCacheDescriptor({
-      vehicle,
-      parsed: parseLiveVehicleId(input.vehicleId),
-    });
-    const cacheKey = descriptor ? getValuesCacheKey(descriptor, input) : null;
+    try {
+      const currentIso = nowIso();
+      const parsedVehicleId = parseLiveVehicleId(input.vehicleId);
+      const isLiveVehicle = Boolean(parsedVehicleId);
+      const vehicle = isLiveVehicle ? null : await resolveStoredVehicleRecordById(input.vehicleId);
+      logger.error(
+        {
+          label: "VALUE_LOOKUP_START",
+          requestId: input.requestId,
+          vehicleId: input.vehicleId,
+          vehicleFound: Boolean(vehicle),
+          year: vehicle?.year ?? null,
+          make: vehicle?.make ?? null,
+          model: vehicle?.model ?? null,
+          trim: vehicle?.trim ?? null,
+          bodyStyle: vehicle?.bodyStyle ?? null,
+          zip: input.zip,
+          mileage: input.mileage,
+          condition: input.condition,
+        },
+        "VALUE_LOOKUP_START",
+      );
+      const descriptor = buildCacheDescriptor({
+        vehicle,
+        parsed: parsedVehicleId,
+      });
+      const cacheKey = descriptor ? getValuesCacheKey(descriptor, input) : null;
 
-    if (cacheKey && providers.valueProviderName === "marketcheck") {
-      const cached = await repositories.valuesCache.findByCacheKey(cacheKey);
-      if (cached) {
-        if (isFresh(cached.expiresAt, currentIso)) {
-          await repositories.valuesCache.markAccessed(cacheKey, currentIso);
-          await writeUsageLog({
-            provider: cached.provider,
-            endpointType: "values",
-            eventType: cached.responseJson.isEmpty ? "empty_hit" : "cache_hit",
+      if (cacheKey && providers.valueProviderName === "marketcheck") {
+        const cacheDescriptor = descriptor;
+        logger.error(
+          {
+            label: "VALUE_LOOKUP_QUERY",
+            requestId: input.requestId,
+            queryType: "cache-read",
+            vehicleId: input.vehicleId,
             cacheKey,
-            requestSummary: input,
-            responseSummary: { isEmpty: cached.responseJson.isEmpty, expiresAt: cached.expiresAt },
-          });
-          if (cached.responseJson.data) {
-            return {
-              data: cached.responseJson.data,
-              source: "cache",
-              fetchedAt: cached.fetchedAt,
-              expiresAt: cached.expiresAt,
-            };
+            year: cacheDescriptor?.year ?? null,
+            make: cacheDescriptor?.make ?? null,
+            model: cacheDescriptor?.model ?? null,
+            trim: cacheDescriptor?.trim ?? null,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition,
+          },
+          "VALUE_LOOKUP_QUERY",
+        );
+        const cached = await repositories.valuesCache.findByCacheKey(cacheKey);
+        if (cached) {
+          if (isFresh(cached.expiresAt, currentIso)) {
+            await repositories.valuesCache.markAccessed(cacheKey, currentIso);
+            await writeUsageLog({
+              provider: cached.provider,
+              endpointType: "values",
+              eventType: cached.responseJson.isEmpty ? "empty_hit" : "cache_hit",
+              cacheKey,
+              requestSummary: input,
+              responseSummary: { isEmpty: cached.responseJson.isEmpty, expiresAt: cached.expiresAt },
+            });
+            if (cached.responseJson.data) {
+              return {
+                data: cached.responseJson.data,
+                source: "cache",
+                fetchedAt: cached.fetchedAt,
+                expiresAt: cached.expiresAt,
+              };
+            }
+          } else {
+            await writeUsageLog({
+              provider: cached.provider,
+              endpointType: "values",
+              eventType: "stale_refresh",
+              cacheKey,
+              requestSummary: input,
+              responseSummary: { previousFetchedAt: cached.fetchedAt, previousExpiresAt: cached.expiresAt },
+            });
           }
         } else {
           await writeUsageLog({
-            provider: cached.provider,
+            provider: providers.valueProviderName,
             endpointType: "values",
-            eventType: "stale_refresh",
+            eventType: "miss",
             cacheKey,
             requestSummary: input,
-            responseSummary: { previousFetchedAt: cached.fetchedAt, previousExpiresAt: cached.expiresAt },
+            responseSummary: {},
           });
         }
-      } else {
-        await writeUsageLog({
-          provider: providers.valueProviderName,
-          endpointType: "values",
-          eventType: "miss",
-          cacheKey,
-          requestSummary: input,
-          responseSummary: {},
-        });
       }
-    }
 
-    try {
       const lookupVariants = buildVehicleLookupVariants(vehicle);
       let liveValue: ValuationRecord | null = null;
 
@@ -366,6 +411,8 @@ export class VehicleService {
         logger.error(
           {
             label: "VALUE_LOOKUP_QUERY",
+            requestId: input.requestId,
+            queryType: "provider-request",
             strategy: index === 0 ? "exact-canonical-fields" : index === 1 ? "trim-stripped" : "model-family",
             vehicleId: input.vehicleId,
             year: variant.year,
@@ -383,6 +430,7 @@ export class VehicleService {
           logger.error(
             {
               label: "VALUE_LOOKUP_SUCCESS",
+              requestId: input.requestId,
               strategy: index === 0 ? "exact-canonical-fields" : index === 1 ? "trim-stripped" : "model-family",
               vehicleId: input.vehicleId,
               year: variant.year,
@@ -433,6 +481,7 @@ export class VehicleService {
       logger.error(
         {
           label: "VALUE_LOOKUP_EMPTY",
+          requestId: input.requestId,
           vehicleId: input.vehicleId,
           year: vehicle?.year ?? null,
           make: vehicle?.make ?? null,
@@ -441,20 +490,75 @@ export class VehicleService {
         },
         "VALUE_LOOKUP_EMPTY",
       );
-    } catch (error) {
+      const seededFallback = vehicle
+        ? await mockValueProvider.getValuation({
+            ...input,
+            vehicle,
+          })
+        : null;
+
+      if (seededFallback) {
+        return {
+          data: seededFallback,
+          source: "provider",
+          fetchedAt: currentIso,
+          expiresAt: currentIso,
+        };
+      }
+
+      const value = await repositories.valuations.findLatest(input);
+      if (value) {
+        logger.error(
+          {
+            label: "VALUE_LOOKUP_SUCCESS",
+            requestId: input.requestId,
+            strategy: "stored-valuation-fallback",
+            vehicleId: input.vehicleId,
+          },
+          "VALUE_LOOKUP_SUCCESS",
+        );
+        return {
+          data: value,
+          source: "provider",
+          fetchedAt: value.generatedAt,
+          expiresAt: currentIso,
+        };
+      }
+
       logger.error(
         {
-          label: "VALUE_LOOKUP_FAILURE",
+          label: "VALUE_LOOKUP_EMPTY",
+          requestId: input.requestId,
           vehicleId: input.vehicleId,
           year: vehicle?.year ?? null,
           make: vehicle?.make ?? null,
           model: vehicle?.model ?? null,
           trim: vehicle?.trim ?? null,
-          message: error instanceof Error ? error.message : "Unknown valuation error",
-          stack: error instanceof Error ? error.stack : undefined,
-          code: typeof error === "object" && error && "code" in error ? (error as { code?: unknown }).code : undefined,
-          details: typeof error === "object" && error && "details" in error ? (error as { details?: unknown }).details : undefined,
-          hint: typeof error === "object" && error && "hint" in error ? (error as { hint?: unknown }).hint : undefined,
+          reason: "No provider valuation and no stored valuation were found.",
+        },
+        "VALUE_LOOKUP_EMPTY",
+      );
+      throw new AppError(404, "VALUATION_NOT_FOUND", "Valuation not found for the requested vehicle.");
+    } catch (error) {
+      const parsedVehicleId = parseLiveVehicleId(input.vehicleId);
+      const isLiveVehicle = Boolean(parsedVehicleId);
+      const vehicle = isLiveVehicle ? null : await resolveStoredVehicleRecordById(input.vehicleId).catch(() => null);
+      const descriptor = buildCacheDescriptor({
+        vehicle,
+        parsed: parsedVehicleId,
+      });
+      const cacheKey = descriptor ? getValuesCacheKey(descriptor, input) : null;
+      logger.error(
+        {
+          label: "VALUE_LOOKUP_FAILURE",
+          requestId: input.requestId,
+          vehicleId: input.vehicleId,
+          year: vehicle?.year ?? descriptor?.year ?? null,
+          make: vehicle?.make ?? descriptor?.make ?? null,
+          model: vehicle?.model ?? descriptor?.model ?? null,
+          trim: vehicle?.trim ?? descriptor?.trim ?? null,
+          bodyStyle: vehicle?.bodyStyle ?? null,
+          ...getErrorDetails(error),
         },
         "VALUE_LOOKUP_FAILURE",
       );
@@ -468,136 +572,111 @@ export class VehicleService {
           responseSummary: { error: error instanceof Error ? error.message : "Unknown provider error" },
         });
       }
+      throw error;
     }
-
-    const seededFallback = vehicle
-      ? await mockValueProvider.getValuation({
-          ...input,
-          vehicle,
-        })
-      : null;
-
-    if (seededFallback) {
-      return {
-        data: seededFallback,
-        source: "provider",
-        fetchedAt: currentIso,
-        expiresAt: currentIso,
-      };
-    }
-
-    const value = await repositories.valuations.findLatest(input);
-    if (value) {
-      logger.error(
-        {
-          label: "VALUE_LOOKUP_SUCCESS",
-          strategy: "stored-valuation-fallback",
-          vehicleId: input.vehicleId,
-        },
-        "VALUE_LOOKUP_SUCCESS",
-      );
-      return {
-        data: value,
-        source: "provider",
-        fetchedAt: value.generatedAt,
-        expiresAt: currentIso,
-      };
-    }
-
-    logger.error(
-      {
-        label: "VALUE_LOOKUP_EMPTY",
-        vehicleId: input.vehicleId,
-        year: vehicle?.year ?? null,
-        make: vehicle?.make ?? null,
-        model: vehicle?.model ?? null,
-        trim: vehicle?.trim ?? null,
-        reason: "No provider valuation and no stored valuation were found.",
-      },
-      "VALUE_LOOKUP_EMPTY",
-    );
-    throw new AppError(404, "VALUATION_NOT_FOUND", "Valuation not found for the requested vehicle.");
   }
 
   async getListings(input: {
+    requestId?: string;
     vehicleId: string;
     zip: string;
     radiusMiles: number;
   }): Promise<CachedServiceResult<ListingRecord[]>> {
-    const currentIso = nowIso();
-    const isLiveVehicle = Boolean(parseLiveVehicleId(input.vehicleId));
-    const vehicle = isLiveVehicle ? null : await resolveStoredVehicleRecordById(input.vehicleId);
-    logger.error(
-      {
-        label: "LISTINGS_LOOKUP_START",
-        vehicleId: input.vehicleId,
-        vehicleFound: Boolean(vehicle),
-        year: vehicle?.year ?? null,
-        make: vehicle?.make ?? null,
-        model: vehicle?.model ?? null,
-        trim: vehicle?.trim ?? null,
-        bodyStyle: vehicle?.bodyStyle ?? null,
-        zip: input.zip,
-        radiusMiles: input.radiusMiles,
-      },
-      "LISTINGS_LOOKUP_START",
-    );
-    const descriptor = buildCacheDescriptor({
-      vehicle,
-      parsed: parseLiveVehicleId(input.vehicleId),
-    });
-    const cacheKey = descriptor ? getListingsCacheKey(descriptor, input) : null;
+    try {
+      const currentIso = nowIso();
+      const parsedVehicleId = parseLiveVehicleId(input.vehicleId);
+      const isLiveVehicle = Boolean(parsedVehicleId);
+      const vehicle = isLiveVehicle ? null : await resolveStoredVehicleRecordById(input.vehicleId);
+      logger.error(
+        {
+          label: "LISTINGS_LOOKUP_START",
+          requestId: input.requestId,
+          vehicleId: input.vehicleId,
+          vehicleFound: Boolean(vehicle),
+          year: vehicle?.year ?? null,
+          make: vehicle?.make ?? null,
+          model: vehicle?.model ?? null,
+          trim: vehicle?.trim ?? null,
+          bodyStyle: vehicle?.bodyStyle ?? null,
+          zip: input.zip,
+          radiusMiles: input.radiusMiles,
+        },
+        "LISTINGS_LOOKUP_START",
+      );
+      const descriptor = buildCacheDescriptor({
+        vehicle,
+        parsed: parsedVehicleId,
+      });
+      const cacheKey = descriptor ? getListingsCacheKey(descriptor, input) : null;
 
-    if (cacheKey && providers.listingsProviderName === "marketcheck") {
-      const cached = await repositories.listingsCache.findByCacheKey(cacheKey);
-      if (cached) {
-        if (isFresh(cached.expiresAt, currentIso)) {
-          await repositories.listingsCache.markAccessed(cacheKey, currentIso);
-          await writeUsageLog({
-            provider: cached.provider,
-            endpointType: "listings",
-            eventType: cached.responseJson.isEmpty ? "empty_hit" : "cache_hit",
+      if (cacheKey && providers.listingsProviderName === "marketcheck") {
+        const cacheDescriptor = descriptor;
+        logger.error(
+          {
+            label: "LISTINGS_LOOKUP_QUERY",
+            requestId: input.requestId,
+            queryType: "cache-read",
+            vehicleId: input.vehicleId,
             cacheKey,
-            requestSummary: input,
-            responseSummary: { count: cached.responseJson.data.length, expiresAt: cached.expiresAt },
-          });
-          if (!cached.responseJson.isEmpty) {
-            return {
-              data: cached.responseJson.data,
-              source: "cache",
-              fetchedAt: cached.fetchedAt,
-              expiresAt: cached.expiresAt,
-            };
+            year: cacheDescriptor?.year ?? null,
+            make: cacheDescriptor?.make ?? null,
+            model: cacheDescriptor?.model ?? null,
+            trim: cacheDescriptor?.trim ?? null,
+            zip: input.zip,
+            radiusMiles: input.radiusMiles,
+          },
+          "LISTINGS_LOOKUP_QUERY",
+        );
+        const cached = await repositories.listingsCache.findByCacheKey(cacheKey);
+        if (cached) {
+          if (isFresh(cached.expiresAt, currentIso)) {
+            await repositories.listingsCache.markAccessed(cacheKey, currentIso);
+            await writeUsageLog({
+              provider: cached.provider,
+              endpointType: "listings",
+              eventType: cached.responseJson.isEmpty ? "empty_hit" : "cache_hit",
+              cacheKey,
+              requestSummary: input,
+              responseSummary: { count: cached.responseJson.data.length, expiresAt: cached.expiresAt },
+            });
+            if (!cached.responseJson.isEmpty) {
+              return {
+                data: cached.responseJson.data,
+                source: "cache",
+                fetchedAt: cached.fetchedAt,
+                expiresAt: cached.expiresAt,
+              };
+            }
+          } else {
+            await writeUsageLog({
+              provider: cached.provider,
+              endpointType: "listings",
+              eventType: "stale_refresh",
+              cacheKey,
+              requestSummary: input,
+              responseSummary: { previousFetchedAt: cached.fetchedAt, previousExpiresAt: cached.expiresAt },
+            });
           }
         } else {
           await writeUsageLog({
-            provider: cached.provider,
+            provider: providers.listingsProviderName,
             endpointType: "listings",
-            eventType: "stale_refresh",
+            eventType: "miss",
             cacheKey,
             requestSummary: input,
-            responseSummary: { previousFetchedAt: cached.fetchedAt, previousExpiresAt: cached.expiresAt },
+            responseSummary: {},
           });
         }
-      } else {
-        await writeUsageLog({
-          provider: providers.listingsProviderName,
-          endpointType: "listings",
-          eventType: "miss",
-          cacheKey,
-          requestSummary: input,
-          responseSummary: {},
-        });
       }
-    }
 
-    try {
       const lookupVariants = buildVehicleLookupVariants(vehicle);
       let liveListings: ListingRecord[] = [];
       for (const [index, variant] of lookupVariants.entries()) {
         logger.error(
           {
             label: "LISTINGS_LOOKUP_QUERY",
+            requestId: input.requestId,
+            queryType: "provider-request",
             strategy: index === 0 ? "exact-canonical-fields" : index === 1 ? "trim-stripped" : "model-family",
             vehicleId: input.vehicleId,
             year: variant.year,
@@ -614,6 +693,7 @@ export class VehicleService {
           logger.error(
             {
               label: "LISTINGS_LOOKUP_SUCCESS",
+              requestId: input.requestId,
               strategy: index === 0 ? "exact-canonical-fields" : index === 1 ? "trim-stripped" : "model-family",
               vehicleId: input.vehicleId,
               resultCount: liveListings.length,
@@ -658,6 +738,7 @@ export class VehicleService {
       logger.error(
         {
           label: "LISTINGS_LOOKUP_EMPTY",
+          requestId: input.requestId,
           vehicleId: input.vehicleId,
           year: vehicle?.year ?? null,
           make: vehicle?.make ?? null,
@@ -666,20 +747,75 @@ export class VehicleService {
         },
         "LISTINGS_LOOKUP_EMPTY",
       );
+      const storedListings = await repositories.listingResults.listByVehicle(input);
+      if (storedListings.length > 0) {
+        logger.error(
+          {
+            label: "LISTINGS_LOOKUP_SUCCESS",
+            requestId: input.requestId,
+            strategy: "stored-listings-fallback",
+            vehicleId: input.vehicleId,
+            resultCount: storedListings.length,
+          },
+          "LISTINGS_LOOKUP_SUCCESS",
+        );
+        return {
+          data: storedListings,
+          source: "provider",
+          fetchedAt: currentIso,
+          expiresAt: currentIso,
+        };
+      }
+
+      if (vehicle) {
+        const listings = await mockListingsProvider.getListings({
+          ...input,
+          vehicle,
+        });
+        logger.error(
+          {
+            label: listings.length > 0 ? "LISTINGS_LOOKUP_SUCCESS" : "LISTINGS_LOOKUP_EMPTY",
+            requestId: input.requestId,
+            strategy: "mock-fallback",
+            vehicleId: input.vehicleId,
+            resultCount: listings.length,
+          },
+          listings.length > 0 ? "LISTINGS_LOOKUP_SUCCESS" : "LISTINGS_LOOKUP_EMPTY",
+        );
+        return {
+          data: listings,
+          source: "provider",
+          fetchedAt: currentIso,
+          expiresAt: currentIso,
+        };
+      }
+
+      return {
+        data: [],
+        source: "provider",
+        fetchedAt: currentIso,
+        expiresAt: currentIso,
+      };
     } catch (error) {
+      const parsedVehicleId = parseLiveVehicleId(input.vehicleId);
+      const isLiveVehicle = Boolean(parsedVehicleId);
+      const vehicle = isLiveVehicle ? null : await resolveStoredVehicleRecordById(input.vehicleId).catch(() => null);
+      const descriptor = buildCacheDescriptor({
+        vehicle,
+        parsed: parsedVehicleId,
+      });
+      const cacheKey = descriptor ? getListingsCacheKey(descriptor, input) : null;
       logger.error(
         {
           label: "LISTINGS_LOOKUP_FAILURE",
+          requestId: input.requestId,
           vehicleId: input.vehicleId,
-          year: vehicle?.year ?? null,
-          make: vehicle?.make ?? null,
-          model: vehicle?.model ?? null,
-          trim: vehicle?.trim ?? null,
-          message: error instanceof Error ? error.message : "Unknown listings error",
-          stack: error instanceof Error ? error.stack : undefined,
-          code: typeof error === "object" && error && "code" in error ? (error as { code?: unknown }).code : undefined,
-          details: typeof error === "object" && error && "details" in error ? (error as { details?: unknown }).details : undefined,
-          hint: typeof error === "object" && error && "hint" in error ? (error as { hint?: unknown }).hint : undefined,
+          year: vehicle?.year ?? descriptor?.year ?? null,
+          make: vehicle?.make ?? descriptor?.make ?? null,
+          model: vehicle?.model ?? descriptor?.model ?? null,
+          trim: vehicle?.trim ?? descriptor?.trim ?? null,
+          bodyStyle: vehicle?.bodyStyle ?? null,
+          ...getErrorDetails(error),
         },
         "LISTINGS_LOOKUP_FAILURE",
       );
@@ -693,54 +829,7 @@ export class VehicleService {
           responseSummary: { error: error instanceof Error ? error.message : "Unknown provider error" },
         });
       }
+      throw error;
     }
-
-    const storedListings = await repositories.listingResults.listByVehicle(input);
-    if (storedListings.length > 0) {
-      logger.error(
-        {
-          label: "LISTINGS_LOOKUP_SUCCESS",
-          strategy: "stored-listings-fallback",
-          vehicleId: input.vehicleId,
-          resultCount: storedListings.length,
-        },
-        "LISTINGS_LOOKUP_SUCCESS",
-      );
-      return {
-        data: storedListings,
-        source: "provider",
-        fetchedAt: currentIso,
-        expiresAt: currentIso,
-      };
-    }
-
-    if (vehicle) {
-      const listings = await mockListingsProvider.getListings({
-        ...input,
-        vehicle,
-      });
-      logger.error(
-        {
-          label: listings.length > 0 ? "LISTINGS_LOOKUP_SUCCESS" : "LISTINGS_LOOKUP_EMPTY",
-          strategy: "mock-fallback",
-          vehicleId: input.vehicleId,
-          resultCount: listings.length,
-        },
-        listings.length > 0 ? "LISTINGS_LOOKUP_SUCCESS" : "LISTINGS_LOOKUP_EMPTY",
-      );
-      return {
-        data: listings,
-        source: "provider",
-        fetchedAt: currentIso,
-        expiresAt: currentIso,
-      };
-    }
-
-    return {
-      data: [],
-      source: "provider",
-      fetchedAt: currentIso,
-      expiresAt: currentIso,
-    };
   }
 }

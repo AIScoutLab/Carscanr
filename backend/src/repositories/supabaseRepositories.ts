@@ -1036,7 +1036,22 @@ export class SupabaseValuesCacheRepository implements ValuesCacheRepository {
       .select("*")
       .eq("cache_key", cacheKey)
       .maybeSingle();
-    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load values cache entry.", error);
+    if (error) {
+      logger.error(
+        {
+          label: "VALUE_CACHE_QUERY_FAILURE",
+          table: "provider_vehicle_values_cache",
+          operation: "select",
+          cacheKey,
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+        },
+        "VALUE_CACHE_QUERY_FAILURE",
+      );
+      throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load values cache entry.", error);
+    }
     return data ? mapValuesCacheRow(data) : null;
   }
 
@@ -1078,7 +1093,22 @@ export class SupabaseListingsCacheRepository implements ListingsCacheRepository 
       .select("*")
       .eq("cache_key", cacheKey)
       .maybeSingle();
-    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load listings cache entry.", error);
+    if (error) {
+      logger.error(
+        {
+          label: "LISTINGS_CACHE_QUERY_FAILURE",
+          table: "provider_vehicle_listings_cache",
+          operation: "select",
+          cacheKey,
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+        },
+        "LISTINGS_CACHE_QUERY_FAILURE",
+      );
+      throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load listings cache entry.", error);
+    }
     return data ? mapListingsCacheRow(data) : null;
   }
 
