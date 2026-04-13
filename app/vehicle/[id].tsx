@@ -14,6 +14,7 @@ import { ValueEstimateCard } from "@/components/ValueEstimateCard";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
 import { useSubscription } from "@/hooks/useSubscription";
+import { scanService } from "@/services/scanService";
 import { vehicleService } from "@/services/vehicleService";
 import { VehicleRecord } from "@/types";
 import { formatCurrency } from "@/lib/utils";
@@ -76,7 +77,7 @@ function getInitialCondition(vehicle: VehicleRecord) {
 }
 
 export default function VehicleDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, imageUri, scanId } = useLocalSearchParams<{ id: string; imageUri?: string; scanId?: string }>();
   const [vehicle, setVehicle] = useState<VehicleRecord | null>(null);
   const [valuation, setValuation] = useState(createEmptyValuation());
   const [zipCode, setZipCode] = useState(defaultZip);
@@ -86,6 +87,8 @@ export default function VehicleDetailScreen() {
   const [tab, setTab] = useState("Overview");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [resolvedImageUri, setResolvedImageUri] = useState<string | null>(typeof imageUri === "string" && imageUri.trim().length > 0 ? imageUri : null);
+  const [imageSourceLabel, setImageSourceLabel] = useState<string>(typeof imageUri === "string" && imageUri.trim().length > 0 ? "scanned photo (route param)" : "provider/generic");
   const {
     status: usage,
     freeUnlocksUsed,
@@ -123,6 +126,38 @@ export default function VehicleDetailScreen() {
         setLoading(false);
       });
   }, [id]);
+
+  useEffect(() => {
+    if (typeof imageUri === "string" && imageUri.trim().length > 0) {
+      console.log("[vehicle-detail] image source selected", {
+        source: "route-image-uri",
+        imageUri,
+        scanId,
+        vehicleId: id,
+      });
+      setResolvedImageUri(imageUri);
+      setImageSourceLabel("scanned photo (route param)");
+      return;
+    }
+
+    if (!scanId) {
+      return;
+    }
+
+    scanService.getRecentScans().then((items) => {
+      const matched = items.find((entry) => entry.id === scanId);
+      if (matched?.imageUri) {
+        console.log("[vehicle-detail] image source selected", {
+          source: "recent-scan-cache",
+          imageUri: matched.imageUri,
+          scanId,
+          vehicleId: id,
+        });
+        setResolvedImageUri(matched.imageUri);
+        setImageSourceLabel("saved scan image");
+      }
+    }).catch(() => undefined);
+  }, [id, imageUri, scanId]);
 
   useEffect(() => {
     if (!vehicle || tab !== "Value") {
@@ -177,10 +212,20 @@ export default function VehicleDetailScreen() {
     );
   }
 
+  const heroImageUri = resolvedImageUri ?? vehicle.heroImage;
+  const selectedImageSourceLabel = resolvedImageUri ? imageSourceLabel : "provider/generic fallback";
+  console.log("[vehicle-detail] image source selected", {
+    source: selectedImageSourceLabel,
+    imageUri: heroImageUri,
+    vehicleId: vehicle.id,
+    scanId,
+  });
+
   return (
     <AppContainer>
       <BackButton fallbackHref="/(tabs)/scan" label="Back" />
-      <Image source={{ uri: vehicle.heroImage }} style={styles.hero} />
+      <Image source={{ uri: heroImageUri }} style={styles.hero} />
+      <Text style={styles.imageDebug}>Image source: {selectedImageSourceLabel}</Text>
       {usage ? (
         <ScanUsageMeter
           status={usage}
@@ -361,7 +406,7 @@ export default function VehicleDetailScreen() {
       {tab === "Photos" ? (
         <View style={styles.sectionCard}>
           <Text style={styles.body}>Your saved scan photos live here for each vehicle. Add more photos as the Garage evolves.</Text>
-          <Image source={{ uri: vehicle.heroImage }} style={styles.photo} />
+          <Image source={{ uri: heroImageUri }} style={styles.photo} />
         </View>
       ) : null}
       {isLocked ? (
@@ -417,6 +462,7 @@ function UnlockAccessCard({
 
 const styles = StyleSheet.create({
   hero: { width: "100%", height: 260, borderRadius: Radius.xl },
+  imageDebug: { ...Typography.caption, color: Colors.textMuted },
   headerCard: { ...cardStyles.primary, padding: 20, gap: 6 },
   title: { ...Typography.title, color: Colors.textStrong },
   subtitle: { ...Typography.body, color: Colors.textMuted },

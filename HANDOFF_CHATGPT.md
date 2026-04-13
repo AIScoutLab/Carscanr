@@ -241,6 +241,37 @@ Key files:
 
 This still needs a fresh build/device confirmation.
 
+### Canonical detail follow-up
+
+Vehicle detail for canonical matches now has three important product fixes in progress:
+
+- Value lookup:
+  - [backend/src/services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/vehicleService.ts) now logs:
+    - `VALUE_LOOKUP_START`
+    - `VALUE_LOOKUP_QUERY`
+    - `VALUE_LOOKUP_SUCCESS`
+    - `VALUE_LOOKUP_EMPTY`
+    - `VALUE_LOOKUP_FAILURE`
+  - canonical valuation lookup now retries with broader vehicle variants:
+    - exact canonical fields
+    - trim stripped
+    - model family fallback
+- Listings lookup:
+  - [backend/src/services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/vehicleService.ts) now logs:
+    - `LISTINGS_LOOKUP_START`
+    - `LISTINGS_LOOKUP_QUERY`
+    - `LISTINGS_LOOKUP_SUCCESS`
+    - `LISTINGS_LOOKUP_EMPTY`
+    - `LISTINGS_LOOKUP_FAILURE`
+  - canonical listings lookup now retries with the same broader vehicle variants before returning empty
+- Detail image priority:
+  - [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx) now passes `imageUri` and `scanId` into the vehicle detail route
+  - [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx) now prefers image sources in this order:
+    1. scanned/uploaded image from route param
+    2. recent saved scan image by `scanId`
+    3. provider/generic fallback image
+  - detail screen temporarily shows visible image-source debug text
+
 ## Important Files
 
 ### Mobile

@@ -40,6 +40,48 @@ function usageLogsCutoffIso() {
   return new Date(Date.now() - USAGE_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
 }
 
+function normalizeVehicleLookupText(value: string | undefined | null) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\b(lx|ex|ex l|exl|sport|touring|limited|premium|luxury|special|standard|base|se|sel|xle|le|s|sl|sv|lt|ls|gt|xlt|lariat|platinum|long range|performance)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildVehicleLookupVariants(vehicle: VehicleRecord | null) {
+  if (!vehicle) {
+    return [];
+  }
+
+  const variants = [
+    vehicle,
+    {
+      ...vehicle,
+      trim: "",
+    },
+  ];
+
+  const normalizedModel = normalizeVehicleLookupText(vehicle.model);
+  const familyModel = normalizedModel.split(" ").slice(0, 2).join(" ").trim();
+  if (familyModel && familyModel !== normalizedModel) {
+    variants.push({
+      ...vehicle,
+      model: familyModel
+        .split(" ")
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" "),
+      trim: "",
+    });
+  }
+
+  return variants.filter(
+    (variant, index, array) =>
+      array.findIndex((entry) => `${entry.year}|${entry.make}|${entry.model}|${entry.trim}` === `${variant.year}|${variant.make}|${variant.model}|${variant.trim}`) === index,
+  );
+}
+
 async function fireAndForgetCleanup(endpointType: "specs" | "values" | "listings") {
   const cacheCleanup =
     endpointType === "specs"
@@ -251,6 +293,22 @@ export class VehicleService {
     const currentIso = nowIso();
     const isLiveVehicle = Boolean(parseLiveVehicleId(input.vehicleId));
     const vehicle = isLiveVehicle ? null : await resolveStoredVehicleRecordById(input.vehicleId);
+    logger.error(
+      {
+        label: "VALUE_LOOKUP_START",
+        vehicleId: input.vehicleId,
+        vehicleFound: Boolean(vehicle),
+        year: vehicle?.year ?? null,
+        make: vehicle?.make ?? null,
+        model: vehicle?.model ?? null,
+        trim: vehicle?.trim ?? null,
+        bodyStyle: vehicle?.bodyStyle ?? null,
+        zip: input.zip,
+        mileage: input.mileage,
+        condition: input.condition,
+      },
+      "VALUE_LOOKUP_START",
+    );
     const descriptor = buildCacheDescriptor({
       vehicle,
       parsed: parseLiveVehicleId(input.vehicleId),
@@ -301,7 +359,43 @@ export class VehicleService {
     }
 
     try {
-      const liveValue = await providers.valueProvider.getValuation({ ...input, vehicle });
+      const lookupVariants = buildVehicleLookupVariants(vehicle);
+      let liveValue: ValuationRecord | null = null;
+
+      for (const [index, variant] of lookupVariants.entries()) {
+        logger.error(
+          {
+            label: "VALUE_LOOKUP_QUERY",
+            strategy: index === 0 ? "exact-canonical-fields" : index === 1 ? "trim-stripped" : "model-family",
+            vehicleId: input.vehicleId,
+            year: variant.year,
+            make: variant.make,
+            model: variant.model,
+            trim: variant.trim,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition,
+          },
+          "VALUE_LOOKUP_QUERY",
+        );
+        liveValue = await providers.valueProvider.getValuation({ ...input, vehicle: variant });
+        if (liveValue) {
+          logger.error(
+            {
+              label: "VALUE_LOOKUP_SUCCESS",
+              strategy: index === 0 ? "exact-canonical-fields" : index === 1 ? "trim-stripped" : "model-family",
+              vehicleId: input.vehicleId,
+              year: variant.year,
+              make: variant.make,
+              model: variant.model,
+              trim: variant.trim,
+            },
+            "VALUE_LOOKUP_SUCCESS",
+          );
+          break;
+        }
+      }
+
       if (descriptor && cacheKey && providers.valueProviderName === "marketcheck") {
         await repositories.valuesCache.upsert(
           createValuesCacheRow({
@@ -336,7 +430,34 @@ export class VehicleService {
           expiresAt: cacheRow?.expiresAt ?? currentIso,
         };
       }
+      logger.error(
+        {
+          label: "VALUE_LOOKUP_EMPTY",
+          vehicleId: input.vehicleId,
+          year: vehicle?.year ?? null,
+          make: vehicle?.make ?? null,
+          model: vehicle?.model ?? null,
+          trim: vehicle?.trim ?? null,
+        },
+        "VALUE_LOOKUP_EMPTY",
+      );
     } catch (error) {
+      logger.error(
+        {
+          label: "VALUE_LOOKUP_FAILURE",
+          vehicleId: input.vehicleId,
+          year: vehicle?.year ?? null,
+          make: vehicle?.make ?? null,
+          model: vehicle?.model ?? null,
+          trim: vehicle?.trim ?? null,
+          message: error instanceof Error ? error.message : "Unknown valuation error",
+          stack: error instanceof Error ? error.stack : undefined,
+          code: typeof error === "object" && error && "code" in error ? (error as { code?: unknown }).code : undefined,
+          details: typeof error === "object" && error && "details" in error ? (error as { details?: unknown }).details : undefined,
+          hint: typeof error === "object" && error && "hint" in error ? (error as { hint?: unknown }).hint : undefined,
+        },
+        "VALUE_LOOKUP_FAILURE",
+      );
       if (cacheKey) {
         await writeUsageLog({
           provider: providers.valueProviderName,
@@ -367,6 +488,14 @@ export class VehicleService {
 
     const value = await repositories.valuations.findLatest(input);
     if (value) {
+      logger.error(
+        {
+          label: "VALUE_LOOKUP_SUCCESS",
+          strategy: "stored-valuation-fallback",
+          vehicleId: input.vehicleId,
+        },
+        "VALUE_LOOKUP_SUCCESS",
+      );
       return {
         data: value,
         source: "provider",
@@ -375,6 +504,18 @@ export class VehicleService {
       };
     }
 
+    logger.error(
+      {
+        label: "VALUE_LOOKUP_EMPTY",
+        vehicleId: input.vehicleId,
+        year: vehicle?.year ?? null,
+        make: vehicle?.make ?? null,
+        model: vehicle?.model ?? null,
+        trim: vehicle?.trim ?? null,
+        reason: "No provider valuation and no stored valuation were found.",
+      },
+      "VALUE_LOOKUP_EMPTY",
+    );
     throw new AppError(404, "VALUATION_NOT_FOUND", "Valuation not found for the requested vehicle.");
   }
 
@@ -386,6 +527,21 @@ export class VehicleService {
     const currentIso = nowIso();
     const isLiveVehicle = Boolean(parseLiveVehicleId(input.vehicleId));
     const vehicle = isLiveVehicle ? null : await resolveStoredVehicleRecordById(input.vehicleId);
+    logger.error(
+      {
+        label: "LISTINGS_LOOKUP_START",
+        vehicleId: input.vehicleId,
+        vehicleFound: Boolean(vehicle),
+        year: vehicle?.year ?? null,
+        make: vehicle?.make ?? null,
+        model: vehicle?.model ?? null,
+        trim: vehicle?.trim ?? null,
+        bodyStyle: vehicle?.bodyStyle ?? null,
+        zip: input.zip,
+        radiusMiles: input.radiusMiles,
+      },
+      "LISTINGS_LOOKUP_START",
+    );
     const descriptor = buildCacheDescriptor({
       vehicle,
       parsed: parseLiveVehicleId(input.vehicleId),
@@ -436,7 +592,37 @@ export class VehicleService {
     }
 
     try {
-      const liveListings = await providers.listingsProvider.getListings({ ...input, vehicle });
+      const lookupVariants = buildVehicleLookupVariants(vehicle);
+      let liveListings: ListingRecord[] = [];
+      for (const [index, variant] of lookupVariants.entries()) {
+        logger.error(
+          {
+            label: "LISTINGS_LOOKUP_QUERY",
+            strategy: index === 0 ? "exact-canonical-fields" : index === 1 ? "trim-stripped" : "model-family",
+            vehicleId: input.vehicleId,
+            year: variant.year,
+            make: variant.make,
+            model: variant.model,
+            trim: variant.trim,
+            zip: input.zip,
+            radiusMiles: input.radiusMiles,
+          },
+          "LISTINGS_LOOKUP_QUERY",
+        );
+        liveListings = await providers.listingsProvider.getListings({ ...input, vehicle: variant });
+        if (liveListings.length > 0) {
+          logger.error(
+            {
+              label: "LISTINGS_LOOKUP_SUCCESS",
+              strategy: index === 0 ? "exact-canonical-fields" : index === 1 ? "trim-stripped" : "model-family",
+              vehicleId: input.vehicleId,
+              resultCount: liveListings.length,
+            },
+            "LISTINGS_LOOKUP_SUCCESS",
+          );
+          break;
+        }
+      }
       if (descriptor && cacheKey && providers.listingsProviderName === "marketcheck") {
         await repositories.listingsCache.upsert(
           createListingsCacheRow({
@@ -469,7 +655,34 @@ export class VehicleService {
           expiresAt: cacheRow?.expiresAt ?? currentIso,
         };
       }
+      logger.error(
+        {
+          label: "LISTINGS_LOOKUP_EMPTY",
+          vehicleId: input.vehicleId,
+          year: vehicle?.year ?? null,
+          make: vehicle?.make ?? null,
+          model: vehicle?.model ?? null,
+          trim: vehicle?.trim ?? null,
+        },
+        "LISTINGS_LOOKUP_EMPTY",
+      );
     } catch (error) {
+      logger.error(
+        {
+          label: "LISTINGS_LOOKUP_FAILURE",
+          vehicleId: input.vehicleId,
+          year: vehicle?.year ?? null,
+          make: vehicle?.make ?? null,
+          model: vehicle?.model ?? null,
+          trim: vehicle?.trim ?? null,
+          message: error instanceof Error ? error.message : "Unknown listings error",
+          stack: error instanceof Error ? error.stack : undefined,
+          code: typeof error === "object" && error && "code" in error ? (error as { code?: unknown }).code : undefined,
+          details: typeof error === "object" && error && "details" in error ? (error as { details?: unknown }).details : undefined,
+          hint: typeof error === "object" && error && "hint" in error ? (error as { hint?: unknown }).hint : undefined,
+        },
+        "LISTINGS_LOOKUP_FAILURE",
+      );
       if (cacheKey) {
         await writeUsageLog({
           provider: providers.listingsProviderName,
@@ -484,6 +697,15 @@ export class VehicleService {
 
     const storedListings = await repositories.listingResults.listByVehicle(input);
     if (storedListings.length > 0) {
+      logger.error(
+        {
+          label: "LISTINGS_LOOKUP_SUCCESS",
+          strategy: "stored-listings-fallback",
+          vehicleId: input.vehicleId,
+          resultCount: storedListings.length,
+        },
+        "LISTINGS_LOOKUP_SUCCESS",
+      );
       return {
         data: storedListings,
         source: "provider",
@@ -497,6 +719,15 @@ export class VehicleService {
         ...input,
         vehicle,
       });
+      logger.error(
+        {
+          label: listings.length > 0 ? "LISTINGS_LOOKUP_SUCCESS" : "LISTINGS_LOOKUP_EMPTY",
+          strategy: "mock-fallback",
+          vehicleId: input.vehicleId,
+          resultCount: listings.length,
+        },
+        listings.length > 0 ? "LISTINGS_LOOKUP_SUCCESS" : "LISTINGS_LOOKUP_EMPTY",
+      );
       return {
         data: listings,
         source: "provider",

@@ -391,7 +391,14 @@ export default function ScanResultScreen() {
       explainBestEffortOnly();
       return;
     }
-    router.push(`/vehicle/${vehicleId}`);
+    router.push({
+      pathname: "/vehicle/[id]",
+      params: {
+        id: vehicleId,
+        imageUri: normalized?.imageUri ?? "",
+        scanId: normalized?.id ?? "",
+      },
+    });
   };
 
   const useCandidate = (candidateId: string) => {
