@@ -211,7 +211,15 @@ export type CanonicalVehicleRecord = {
   make: string;
   model: string;
   trim?: string | null;
+  bodyType?: string | null;
   vehicleType?: VehicleType | null;
+  engine?: string | null;
+  drivetrain?: string | null;
+  transmission?: string | null;
+  fuelType?: string | null;
+  horsepower?: number | null;
+  torque?: string | null;
+  msrp?: number | null;
   normalizedMake: string;
   normalizedModel: string;
   normalizedTrim?: string | null;

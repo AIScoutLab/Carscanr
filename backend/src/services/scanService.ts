@@ -1,12 +1,15 @@
 import crypto from "node:crypto";
 import { env } from "../config/env.js";
 import { AppError } from "../errors/appError.js";
+import { mapCanonicalVehicleToRecord, resolveStoredVehicleRecordById, upsertCanonicalVehicleFromProvider } from "../lib/canonicalVehicleCatalog.js";
 import { logger } from "../lib/logger.js";
 import { providers } from "../lib/providerRegistry.js";
+import { buildCanonicalKey, normalizeLookupText } from "../lib/providerCache.js";
 import { repositories } from "../lib/repositoryRegistry.js";
 import { buildAnalysisKey, buildImageKey, buildVehicleKey } from "../lib/cacheKeys.js";
 import { resizeForVision, computeDhashHex } from "../lib/imageProcessing.js";
-import { AuthContext, MatchedVehicleCandidate, ScanRecord, VisionProviderResult, VisionResult } from "../types/domain.js";
+import { buildLiveVehicleId } from "../providers/marketcheck/vehicleId.js";
+import { AuthContext, MatchedVehicleCandidate, ScanRecord, VehicleRecord, VisionProviderResult, VisionResult } from "../types/domain.js";
 import { AnalysisCacheService } from "./analysisCacheService.js";
 import { UsageService } from "./usageService.js";
 import { UnlockService } from "./unlockService.js";
@@ -48,9 +51,7 @@ function safeSerializeUnknown(value: unknown) {
 }
 
 function normalizeMatchText(value: string | undefined | null) {
-  return String(value ?? "")
-    .toLowerCase()
-    .trim()
+  return normalizeLookupText(value)
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\b(sedan|coupe|hatchback|wagon|suv|crossover|truck|van|convertible|standard|base|sport|limited|premium|luxury|touring|edition)\b/g, " ")
     .replace(/\s+/g, " ")
@@ -60,6 +61,27 @@ function normalizeMatchText(value: string | undefined | null) {
 function buildModelFamily(value: string | undefined | null) {
   const normalized = normalizeMatchText(value);
   return normalized.split(" ").slice(0, 2).join(" ").trim();
+}
+
+function stripTrimTokens(value: string | undefined | null) {
+  return normalizeMatchText(value)
+    .replace(/\b(lx|ex|ex l|exl|sport|touring|limited|premium|luxury|special|standard|base|se|sel|xle|le|s|sl|sv|lt|ls|gt|xlt|lariat|platinum|long range|performance)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenizeMatchText(value: string | undefined | null) {
+  return normalizeMatchText(value)
+    .split(" ")
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function getTokenOverlapScore(left: string[], right: string[]) {
+  if (left.length === 0 || right.length === 0) return 0;
+  const rightSet = new Set(right);
+  const matches = left.filter((token) => rightSet.has(token)).length;
+  return matches / Math.max(left.length, right.length);
 }
 
 function stageFailureMessage(stage: ScanFailureStage) {
@@ -233,7 +255,21 @@ export class ScanService {
         userId: input.auth.userId,
       });
       const normalizedResult = normalizeVisionResult(visionResult.normalized);
-      const matchedVehicles = await this.matchVehicles(normalizedResult);
+      const matchedVehicles = await this.resolveCatalogMatches(normalizedResult);
+      const resolvedVehicles =
+        matchedVehicles.length > 0
+          ? matchedVehicles
+          : [
+              {
+                vehicleId: "",
+                year: normalizedResult.likely_year,
+                make: normalizedResult.likely_make,
+                model: normalizedResult.likely_model,
+                trim: normalizedResult.likely_trim ?? "",
+                confidence: normalizedResult.confidence,
+                matchReason: "Best-effort identification. Could not match full specs catalog, showing AI result.",
+              },
+            ];
 
       if (matchedVehicles.length === 0) {
         logger.error(
@@ -250,7 +286,7 @@ export class ScanService {
       logIdentifyStage("VEHICLE_MATCH", "success", {
         scanId,
         userId: input.auth.userId,
-        candidateCount: matchedVehicles.length,
+        candidateCount: resolvedVehicles.length,
       });
 
       const scanRecord: ScanRecord = {
@@ -261,12 +297,12 @@ export class ScanService {
         confidence: normalizedResult.confidence,
         createdAt: new Date().toISOString(),
         normalizedResult,
-        candidates: matchedVehicles,
+        candidates: resolvedVehicles,
       };
 
       let entitlement: { usedUnlock: boolean; alreadyUnlocked: boolean; remainingUnlocks: number; isPro: boolean } | undefined;
-      if (premiumRequested && !usage.isPro && matchedVehicles[0]) {
-        const vehicle = await repositories.vehicles.findById(matchedVehicles[0].vehicleId);
+      if (premiumRequested && !usage.isPro && resolvedVehicles[0]) {
+        const vehicle = await resolveStoredVehicleRecordById(resolvedVehicles[0].vehicleId);
         if (vehicle) {
           const unlockResult = await this.unlockService.grantUnlockForVehicle({
             userId: input.auth.userId,
@@ -660,7 +696,7 @@ export class ScanService {
     }
   }
 
-  private async matchVehicles(result: VisionResult): Promise<MatchedVehicleCandidate[]> {
+  private async resolveCatalogMatches(result: VisionResult): Promise<MatchedVehicleCandidate[]> {
     logger.error(
       {
         label: "VEHICLE_MATCH_INPUT",
@@ -690,18 +726,8 @@ export class ScanService {
     const matched: MatchedVehicleCandidate[] = [];
 
     for (const candidate of candidates) {
-      const vehicles = await this.findVehicleMatches(candidate);
-      for (const vehicle of vehicles) {
-        matched.push({
-          vehicleId: vehicle.id,
-          year: vehicle.year,
-          make: vehicle.make,
-          model: vehicle.model,
-          trim: vehicle.trim,
-          confidence: candidate.confidence,
-          matchReason: `Matched ${vehicle.year} ${vehicle.make} ${vehicle.model} from normalized vision output.`,
-        });
-      }
+      const matches = await this.findVehicleMatches(candidate);
+      matched.push(...matches);
     }
 
     const uniqueMatches = matched
@@ -710,33 +736,42 @@ export class ScanService {
       .slice(0, 3);
 
     if (uniqueMatches.length > 0) {
+      logger.error(
+        {
+          label: "VEHICLE_MATCH_SELECTED",
+          selectedCount: uniqueMatches.length,
+          selectedVehicleIds: uniqueMatches.map((entry) => entry.vehicleId),
+          selectedVehicles: uniqueMatches.map((entry) => ({
+            vehicleId: entry.vehicleId,
+            year: entry.year,
+            make: entry.make,
+            model: entry.model,
+            trim: entry.trim,
+            confidence: entry.confidence,
+          })),
+        },
+        "VEHICLE_MATCH_SELECTED",
+      );
       return uniqueMatches;
     }
+    return [];
+  }
 
-    logger.warn(
-      {
-        label: "VEHICLE_MATCH_FALLBACK_AI_ONLY",
-        year: result.likely_year,
-        make: result.likely_make,
-        model: result.likely_model,
-        trim: result.likely_trim ?? null,
-        vehicleType: result.vehicle_type,
-        confidence: result.confidence,
-      },
-      "VEHICLE_MATCH_FALLBACK_AI_ONLY",
-    );
-
-    return [
-      {
-        vehicleId: "",
-        year: result.likely_year,
-        make: result.likely_make,
-        model: result.likely_model,
-        trim: result.likely_trim ?? "",
-        confidence: result.confidence,
-        matchReason: "Best-effort identification. Could not match full specs catalog, showing AI result.",
-      },
-    ];
+  private buildCanonicalMatchedCandidate(input: {
+    vehicleId: string;
+    vehicle: VehicleRecord;
+    confidence: number;
+    matchReason: string;
+  }): MatchedVehicleCandidate {
+    return {
+      vehicleId: input.vehicleId,
+      year: input.vehicle.year,
+      make: input.vehicle.make,
+      model: input.vehicle.model,
+      trim: input.vehicle.trim,
+      confidence: input.confidence,
+      matchReason: input.matchReason,
+    };
   }
 
   private async findVehicleMatches(candidate: {
@@ -745,80 +780,407 @@ export class ScanService {
     model: string;
     trim?: string;
     confidence: number;
-  }) {
-    logger.error(
-      {
-        label: "VEHICLE_MATCH_QUERY",
-        strategy: "exact-year-make-model",
-        candidate,
-      },
-      "VEHICLE_MATCH_QUERY",
-    );
-    const exactMatches = await repositories.vehicles.searchCandidates(candidate);
-    if (exactMatches.length > 0) {
-      return exactMatches;
-    }
+  }): Promise<MatchedVehicleCandidate[]> {
+    const logStrategy = (
+      strategy: string,
+      vehicles: Array<VehicleRecord | MatchedVehicleCandidate | { id: string; year: number; make: string; model: string; trim?: string | null }>,
+      extra: Record<string, unknown> = {},
+    ) => {
+      const sampleIds = vehicles.slice(0, 5).map((vehicle) => ("vehicleId" in vehicle ? vehicle.vehicleId : vehicle.id));
+      logger.error(
+        {
+          label: "VEHICLE_MATCH_STRATEGY",
+          strategy,
+          candidate,
+          candidateCount: vehicles.length,
+          sampleVehicleIds: sampleIds,
+          ...extra,
+        },
+        "VEHICLE_MATCH_STRATEGY",
+      );
+      logger.error(
+        {
+          label: "VEHICLE_MATCH_CANDIDATE_COUNT",
+          strategy,
+          count: vehicles.length,
+          candidate,
+        },
+        "VEHICLE_MATCH_CANDIDATE_COUNT",
+      );
+    };
 
-    const broadMatches = await repositories.vehicles.search({
+    const normalizedMake = normalizeMatchText(candidate.make);
+    const normalizedModel = normalizeMatchText(candidate.model);
+    const normalizedTrim = stripTrimTokens(candidate.trim ?? "");
+    const exactCanonicalKey = buildCanonicalKey({
+      year: candidate.year,
       make: candidate.make,
       model: candidate.model,
-    });
-
-    const normalizedCandidateMake = normalizeMatchText(candidate.make);
-    const normalizedCandidateModel = normalizeMatchText(candidate.model);
-    const candidateModelFamily = buildModelFamily(candidate.model);
-
-    const nearbyYearMatches = broadMatches.filter((vehicle) => {
-      const makeMatch = normalizeMatchText(vehicle.make) === normalizedCandidateMake;
-      const modelMatch = normalizeMatchText(vehicle.model) === normalizedCandidateModel;
-      return makeMatch && modelMatch && Math.abs(vehicle.year - candidate.year) <= 2;
-    });
-    if (nearbyYearMatches.length > 0) {
-      logger.error(
-        {
-          label: "VEHICLE_MATCH_QUERY",
-          strategy: "nearby-year-make-model",
-          candidate,
-          matchCount: nearbyYearMatches.length,
-        },
-        "VEHICLE_MATCH_QUERY",
-      );
-      return nearbyYearMatches;
-    }
-
-    const fuzzyModelMatches = broadMatches.filter((vehicle) => {
-      const makeMatch = normalizeMatchText(vehicle.make) === normalizedCandidateMake;
-      const vehicleModel = normalizeMatchText(vehicle.model);
-      return makeMatch && (vehicleModel.includes(normalizedCandidateModel) || normalizedCandidateModel.includes(vehicleModel));
-    });
-    if (fuzzyModelMatches.length > 0) {
-      logger.error(
-        {
-          label: "VEHICLE_MATCH_QUERY",
-          strategy: "fuzzy-model-normalization",
-          candidate,
-          matchCount: fuzzyModelMatches.length,
-        },
-        "VEHICLE_MATCH_QUERY",
-      );
-      return fuzzyModelMatches;
-    }
-
-    const familyMatches = broadMatches.filter((vehicle) => {
-      const makeMatch = normalizeMatchText(vehicle.make) === normalizedCandidateMake;
-      const vehicleFamily = buildModelFamily(vehicle.model);
-      return makeMatch && vehicleFamily.length > 0 && vehicleFamily === candidateModelFamily;
+      trim: candidate.trim,
     });
     logger.error(
       {
-        label: "VEHICLE_MATCH_QUERY",
-        strategy: "model-family-trim-stripped",
+        label: "CANONICAL_LOOKUP_START",
+        canonicalKey: exactCanonicalKey,
         candidate,
-        matchCount: familyMatches.length,
       },
-      "VEHICLE_MATCH_QUERY",
+      "CANONICAL_LOOKUP_START",
     );
-    return familyMatches;
+
+    const exactCanonical = await repositories.canonicalVehicles.findByCanonicalKey(exactCanonicalKey);
+    if (exactCanonical) {
+      const exactCanonicalVehicle = mapCanonicalVehicleToRecord(exactCanonical);
+      logStrategy("canonical-exact-key", exactCanonicalVehicle ? [exactCanonical] : [], {
+        canonicalKey: exactCanonicalKey,
+      });
+      if (exactCanonicalVehicle) {
+        logger.error(
+          {
+            label: "CANONICAL_LOOKUP_HIT",
+            canonicalKey: exactCanonicalKey,
+            canonicalId: exactCanonical.id,
+            source: "exact-key",
+          },
+          "CANONICAL_LOOKUP_HIT",
+        );
+        await repositories.canonicalVehicles.incrementPopularity(exactCanonical.canonicalKey);
+        return [
+          this.buildCanonicalMatchedCandidate({
+            vehicleId: exactCanonical.id,
+            vehicle: exactCanonicalVehicle,
+            confidence: candidate.confidence,
+            matchReason: `Matched canonical catalog key for ${exactCanonical.year} ${exactCanonical.make} ${exactCanonical.model}.`,
+          }),
+        ];
+      }
+    } else {
+      logger.error(
+        {
+          label: "CANONICAL_LOOKUP_MISS",
+          canonicalKey: exactCanonicalKey,
+          source: "exact-key",
+        },
+        "CANONICAL_LOOKUP_MISS",
+      );
+      logStrategy("canonical-exact-key", [], { canonicalKey: exactCanonicalKey });
+    }
+
+    const canonicalCandidates = await repositories.canonicalVehicles.searchPromoted({
+      year: candidate.year,
+      normalizedMake: normalizedMake,
+    });
+    logStrategy("canonical-make-slice", canonicalCandidates, {
+      normalizedMake,
+      normalizedModel,
+    });
+    if (canonicalCandidates.length > 0) {
+      logger.error(
+        {
+          label: "CANONICAL_LOOKUP_HIT",
+          canonicalKey: exactCanonicalKey,
+          source: "promoted-search",
+          candidateCount: canonicalCandidates.length,
+        },
+        "CANONICAL_LOOKUP_HIT",
+      );
+    } else {
+      logger.error(
+        {
+          label: "CANONICAL_LOOKUP_MISS",
+          canonicalKey: exactCanonicalKey,
+          source: "promoted-search",
+          candidateCount: 0,
+        },
+        "CANONICAL_LOOKUP_MISS",
+      );
+    }
+
+    const exactCanonicalMatches = canonicalCandidates.filter((record) => {
+      const vehicle = mapCanonicalVehicleToRecord(record);
+      if (!vehicle) return false;
+      return vehicle.year === candidate.year && normalizeMatchText(vehicle.model) === normalizedModel;
+    });
+    logStrategy("canonical-exact-year-make-model", exactCanonicalMatches);
+    if (exactCanonicalMatches.length > 0) {
+      return exactCanonicalMatches
+        .map((record) => {
+          const vehicle = mapCanonicalVehicleToRecord(record);
+          return vehicle
+            ? this.buildCanonicalMatchedCandidate({
+                vehicleId: record.id,
+                vehicle,
+                confidence: candidate.confidence,
+                matchReason: `Matched canonical ${vehicle.year} ${vehicle.make} ${vehicle.model}.`,
+              })
+            : null;
+        })
+        .filter((entry): entry is MatchedVehicleCandidate => entry !== null);
+    }
+
+    const normalizedCandidateMake = normalizedMake;
+    const normalizedCandidateModel = normalizedModel;
+    const strippedCandidateModel = stripTrimTokens(candidate.model);
+    const candidateModelFamily = buildModelFamily(candidate.model);
+    const candidateTokens = tokenizeMatchText(candidate.model);
+
+    const canonicalRankedMatches = canonicalCandidates
+      .map((record) => {
+        const vehicle = mapCanonicalVehicleToRecord(record);
+        if (!vehicle) return null;
+        const vehicleModel = normalizeMatchText(vehicle.model);
+        const vehicleFamily = buildModelFamily(vehicle.model);
+        const vehicleTokens = tokenizeMatchText(vehicle.model);
+        const overlapScore = getTokenOverlapScore(candidateTokens, vehicleTokens);
+        const yearDistance = Math.abs(vehicle.year - candidate.year);
+
+        let score = 0;
+        if (vehicleModel === normalizedCandidateModel) score += 100;
+        else if (normalizedCandidateModel && (vehicleModel.includes(normalizedCandidateModel) || normalizedCandidateModel.includes(vehicleModel))) score += 85;
+        else if (candidateModelFamily && vehicleFamily === candidateModelFamily) score += 70;
+        else if (strippedCandidateModel) {
+          const strippedVehicleModel = stripTrimTokens(vehicle.model);
+          if (strippedVehicleModel && (strippedVehicleModel === strippedCandidateModel || strippedVehicleModel.includes(strippedCandidateModel) || strippedCandidateModel.includes(strippedVehicleModel))) {
+            score += 65;
+          }
+        }
+
+        if (normalizedTrim && record.normalizedTrim && record.normalizedTrim.includes(normalizedTrim)) {
+          score += 10;
+        }
+
+        score += Math.round(overlapScore * 40);
+        if (yearDistance === 0) score += 20;
+        else if (yearDistance === 1) score += 12;
+        else if (yearDistance === 2) score += 8;
+        else if (yearDistance === 3) score += 4;
+
+        return { record, vehicle, score, yearDistance };
+      })
+      .filter((entry): entry is { record: NonNullable<typeof entry>["record"]; vehicle: VehicleRecord; score: number; yearDistance: number } => entry !== null && entry.score >= 45)
+      .sort((left, right) => right.score - left.score || left.yearDistance - right.yearDistance)
+      .slice(0, 5);
+
+    logStrategy("canonical-ranked-fallback", canonicalRankedMatches.map((entry) => entry.record), {
+      normalizedCandidateModel,
+      strippedCandidateModel,
+      candidateModelFamily,
+    });
+    if (canonicalRankedMatches.length > 0) {
+      const selected = canonicalRankedMatches.map((entry) =>
+        this.buildCanonicalMatchedCandidate({
+          vehicleId: entry.record.id,
+          vehicle: entry.vehicle,
+          confidence: candidate.confidence,
+          matchReason: `Matched canonical fallback ${entry.vehicle.year} ${entry.vehicle.make} ${entry.vehicle.model}.`,
+        }),
+      );
+      logger.error(
+        {
+          label: "CANONICAL_SELECTED",
+          source: "canonical-ranked-fallback",
+          selectedVehicleIds: selected.map((entry) => entry.vehicleId),
+        },
+        "CANONICAL_SELECTED",
+      );
+      return selected;
+    }
+
+    logger.error(
+      {
+        label: "CANONICAL_PROVIDER_ENRICH_START",
+        source: "provider-search-candidates",
+        candidate,
+        provider: providers.specsProviderName,
+      },
+      "CANONICAL_PROVIDER_ENRICH_START",
+    );
+    const providerCandidateResults = await providers.specsProvider.searchCandidates({
+      year: candidate.year,
+      make: candidate.make,
+      model: candidate.model,
+      trim: candidate.trim,
+    }).catch((error) => {
+      logger.error(
+        {
+          label: "CANONICAL_PROVIDER_ENRICH_FAILURE",
+          source: "provider-search-candidates",
+          provider: providers.specsProviderName,
+          candidate,
+          message: error instanceof Error ? error.message : "Unknown provider searchCandidates error",
+          stack: error instanceof Error ? error.stack : undefined,
+          code: typeof error === "object" && error && "code" in error ? (error as { code?: unknown }).code : undefined,
+          details: typeof error === "object" && error && "details" in error ? (error as { details?: unknown }).details : undefined,
+          hint: typeof error === "object" && error && "hint" in error ? (error as { hint?: unknown }).hint : undefined,
+        },
+        "CANONICAL_PROVIDER_ENRICH_FAILURE",
+      );
+      return [];
+    });
+    logStrategy("provider-search-candidates", providerCandidateResults);
+
+    if (providerCandidateResults.length === 0) {
+      logger.error(
+        {
+          label: "CANONICAL_PROVIDER_ENRICH_START",
+          source: "provider-search-vehicles",
+          candidate,
+          provider: providers.specsProviderName,
+        },
+        "CANONICAL_PROVIDER_ENRICH_START",
+      );
+    }
+    const providerBroadResults = providerCandidateResults.length > 0
+      ? providerCandidateResults
+      : await providers.specsProvider.searchVehicles({
+          year: String(candidate.year),
+          make: candidate.make,
+          model: candidate.model,
+        }).catch((error) => {
+          logger.error(
+            {
+              label: "CANONICAL_PROVIDER_ENRICH_FAILURE",
+              source: "provider-search-vehicles",
+              provider: providers.specsProviderName,
+              candidate,
+              message: error instanceof Error ? error.message : "Unknown provider searchVehicles error",
+              stack: error instanceof Error ? error.stack : undefined,
+              code: typeof error === "object" && error && "code" in error ? (error as { code?: unknown }).code : undefined,
+              details: typeof error === "object" && error && "details" in error ? (error as { details?: unknown }).details : undefined,
+              hint: typeof error === "object" && error && "hint" in error ? (error as { hint?: unknown }).hint : undefined,
+            },
+            "CANONICAL_PROVIDER_ENRICH_FAILURE",
+          );
+          return [];
+        });
+    logStrategy("provider-search-vehicles", providerBroadResults);
+
+    let enrichmentVehicles = providerBroadResults;
+    if (enrichmentVehicles.length === 0) {
+      const liveVehicleId = buildLiveVehicleId({
+        year: candidate.year,
+        make: candidate.make,
+        model: candidate.model,
+        trim: candidate.trim,
+      });
+      logger.error(
+        {
+          label: "CANONICAL_PROVIDER_ENRICH_START",
+          source: "provider-direct-specs",
+          provider: providers.specsProviderName,
+          candidate,
+          liveVehicleId,
+        },
+        "CANONICAL_PROVIDER_ENRICH_START",
+      );
+      const directVehicle = await providers.specsProvider.getVehicleSpecs({
+        vehicleId: liveVehicleId,
+        vehicle: null,
+      }).catch((error) => {
+        logger.error(
+          {
+            label: "CANONICAL_PROVIDER_ENRICH_FAILURE",
+            source: "provider-direct-specs",
+            provider: providers.specsProviderName,
+            candidate,
+            liveVehicleId,
+            message: error instanceof Error ? error.message : "Unknown provider getVehicleSpecs error",
+            stack: error instanceof Error ? error.stack : undefined,
+            code: typeof error === "object" && error && "code" in error ? (error as { code?: unknown }).code : undefined,
+            details: typeof error === "object" && error && "details" in error ? (error as { details?: unknown }).details : undefined,
+            hint: typeof error === "object" && error && "hint" in error ? (error as { hint?: unknown }).hint : undefined,
+          },
+          "CANONICAL_PROVIDER_ENRICH_FAILURE",
+        );
+        return null;
+      });
+      enrichmentVehicles = directVehicle ? [directVehicle] : [];
+      logStrategy("provider-direct-specs", enrichmentVehicles, { liveVehicleId });
+    }
+
+    if (enrichmentVehicles.length > 0) {
+      logger.error(
+        {
+          label: "CANONICAL_PROVIDER_ENRICH_SUCCESS",
+          provider: providers.specsProviderName,
+          candidate,
+          resultCount: enrichmentVehicles.length,
+          sampleVehicleIds: enrichmentVehicles.slice(0, 5).map((vehicle) => vehicle.id),
+        },
+        "CANONICAL_PROVIDER_ENRICH_SUCCESS",
+      );
+      const canonicalizedProviderResults = (
+        await Promise.all(
+        enrichmentVehicles.slice(0, 5).map(async (vehicle) => {
+          try {
+            const canonical = await upsertCanonicalVehicleFromProvider({
+              vehicle,
+              sourceProvider: providers.specsProviderName,
+              sourceVehicleId: vehicle.id,
+            });
+            return this.buildCanonicalMatchedCandidate({
+              vehicleId: canonical.id,
+              vehicle,
+              confidence: candidate.confidence,
+              matchReason: `Matched live provider result ${vehicle.year} ${vehicle.make} ${vehicle.model} and stored canonical catalog entry.`,
+            });
+          } catch (error) {
+            logger.error(
+              {
+                label: "CANONICAL_UPSERT_FAILURE",
+                provider: providers.specsProviderName,
+                candidate,
+                vehicleId: vehicle.id,
+                year: vehicle.year,
+                make: vehicle.make,
+                model: vehicle.model,
+                trim: vehicle.trim,
+                message: error instanceof Error ? error.message : "Unknown canonicalization error",
+                stack: error instanceof Error ? error.stack : undefined,
+                code: typeof error === "object" && error && "code" in error ? (error as { code?: unknown }).code : undefined,
+                details: typeof error === "object" && error && "details" in error ? (error as { details?: unknown }).details : undefined,
+                hint: typeof error === "object" && error && "hint" in error ? (error as { hint?: unknown }).hint : undefined,
+              },
+              "CANONICAL_UPSERT_FAILURE",
+            );
+            return null;
+          }
+        }),
+      )
+      ).filter((entry): entry is MatchedVehicleCandidate => entry !== null);
+      logStrategy("provider-canonicalized", canonicalizedProviderResults);
+      if (canonicalizedProviderResults.length > 0) {
+        logger.error(
+          {
+            label: "CANONICAL_SELECTED",
+            source: "provider-canonicalized",
+            selectedVehicleIds: canonicalizedProviderResults.map((entry) => entry.vehicleId),
+          },
+          "CANONICAL_SELECTED",
+        );
+        return canonicalizedProviderResults;
+      }
+      logger.error(
+        {
+          label: "CANONICAL_PROVIDER_ENRICH_FAILURE",
+          source: "provider-canonicalized",
+          provider: providers.specsProviderName,
+          candidate,
+          message: "Provider returned vehicles but canonical upsert did not produce any persisted canonical rows.",
+        },
+        "CANONICAL_PROVIDER_ENRICH_FAILURE",
+      );
+    }
+    logger.error(
+      {
+        label: "CANONICAL_PROVIDER_ENRICH_FAILURE",
+        source: "final-fallback",
+        provider: providers.specsProviderName,
+        candidate,
+        message: "No provider enrichment result was available; falling back to AI-only result.",
+      },
+      "CANONICAL_PROVIDER_ENRICH_FAILURE",
+    );
+    return [];
   }
 
   private async identifyFromCacheOnly(input: {

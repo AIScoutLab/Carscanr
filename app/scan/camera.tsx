@@ -26,6 +26,7 @@ type CameraStatus =
   | "Optimizing image"
   | "Preparing upload"
   | "Uploading image"
+  | "Identifying vehicle..."
   | "Waiting for identification"
   | "Waking backend, please wait..."
   | "Identify succeeded"
@@ -198,7 +199,7 @@ export default function ScanCameraScreen() {
               setStatus("Preparing upload");
             }
             if (stage === "identify request start") {
-              setStatus("Uploading image");
+              setStatus("Identifying vehicle...");
             }
             if (stage === "identify request success") {
               clearWaitingIdentifyTimeout();

@@ -21,6 +21,7 @@ let mutableUnlockStatus = {
 const MAX_UPLOAD_BYTES = 4.8 * 1024 * 1024;
 const BACKEND_WAKE_TIMEOUT_MS = 45000;
 const IDENTIFY_TIMEOUT_MS = 60000;
+const IDENTIFY_TIMEOUT_MS_AFTER_SLOW_WAKE = 90000;
 
 type IdentifyStageLogger = (stage: string, payload?: unknown) => void;
 type BackendHealthResponse = {
@@ -128,6 +129,10 @@ async function assertUploadSize(imageUri: string) {
       console.log("[scan-service] upload size check skipped", error instanceof Error ? error.message : error);
     }
   }
+}
+
+function nowIso() {
+  return new Date().toISOString();
 }
 
 function mapUsage(usage: BackendUsageResponse): SubscriptionStatus {
@@ -247,7 +252,6 @@ export const scanService = {
     }
     const accessToken = await authService.getAccessToken();
     const guestId = accessToken ? null : await guestSessionService.getGuestId();
-    const identifyTimeoutMs = options?.timeoutMs ?? IDENTIFY_TIMEOUT_MS;
     const identifyUrl = getIdentifyEndpointUrl();
     await assertUploadSize(imageUri);
     const usage = mutableUsage;
@@ -275,9 +279,10 @@ export const scanService = {
       fileSize: fileInfo.exists && typeof fileInfo.size === "number" ? fileInfo.size : null,
     });
 
-    options?.onStage?.("request url", { url: identifyUrl });
-    options?.onStage?.("request timeout", { timeoutMs: identifyTimeoutMs });
-    options?.onStage?.("health wake-up start", { url: `${getApiBaseUrlOrThrow()}/health`, timeoutMs: BACKEND_WAKE_TIMEOUT_MS });
+    const healthUrl = `${getApiBaseUrlOrThrow()}/health`;
+    const wakeStartedAt = Date.now();
+    const wakeStartedAtIso = nowIso();
+    options?.onStage?.("health wake-up start", { url: healthUrl, timeoutMs: BACKEND_WAKE_TIMEOUT_MS, startedAt: wakeStartedAtIso });
     try {
       await apiRequest<BackendHealthResponse>({
         path: "/health",
@@ -285,19 +290,40 @@ export const scanService = {
         headers: guestId ? { "x-carscanr-guest-id": guestId } : undefined,
         timeoutMs: BACKEND_WAKE_TIMEOUT_MS,
       });
-      options?.onStage?.("health wake-up success", { statusCode: 200 });
+      const wakeElapsedMs = Date.now() - wakeStartedAt;
+      options?.onStage?.("health wake-up success", { statusCode: 200, elapsedMs: wakeElapsedMs, endedAt: nowIso() });
     } catch (error) {
-      options?.onStage?.("health wake-up failure", error instanceof Error ? error.message : "Unknown health check error");
+      const wakeElapsedMs = Date.now() - wakeStartedAt;
+      options?.onStage?.("health wake-up failure", {
+        message: error instanceof Error ? error.message : "Unknown health check error",
+        elapsedMs: wakeElapsedMs,
+        endedAt: nowIso(),
+      });
       if (error instanceof ApiRequestError && error.code === "REQUEST_TIMEOUT") {
         throw new ApiRequestError("The backend took too long to wake up. Please try again.", {
           code: "BACKEND_WAKE_TIMEOUT",
-          details: { timeoutMs: BACKEND_WAKE_TIMEOUT_MS, url: `${getApiBaseUrlOrThrow()}/health` },
+          details: { timeoutMs: BACKEND_WAKE_TIMEOUT_MS, url: healthUrl },
         });
       }
       throw error;
     }
 
-    options?.onStage?.("identify request start", { url: identifyUrl, timeoutMs: identifyTimeoutMs });
+    const wakeElapsedMs = Date.now() - wakeStartedAt;
+    const identifyTimeoutMs =
+      wakeElapsedMs >= 15000
+        ? Math.max(options?.timeoutMs ?? IDENTIFY_TIMEOUT_MS, IDENTIFY_TIMEOUT_MS_AFTER_SLOW_WAKE)
+        : options?.timeoutMs ?? IDENTIFY_TIMEOUT_MS;
+    const identifyStartedAt = Date.now();
+    const identifyStartedAtIso = nowIso();
+    options?.onStage?.("identify timeout start", {
+      source: "post-health-success",
+      startedAt: identifyStartedAtIso,
+      timeoutMs: identifyTimeoutMs,
+      wakeElapsedMs,
+    });
+    options?.onStage?.("request url", { url: identifyUrl });
+    options?.onStage?.("request timeout", { timeoutMs: identifyTimeoutMs, source: "identify-fetch-only" });
+    options?.onStage?.("identify request start", { url: identifyUrl, timeoutMs: identifyTimeoutMs, startedAt: identifyStartedAtIso });
     let response;
     try {
       response = await apiRequestEnvelope<BackendScanResponse>({
@@ -309,12 +335,20 @@ export const scanService = {
         timeoutMs: identifyTimeoutMs,
       });
     } catch (error) {
-      options?.onStage?.("identify request failure", error instanceof Error ? error.message : "Unknown identify request error");
+      options?.onStage?.("identify request failure", {
+        message: error instanceof Error ? error.message : "Unknown identify request error",
+        elapsedMs: Date.now() - identifyStartedAt,
+        endedAt: nowIso(),
+        timeoutMs: identifyTimeoutMs,
+        code: error instanceof ApiRequestError ? error.code : undefined,
+      });
       throw error;
     }
     options?.onStage?.("identify request success", {
       provider: response.meta?.provider,
       requestId: response.requestId,
+      elapsedMs: Date.now() - identifyStartedAt,
+      endedAt: nowIso(),
     });
 
     if (response.meta?.provider) {

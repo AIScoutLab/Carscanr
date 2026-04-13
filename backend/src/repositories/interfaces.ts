@@ -36,6 +36,7 @@ export interface VehiclesRepository {
 }
 
 export interface CanonicalVehiclesRepository {
+  findById(id: string): Promise<CanonicalVehicleRecord | null>;
   findByCanonicalKey(canonicalKey: string): Promise<CanonicalVehicleRecord | null>;
   findPromotedMatch(input: {
     year: number;
@@ -43,6 +44,12 @@ export interface CanonicalVehiclesRepository {
     normalizedModel: string;
     normalizedTrim?: string | null;
   }): Promise<CanonicalVehicleRecord | null>;
+  searchPromoted(input: {
+    year?: number;
+    normalizedMake?: string;
+    normalizedModel?: string;
+    normalizedTrim?: string | null;
+  }): Promise<CanonicalVehicleRecord[]>;
   upsertCandidate(record: CanonicalVehicleRecord): Promise<CanonicalVehicleRecord>;
   promote(canonicalKey: string): Promise<void>;
   incrementPopularity(canonicalKey: string): Promise<void>;

@@ -80,7 +80,15 @@ function mapCanonicalVehicleRow(row: any): CanonicalVehicleRecord {
     make: row.make,
     model: row.model,
     trim: row.trim ?? null,
+    bodyType: row.body_type ?? null,
     vehicleType: row.vehicle_type ?? null,
+    engine: row.engine ?? null,
+    drivetrain: row.drivetrain ?? null,
+    transmission: row.transmission ?? null,
+    fuelType: row.fuel_type ?? null,
+    horsepower: row.horsepower ?? null,
+    torque: row.torque ?? null,
+    msrp: row.msrp ?? null,
     normalizedMake: row.normalized_make,
     normalizedModel: row.normalized_model,
     normalizedTrim: row.normalized_trim ?? null,
@@ -108,7 +116,15 @@ function canonicalVehicleToRow(record: CanonicalVehicleRecord) {
     make: record.make,
     model: record.model,
     trim: record.trim ?? null,
+    body_type: record.bodyType ?? null,
     vehicle_type: record.vehicleType ?? null,
+    engine: record.engine ?? null,
+    drivetrain: record.drivetrain ?? null,
+    transmission: record.transmission ?? null,
+    fuel_type: record.fuelType ?? null,
+    horsepower: record.horsepower ?? null,
+    torque: record.torque ?? null,
+    msrp: record.msrp ?? null,
     normalized_make: record.normalizedMake,
     normalized_model: record.normalizedModel,
     normalized_trim: record.normalizedTrim ?? null,
@@ -683,7 +699,7 @@ export class SupabaseVehiclesRepository implements VehiclesRepository {
     }
     if (input.make) query = query.ilike("make", `%${input.make}%`);
     if (input.model) query = query.ilike("model", `%${input.model}%`);
-    const { data, error } = await query.limit(20);
+    const { data, error } = await query.limit(100);
     if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to search vehicles.", error);
     return (data ?? []).map(mapVehicleRow);
   }
@@ -693,10 +709,10 @@ export class SupabaseVehiclesRepository implements VehiclesRepository {
       .from("vehicles")
       .select("*")
       .eq("year", input.year)
-      .ilike("make", input.make)
-      .ilike("model", input.model);
+      .ilike("make", `%${input.make}%`)
+      .ilike("model", `%${input.model}%`);
     if (input.trim) query = query.ilike("trim", `%${input.trim}%`);
-    const { data, error } = await query.limit(5);
+    const { data, error } = await query.limit(25);
     if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to search candidate vehicles.", error);
     return (data ?? []).map(mapVehicleRow);
   }
@@ -705,9 +721,30 @@ export class SupabaseVehiclesRepository implements VehiclesRepository {
 export class SupabaseCanonicalVehiclesRepository implements CanonicalVehiclesRepository {
   constructor(private readonly client: DbClient) {}
 
+  async findById(id: string): Promise<CanonicalVehicleRecord | null> {
+    const { data, error } = await this.client.from("canonical_vehicles").select("*").eq("id", id).maybeSingle();
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load canonical vehicle by id.", error);
+    return data ? mapCanonicalVehicleRow(data) : null;
+  }
+
   async findByCanonicalKey(canonicalKey: string): Promise<CanonicalVehicleRecord | null> {
     const { data, error } = await this.client.from("canonical_vehicles").select("*").eq("canonical_key", canonicalKey).maybeSingle();
-    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load canonical vehicle.", error);
+    if (error) {
+      logger.error(
+        {
+          label: "CANONICAL_LOOKUP_FAILURE",
+          table: "canonical_vehicles",
+          operation: "select",
+          canonicalKey,
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+        },
+        "CANONICAL_LOOKUP_FAILURE",
+      );
+      throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load canonical vehicle.", error);
+    }
     return data ? mapCanonicalVehicleRow(data) : null;
   }
 
@@ -735,6 +772,38 @@ export class SupabaseCanonicalVehiclesRepository implements CanonicalVehiclesRep
     const { data, error } = await query.limit(1).maybeSingle();
     if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load promoted canonical vehicle.", error);
     return data ? mapCanonicalVehicleRow(data) : null;
+  }
+
+  async searchPromoted(input: {
+    year?: number;
+    normalizedMake?: string;
+    normalizedModel?: string;
+    normalizedTrim?: string | null;
+  }): Promise<CanonicalVehicleRecord[]> {
+    let query = this.client
+      .from("canonical_vehicles")
+      .select("*")
+      .eq("promotion_status", "promoted")
+      .not("specs_json", "is", null)
+      .order("popularity_score", { ascending: false })
+      .order("year", { ascending: false });
+
+    if (input.year) {
+      query = query.gte("year", input.year - 3).lte("year", input.year + 3);
+    }
+    if (input.normalizedMake) {
+      query = query.eq("normalized_make", input.normalizedMake);
+    }
+    if (input.normalizedModel) {
+      query = query.ilike("normalized_model", `%${input.normalizedModel}%`);
+    }
+    if (input.normalizedTrim) {
+      query = query.ilike("normalized_trim", `%${input.normalizedTrim}%`);
+    }
+
+    const { data, error } = await query.limit(100);
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to search promoted canonical vehicles.", error);
+    return (data ?? []).map(mapCanonicalVehicleRow);
   }
 
   async upsertCandidate(record: CanonicalVehicleRecord): Promise<CanonicalVehicleRecord> {
@@ -775,7 +844,23 @@ export class SupabaseCanonicalVehiclesRepository implements CanonicalVehiclesRep
       .upsert(canonicalVehicleToRow(merged), { onConflict: "canonical_key" })
       .select("*")
       .single();
-    if (error) throw new AppError(500, "SUPABASE_UPSERT_FAILED", "Failed to persist canonical vehicle candidate.", error);
+    if (error) {
+      logger.error(
+        {
+          label: "CANONICAL_REPOSITORY_UPSERT_FAILURE",
+          table: "canonical_vehicles",
+          operation: "upsert",
+          canonicalKey: record.canonicalKey,
+          canonicalId: record.id,
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+        },
+        "CANONICAL_REPOSITORY_UPSERT_FAILURE",
+      );
+      throw new AppError(500, "SUPABASE_UPSERT_FAILED", "Failed to persist canonical vehicle candidate.", error);
+    }
     return mapCanonicalVehicleRow(requireData(data, "Canonical vehicle upsert returned no row."));
   }
 

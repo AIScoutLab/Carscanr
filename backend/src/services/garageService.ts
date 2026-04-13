@@ -1,11 +1,12 @@
 import crypto from "node:crypto";
 import { AppError } from "../errors/appError.js";
+import { resolveStoredVehicleRecordById } from "../lib/canonicalVehicleCatalog.js";
 import { repositories } from "../lib/repositoryRegistry.js";
 
 export class GarageService {
   async list(userId: string) {
     const items = await repositories.garageItems.listByUser(userId);
-    const vehicles = await Promise.all(items.map((item) => repositories.vehicles.findById(item.vehicleId)));
+    const vehicles = await Promise.all(items.map((item) => resolveStoredVehicleRecordById(item.vehicleId)));
     return items.map((item, index) => ({
       ...item,
       vehicle: vehicles[index] ?? null,
@@ -19,7 +20,7 @@ export class GarageService {
     notes: string;
     favorite: boolean;
   }) {
-    const vehicle = await repositories.vehicles.findById(input.vehicleId);
+    const vehicle = await resolveStoredVehicleRecordById(input.vehicleId);
     if (!vehicle) {
       throw new AppError(404, "VEHICLE_NOT_FOUND", "Cannot save unknown vehicle to garage.");
     }

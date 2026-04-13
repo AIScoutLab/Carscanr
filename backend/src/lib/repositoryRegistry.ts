@@ -119,8 +119,10 @@ function createMissingRepositories(): RepositoryRegistry {
       searchCandidates: async () => notConfigured(),
     },
     canonicalVehicles: {
+      findById: async () => notConfigured(),
       findByCanonicalKey: async () => notConfigured(),
       findPromotedMatch: async () => notConfigured(),
+      searchPromoted: async () => notConfigured(),
       upsertCandidate: async () => notConfigured(),
       promote: async () => notConfigured(),
       incrementPopularity: async () => notConfigured(),

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { AppError } from "../errors/appError.js";
 import { buildUnlockKey, buildVehicleKey } from "../lib/cacheKeys.js";
+import { resolveStoredVehicleRecordById } from "../lib/canonicalVehicleCatalog.js";
 import { repositories } from "../lib/repositoryRegistry.js";
 import { VehicleRecord } from "../types/domain.js";
 import { SubscriptionService } from "./subscriptionService.js";
@@ -126,7 +127,7 @@ export class UnlockService {
     vehicleId: string;
     scanId?: string | null;
   }): Promise<UnlockEntitlementResult> {
-    const vehicle = await repositories.vehicles.findById(input.vehicleId);
+    const vehicle = await resolveStoredVehicleRecordById(input.vehicleId);
     if (!vehicle) {
       throw new AppError(404, "VEHICLE_NOT_FOUND", "Vehicle not found.");
     }

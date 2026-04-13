@@ -1,7 +1,6 @@
 import { router, useLocalSearchParams } from "expo-router";
-import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { AppContainer } from "@/components/AppContainer";
 import { BackButton } from "@/components/BackButton";
 import { CandidateMatchCard } from "@/components/CandidateMatchCard";
@@ -144,7 +143,6 @@ export default function ScanResultScreen() {
     useFreeUnlockForVehicle,
     refreshStatus,
   } = useSubscription();
-  const renderCountRef = useRef(0);
   const sectionStateRef = useRef<{
     lockedPreview: boolean;
     alternatives: number;
@@ -156,8 +154,6 @@ export default function ScanResultScreen() {
   const confidenceOpacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    console.log("[scan-result] params", params);
-    console.log("[scan-result] mounted", { scanId, imageUri: params.imageUri });
     Animated.parallel([
       Animated.timing(screenOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
       Animated.timing(screenTranslate, { toValue: 0, duration: 200, useNativeDriver: true }),
@@ -169,16 +165,13 @@ export default function ScanResultScreen() {
     Animated.timing(confidenceOpacity, { toValue: 1, duration: 120, delay: 100, useNativeDriver: true }).start();
     scanService.getRecentScans().then((items) => {
       try {
-        console.log("[scan-result] recent scans", { count: items.length, scanId });
         const matched = items.find((entry) => entry.id === scanId) ?? null;
-        console.log("[scan-result] raw scan", matched);
         setScan(matched);
         if (!matched) {
           setNormalized(null);
           setError("Scan result is no longer available.");
         } else {
           const normalizedScan = normalizeScanForResult(matched);
-          console.log("[scan-result] normalized scan", normalizedScan);
           setNormalized(normalizedScan);
           setError(null);
         }
@@ -194,15 +187,6 @@ export default function ScanResultScreen() {
       console.log("[scan-result] unmounted", { scanId });
     };
   }, [scanId]);
-
-
-  renderCountRef.current += 1;
-  console.log("[scan-result] render start", {
-    render: renderCountRef.current,
-    scanId,
-    hasScan: Boolean(scan),
-    hasNormalized: Boolean(normalized),
-  });
 
   const fallbackVehicle: NormalizedVehicle = {
     id: null,
@@ -301,18 +285,6 @@ export default function ScanResultScreen() {
         confidence: bestMatch.confidence ?? confidenceScore,
         thumbnailUrl: bestMatch.thumbnailUrl ?? "",
       });
-      console.log("[scan-result] header ready", {
-        bestMatch,
-        candidatesLength: candidates.length,
-        normalizedLength: normalized.candidates.length,
-        renderKeys: candidatesForRender.map((candidate) => candidate.renderKey),
-        bestKey,
-        duplicateBest,
-        alternativesLength: alternatives.length,
-        hasFullAccess,
-        unlockedForVehicle,
-        freeUnlocksRemaining,
-      });
     }
   } catch (err) {
     console.log("[scan-result] derived fields failed", err);
@@ -334,7 +306,6 @@ export default function ScanResultScreen() {
     const zip = "60610";
     const mileage = "18400";
     const condition = "excellent";
-    console.log("[scan-result] market fetch", { vehicleId, zip, mileage, condition });
     Promise.all([
       vehicleService.getValue(vehicleId, zip, mileage, condition).catch((err) => {
         console.log("[scan-result] value fetch failed", err);
@@ -346,10 +317,7 @@ export default function ScanResultScreen() {
       }),
     ])
       .then(([valuation, listings]) => {
-        console.log("[scan-result] value response", valuation);
-        console.log("[scan-result] listings response", { count: listings.length, sample: listings[0] });
         const snapshot = buildMarketSnapshot(valuation, listings);
-        console.log("[scan-result] market snapshot", snapshot);
         setMarketSnapshot(snapshot);
       })
       .catch((err) => {
@@ -361,12 +329,6 @@ export default function ScanResultScreen() {
   useEffect(() => {
     if (!normalized) return;
     const nextState = { lockedPreview: !hasFullAccess, alternatives: alternatives.length };
-    const prev = sectionStateRef.current;
-    if (!prev) {
-      console.log("[scan-result] section state", nextState);
-    } else if (prev.lockedPreview !== nextState.lockedPreview || prev.alternatives !== nextState.alternatives) {
-      console.log("[scan-result] section state changed", { prev, next: nextState });
-    }
     sectionStateRef.current = nextState;
   }, [normalized, hasFullAccess, alternatives.length]);
 
@@ -415,19 +377,26 @@ export default function ScanResultScreen() {
     router.push("/(tabs)/garage");
   };
 
-  const useCandidate = (candidateId: string) => {
-    console.log("[tap] result-use-candidate", { candidateId });
-    router.push(`/vehicle/${candidateId}`);
+  const explainBestEffortOnly = () => {
+    console.log("[tap] result-best-effort-info");
+    Alert.alert(
+      "Best-effort identification",
+      "We identified the vehicle from the photo, but couldn’t link it to the full specs catalog yet. Try rescanning from a cleaner front or rear angle for deeper details.",
+    );
   };
 
-  const renderSection = (label: string, render: () => ReactNode) => {
-    try {
-      console.log(`[scan-result] render ${label}`);
-      return render();
-    } catch (err) {
-      console.log(`[scan-result] render failed ${label}`, err);
-      return null;
+  const openVehicleIfAvailable = (vehicleId: string | null, source: string) => {
+    console.log("[tap] result-open-request", { source, vehicleId });
+    if (!vehicleId) {
+      explainBestEffortOnly();
+      return;
     }
+    router.push(`/vehicle/${vehicleId}`);
+  };
+
+  const useCandidate = (candidateId: string) => {
+    console.log("[tap] result-use-candidate", { candidateId });
+    openVehicleIfAvailable(candidateId || null, "candidate-card");
   };
 
   return (
@@ -455,121 +424,116 @@ export default function ScanResultScreen() {
             />
           ) : null}
           
-          {renderSection("header", () => (
-            <>
-              <SectionHeader title="Best Match" subtitle="Our strongest identification from this photo." />
-              <Animated.View style={{ opacity: bestMatchOpacity, transform: [{ scale: bestMatchScale }] }}>
-                <Pressable
-                  style={styles.primaryCard}
-                  onPress={() => {
-                    if (bestMatch.id) {
-                      console.log("[tap] result-best-match-open", { vehicleId: bestMatch.id });
-                      router.push(`/vehicle/${bestMatch.id}`);
-                    }
-                  }}
-                >
-                  <View style={styles.primaryAccent} />
-                  <Text style={styles.primaryTitle}>{bestMatch.year ?? "--"} {bestMatch.make} {bestMatch.model}</Text>
-                  <Text style={styles.subtitle}>{bestMatch.trim ?? "Likely trim match"}</Text>
-                  <Text style={styles.confidenceLine}>{confidenceLine}</Text>
-                  <Text style={styles.insightLine}>{insightCopy}</Text>
-                  <Animated.View style={[styles.confidenceRow, { opacity: confidenceOpacity }]}>
-                    <View style={[styles.confidencePill, { backgroundColor: confidencePalette.pill }]}>
-                      <View style={[styles.confidenceDot, { backgroundColor: confidencePalette.dot }]} />
-                      <Text style={[styles.confidencePillValue, { color: confidencePalette.text }, isHighConfidence && styles.confidencePositive]}>
-                        {formatConfidence(displayConfidenceScore)}
-                      </Text>
-                    </View>
-                    <Text style={[styles.confidenceCopy, { color: confidencePalette.label }, isHighConfidence && styles.confidencePositive]}>
-                      {confidenceTone(displayConfidenceScore)}
+          <>
+            <SectionHeader title="Best Match" subtitle="Our strongest identification from this photo." />
+            <Animated.View style={{ opacity: bestMatchOpacity, transform: [{ scale: bestMatchScale }] }}>
+              <TouchableOpacity
+                style={[styles.primaryCard, !bestMatch.id && styles.primaryCardDisabled]}
+                activeOpacity={0.88}
+                accessibilityRole="button"
+                onPress={() => openVehicleIfAvailable(bestMatch.id, "best-match-card")}
+              >
+                <View style={styles.primaryAccent} pointerEvents="none" />
+                <Text style={styles.primaryTitle}>{bestMatch.year ?? "--"} {bestMatch.make} {bestMatch.model}</Text>
+                <Text style={styles.subtitle}>{bestMatch.trim ?? "Likely trim match"}</Text>
+                <Text style={styles.confidenceLine}>{confidenceLine}</Text>
+                <Text style={styles.insightLine}>{insightCopy}</Text>
+                <Animated.View style={[styles.confidenceRow, { opacity: confidenceOpacity }]}>
+                  <View style={[styles.confidencePill, { backgroundColor: confidencePalette.pill }]}>
+                    <View style={[styles.confidenceDot, { backgroundColor: confidencePalette.dot }]} />
+                    <Text style={[styles.confidencePillValue, { color: confidencePalette.text }, isHighConfidence && styles.confidencePositive]}>
+                      {formatConfidence(displayConfidenceScore)}
                     </Text>
-                  </Animated.View>
-                  <Text style={styles.confidenceNote}>This is the most likely match based on visible design cues from your photo.</Text>
-                  {!hasFullAccess ? <Text style={styles.preview}>Premium details are locked until you use a free unlock or upgrade to Pro.</Text> : null}
-                </Pressable>
-              </Animated.View>
-            </>
-          ))}
-          {!hasFullAccess
-            ? renderSection("pro-lock", () => (
-                <>
-                  <ProLockCard onPress={() => router.push("/paywall")} />
-                  <LockedContentPreview
-                    locked
-                    title="Full detail preview"
-                    description="You can still see the shape of the result. Pro reveals the full vehicle profile, value, and listings."
-                  >
-                    <View style={styles.previewCard}>
-                      <Text style={styles.previewHeading}>What opens next</Text>
-                      <Text style={styles.previewBody}>Original MSRP, engine, drivetrain, colors, market value, dealer listings, and your saved photo history for this vehicle.</Text>
-                    </View>
-                  </LockedContentPreview>
-                  <View style={styles.unlockCard}>
-                    <Text style={styles.unlockTitle}>Use 1 of your free unlocks</Text>
-                    <Text style={styles.unlockBody}>This unlock gives full premium access for this vehicle.</Text>
-                    <Text style={styles.unlockNote}>
-                      {Math.max(0, freeUnlocksRemaining)} of {freeUnlocksLimit} free unlocks remaining
-                    </Text>
-                    {freeUnlocksRemaining > 0 ? (
-                      <PrimaryButton
-                        label={isUnlocking ? "Applying unlock..." : "Use 1 Free Unlock"}
-                        onPress={async () => {
-                          console.log("[tap] result-use-free-unlock", { vehicleId: bestMatch.id });
-                          if (!bestMatch.id) return;
-                          const success = await useFreeUnlockForVehicle(bestMatch.id);
-                          if (success) {
-                            await refreshStatus();
-                            router.push(`/vehicle/${bestMatch.id}`);
-                          }
-                        }}
-                        disabled={!bestMatch.id || isUnlocking}
-                      />
-                    ) : null}
-                    <PrimaryButton label="Unlock Pro" secondary onPress={() => { console.log("[tap] result-unlock-pro"); router.push("/paywall"); }} />
                   </View>
-                </>
-              ))
-            : renderSection("insights", () => (
-                <>
-                  <MarketSnapshotCard
-                    avgPrice={marketSnapshot?.avgPrice ?? null}
-                    priceRange={marketSnapshot?.priceRange ?? null}
-                    dealRating={marketSnapshot?.dealRating ?? null}
+                  <Text style={[styles.confidenceCopy, { color: confidencePalette.label }, isHighConfidence && styles.confidencePositive]}>
+                    {confidenceTone(displayConfidenceScore)}
+                  </Text>
+                </Animated.View>
+                <Text style={styles.confidenceNote}>This is the most likely match based on visible design cues from your photo.</Text>
+                {!bestMatch.id ? (
+                  <Text style={styles.bestEffortNote}>Best-effort identification. Full specs catalog match is not available for this result yet.</Text>
+                ) : null}
+                {!hasFullAccess ? <Text style={styles.preview}>Premium details are locked until you use a free unlock or upgrade to Pro.</Text> : null}
+              </TouchableOpacity>
+            </Animated.View>
+          </>
+          {!hasFullAccess ? (
+            <>
+              <ProLockCard onPress={() => { console.log("[tap] result-pro-lock-card"); router.push("/paywall"); }} />
+              <LockedContentPreview
+                locked
+                title="Full detail preview"
+                description="You can still see the shape of the result. Pro reveals the full vehicle profile, value, and listings."
+              >
+                <View style={styles.previewCard}>
+                  <Text style={styles.previewHeading}>What opens next</Text>
+                  <Text style={styles.previewBody}>Original MSRP, engine, drivetrain, colors, market value, dealer listings, and your saved photo history for this vehicle.</Text>
+                </View>
+              </LockedContentPreview>
+              <View style={styles.unlockCard}>
+                <Text style={styles.unlockTitle}>Use 1 of your free unlocks</Text>
+                <Text style={styles.unlockBody}>This unlock gives full premium access for this vehicle.</Text>
+                <Text style={styles.unlockNote}>
+                  {Math.max(0, freeUnlocksRemaining)} of {freeUnlocksLimit} free unlocks remaining
+                </Text>
+                {freeUnlocksRemaining > 0 ? (
+                  <PrimaryButton
+                    label={isUnlocking ? "Applying unlock..." : "Use 1 Free Unlock"}
+                    onPress={async () => {
+                      console.log("[tap] result-use-free-unlock", { vehicleId: bestMatch.id });
+                      if (!bestMatch.id) {
+                        explainBestEffortOnly();
+                        return;
+                      }
+                      const success = await useFreeUnlockForVehicle(bestMatch.id);
+                      if (success) {
+                        await refreshStatus();
+                        openVehicleIfAvailable(bestMatch.id, "free-unlock-continue");
+                      }
+                    }}
+                    disabled={isUnlocking}
                   />
-                  <OwnershipInsightsCard />
-                </>
+                ) : null}
+                <PrimaryButton label="Unlock Pro" secondary onPress={() => { console.log("[tap] result-unlock-pro"); router.push("/paywall"); }} />
+              </View>
+            </>
+          ) : (
+            <>
+              <MarketSnapshotCard
+                avgPrice={marketSnapshot?.avgPrice ?? null}
+                priceRange={marketSnapshot?.priceRange ?? null}
+                dealRating={marketSnapshot?.dealRating ?? null}
+              />
+              <OwnershipInsightsCard />
+            </>
+          )}
+          {alternatives.length > 0 ? (
+            <>
+              <SectionHeader title="Other Possibilities" subtitle="Helpful alternatives if the best match doesn’t look quite right." />
+              {alternatives.map((candidate) => (
+                <CandidateMatchCard
+                  key={candidate.renderKey}
+                  candidate={{
+                    id: candidate.id ?? "",
+                    year: candidate.year ?? 0,
+                    make: candidate.make,
+                    model: candidate.model,
+                    trim: candidate.trim && candidate.trim.length > 0 ? candidate.trim : undefined,
+                    confidence: candidate.confidence ?? 0,
+                    thumbnailUrl: candidate.thumbnailUrl ?? "",
+                  }}
+                  onPress={() => useCandidate(candidate.id ?? "")}
+                />
               ))}
-          {alternatives.length > 0
-            ? renderSection("alternatives", () => (
-                <>
-                  <SectionHeader title="Other Possibilities" subtitle="Helpful alternatives if the best match doesn’t look quite right." />
-                  {alternatives.map((candidate) => (
-                    <CandidateMatchCard
-                      key={candidate.renderKey}
-                      candidate={{
-                        id: candidate.id ?? "unknown",
-                        year: candidate.year ?? 0,
-                        make: candidate.make,
-                        model: candidate.model,
-                        trim: candidate.trim && candidate.trim.length > 0 ? candidate.trim : undefined,
-                        confidence: candidate.confidence ?? 0,
-                        thumbnailUrl: candidate.thumbnailUrl ?? "",
-                      }}
-                      onPress={() => candidate.id && useCandidate(candidate.id)}
-                    />
-                  ))}
-                </>
-              ))
-            : null}
+            </>
+          ) : null}
           <PrimaryButton label="Save to Garage" onPress={saveToGarage} />
           <PrimaryButton
             label="Open Full Vehicle Detail"
             secondary
             onPress={() => {
-              if (bestMatch.id) {
-                console.log("[tap] result-open-full-detail", { vehicleId: bestMatch.id });
-                router.push(`/vehicle/${bestMatch.id}`);
-              }
+              console.log("[tap] result-open-full-detail", { vehicleId: bestMatch.id });
+              openVehicleIfAvailable(bestMatch.id, "open-full-detail");
             }}
           />
           <Text style={styles.notRight}>Not right? Try one of the other possibilities above, or rescan from a cleaner front or rear angle.</Text>
@@ -586,6 +550,9 @@ const styles = StyleSheet.create({
     ...cardStyles.primaryTint,
     gap: 10,
     overflow: "hidden",
+  },
+  primaryCardDisabled: {
+    opacity: 0.97,
   },
   primaryAccent: {
     position: "absolute",
@@ -621,6 +588,7 @@ const styles = StyleSheet.create({
   confidenceLine: { ...Typography.caption, color: Colors.textMuted },
   insightLine: { ...Typography.bodyStrong, color: Colors.textStrong },
   preview: { ...Typography.caption, color: Colors.warning },
+  bestEffortNote: { ...Typography.caption, color: Colors.accent },
   unlockCard: {
     ...cardStyles.secondary,
     gap: 10,

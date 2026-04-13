@@ -1,8 +1,6 @@
-import crypto from "node:crypto";
 import { AppError } from "../errors/appError.js";
 import {
   buildCacheDescriptor,
-  buildCanonicalKey,
   CACHE_RETENTION_MS,
   CachedServiceResult,
   createListingsCacheRow,
@@ -13,13 +11,14 @@ import {
   getSpecsCacheKey,
   getValuesCacheKey,
 } from "../lib/providerCache.js";
+import { mapCanonicalVehicleToRecord, resolveStoredVehicleRecordById, upsertCanonicalVehicleFromProvider } from "../lib/canonicalVehicleCatalog.js";
 import { logger } from "../lib/logger.js";
 import { providers } from "../lib/providerRegistry.js";
 import { repositories } from "../lib/repositoryRegistry.js";
 import { parseLiveVehicleId } from "../providers/marketcheck/vehicleId.js";
 import { MockVehicleListingsProvider } from "../providers/mock/mockVehicleListingsProvider.js";
 import { MockVehicleValueProvider } from "../providers/mock/mockVehicleValueProvider.js";
-import { CanonicalVehicleRecord, ListingRecord, ValuationRecord, VehicleRecord } from "../types/domain.js";
+import { ListingRecord, ValuationRecord, VehicleRecord } from "../types/domain.js";
 
 const mockValueProvider = new MockVehicleValueProvider();
 const mockListingsProvider = new MockVehicleListingsProvider();
@@ -67,68 +66,6 @@ async function writeUsageLog(input: Parameters<typeof createProviderApiUsageLog>
   });
 }
 
-function mapCanonicalVehicleToRecord(record: CanonicalVehicleRecord): VehicleRecord | null {
-  return record.specsJson ?? null;
-}
-
-function buildCanonicalVehicleCandidate(input: {
-  vehicle: VehicleRecord;
-  sourceProvider: string;
-  sourceVehicleId: string;
-}): CanonicalVehicleRecord {
-  const currentIso = nowIso();
-  const descriptor = buildCacheDescriptor({ vehicle: input.vehicle });
-  if (!descriptor) {
-    throw new Error("Unable to build canonical vehicle candidate descriptor.");
-  }
-
-  return {
-    id: crypto.randomUUID(),
-    year: input.vehicle.year,
-    make: input.vehicle.make,
-    model: input.vehicle.model,
-    trim: input.vehicle.trim,
-    vehicleType: input.vehicle.vehicleType,
-    normalizedMake: descriptor.normalizedMake,
-    normalizedModel: descriptor.normalizedModel,
-    normalizedTrim: descriptor.normalizedTrim || null,
-    normalizedVehicleType: input.vehicle.vehicleType,
-    canonicalKey: buildCanonicalKey({
-      year: input.vehicle.year,
-      make: input.vehicle.make,
-      model: input.vehicle.model,
-      trim: input.vehicle.trim,
-      vehicleType: input.vehicle.vehicleType,
-    }),
-    specsJson: input.vehicle,
-    overviewJson: {
-      bodyStyle: input.vehicle.bodyStyle,
-      mpgOrRange: input.vehicle.mpgOrRange,
-      colors: input.vehicle.colors,
-    },
-    defaultImageUrl: null,
-    sourceProvider: input.sourceProvider,
-    sourceVehicleId: input.sourceVehicleId,
-    popularityScore: 1,
-    promotionStatus: "candidate",
-    firstSeenAt: currentIso,
-    lastSeenAt: currentIso,
-    lastPromotedAt: null,
-    createdAt: currentIso,
-    updatedAt: currentIso,
-  };
-}
-
-async function maybeUpsertCanonicalCandidate(input: {
-  vehicle: VehicleRecord;
-  sourceProvider: string;
-  sourceVehicleId: string;
-}) {
-  const candidate = buildCanonicalVehicleCandidate(input);
-  await repositories.canonicalVehicles.upsertCandidate(candidate);
-  await repositories.canonicalVehicles.incrementPopularity(candidate.canonicalKey);
-}
-
 export class VehicleService {
   async searchVehicles(query: {
     year?: string;
@@ -139,13 +76,23 @@ export class VehicleService {
     if (liveResults.length > 0) {
       return liveResults;
     }
+    const canonicalResults = await repositories.canonicalVehicles.searchPromoted({
+      year: query.year ? Number(query.year) : undefined,
+      normalizedMake: query.make ? query.make.toLowerCase().trim() : undefined,
+      normalizedModel: query.model ? query.model.toLowerCase().trim() : undefined,
+    });
+    if (canonicalResults.length > 0) {
+      return canonicalResults
+        .map(mapCanonicalVehicleToRecord)
+        .filter((vehicle): vehicle is VehicleRecord => vehicle !== null);
+    }
     return repositories.vehicles.search(query);
   }
 
   async getSpecs(vehicleId: string): Promise<CachedServiceResult<VehicleRecord>> {
     const currentIso = nowIso();
     const isLiveVehicle = Boolean(parseLiveVehicleId(vehicleId));
-    const vehicle = isLiveVehicle ? null : await repositories.vehicles.findById(vehicleId);
+    const vehicle = isLiveVehicle ? null : await resolveStoredVehicleRecordById(vehicleId);
 
     if (vehicle) {
       return {
@@ -236,7 +183,7 @@ export class VehicleService {
       const liveVehicle = await providers.specsProvider.getVehicleSpecs({ vehicleId, vehicle });
       if (liveVehicle) {
         if (!vehicle) {
-          await maybeUpsertCanonicalCandidate({
+          await upsertCanonicalVehicleFromProvider({
             vehicle: liveVehicle,
             sourceProvider: providers.specsProviderName,
             sourceVehicleId: vehicleId,
@@ -303,7 +250,7 @@ export class VehicleService {
   }): Promise<CachedServiceResult<ValuationRecord>> {
     const currentIso = nowIso();
     const isLiveVehicle = Boolean(parseLiveVehicleId(input.vehicleId));
-    const vehicle = isLiveVehicle ? null : await repositories.vehicles.findById(input.vehicleId);
+    const vehicle = isLiveVehicle ? null : await resolveStoredVehicleRecordById(input.vehicleId);
     const descriptor = buildCacheDescriptor({
       vehicle,
       parsed: parseLiveVehicleId(input.vehicleId),
@@ -438,7 +385,7 @@ export class VehicleService {
   }): Promise<CachedServiceResult<ListingRecord[]>> {
     const currentIso = nowIso();
     const isLiveVehicle = Boolean(parseLiveVehicleId(input.vehicleId));
-    const vehicle = isLiveVehicle ? null : await repositories.vehicles.findById(input.vehicleId);
+    const vehicle = isLiveVehicle ? null : await resolveStoredVehicleRecordById(input.vehicleId);
     const descriptor = buildCacheDescriptor({
       vehicle,
       parsed: parseLiveVehicleId(input.vehicleId),

@@ -40,6 +40,7 @@ type DebugStatus =
   | "Optimizing image"
   | "Preparing upload"
   | "Uploading image"
+  | "Identifying vehicle..."
   | "Waiting for identification"
   | "Waking backend, please wait..."
   | "Identify succeeded"
@@ -282,12 +283,6 @@ export default function ScanScreen() {
         recordStage("preparing upload", { source }, flowId);
         setDebugStatus("Uploading image");
         beginIdentifyPendingStatus(flowId);
-        console.log("[scan] identify request start", {
-          source,
-          uri: optimizedSelection.cachedUri,
-          mimeType: optimizedSelection.mimeType,
-          fileSize: optimizedSelection.fileSize,
-        });
         const result = await scanService.identifyVehicle(optimizedSelection.cachedUri!, {
           timeoutMs: IDENTIFY_TIMEOUT_MS,
           onStage: (stage, payload) => {
@@ -301,7 +296,7 @@ export default function ScanScreen() {
               setDebugStatus("Preparing upload");
             }
             if (stage === "identify request start") {
-              setDebugStatus("Uploading image");
+              setDebugStatus("Identifying vehicle...");
             }
             if (stage === "identify request success") {
               clearPendingIdentifyTimer();

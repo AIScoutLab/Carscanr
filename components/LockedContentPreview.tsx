@@ -18,8 +18,8 @@ export function LockedContentPreview({
     <View style={styles.container}>
       <View style={[styles.content, locked && styles.contentLocked]}>{children}</View>
       {locked ? (
-        <View style={styles.overlay}>
-          <View style={styles.blur}>
+        <View style={styles.overlay} pointerEvents="none">
+          <View style={styles.blur} pointerEvents="none">
             <View style={styles.callout}>
               <Text style={styles.title}>{title}</Text>
               <Text style={styles.description}>{description}</Text>

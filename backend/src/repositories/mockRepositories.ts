@@ -75,6 +75,10 @@ export class MockVehiclesRepository implements VehiclesRepository {
 }
 
 export class MockCanonicalVehiclesRepository implements CanonicalVehiclesRepository {
+  async findById(id: string): Promise<CanonicalVehicleRecord | null> {
+    return db.canonicalVehicles.find((vehicle) => vehicle.id === id) ?? null;
+  }
+
   async findByCanonicalKey(canonicalKey: string): Promise<CanonicalVehicleRecord | null> {
     return db.canonicalVehicles.find((vehicle) => vehicle.canonicalKey === canonicalKey) ?? null;
   }
@@ -97,6 +101,22 @@ export class MockCanonicalVehiclesRepository implements CanonicalVehiclesReposit
         return vehicle.normalizedTrim == null;
       }) ?? null
     );
+  }
+
+  async searchPromoted(input: {
+    year?: number;
+    normalizedMake?: string;
+    normalizedModel?: string;
+    normalizedTrim?: string | null;
+  }): Promise<CanonicalVehicleRecord[]> {
+    return db.canonicalVehicles.filter((vehicle) => {
+      if (vehicle.promotionStatus !== "promoted" || !vehicle.specsJson) return false;
+      if (input.year && Math.abs(vehicle.year - input.year) > 3) return false;
+      if (input.normalizedMake && vehicle.normalizedMake !== input.normalizedMake) return false;
+      if (input.normalizedModel && !vehicle.normalizedModel.includes(input.normalizedModel)) return false;
+      if (input.normalizedTrim && !(vehicle.normalizedTrim ?? "").includes(input.normalizedTrim)) return false;
+      return true;
+    });
   }
 
   async upsertCandidate(record: CanonicalVehicleRecord): Promise<CanonicalVehicleRecord> {
