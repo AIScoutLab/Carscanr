@@ -154,14 +154,15 @@ function mapUsage(usage: BackendUsageResponse): SubscriptionStatus {
 }
 
 function mapCandidate(candidate: Partial<BackendScanCandidate>): VehicleCandidate {
+  const candidateId = safeString(candidate.vehicleId, "");
   return {
-    id: safeString(candidate.vehicleId, "unknown-vehicle"),
+    id: candidateId,
     year: safeNumber(candidate.year, 0),
     make: safeString(candidate.make, "Unknown"),
     model: safeString(candidate.model, "Vehicle"),
     trim: safeString(candidate.trim, ""),
     confidence: safeNumber(candidate.confidence, 0),
-    thumbnailUrl: getVehicleImage(safeString(candidate.vehicleId, "unknown-vehicle")),
+    thumbnailUrl: getVehicleImage(candidateId || "unknown-vehicle"),
   };
 }
 
@@ -180,7 +181,7 @@ function normalizeBackendScanResponse(raw: BackendScanResponse): BackendScanResp
     },
     candidates: Array.isArray(raw?.candidates)
       ? raw.candidates.map((candidate) => ({
-          vehicleId: safeString(candidate?.vehicleId, "unknown-vehicle"),
+          vehicleId: safeString(candidate?.vehicleId, ""),
           year: safeNumber(candidate?.year, 0),
           make: safeString(candidate?.make, "Unknown"),
           model: safeString(candidate?.model, "Vehicle"),

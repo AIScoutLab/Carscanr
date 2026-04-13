@@ -47,6 +47,21 @@ function safeSerializeUnknown(value: unknown) {
   }
 }
 
+function normalizeMatchText(value: string | undefined | null) {
+  return String(value ?? "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\b(sedan|coupe|hatchback|wagon|suv|crossover|truck|van|convertible|standard|base|sport|limited|premium|luxury|touring|edition)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildModelFamily(value: string | undefined | null) {
+  const normalized = normalizeMatchText(value);
+  return normalized.split(" ").slice(0, 2).join(" ").trim();
+}
+
 function stageFailureMessage(stage: ScanFailureStage) {
   switch (stage) {
     case "VISION_REQUEST":
@@ -221,7 +236,16 @@ export class ScanService {
       const matchedVehicles = await this.matchVehicles(normalizedResult);
 
       if (matchedVehicles.length === 0) {
-        throw new AppError(404, "NO_VEHICLE_MATCH", "No vehicle candidates matched the normalized AI result.");
+        logger.error(
+          {
+            label: "VEHICLE_MATCH_FALLBACK_RESULT",
+            scanId,
+            userId: input.auth.userId,
+            branch: "standard-scan-ai-fallback",
+            normalizedResult,
+          },
+          "VEHICLE_MATCH_FALLBACK_RESULT",
+        );
       }
       logIdentifyStage("VEHICLE_MATCH", "success", {
         scanId,
@@ -637,6 +661,21 @@ export class ScanService {
   }
 
   private async matchVehicles(result: VisionResult): Promise<MatchedVehicleCandidate[]> {
+    logger.error(
+      {
+        label: "VEHICLE_MATCH_INPUT",
+        rawAiOutput: result,
+        normalizedMatchFields: {
+          year: result.likely_year,
+          make: result.likely_make,
+          model: result.likely_model,
+          trim: result.likely_trim ?? null,
+          vehicleType: result.vehicle_type,
+          confidence: result.confidence,
+        },
+      },
+      "VEHICLE_MATCH_INPUT",
+    );
     const candidates = [
       { year: result.likely_year, make: result.likely_make, model: result.likely_model, trim: result.likely_trim, confidence: result.confidence },
       ...result.alternate_candidates.map((candidate) => ({
@@ -651,7 +690,7 @@ export class ScanService {
     const matched: MatchedVehicleCandidate[] = [];
 
     for (const candidate of candidates) {
-      const vehicles = await repositories.vehicles.searchCandidates(candidate);
+      const vehicles = await this.findVehicleMatches(candidate);
       for (const vehicle of vehicles) {
         matched.push({
           vehicleId: vehicle.id,
@@ -665,10 +704,121 @@ export class ScanService {
       }
     }
 
-    return matched
+    const uniqueMatches = matched
       .filter((entry, index, array) => array.findIndex((item) => item.vehicleId === entry.vehicleId) === index)
       .sort((a, b) => b.confidence - a.confidence)
       .slice(0, 3);
+
+    if (uniqueMatches.length > 0) {
+      return uniqueMatches;
+    }
+
+    logger.warn(
+      {
+        label: "VEHICLE_MATCH_FALLBACK_AI_ONLY",
+        year: result.likely_year,
+        make: result.likely_make,
+        model: result.likely_model,
+        trim: result.likely_trim ?? null,
+        vehicleType: result.vehicle_type,
+        confidence: result.confidence,
+      },
+      "VEHICLE_MATCH_FALLBACK_AI_ONLY",
+    );
+
+    return [
+      {
+        vehicleId: "",
+        year: result.likely_year,
+        make: result.likely_make,
+        model: result.likely_model,
+        trim: result.likely_trim ?? "",
+        confidence: result.confidence,
+        matchReason: "Best-effort identification. Could not match full specs catalog, showing AI result.",
+      },
+    ];
+  }
+
+  private async findVehicleMatches(candidate: {
+    year: number;
+    make: string;
+    model: string;
+    trim?: string;
+    confidence: number;
+  }) {
+    logger.error(
+      {
+        label: "VEHICLE_MATCH_QUERY",
+        strategy: "exact-year-make-model",
+        candidate,
+      },
+      "VEHICLE_MATCH_QUERY",
+    );
+    const exactMatches = await repositories.vehicles.searchCandidates(candidate);
+    if (exactMatches.length > 0) {
+      return exactMatches;
+    }
+
+    const broadMatches = await repositories.vehicles.search({
+      make: candidate.make,
+      model: candidate.model,
+    });
+
+    const normalizedCandidateMake = normalizeMatchText(candidate.make);
+    const normalizedCandidateModel = normalizeMatchText(candidate.model);
+    const candidateModelFamily = buildModelFamily(candidate.model);
+
+    const nearbyYearMatches = broadMatches.filter((vehicle) => {
+      const makeMatch = normalizeMatchText(vehicle.make) === normalizedCandidateMake;
+      const modelMatch = normalizeMatchText(vehicle.model) === normalizedCandidateModel;
+      return makeMatch && modelMatch && Math.abs(vehicle.year - candidate.year) <= 2;
+    });
+    if (nearbyYearMatches.length > 0) {
+      logger.error(
+        {
+          label: "VEHICLE_MATCH_QUERY",
+          strategy: "nearby-year-make-model",
+          candidate,
+          matchCount: nearbyYearMatches.length,
+        },
+        "VEHICLE_MATCH_QUERY",
+      );
+      return nearbyYearMatches;
+    }
+
+    const fuzzyModelMatches = broadMatches.filter((vehicle) => {
+      const makeMatch = normalizeMatchText(vehicle.make) === normalizedCandidateMake;
+      const vehicleModel = normalizeMatchText(vehicle.model);
+      return makeMatch && (vehicleModel.includes(normalizedCandidateModel) || normalizedCandidateModel.includes(vehicleModel));
+    });
+    if (fuzzyModelMatches.length > 0) {
+      logger.error(
+        {
+          label: "VEHICLE_MATCH_QUERY",
+          strategy: "fuzzy-model-normalization",
+          candidate,
+          matchCount: fuzzyModelMatches.length,
+        },
+        "VEHICLE_MATCH_QUERY",
+      );
+      return fuzzyModelMatches;
+    }
+
+    const familyMatches = broadMatches.filter((vehicle) => {
+      const makeMatch = normalizeMatchText(vehicle.make) === normalizedCandidateMake;
+      const vehicleFamily = buildModelFamily(vehicle.model);
+      return makeMatch && vehicleFamily.length > 0 && vehicleFamily === candidateModelFamily;
+    });
+    logger.error(
+      {
+        label: "VEHICLE_MATCH_QUERY",
+        strategy: "model-family-trim-stripped",
+        candidate,
+        matchCount: familyMatches.length,
+      },
+      "VEHICLE_MATCH_QUERY",
+    );
+    return familyMatches;
   }
 
   private async identifyFromCacheOnly(input: {
