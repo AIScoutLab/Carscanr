@@ -13,7 +13,19 @@ import { getApiAuthDebug } from "@/services/apiClient";
 import { AuthUser } from "@/types";
 
 export default function ProfileScreen() {
-  const { status, isLoading, isRestoring, isCancelling, feedbackMessage, errorMessage, restorePurchases, cancelPro } = useSubscription();
+  const {
+    status,
+    isLoading,
+    isRestoring,
+    isCancelling,
+    freeUnlocksUsed,
+    freeUnlocksRemaining,
+    freeUnlocksLimit,
+    feedbackMessage,
+    errorMessage,
+    restorePurchases,
+    cancelPro,
+  } = useSubscription();
   const [user, setUser] = useState<AuthUser | null>(authService.getCurrentUserSync());
   const [tokenPresent, setTokenPresent] = useState(false);
   const [sessionDetected, setSessionDetected] = useState(false);
@@ -57,11 +69,15 @@ export default function ProfileScreen() {
           </Text>
         </View>
       </View>
-      {status?.plan !== "pro" ? <PaywallCard status={status} /> : null}
+      {status?.plan !== "pro" ? <PaywallCard status={status} unlocksRemaining={freeUnlocksRemaining} unlocksLimit={freeUnlocksLimit} /> : null}
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Plan</Text>
         <Text style={styles.meta}>{isLoading ? "Checking plan..." : status?.plan === "pro" ? "Pro active" : "Free plan"}</Text>
         <Text style={styles.meta}>{status?.renewalLabel ?? "Sign in to sync your subscription status."}</Text>
+        <Text style={styles.meta}>
+          {freeUnlocksUsed} of {freeUnlocksLimit} free Pro unlocks used
+        </Text>
+        <Text style={styles.meta}>{Math.max(0, freeUnlocksRemaining)} free Pro unlocks remaining</Text>
         <PrimaryButton label={status?.plan === "pro" ? "View Pro Status" : "Upgrade to Pro"} onPress={() => router.push("/paywall")} />
         <PrimaryButton
           label={isRestoring ? "Checking App Store..." : "Restore Purchases"}

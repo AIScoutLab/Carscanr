@@ -106,6 +106,162 @@ function getErrorDetails(error: unknown) {
   };
 }
 
+function getVehicleRangeProfile(vehicle: VehicleRecord | null, anchor: number) {
+  const body = normalizeVehicleLookupText(vehicle?.bodyStyle ?? "");
+  const make = normalizeVehicleLookupText(vehicle?.make ?? "");
+  const model = normalizeVehicleLookupText(vehicle?.model ?? "");
+  const isLuxuryOrPerformance =
+    /bmw|mercedes|porsche|audi|lexus|tesla|rivian|lucid|ferrari|lamborghini|mclaren|maserati/.test(make) ||
+    /m |amg|rs|type r|hellcat|plaid|gt|sport/.test(model);
+
+  let width = 0.07;
+  if (/truck|suv|pickup/.test(body)) {
+    width = 0.09;
+  } else if (/compact|coupe|sedan|hatch/.test(body)) {
+    width = 0.06;
+  }
+  if (anchor >= 60000 || isLuxuryOrPerformance) {
+    width += 0.04;
+  } else if (anchor <= 22000) {
+    width -= 0.01;
+  }
+
+  return Math.min(0.16, Math.max(0.05, width));
+}
+
+function buildDynamicRange(center: number, widthRatio: number) {
+  return {
+    low: Math.round(center * (1 - widthRatio)),
+    high: Math.round(center * (1 + widthRatio)),
+  };
+}
+
+function shapeValuationRecord(input: {
+  valuation: ValuationRecord;
+  vehicle: VehicleRecord | null;
+  source: "cache" | "provider" | "stored";
+}) {
+  const valuation = { ...input.valuation };
+  const providerRangeAvailable =
+    typeof valuation.privatePartyLow === "number" &&
+    typeof valuation.privatePartyHigh === "number" &&
+    typeof valuation.tradeInLow === "number" &&
+    typeof valuation.tradeInHigh === "number" &&
+    typeof valuation.dealerRetailLow === "number" &&
+    typeof valuation.dealerRetailHigh === "number";
+
+  const modelType = providerRangeAvailable ? "provider_range" : valuation.modelType ?? "modeled";
+  logger.error(
+    {
+      label: "VALUE_MODEL_TYPE_SELECTED",
+      vehicleId: valuation.vehicleId,
+      source: input.source,
+      modelType,
+      providerRangeAvailable,
+    },
+    "VALUE_MODEL_TYPE_SELECTED",
+  );
+
+  if (providerRangeAvailable) {
+    logger.error(
+      {
+        label: "VALUE_PROVIDER_RANGE_USED",
+        vehicleId: valuation.vehicleId,
+        fields: ["price.min", "price.median", "price.max", "price.mean"],
+        source: input.source,
+      },
+      "VALUE_PROVIDER_RANGE_USED",
+    );
+  } else {
+    const privateWidth = getVehicleRangeProfile(input.vehicle, valuation.privateParty);
+    const retailWidth = Math.min(0.18, privateWidth + 0.015);
+    const tradeWidth = Math.max(0.04, privateWidth - 0.01);
+    const tradeRange = buildDynamicRange(valuation.tradeIn, tradeWidth);
+    const privateRange = buildDynamicRange(valuation.privateParty, privateWidth);
+    const retailRange = buildDynamicRange(valuation.dealerRetail, retailWidth);
+    valuation.tradeInLow = tradeRange.low;
+    valuation.tradeInHigh = tradeRange.high;
+    valuation.privatePartyLow = privateRange.low;
+    valuation.privatePartyHigh = privateRange.high;
+    valuation.dealerRetailLow = retailRange.low;
+    valuation.dealerRetailHigh = retailRange.high;
+    valuation.modelType = valuation.modelType ?? "modeled";
+    logger.error(
+      {
+        label: "VALUE_DYNAMIC_RANGE_APPLIED",
+        vehicleId: valuation.vehicleId,
+        source: input.source,
+        bodyStyle: input.vehicle?.bodyStyle ?? null,
+        width: privateWidth,
+        anchor: valuation.privateParty,
+      },
+      "VALUE_DYNAMIC_RANGE_APPLIED",
+    );
+  }
+
+  const exactTrimMatch = Boolean(input.vehicle?.trim && input.vehicle.trim.trim().length > 0);
+  const confidenceLabel =
+    modelType === "provider_range"
+      ? exactTrimMatch
+        ? "High confidence"
+        : "Moderate confidence"
+      : exactTrimMatch
+        ? "Moderate confidence"
+        : "Limited data";
+  const sourceLabel =
+    modelType === "provider_range"
+      ? "Based on market data"
+      : input.source === "stored"
+        ? "Estimated from listings"
+        : "Modeled estimate";
+
+  valuation.confidenceLabel = confidenceLabel;
+  valuation.sourceLabel = sourceLabel;
+  logger.error(
+    {
+      label: "VALUE_CONFIDENCE_COMPUTED",
+      vehicleId: valuation.vehicleId,
+      confidenceLabel,
+      exactTrimMatch,
+      modelType,
+      source: input.source,
+    },
+    "VALUE_CONFIDENCE_COMPUTED",
+  );
+  logger.error(
+    {
+      label: "VALUE_SOURCE_LABEL_SELECTED",
+      vehicleId: valuation.vehicleId,
+      sourceLabel,
+      modelType,
+      source: input.source,
+    },
+    "VALUE_SOURCE_LABEL_SELECTED",
+  );
+  logger.error(
+    {
+      label: "VALUE_RESPONSE_SHAPED",
+      vehicleId: valuation.vehicleId,
+      source: input.source,
+      modelType,
+      tradeIn: valuation.tradeIn,
+      tradeInLow: valuation.tradeInLow,
+      tradeInHigh: valuation.tradeInHigh,
+      privateParty: valuation.privateParty,
+      privatePartyLow: valuation.privatePartyLow,
+      privatePartyHigh: valuation.privatePartyHigh,
+      dealerRetail: valuation.dealerRetail,
+      dealerRetailLow: valuation.dealerRetailLow,
+      dealerRetailHigh: valuation.dealerRetailHigh,
+      sourceLabel,
+      confidenceLabel,
+    },
+    "VALUE_RESPONSE_SHAPED",
+  );
+
+  return valuation;
+}
+
 async function fireAndForgetCleanup(endpointType: "specs" | "values" | "listings") {
   const cacheCleanup =
     endpointType === "specs"
@@ -342,6 +498,24 @@ export class VehicleService {
         parsed: parsedVehicleId,
       });
       const cacheKey = descriptor ? getValuesCacheKey(descriptor, input) : null;
+      logger.error(
+        {
+          label: "VALUE_LOOKUP_QUERY",
+          requestId: input.requestId,
+          queryType: "preflight",
+          vehicleId: input.vehicleId,
+          year: vehicle?.year ?? descriptor?.year ?? null,
+          make: vehicle?.make ?? descriptor?.make ?? null,
+          model: vehicle?.model ?? descriptor?.model ?? null,
+          trim: vehicle?.trim ?? descriptor?.trim ?? null,
+          bodyStyle: vehicle?.bodyStyle ?? null,
+          zip: input.zip,
+          mileage: input.mileage,
+          condition: input.condition,
+          cacheKey,
+        },
+        "VALUE_LOOKUP_QUERY",
+      );
 
       if (cacheKey && providers.valueProviderName === "marketcheck") {
         const cacheDescriptor = descriptor;
@@ -375,8 +549,25 @@ export class VehicleService {
               responseSummary: { isEmpty: cached.responseJson.isEmpty, expiresAt: cached.expiresAt },
             });
             if (cached.responseJson.data) {
+              const shaped = shapeValuationRecord({
+                valuation: cached.responseJson.data,
+                vehicle,
+                source: "cache",
+              });
+              logger.error(
+                {
+                  label: "VALUE_CONDITION_COMPARISON",
+                  requestId: input.requestId,
+                  vehicleId: input.vehicleId,
+                  condition: input.condition,
+                  cacheKey,
+                  source: "cache",
+                  value: shaped,
+                },
+                "VALUE_CONDITION_COMPARISON",
+              );
               return {
-                data: cached.responseJson.data,
+                data: shaped,
                 source: "cache",
                 fetchedAt: cached.fetchedAt,
                 expiresAt: cached.expiresAt,
@@ -437,6 +628,10 @@ export class VehicleService {
               make: variant.make,
               model: variant.model,
               trim: variant.trim,
+              condition: input.condition,
+              cacheKey,
+              source: "provider",
+              value: liveValue,
             },
             "VALUE_LOOKUP_SUCCESS",
           );
@@ -472,7 +667,11 @@ export class VehicleService {
             })
           : null;
         return {
-          data: liveValue,
+          data: shapeValuationRecord({
+            valuation: liveValue,
+            vehicle,
+            source: "provider",
+          }),
           source: "provider",
           fetchedAt: cacheRow?.fetchedAt ?? currentIso,
           expiresAt: cacheRow?.expiresAt ?? currentIso,
@@ -518,7 +717,11 @@ export class VehicleService {
           "VALUE_LOOKUP_SUCCESS",
         );
         return {
-          data: value,
+          data: shapeValuationRecord({
+            valuation: value,
+            vehicle,
+            source: "stored",
+          }),
           source: "provider",
           fetchedAt: value.generatedAt,
           expiresAt: currentIso,

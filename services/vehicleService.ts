@@ -1,6 +1,6 @@
 import { formatCurrency } from "@/lib/utils";
 import { getVehicleImage } from "@/constants/vehicleImages";
-import { apiRequest } from "@/services/apiClient";
+import { apiRequest, apiRequestEnvelope } from "@/services/apiClient";
 import { ListingResult, ValuationResult, VehicleRecord, VehicleSearchQuery } from "@/types";
 
 type BackendVehicle = {
@@ -28,10 +28,19 @@ type BackendValuation = {
   mileage: number;
   condition: string;
   tradeIn: number;
+  tradeInLow?: number;
+  tradeInHigh?: number;
   privateParty: number;
+  privatePartyLow?: number;
+  privatePartyHigh?: number;
   dealerRetail: number;
+  dealerRetailLow?: number;
+  dealerRetailHigh?: number;
   currency: "USD";
   generatedAt: string;
+  sourceLabel?: string;
+  confidenceLabel?: string;
+  modelType?: "provider_range" | "listing_derived" | "modeled";
 };
 
 type BackendListing = {
@@ -52,11 +61,24 @@ function defaultOverview(vehicle: BackendVehicle) {
 }
 
 function mapValuation(valuation: BackendValuation): ValuationResult {
+  const tradeInLow = valuation.tradeInLow ?? valuation.tradeIn;
+  const tradeInHigh = valuation.tradeInHigh ?? valuation.tradeIn;
+  const privateLow = valuation.privatePartyLow ?? valuation.privateParty;
+  const privateHigh = valuation.privatePartyHigh ?? valuation.privateParty;
+  const retailLow = valuation.dealerRetailLow ?? valuation.dealerRetail;
+  const retailHigh = valuation.dealerRetailHigh ?? valuation.dealerRetail;
   return {
     tradeIn: formatCurrency(valuation.tradeIn),
+    tradeInRange: `${formatCurrency(tradeInLow)} - ${formatCurrency(tradeInHigh)}`,
     privateParty: formatCurrency(valuation.privateParty),
+    privatePartyRange: `${formatCurrency(privateLow)} - ${formatCurrency(privateHigh)}`,
     dealerRetail: formatCurrency(valuation.dealerRetail),
-    confidenceLabel: `Based on ${valuation.condition.replace("_", " ")} condition at ${valuation.mileage.toLocaleString("en-US")} miles`,
+    dealerRetailRange: `${formatCurrency(retailLow)} - ${formatCurrency(retailHigh)}`,
+    confidenceLabel:
+      valuation.confidenceLabel ??
+      `Based on ${valuation.condition.replace("_", " ")} condition at ${valuation.mileage.toLocaleString("en-US")} miles`,
+    sourceLabel: valuation.sourceLabel ?? "Modeled estimate",
+    modelType: valuation.modelType ?? "modeled",
   };
 }
 
@@ -76,9 +98,14 @@ function mapListings(listings: BackendListing[]): ListingResult[] {
 function createEmptyValuation(): ValuationResult {
   return {
     tradeIn: "Unavailable",
+    tradeInRange: "Unavailable",
     privateParty: "Unavailable",
+    privatePartyRange: "Unavailable",
     dealerRetail: "Unavailable",
+    dealerRetailRange: "Unavailable",
     confidenceLabel: "Live valuation unavailable",
+    sourceLabel: "No live value source",
+    modelType: "modeled",
   };
 }
 
@@ -143,11 +170,26 @@ export const vehicleService = {
   },
 
   async getValue(vehicleId: string, zip: string, mileage: string, condition: string): Promise<ValuationResult> {
-    const valuation = await apiRequest<BackendValuation>({
-      path: `/api/vehicle/value?vehicleId=${encodeURIComponent(vehicleId)}&zip=${encodeURIComponent(zip)}&mileage=${encodeURIComponent(mileage)}&condition=${encodeURIComponent(condition)}`,
+    const path = `/api/vehicle/value?vehicleId=${encodeURIComponent(vehicleId)}&zip=${encodeURIComponent(zip)}&mileage=${encodeURIComponent(mileage)}&condition=${encodeURIComponent(condition)}`;
+    console.log("[vehicle-service] VALUE_REQUEST_PARAMS", {
+      vehicleId,
+      zip,
+      mileage,
+      condition,
+      path,
+    });
+    const response = await apiRequestEnvelope<BackendValuation>({
+      path,
       authRequired: false,
     });
-    return mapValuation(valuation);
+    console.log("[vehicle-service] VALUE_RESPONSE_RECEIVED", {
+      vehicleId,
+      condition,
+      source: response.meta?.source,
+      requestId: response.requestId,
+      value: response.data,
+    });
+    return mapValuation(response.data);
   },
 
   async getListings(vehicleId: string, zip: string): Promise<ListingResult[]> {

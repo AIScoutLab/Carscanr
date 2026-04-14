@@ -1,33 +1,33 @@
 import { LinearGradient } from "expo-linear-gradient";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { shadow } from "@/design/tokens";
 import { SubscriptionStatus } from "@/types";
 
 export function PaywallCard({
   status,
-  onPress,
+  unlocksRemaining,
+  unlocksLimit,
 }: {
   status?: SubscriptionStatus | null;
-  onPress?: () => void;
+  unlocksRemaining?: number;
+  unlocksLimit?: number;
 }) {
   const usageLabel =
-    status?.plan === "free" && status.limit
-      ? `${status.scansRemaining ?? 0} of ${status.limit} free scans left`
-      : "Unlimited vehicle scans";
+    status?.plan === "free"
+      ? `${typeof unlocksRemaining === "number" ? unlocksRemaining : 5} of ${typeof unlocksLimit === "number" ? unlocksLimit : 5} free Pro unlocks left`
+      : "Unlimited Pro details";
 
   return (
-    <TouchableOpacity accessibilityRole="button" onPress={onPress} activeOpacity={0.86}>
-      <LinearGradient colors={["#0F172A", "#1E293B"]} style={styles.card}>
-        <Text style={styles.eyebrow}>CarScanr Pro</Text>
-        <Text style={styles.title}>Unlock CarScanr Pro</Text>
-        <Text style={styles.price}>$6.99/month</Text>
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>{usageLabel}</Text>
-        </View>
-        <Text style={styles.footer}>Cancel anytime</Text>
-      </LinearGradient>
-    </TouchableOpacity>
+    <LinearGradient colors={["#0F172A", "#1E293B"]} style={styles.card}>
+      <Text style={styles.eyebrow}>CarScanr Pro</Text>
+      <Text style={styles.title}>Unlock Full Vehicle Details</Text>
+      <Text style={styles.price}>$6.99/month</Text>
+      <View style={styles.badge}>
+        <Text style={styles.badgeText}>{usageLabel}</Text>
+      </View>
+      <Text style={styles.footer}>Scans stay free. Pro unlocks full specs, value, listings, and richer history tools.</Text>
+    </LinearGradient>
   );
 }
 

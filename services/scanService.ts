@@ -17,6 +17,7 @@ let mutableUnlockStatus = {
   unlockedVehicleCount: 0,
   unlockedVehicleIds: [] as string[],
 };
+let usageRequestInFlight: Promise<SubscriptionStatus> | null = null;
 
 const MAX_UPLOAD_BYTES = 4.8 * 1024 * 1024;
 const BACKEND_WAKE_TIMEOUT_MS = 45000;
@@ -231,19 +232,42 @@ export const scanService = {
   },
 
   async getUsage(): Promise<SubscriptionStatus> {
-    const token = await authService.getAccessToken();
-    try {
-      const guestId = token ? null : await guestSessionService.getGuestId();
-      const usage = await apiRequest<BackendUsageResponse>({
-        path: "/api/usage/today",
-        authRequired: false,
-        headers: guestId ? { "x-carscanr-guest-id": guestId } : undefined,
-      });
-      mutableUsage = mapUsage(usage);
-      return mutableUsage;
-    } catch {
-      return mutableUsage;
+    if (usageRequestInFlight) {
+      console.log("[scan-service] USAGE_FETCH_START", { source: "deduped-wait" });
+      return usageRequestInFlight;
     }
+
+    usageRequestInFlight = (async () => {
+      const token = await authService.getAccessToken();
+      const guestId = token ? null : await guestSessionService.getGuestId();
+      console.log("[scan-service] USAGE_FETCH_START", {
+        signedIn: Boolean(token),
+        guestIdPresent: Boolean(guestId),
+      });
+      try {
+        const usage = await apiRequest<BackendUsageResponse>({
+          path: "/api/usage/today",
+          authRequired: false,
+          headers: guestId ? { "x-carscanr-guest-id": guestId } : undefined,
+        });
+        mutableUsage = mapUsage(usage);
+        console.log("[scan-service] USAGE_FETCH_SUCCESS", {
+          plan: mutableUsage.plan,
+          scansUsed: mutableUsage.scansUsed,
+          scansRemaining: mutableUsage.scansRemaining,
+        });
+        return mutableUsage;
+      } catch (error) {
+        console.log("[scan-service] USAGE_FETCH_FAILURE", {
+          message: error instanceof Error ? error.message : "Unknown usage fetch error",
+        });
+        return mutableUsage;
+      } finally {
+        usageRequestInFlight = null;
+      }
+    })();
+
+    return usageRequestInFlight;
   },
 
   async identifyVehicle(imageUri: string, options?: { onStage?: IdentifyStageLogger; timeoutMs?: number }): Promise<ScanResult> {
@@ -324,6 +348,11 @@ export const scanService = {
     options?.onStage?.("request url", { url: identifyUrl });
     options?.onStage?.("request timeout", { timeoutMs: identifyTimeoutMs, source: "identify-fetch-only" });
     options?.onStage?.("identify request start", { url: identifyUrl, timeoutMs: identifyTimeoutMs, startedAt: identifyStartedAtIso });
+    console.log("[scan-service] IDENTIFY_REQUEST_START", {
+      url: identifyUrl,
+      timeoutMs: identifyTimeoutMs,
+      startedAt: identifyStartedAtIso,
+    });
     let response;
     try {
       response = await apiRequestEnvelope<BackendScanResponse>({
@@ -335,6 +364,11 @@ export const scanService = {
         timeoutMs: identifyTimeoutMs,
       });
     } catch (error) {
+      console.log("[scan-service] IDENTIFY_REQUEST_FAILURE", {
+        message: error instanceof Error ? error.message : "Unknown identify request error",
+        code: error instanceof ApiRequestError ? error.code : undefined,
+        elapsedMs: Date.now() - identifyStartedAt,
+      });
       options?.onStage?.("identify request failure", {
         message: error instanceof Error ? error.message : "Unknown identify request error",
         elapsedMs: Date.now() - identifyStartedAt,
@@ -349,6 +383,11 @@ export const scanService = {
       requestId: response.requestId,
       elapsedMs: Date.now() - identifyStartedAt,
       endedAt: nowIso(),
+    });
+    console.log("[scan-service] IDENTIFY_REQUEST_SUCCESS", {
+      requestId: response.requestId,
+      provider: response.meta?.provider,
+      elapsedMs: Date.now() - identifyStartedAt,
     });
 
     if (response.meta?.provider) {

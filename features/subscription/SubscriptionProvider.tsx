@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { subscriptionService } from "@/services/subscriptionService";
 import { SubscriptionActionResult, SubscriptionStatus } from "@/types";
@@ -41,7 +41,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const refreshStatus = async () => {
+  const refreshStatus = useCallback(async () => {
     try {
       setErrorMessage(null);
       const nextStatus = await subscriptionService.getStatus();
@@ -63,9 +63,9 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
-  const purchasePro = async () => {
+  const purchasePro = useCallback(async () => {
     try {
       setIsPurchasing(true);
       setErrorMessage(null);
@@ -80,9 +80,9 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsPurchasing(false);
     }
-  };
+  }, []);
 
-  const restorePurchases = async () => {
+  const restorePurchases = useCallback(async () => {
     try {
       setIsRestoring(true);
       setErrorMessage(null);
@@ -97,9 +97,9 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsRestoring(false);
     }
-  };
+  }, []);
 
-  const cancelPro = async () => {
+  const cancelPro = useCallback(async () => {
     try {
       setIsCancelling(true);
       setErrorMessage(null);
@@ -114,9 +114,9 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsCancelling(false);
     }
-  };
+  }, []);
 
-  const useFreeUnlockForVehicle = async (vehicleId: string) => {
+  const useFreeUnlockForVehicle = useCallback(async (vehicleId: string) => {
     if (isUnlocking) return false;
     if (!vehicleId) return false;
     try {
@@ -142,14 +142,14 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsUnlocking(false);
     }
-  };
+  }, [isUnlocking]);
 
-  const isVehicleUnlocked = (vehicleId: string) => unlockedVehicleIds.includes(vehicleId);
+  const isVehicleUnlocked = useCallback((vehicleId: string) => unlockedVehicleIds.includes(vehicleId), [unlockedVehicleIds]);
 
-  const clearFeedback = () => {
+  const clearFeedback = useCallback(() => {
     setFeedbackMessage(null);
     setErrorMessage(null);
-  };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -219,6 +219,13 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       isUnlocking,
       status,
       unlockedVehicleIds,
+      refreshStatus,
+      purchasePro,
+      restorePurchases,
+      cancelPro,
+      useFreeUnlockForVehicle,
+      isVehicleUnlocked,
+      clearFeedback,
     ],
   );
 

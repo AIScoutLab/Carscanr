@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { CameraView, type CameraCapturedPicture } from "expo-camera";
 import { useSubscription } from "@/hooks/useSubscription";
 import { supabase } from "@/lib/supabase";
@@ -14,6 +14,7 @@ const PERMISSION_PROMPT_TIMEOUT_MS = 10000;
 const CAMERA_READY_TIMEOUT_MS = 10000;
 const IMAGE_PROCESSING_TIMEOUT_MS = 15000;
 const IDENTIFY_TIMEOUT_MS = 60000;
+const MAX_CAMERA_ZOOM = 0.7;
 
 type CameraStatus =
   | "Requesting camera permission"
@@ -48,6 +49,20 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
   }) as Promise<T>;
 }
 
+function clampZoom(value: number) {
+  return Math.min(MAX_CAMERA_ZOOM, Math.max(0, value));
+}
+
+function getTouchDistance(touches: ArrayLike<{ pageX: number; pageY: number }>) {
+  if (touches.length < 2) {
+    return null;
+  }
+  const [first, second] = [touches[0], touches[1]];
+  const dx = first.pageX - second.pageX;
+  const dy = first.pageY - second.pageY;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
 export default function ScanCameraScreen() {
   const cameraRef = useRef<CameraView | null>(null);
   const flowStartedAtRef = useRef<number | null>(null);
@@ -56,6 +71,9 @@ export default function ScanCameraScreen() {
   const cameraMountFlowIdRef = useRef<number | null>(null);
   const cameraReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const waitingIdentifyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pinchStartDistanceRef = useRef<number | null>(null);
+  const pinchStartZoomRef = useRef(0);
+  const zoomGestureActiveRef = useRef(false);
 
   const [permissionReady, setPermissionReady] = useState<boolean | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
@@ -67,11 +85,8 @@ export default function ScanCameraScreen() {
   const [signedIn, setSignedIn] = useState(false);
   const [sessionDetected, setSessionDetected] = useState(false);
   const [tokenPresent, setTokenPresent] = useState(false);
+  const [zoom, setZoom] = useState(0);
   const { status: usage } = useSubscription();
-
-  const scansUsed = usage?.scansUsed ?? usage?.scansUsedToday ?? 0;
-  const scanLimit = usage?.limit ?? usage?.dailyScanLimit ?? 5;
-  const blocked = usage?.plan === "free" && scansUsed >= scanLimit;
 
   const isFlowActive = useCallback((flowId: number) => activeFlowIdRef.current === flowId, []);
 
@@ -237,16 +252,11 @@ export default function ScanCameraScreen() {
       return;
     }
 
-    if (blocked) {
-      Alert.alert("Free scan limit reached", "You’ve used all 5 free scans. Start unlimited access to keep scanning.");
-      router.push("/paywall");
-      return;
-    }
-
     const flowId = startFlow("camera-capture");
     setIsBusy(true);
     setStatus("Opening camera");
     appendStage("capture start", undefined, flowId);
+    console.log("[scan-camera] CAMERA_CAPTURE_WITH_ZOOM", { flowId, zoom });
 
     try {
       const picture = await withTimeout(
@@ -322,7 +332,41 @@ export default function ScanCameraScreen() {
     } catch (error) {
       fail(error instanceof Error ? error.message : "We couldn’t capture that photo.", flowId);
     }
-  }, [appendStage, blocked, cameraReady, fail, isBusy, isFlowActive, runIdentify, startFlow]);
+  }, [appendStage, cameraReady, fail, isBusy, isFlowActive, runIdentify, startFlow, zoom]);
+
+  const handleTouchStart = useCallback((event: any) => {
+    const distance = getTouchDistance(event.nativeEvent.touches);
+    if (distance == null) {
+      return;
+    }
+    zoomGestureActiveRef.current = true;
+    pinchStartDistanceRef.current = distance;
+    pinchStartZoomRef.current = zoom;
+    console.log("[scan-camera] CAMERA_ZOOM_START", { zoom });
+  }, [zoom]);
+
+  const handleTouchMove = useCallback((event: any) => {
+    if (!zoomGestureActiveRef.current) {
+      return;
+    }
+    const distance = getTouchDistance(event.nativeEvent.touches);
+    const startDistance = pinchStartDistanceRef.current;
+    if (distance == null || startDistance == null) {
+      return;
+    }
+    const nextZoom = clampZoom(pinchStartZoomRef.current + (distance - startDistance) / 300);
+    setZoom(nextZoom);
+    console.log("[scan-camera] CAMERA_ZOOM_CHANGE", { zoom: Number(nextZoom.toFixed(3)) });
+  }, []);
+
+  const finishZoomGesture = useCallback(() => {
+    if (!zoomGestureActiveRef.current) {
+      return;
+    }
+    zoomGestureActiveRef.current = false;
+    pinchStartDistanceRef.current = null;
+    console.log("[scan-camera] CAMERA_ZOOM_END", { zoom: Number(zoom.toFixed(3)) });
+  }, [zoom]);
 
   const requestPermissionFlow = useCallback(async () => {
     const flowId = startFlow("camera-permission");
@@ -393,25 +437,34 @@ export default function ScanCameraScreen() {
   return (
     <View style={styles.screen}>
       {permissionReady ? (
-        <CameraView
-          ref={cameraRef}
+        <View
           style={StyleSheet.absoluteFill}
-          facing="back"
-          onCameraReady={() => {
-            const flowId = cameraMountFlowIdRef.current;
-            if (typeof flowId === "number" && !isFlowActive(flowId)) {
-              return;
-            }
-            clearCameraReadyTimeout();
-            setCameraReady(true);
-            setStatus("Camera ready");
-            appendStage("camera ready", undefined, flowId ?? undefined);
-          }}
-          onMountError={(event) => {
-            const flowId = cameraMountFlowIdRef.current;
-            fail(event.message || "Camera took too long to open.", flowId ?? undefined);
-          }}
-        />
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={finishZoomGesture}
+          onTouchCancel={finishZoomGesture}
+        >
+          <CameraView
+            ref={cameraRef}
+            style={StyleSheet.absoluteFill}
+            facing="back"
+            zoom={zoom}
+            onCameraReady={() => {
+              const flowId = cameraMountFlowIdRef.current;
+              if (typeof flowId === "number" && !isFlowActive(flowId)) {
+                return;
+              }
+              clearCameraReadyTimeout();
+              setCameraReady(true);
+              setStatus("Camera ready");
+              appendStage("camera ready", undefined, flowId ?? undefined);
+            }}
+            onMountError={(event) => {
+              const flowId = cameraMountFlowIdRef.current;
+              fail(event.message || "Camera took too long to open.", flowId ?? undefined);
+            }}
+          />
+        </View>
       ) : (
         <View style={styles.cameraPlaceholder} />
       )}
@@ -424,6 +477,7 @@ export default function ScanCameraScreen() {
 
       <View style={[styles.statusCard, statusTone]}>
         <Text style={styles.statusTitle}>{status}</Text>
+        <Text style={styles.zoomMeta}>Zoom: {zoom.toFixed(2)}x digital</Text>
         <Text style={styles.statusMeta}>Signed in: {signedIn ? "yes" : "no"} | Session detected: {sessionDetected ? "yes" : "no"} | Auth token present: {tokenPresent ? "yes" : "no"}</Text>
         <Text style={styles.statusMeta}>
           Permission timeout: {PERMISSION_PROMPT_TIMEOUT_MS}ms | Camera open timeout: {CAMERA_READY_TIMEOUT_MS}ms | Processing timeout: {IMAGE_PROCESSING_TIMEOUT_MS}ms | Identify timeout: {IDENTIFY_TIMEOUT_MS}ms
@@ -526,6 +580,10 @@ const styles = StyleSheet.create({
   statusMeta: {
     ...Typography.caption,
     color: "rgba(255,255,255,0.74)",
+  },
+  zoomMeta: {
+    ...Typography.caption,
+    color: "#BAE6FD",
   },
   statusDetail: {
     ...Typography.caption,

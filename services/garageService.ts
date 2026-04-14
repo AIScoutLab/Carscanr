@@ -55,9 +55,14 @@ function mapVehicle(vehicle: BackendVehicle | null, vehicleId: string): VehicleR
       },
       valuation: {
         tradeIn: "Unavailable",
+        tradeInRange: "Unavailable",
         privateParty: "Unavailable",
+        privatePartyRange: "Unavailable",
         dealerRetail: "Unavailable",
+        dealerRetailRange: "Unavailable",
         confidenceLabel: "Unavailable",
+        sourceLabel: "No live value source",
+        modelType: "modeled",
       },
       listings: [],
     };
@@ -84,9 +89,14 @@ function mapVehicle(vehicle: BackendVehicle | null, vehicleId: string): VehicleR
     },
     valuation: {
       tradeIn: "Unavailable",
+      tradeInRange: "Unavailable",
       privateParty: "Unavailable",
+      privatePartyRange: "Unavailable",
       dealerRetail: "Unavailable",
+      dealerRetailRange: "Unavailable",
       confidenceLabel: "Open vehicle detail for live value",
+      sourceLabel: "No live value source",
+      modelType: "modeled",
     },
     listings: [],
   };

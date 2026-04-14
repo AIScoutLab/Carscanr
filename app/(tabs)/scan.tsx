@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
 import { AppContainer } from "@/components/AppContainer";
@@ -64,6 +64,7 @@ export default function ScanScreen() {
   const [signedIn, setSignedIn] = useState(false);
   const [sessionDetected, setSessionDetected] = useState(false);
   const [tokenPresent, setTokenPresent] = useState(false);
+  const lastFocusRefreshAtRef = useRef(0);
   const scanStartedAtRef = useRef<number | null>(null);
   const lastStageAtRef = useRef<number | null>(null);
   const pendingIdentifyStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -114,7 +115,11 @@ export default function ScanScreen() {
           setSessionDetected(false);
           setTokenPresent(false);
         });
-      refreshStatus().catch(() => undefined);
+      const now = Date.now();
+      if (now - lastFocusRefreshAtRef.current > 15000) {
+        lastFocusRefreshAtRef.current = now;
+        refreshStatus().catch(() => undefined);
+      }
     }, [refreshStatus]),
   );
 
@@ -136,10 +141,8 @@ export default function ScanScreen() {
   };
 
   const scansUsed = usage?.scansUsed ?? usage?.scansUsedToday ?? 0;
-  const scanLimit = usage?.limit ?? usage?.dailyScanLimit ?? 5;
-  const blocked = usage?.plan === "free" && scansUsed >= scanLimit;
-  const showUpgradeCard = usage?.plan !== "pro" && (scansUsed >= 2 || blocked);
-  const showSoftUpsell = usage?.plan === "free" && scansUsed >= 3 && !blocked;
+  const showUpgradeCard = usage?.plan !== "pro" && freeUnlocksRemaining <= 1;
+  const showSoftUpsell = usage?.plan === "free" && freeUnlocksRemaining <= 2;
 
   const appendDebugDetail = useCallback((label: string, value: unknown) => {
     const formatted = typeof value === "string" ? value : JSON.stringify(value);
@@ -236,18 +239,6 @@ export default function ScanScreen() {
         return;
       }
 
-      if (blocked) {
-        if (!isFlowActive(flowId)) {
-          return;
-        }
-        setIsBusy(false);
-        setDebugStatus("Idle");
-        Alert.alert("Free scan limit reached", "You’ve used all 5 free scans. Start unlimited access to keep scanning.");
-        activeFlowIdRef.current += 1;
-        router.push("/paywall");
-        return;
-      }
-
       recordStage("photo selected", {
         source,
         uri: selection.cachedUri,
@@ -329,12 +320,13 @@ export default function ScanScreen() {
         failScan(message, flowId);
       }
     },
-    [appendDebugDetail, beginIdentifyPendingStatus, blocked, clearPendingIdentifyTimer, failScan, isFlowActive, recordStage],
+    [appendDebugDetail, beginIdentifyPendingStatus, clearPendingIdentifyTimer, failScan, isFlowActive, recordStage],
   );
 
   const beginLibraryScan = async () => {
     console.log("[tap] scan-library");
     const flowId = startFlow("library");
+    console.log("[scan] PHOTO_PICK_START", { flowId, source: "library" });
     recordStage("tap received", "library", flowId);
     setDebugStatus("Requesting photo library permission");
 
@@ -364,6 +356,12 @@ export default function ScanScreen() {
       if (!isFlowActive(flowId)) {
         return;
       }
+      console.log("[scan] PHOTO_PICK_SUCCESS", {
+        flowId,
+        canceled: selection.canceled,
+        assetExists: selection.assetExists,
+        cachedUri: selection.cachedUri,
+      });
       recordStage("launchImageLibraryAsync resolved", {
         canceled: selection.canceled,
         assetExists: selection.assetExists,
@@ -383,7 +381,7 @@ export default function ScanScreen() {
   };
 
   const beginScan = async (source: "camera" | "library") => {
-    console.log("[tap] begin-scan", { source, blocked });
+    console.log("[tap] begin-scan", { source, freeUnlocksRemaining });
     if (source === "library") {
       setDebugStatus("Opening photo library");
       const flowId = startFlow("library");
@@ -399,7 +397,7 @@ export default function ScanScreen() {
   const beginSampleScan = async (sampleId: string) => {
     let flowId = 0;
     try {
-      console.log("[tap] begin-sample-scan", { sampleId, blocked });
+      console.log("[tap] begin-sample-scan", { sampleId, freeUnlocksRemaining });
       flowId = startFlow(`sample:${sampleId}`);
       setLoadingSampleId(sampleId);
       recordStage("tap received", `sample:${sampleId}`, flowId);
@@ -530,10 +528,8 @@ export default function ScanScreen() {
       {showUpgradeCard ? (
         <PaywallCard
           status={usage}
-          onPress={() => {
-            console.log("[tap] scan-paywall-card");
-            router.push("/paywall");
-          }}
+          unlocksRemaining={freeUnlocksRemaining}
+          unlocksLimit={freeUnlocksLimit}
         />
       ) : null}
       <SectionHeader title="Recent scans" subtitle="Jump back into the vehicles you’ve already scanned." />
@@ -559,7 +555,17 @@ export default function ScanScreen() {
               exteriorColors: [],
               msrp: 0,
             },
-            valuation: { tradeIn: "", privateParty: "", dealerRetail: "", confidenceLabel: "" },
+            valuation: {
+              tradeIn: "",
+              tradeInRange: "",
+              privateParty: "",
+              privatePartyRange: "",
+              dealerRetail: "",
+              dealerRetailRange: "",
+              confidenceLabel: "",
+              sourceLabel: "",
+              modelType: "modeled",
+            },
             listings: [],
           }}
           subtitle="Tap to open your full scan result"

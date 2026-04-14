@@ -11,44 +11,68 @@ import { Colors, Radius, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
 
 export default function PaywallScreen() {
-  const { status, isLoading, isPurchasing, feedbackMessage, errorMessage, purchasePro } = useSubscription();
+  const { status, isLoading, isPurchasing, freeUnlocksRemaining, freeUnlocksLimit, feedbackMessage, errorMessage, purchasePro } = useSubscription();
   const hasPro = status?.plan === "pro";
   const backendProActive = status?.plan === "pro" && status?.provider === "backend";
+  const purchaseAvailable = Boolean(status?.purchaseAvailable);
   const primaryLabel = hasPro
     ? backendProActive
       ? "Continue With Pro"
       : isPurchasing
         ? "Activating Pro..."
         : "Activate Pro Access"
-    : isPurchasing
-      ? "Preparing purchase flow..."
-      : "Start Free Trial";
+    : purchaseAvailable
+      ? isPurchasing
+        ? "Preparing purchase flow..."
+        : "Start Free Trial"
+      : "Purchases Coming Soon";
 
   return (
     <AppContainer>
       <BackButton fallbackHref="/(tabs)/scan" label="Back" />
-      {!backendProActive ? <PaywallCard status={status} /> : null}
-      {status ? <ScanUsageMeter status={status} /> : null}
+      <View style={styles.heroSection}>
+        {!backendProActive ? <PaywallCard status={status} unlocksRemaining={freeUnlocksRemaining} unlocksLimit={freeUnlocksLimit} /> : null}
+        {status ? (
+          <ScanUsageMeter
+            status={status}
+            mode="unlocks"
+            unlocksUsed={freeUnlocksLimit - freeUnlocksRemaining}
+            unlocksRemaining={freeUnlocksRemaining}
+            unlocksLimit={freeUnlocksLimit}
+            supportingText="Basic scan results stay available even after your free Pro unlocks run out."
+          />
+        ) : null}
+      </View>
       {backendProActive ? (
-        <View style={styles.compareCard}>
+        <View style={styles.detailCard}>
           <Text style={styles.title}>Pro is active</Text>
           <Text style={styles.subtitle}>Unlimited scans and full details are unlocked on this device.</Text>
           <PlanColumn title="Included with Pro" items={planBenefits.pro} highlight />
         </View>
       ) : (
-        <View style={styles.compareCard}>
-          <Text style={styles.title}>Unlock CarScanr Pro</Text>
-          <Text style={styles.subtitle}>Everything you need to make smarter car decisions</Text>
+        <View style={styles.detailCard}>
+          <Text style={styles.title}>Everything behind Pro</Text>
+          <Text style={styles.subtitle}>Use your 5 free Pro unlocks first, then upgrade later for unlimited premium details.</Text>
           <PlanColumn title="Included" items={planBenefits.pro} highlight />
-          <Text style={styles.footer}>Cancel anytime</Text>
+          {!purchaseAvailable ? <Text style={styles.notice}>In-app purchase is not live in this build yet. This screen is informational for the current debug cycle.</Text> : null}
         </View>
       )}
       <PrimaryButton
         label={primaryLabel}
         onPress={async () => {
-          console.log("[tap] paywall-primary", { backendProActive, hasPro, isLoading, isPurchasing });
+          console.log("[paywall] PAYWALL_CTA_TAPPED", {
+            cta: "primary",
+            backendProActive,
+            hasPro,
+            isLoading,
+            isPurchasing,
+            purchaseAvailable,
+          });
           if (backendProActive) {
             router.back();
+            return;
+          }
+          if (!purchaseAvailable) {
             return;
           }
           try {
@@ -61,12 +85,19 @@ export default function PaywallScreen() {
             // The inline error state from the subscription provider handles display.
           }
         }}
-        disabled={isLoading || isPurchasing}
+        disabled={isLoading || isPurchasing || !purchaseAvailable}
       />
-      <PrimaryButton label="Keep Free Access" secondary onPress={() => { console.log("[tap] paywall-keep-free"); router.back(); }} />
+      <PrimaryButton
+        label="Keep Free Access"
+        secondary
+        onPress={() => {
+          console.log("[paywall] PAYWALL_CTA_TAPPED", { cta: "secondary-keep-free" });
+          router.back();
+        }}
+      />
       {feedbackMessage ? <Text style={styles.feedback}>{feedbackMessage}</Text> : null}
       {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
-      {!hasPro ? <Text style={styles.footnote}>Cancel anytime</Text> : null}
+      {!hasPro && purchaseAvailable ? <Text style={styles.footnote}>Cancel anytime</Text> : null}
     </AppContainer>
   );
 }
@@ -83,7 +114,8 @@ function PlanColumn({ title, items, highlight = false }: { title: string; items:
 }
 
 const styles = StyleSheet.create({
-  compareCard: { ...cardStyles.standard, padding: 20, gap: 14 },
+  heroSection: { gap: 14 },
+  detailCard: { ...cardStyles.standard, padding: 20, gap: 14 },
   title: { ...Typography.title, color: Colors.textStrong },
   subtitle: { ...Typography.body, color: Colors.textMuted },
   plan: { backgroundColor: Colors.cardAlt, borderRadius: Radius.lg, padding: 16, gap: 8 },
@@ -92,8 +124,8 @@ const styles = StyleSheet.create({
   planTitleHighlight: { color: "#FFFFFF" },
   item: { ...Typography.body, color: Colors.textMuted },
   itemHighlight: { color: "rgba(255,255,255,0.86)" },
+  notice: { ...Typography.caption, color: Colors.textMuted, textAlign: "center" },
   feedback: { ...Typography.caption, color: Colors.textMuted, textAlign: "center" },
   error: { ...Typography.caption, color: "#A14D52", textAlign: "center" },
   footnote: { ...Typography.caption, color: Colors.textMuted, textAlign: "center" },
-  footer: { ...Typography.caption, color: Colors.textMuted, textAlign: "center" },
 });

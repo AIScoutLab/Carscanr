@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { AppContainer } from "@/components/AppContainer";
 import { BackButton } from "@/components/BackButton";
@@ -16,7 +16,7 @@ import { cardStyles } from "@/design/patterns";
 import { useSubscription } from "@/hooks/useSubscription";
 import { scanService } from "@/services/scanService";
 import { vehicleService } from "@/services/vehicleService";
-import { VehicleRecord } from "@/types";
+import { ValuationResult, VehicleRecord } from "@/types";
 import { formatCurrency } from "@/lib/utils";
 
 const tabs = ["Overview", "Specs", "Value", "For Sale", "Photos"];
@@ -25,12 +25,17 @@ const defaultMileage = "18400";
 const defaultCondition = "Excellent";
 const conditionOptions = ["Poor", "Fair", "Good", "Very Good", "Excellent"];
 
-function createEmptyValuation() {
+function createEmptyValuation(): ValuationResult {
   return {
     tradeIn: "Unavailable",
+    tradeInRange: "Unavailable",
     privateParty: "Unavailable",
+    privatePartyRange: "Unavailable",
     dealerRetail: "Unavailable",
+    dealerRetailRange: "Unavailable",
     confidenceLabel: "Live valuation unavailable",
+    sourceLabel: "No live value source",
+    modelType: "modeled" as const,
   };
 }
 
@@ -79,7 +84,7 @@ function getInitialCondition(vehicle: VehicleRecord) {
 export default function VehicleDetailScreen() {
   const { id, imageUri, scanId } = useLocalSearchParams<{ id: string; imageUri?: string; scanId?: string }>();
   const [vehicle, setVehicle] = useState<VehicleRecord | null>(null);
-  const [valuation, setValuation] = useState(createEmptyValuation());
+  const [valuation, setValuation] = useState<ValuationResult>(createEmptyValuation());
   const [zipCode, setZipCode] = useState(defaultZip);
   const [mileage, setMileage] = useState(defaultMileage);
   const [condition, setCondition] = useState(defaultCondition);
@@ -89,6 +94,8 @@ export default function VehicleDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [resolvedImageUri, setResolvedImageUri] = useState<string | null>(typeof imageUri === "string" && imageUri.trim().length > 0 ? imageUri : null);
   const [imageSourceLabel, setImageSourceLabel] = useState<string>(typeof imageUri === "string" && imageUri.trim().length > 0 ? "scanned photo (route param)" : "provider/generic");
+  const previousConditionRef = useRef<string | null>(null);
+  const previousValueRef = useRef<string | null>(null);
   const {
     status: usage,
     freeUnlocksUsed,
@@ -167,6 +174,13 @@ export default function VehicleDetailScreen() {
     const normalizedZip = zipCode.trim();
     const normalizedMileage = mileage.trim();
     const normalizedCondition = normalizeCondition(condition);
+    console.log("[vehicle-detail] VALUE_INPUT_CHANGED", {
+      vehicleId: vehicle.id,
+      previousCondition: previousConditionRef.current,
+      newCondition: normalizedCondition,
+      zip: normalizedZip,
+      mileage: normalizedMileage,
+    });
 
     if (!normalizedZip || !normalizedMileage || !normalizedCondition) {
       setValuation(createEmptyValuation());
@@ -174,11 +188,27 @@ export default function VehicleDetailScreen() {
     }
 
     const timeout = setTimeout(() => {
+      console.log("[vehicle-detail] VALUE_REQUEST_TRIGGERED", {
+        vehicleId: vehicle.id,
+        previousCondition: previousConditionRef.current,
+        newCondition: normalizedCondition,
+      });
       setValuationLoading(true);
       vehicleService
         .getValue(vehicle.id, normalizedZip, normalizedMileage, normalizedCondition)
         .then((result) => {
+          const nextValue = JSON.stringify(result);
+          console.log("[vehicle-detail] VALUE_CONDITION_COMPARISON", {
+            vehicleId: vehicle.id,
+            previousCondition: previousConditionRef.current,
+            newCondition: normalizedCondition,
+            previousValue: previousValueRef.current,
+            newValue: nextValue,
+            changed: previousValueRef.current !== nextValue,
+          });
           setValuation(result);
+          previousConditionRef.current = normalizedCondition;
+          previousValueRef.current = nextValue;
         })
         .catch(() => {
           setValuation(createEmptyValuation());
@@ -190,6 +220,17 @@ export default function VehicleDetailScreen() {
 
     return () => clearTimeout(timeout);
   }, [vehicle, tab, zipCode, mileage, condition]);
+
+  useEffect(() => {
+    if (!vehicle || tab !== "Value") {
+      return;
+    }
+    console.log("[vehicle-detail] VALUE_RENDERED", {
+      vehicleId: vehicle.id,
+      condition,
+      valuation,
+    });
+  }, [condition, tab, valuation, vehicle]);
 
   if (loading) {
     return (

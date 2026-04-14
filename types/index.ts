@@ -21,9 +21,14 @@ export type VehicleSpecs = {
 
 export type ValuationResult = {
   tradeIn: string;
+  tradeInRange: string;
   privateParty: string;
+  privatePartyRange: string;
   dealerRetail: string;
+  dealerRetailRange: string;
   confidenceLabel: string;
+  sourceLabel: string;
+  modelType: "provider_range" | "listing_derived" | "modeled";
 };
 
 export type ListingResult = {

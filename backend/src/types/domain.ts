@@ -74,10 +74,20 @@ export type ValuationRecord = {
   mileage: number;
   condition: VehicleCondition;
   tradeIn: number;
+  tradeInLow?: number;
+  tradeInHigh?: number;
   privateParty: number;
+  privatePartyLow?: number;
+  privatePartyHigh?: number;
   dealerRetail: number;
+  dealerRetailLow?: number;
+  dealerRetailHigh?: number;
   currency: "USD";
   generatedAt: string;
+  sourceLabel?: string;
+  confidenceLabel?: string;
+  modelType?: "provider_range" | "listing_derived" | "modeled";
+  listingCount?: number | null;
 };
 
 export type ListingRecord = {

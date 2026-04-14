@@ -54,6 +54,8 @@ const PRO_MONTHLY_PRODUCT: SubscriptionProduct = {
 
 const SUBSCRIPTION_PLACEHOLDER_MESSAGE =
   "Purchases are not wired yet. Connect StoreKit 2 or RevenueCat, then send the App Store receipt to your backend.";
+const PURCHASE_NOT_AVAILABLE_MESSAGE =
+  "In-app purchase is not live in this build yet. Scanning still works, and you can keep using your remaining free Pro unlocks.";
 
 function normalizeUnlockState(input: unknown): FreeUnlockState {
   if (!input || typeof input !== "object") {
@@ -302,11 +304,17 @@ export const subscriptionService = {
   },
 
   async purchaseSubscription(): Promise<SubscriptionActionResult> {
-    if (!(await authService.getAccessToken())) {
-      throw new Error("Sign in to manage subscriptions and restore purchases across devices.");
-    }
+    console.log("[subscription] PURCHASE_FLOW_START");
+    console.log("[subscription] PURCHASE_PRODUCTS_LOAD_START");
     await wait(400);
+    console.log("[subscription] PURCHASE_PRODUCTS_LOAD_SUCCESS", { configured: false });
+    console.log("[subscription] PURCHASE_PRODUCTS_LOAD_FAILURE", {
+      stage: "not_configured",
+      message: PURCHASE_NOT_AVAILABLE_MESSAGE,
+    });
+    console.log("[subscription] PURCHASE_ATTEMPT_START", { configured: false });
     if (status.plan === "pro" && status.provider === "backend") {
+      console.log("[subscription] PURCHASE_ATTEMPT_SUCCESS", { outcome: "already_active" });
       return {
         outcome: "verified",
         status,
@@ -314,19 +322,26 @@ export const subscriptionService = {
       };
     }
 
+    console.log("[subscription] PURCHASE_ATTEMPT_FAILURE", {
+      stage: "not_configured",
+      message: PURCHASE_NOT_AVAILABLE_MESSAGE,
+    });
+    console.log("[subscription] PURCHASE_FLOW_FAILURE", {
+      stage: "not_configured",
+      message: PURCHASE_NOT_AVAILABLE_MESSAGE,
+    });
     return {
       outcome: "not_configured",
       status,
-      message: SUBSCRIPTION_PLACEHOLDER_MESSAGE,
+      message: PURCHASE_NOT_AVAILABLE_MESSAGE,
     };
   },
 
   async restorePurchases(): Promise<SubscriptionActionResult> {
-    if (!(await authService.getAccessToken())) {
-      throw new Error("Sign in to restore purchases across devices.");
-    }
+    console.log("[subscription] RESTORE_PURCHASES_START");
     await wait(500);
     if (status.plan === "pro" && status.provider === "backend") {
+      console.log("[subscription] RESTORE_PURCHASES_SUCCESS", { outcome: "restored", alreadyActive: true });
       return {
         outcome: "restored",
         status,
@@ -334,6 +349,10 @@ export const subscriptionService = {
       };
     }
 
+    console.log("[subscription] RESTORE_PURCHASES_FAILURE", {
+      stage: "not_configured",
+      message: SUBSCRIPTION_PLACEHOLDER_MESSAGE,
+    });
     return {
       outcome: "not_configured",
       status,

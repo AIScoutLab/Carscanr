@@ -4,13 +4,13 @@ import { AuthUser, SubscriptionStatus } from "@/types";
 // Vehicle/spec/listing/value data must come from backend APIs.
 export const defaultSubscriptionStatus: SubscriptionStatus = {
   plan: "free",
-  renewalLabel: "Upgrade for unlimited scans",
+  renewalLabel: "Upgrade for unlimited Pro details",
   scansUsed: 0,
-  scansRemaining: 5,
+  scansRemaining: null,
   limitType: "lifetime",
-  limit: 5,
+  limit: null,
   scansUsedToday: 0,
-  dailyScanLimit: 5,
+  dailyScanLimit: null,
 };
 
 // Auth/profile placeholder until real user session data is wired.

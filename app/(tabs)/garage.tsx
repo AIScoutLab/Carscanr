@@ -21,7 +21,7 @@ export default function GarageScreen() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [requiresAuth, setRequiresAuth] = useState(false);
-  const { status: usage } = useSubscription();
+  const { status: usage, freeUnlocksRemaining, freeUnlocksLimit } = useSubscription();
 
   useEffect(() => {
     authService
@@ -58,7 +58,7 @@ export default function GarageScreen() {
     <AppContainer>
       <Text style={styles.title}>Garage</Text>
       <Text style={styles.subtitle}>Saved scans, notes, and favorites in one clean collection.</Text>
-      {usage ? <ScanUsageMeter status={usage} /> : null}
+      {usage ? <ScanUsageMeter status={usage} mode="unlocks" unlocksUsed={freeUnlocksLimit - freeUnlocksRemaining} unlocksRemaining={freeUnlocksRemaining} unlocksLimit={freeUnlocksLimit} /> : null}
       <TextInput value={query} onChangeText={setQuery} placeholder="Search your garage" placeholderTextColor={Colors.textMuted} style={styles.input} />
       <Pressable style={[styles.filter, favoritesOnly && styles.filterActive]} onPress={() => setFavoritesOnly((current) => !current)}>
         <Text style={[styles.filterLabel, favoritesOnly && styles.filterLabelActive]}>Favorites only</Text>

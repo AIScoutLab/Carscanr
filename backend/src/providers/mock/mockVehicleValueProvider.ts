@@ -21,6 +21,12 @@ function adjustFromBaseline(baseValue: number, mileageDelta: number, condition: 
   return Math.max(conditioned, Math.round(baseValue * 0.45));
 }
 
+function buildModeledRange(center: number, widthRatio: number) {
+  const low = Math.round(center * (1 - widthRatio));
+  const high = Math.round(center * (1 + widthRatio));
+  return { low, high };
+}
+
 export class MockVehicleValueProvider implements VehicleValueProvider {
   async getValuation(input: {
     vehicleId: string;
@@ -44,9 +50,19 @@ export class MockVehicleValueProvider implements VehicleValueProvider {
         mileage: input.mileage,
         condition: normalizedCondition,
         tradeIn,
+        tradeInLow: buildModeledRange(tradeIn, 0.05).low,
+        tradeInHigh: buildModeledRange(tradeIn, 0.05).high,
         privateParty,
+        privatePartyLow: buildModeledRange(privateParty, 0.05).low,
+        privatePartyHigh: buildModeledRange(privateParty, 0.05).high,
         dealerRetail,
+        dealerRetailLow: buildModeledRange(dealerRetail, 0.06).low,
+        dealerRetailHigh: buildModeledRange(dealerRetail, 0.06).high,
         generatedAt: new Date().toISOString(),
+        sourceLabel: "Estimated from historical seed values",
+        confidenceLabel: "Moderate confidence",
+        modelType: "modeled",
+        listingCount: null,
       };
     }
 
@@ -62,10 +78,20 @@ export class MockVehicleValueProvider implements VehicleValueProvider {
       mileage: input.mileage,
       condition: normalizedCondition,
       tradeIn,
+      tradeInLow: buildModeledRange(tradeIn, 0.08).low,
+      tradeInHigh: buildModeledRange(tradeIn, 0.08).high,
       privateParty: Math.round(tradeIn * 1.08),
+      privatePartyLow: buildModeledRange(Math.round(tradeIn * 1.08), 0.08).low,
+      privatePartyHigh: buildModeledRange(Math.round(tradeIn * 1.08), 0.08).high,
       dealerRetail: Math.round(tradeIn * 1.18),
+      dealerRetailLow: buildModeledRange(Math.round(tradeIn * 1.18), 0.1).low,
+      dealerRetailHigh: buildModeledRange(Math.round(tradeIn * 1.18), 0.1).high,
       currency: "USD",
       generatedAt: new Date().toISOString(),
+      sourceLabel: "Modeled estimate",
+      confidenceLabel: "Limited data",
+      modelType: "modeled",
+      listingCount: null,
     };
   }
 }

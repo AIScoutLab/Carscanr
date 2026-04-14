@@ -8,20 +8,22 @@ export function ValueEstimateCard({ result }: { result: ValuationResult }) {
     <View style={styles.card}>
       <Text style={styles.heading}>Estimated market value</Text>
       <View style={styles.row}>
-        <Metric label="Trade-in" value={result.tradeIn} />
-        <Metric label="Private" value={result.privateParty} />
-        <Metric label="Retail" value={result.dealerRetail} />
+        <Metric label="Trade-in" value={result.tradeIn} range={result.tradeInRange} />
+        <Metric label="Private" value={result.privateParty} range={result.privatePartyRange} />
+        <Metric label="Retail" value={result.dealerRetail} range={result.dealerRetailRange} />
       </View>
+      <Text style={styles.source}>{result.sourceLabel}</Text>
       <Text style={styles.caption}>{result.confidenceLabel}</Text>
     </View>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, range }: { label: string; value: string; range: string }) {
   return (
     <View style={styles.metric}>
       <Text style={styles.metricLabel}>{label}</Text>
       <Text style={styles.metricValue}>{value}</Text>
+      <Text style={styles.metricRange}>{range}</Text>
     </View>
   );
 }
@@ -33,5 +35,7 @@ const styles = StyleSheet.create({
   metric: { flex: 1, backgroundColor: Colors.cardAlt, borderRadius: 14, padding: 12, gap: 4 },
   metricLabel: { ...Typography.caption, color: Colors.textMuted },
   metricValue: { ...Typography.bodyStrong, color: Colors.textStrong },
+  metricRange: { ...Typography.caption, color: Colors.textMuted },
+  source: { ...Typography.caption, color: Colors.textStrong },
   caption: { ...Typography.caption, color: Colors.success },
 });

@@ -16,6 +16,10 @@ Product goal:
 - App shows a useful result immediately
 - Full specs/value/listings/Garage are layered on top of that core flow
 - Product direction is now explicitly guest-first for scanning
+- Monetization truth now being enforced in app state:
+  - scans are unlimited
+  - free users get 5 free Pro unlocks
+  - only premium detail access should lock after free unlocks are exhausted
 
 ## Current State Snapshot
 
@@ -55,6 +59,7 @@ Product goal:
 Guest scan is now the intended product flow:
 
 - Standard scan should work without sign-in
+- Standard scan should not be blocked by scan-count limits at all
 - Sign-in is still required for:
   - Garage save/list/delete
   - synced history
@@ -71,6 +76,93 @@ Key files:
 - [services/guestSessionService.ts](/Users/mattbrillman/Car_Identifier/services/guestSessionService.ts)
 - [services/scanService.ts](/Users/mattbrillman/Car_Identifier/services/scanService.ts)
 
+### Monetization / entitlement consistency
+
+Current product truth:
+
+- scanning is always allowed
+- free users get 5 free Pro unlocks
+- scanning alone must not consume free unlocks
+- basic scan result identification remains visible without Pro
+- only locked premium sections should depend on unlocks or Pro
+
+Recent app-side fixes:
+
+- [app/(tabs)/scan.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/scan.tsx)
+  - removed hard free-scan blocking logic
+  - upsell logic now keys off remaining free unlocks instead of scan counts
+- [app/scan/camera.tsx](/Users/mattbrillman/Car_Identifier/app/scan/camera.tsx)
+  - removed hard free-scan blocking logic
+- [app/paywall.tsx](/Users/mattbrillman/Car_Identifier/app/paywall.tsx)
+  - now shows unlock-based meter instead of scan-based meter
+- [app/(tabs)/garage.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/garage.tsx)
+  - now shows unlock-based meter instead of scan-based meter
+- [app/(tabs)/profile.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/profile.tsx)
+  - now shows explicit free unlock usage / remaining counts
+- [components/PaywallCard.tsx](/Users/mattbrillman/Car_Identifier/components/PaywallCard.tsx)
+  - now says free Pro unlocks left, not free scans left
+- [constants/seedData.ts](/Users/mattbrillman/Car_Identifier/constants/seedData.ts)
+  - default free status no longer implies a hard 5-scan cap
+- [services/subscriptionService.ts](/Users/mattbrillman/Car_Identifier/services/subscriptionService.ts)
+  - purchase/restore placeholder flow no longer throws sign-in-required immediately
+  - debug logs added:
+    - `PURCHASE_FLOW_START`
+    - `PURCHASE_PRODUCTS_LOAD_START`
+    - `PURCHASE_PRODUCTS_LOAD_SUCCESS`
+    - `PURCHASE_PRODUCTS_LOAD_FAILURE`
+    - `PURCHASE_FLOW_FAILURE`
+    - `RESTORE_PURCHASES_START`
+    - `RESTORE_PURCHASES_SUCCESS`
+    - `RESTORE_PURCHASES_FAILURE`
+
+Important diagnosis:
+
+- counter mismatch was partly a UI truth mismatch, not only data:
+  - scan/result/detail screens were using unlock counts from subscription context
+  - paywall/garage/profile still showed old scan-count language or scan-based meter defaults
+- purchase flow “Preparing purchase flow” issue was caused by placeholder purchase logic that still required auth and then surfaced sign-in/restore-style messaging even though real StoreKit purchase wiring is not implemented yet
+
+### Paywall truthfulness / cleanup
+
+Current truth:
+
+- real in-app purchase is still not wired in this repo
+- paywall should not pretend a real free trial or StoreKit purchase can start
+
+Recent fixes:
+
+- [app/paywall.tsx](/Users/mattbrillman/Car_Identifier/app/paywall.tsx)
+  - cleaned up duplicated stacked paywall feel into:
+    - one hero section
+    - one detail section
+    - one primary CTA
+  - primary CTA is now disabled when `purchaseAvailable` is false
+  - no more fake loading flash for a purchase path that cannot actually proceed
+  - logs:
+    - `PAYWALL_CTA_TAPPED`
+- [components/PaywallCard.tsx](/Users/mattbrillman/Car_Identifier/components/PaywallCard.tsx)
+  - no longer renders as a tappable dead surface
+  - hero copy now says scans stay free and Pro unlocks premium details
+- [services/subscriptionService.ts](/Users/mattbrillman/Car_Identifier/services/subscriptionService.ts)
+  - current placeholder purchase flow is now explicit / honest
+  - logs:
+    - `PURCHASE_FLOW_START`
+    - `PURCHASE_PRODUCTS_LOAD_START`
+    - `PURCHASE_PRODUCTS_LOAD_SUCCESS`
+    - `PURCHASE_PRODUCTS_LOAD_FAILURE`
+    - `PURCHASE_ATTEMPT_START`
+    - `PURCHASE_ATTEMPT_SUCCESS`
+    - `PURCHASE_ATTEMPT_FAILURE`
+    - `PURCHASE_FLOW_FAILURE`
+    - `RESTORE_PURCHASES_START`
+    - `RESTORE_PURCHASES_SUCCESS`
+    - `RESTORE_PURCHASES_FAILURE`
+
+Important diagnosis:
+
+- top Pro card previously looked tappable because [components/PaywallCard.tsx](/Users/mattbrillman/Car_Identifier/components/PaywallCard.tsx) always rendered as a touchable, even when no action was attached
+- bottom CTA flashed because placeholder purchase logic briefly entered a fake async path, then returned `not_configured` with no real purchase destination
+
 ### Dedicated in-app camera flow
 
 `Scan Vehicle` no longer depends on `launchCameraAsync`.
@@ -82,6 +174,34 @@ Current camera flow:
 - Photo library still uses `expo-image-picker`
 - Captured/selected images are resized/compressed before upload
 - UI shows visible scan stage text during the flow
+- Camera screen now supports pinch-to-zoom in [app/scan/camera.tsx](/Users/mattbrillman/Car_Identifier/app/scan/camera.tsx)
+  - logs:
+    - `CAMERA_ZOOM_START`
+    - `CAMERA_ZOOM_CHANGE`
+    - `CAMERA_ZOOM_END`
+    - `CAMERA_CAPTURE_WITH_ZOOM`
+  - current implementation uses `CameraView.zoom`
+  - this is digital zoom, not explicit multi-lens switching
+  - zoom is clamped to a safe range so capture flow remains stable
+- Photo-library flow had a real app-side bug on device:
+  - repeated `/api/usage/today` fetches could flood before identify ever started
+  - the strongest cause was unstable `refreshStatus` callbacks inside [features/subscription/SubscriptionProvider.tsx](/Users/mattbrillman/Car_Identifier/features/subscription/SubscriptionProvider.tsx), combined with scan-tab `useFocusEffect`
+  - fix applied:
+    - subscription actions are now `useCallback`-stable
+    - scan-tab focus refresh is throttled
+    - [services/scanService.ts](/Users/mattbrillman/Car_Identifier/services/scanService.ts) now dedupes in-flight `getUsage()` requests
+    - client logs added:
+      - `PHOTO_PICK_START`
+      - `PHOTO_PICK_SUCCESS`
+      - `USAGE_FETCH_START`
+      - `USAGE_FETCH_SUCCESS`
+      - `USAGE_FETCH_FAILURE`
+      - `IDENTIFY_REQUEST_START`
+      - `IDENTIFY_REQUEST_SUCCESS`
+      - `IDENTIFY_REQUEST_FAILURE`
+  - important nuance:
+    - the scan spinner is tied to `isBusy` in [app/(tabs)/scan.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/scan.tsx), not directly to subscription `isLoading`
+    - the dead/spinning behavior was likely caused by the usage refresh loop starving the photo-library flow before identify started, while `isBusy` remained true from scan start
 
 Key files:
 
@@ -257,6 +377,55 @@ Vehicle detail for canonical matches now has three important product fixes in pr
     - trim stripped
     - model family fallback
     - nearby year fallback
+  - current value bug root cause was not just UI:
+    - app was sending changed condition values correctly
+    - cache keys already varied by condition
+    - but the MarketCheck valuation provider was not actually applying condition to the returned price math
+  - fix applied:
+    - [backend/src/providers/marketcheck/marketCheckVehicleDataProvider.ts](/Users/mattbrillman/Car_Identifier/backend/src/providers/marketcheck/marketCheckVehicleDataProvider.ts) now applies condition multipliers to the live valuation anchor
+    - the value model has now been upgraded from a single synthetic number to a market-style range response
+    - MarketCheck fields currently used when present:
+      - `price.min`
+      - `price.median`
+      - `price.max`
+      - `price.mean`
+    - backend now shapes value output with:
+      - low estimate
+      - midpoint / best estimate
+      - high estimate
+      - separate `tradeIn`, `privateParty`, and `dealerRetail` ranges
+    - when provider range fields are missing, backend applies dynamic modeled spreads instead of a fixed-width spread
+      - narrower for cheaper/economy vehicles
+      - medium for SUVs/trucks
+      - wider for luxury / performance / high-price vehicles
+    - backend logs added for the valuation model:
+      - `VALUE_MODEL_TYPE_SELECTED`
+      - `VALUE_PROVIDER_RANGE_USED`
+      - `VALUE_DYNAMIC_RANGE_APPLIED`
+      - `VALUE_CONFIDENCE_COMPUTED`
+      - `VALUE_SOURCE_LABEL_SELECTED`
+      - `VALUE_RESPONSE_SHAPED`
+    - source/confidence labeling is now intended to stay honest:
+      - provider-rich response => `Based on market data`
+      - modeled fallback => `Modeled estimate`
+      - confidence is lowered when trim specificity or provider richness is weaker
+    - client/detail logs added:
+      - `VALUE_INPUT_CHANGED`
+      - `VALUE_REQUEST_TRIGGERED`
+      - `VALUE_REQUEST_PARAMS`
+      - `VALUE_RESPONSE_RECEIVED`
+      - `VALUE_RENDERED`
+      - `VALUE_CONDITION_COMPARISON`
+    - backend logs now include cache key and source on value lookup success/cache hit
+    - app UI now renders midpoint plus visible low-high range in:
+      - [components/ValueEstimateCard.tsx](/Users/mattbrillman/Car_Identifier/components/ValueEstimateCard.tsx)
+      - [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx)
+    - client shaping now carries:
+      - `tradeInRange`
+      - `privatePartyRange`
+      - `dealerRetailRange`
+      - `sourceLabel`
+      - `modelType`
 - Listings lookup:
   - [backend/src/services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/vehicleService.ts) now logs:
     - `LISTINGS_LOOKUP_START`
@@ -271,6 +440,12 @@ Vehicle detail for canonical matches now has three important product fixes in pr
   - repository-level cache read failures now log with:
     - `VALUE_CACHE_QUERY_FAILURE`
     - `LISTINGS_CACHE_QUERY_FAILURE`
+  - live root cause identified:
+    - production was missing `public.provider_vehicle_values_cache`
+    - production was missing `public.provider_vehicle_listings_cache`
+    - production is also likely missing `public.provider_api_usage_logs`
+  - production-safe bootstrap migration added:
+    - [backend/supabase/migrations/011_provider_cache_bootstrap.sql](/Users/mattbrillman/Car_Identifier/backend/supabase/migrations/011_provider_cache_bootstrap.sql)
   - likely previous pre-query crash area was before `*_LOOKUP_QUERY`, especially cache access / descriptor generation in:
     - `getValue()` around the cache read path in [backend/src/services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/vehicleService.ts)
     - `getListings()` around the cache read path in [backend/src/services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/vehicleService.ts)

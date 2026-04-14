@@ -1,4 +1,4 @@
 export const planBenefits = {
-  free: ["5 free scans total", "Up to 25 saved vehicles", "Basic identification", "Limited specs and value"],
-  pro: ["Unlimited scans", "Real-time pricing", "Local listings", "Price trends", "Advanced insights"],
+  free: ["Unlimited basic scans", "5 free Pro unlocks", "Basic identification", "Guest-first access"],
+  pro: ["Unlimited Pro unlocks", "Real-time pricing", "Local listings", "Price trends", "Advanced insights"],
 };

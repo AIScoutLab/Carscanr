@@ -105,6 +105,23 @@ function getPriceStats(stats: Record<string, unknown> | undefined) {
   return { mean, median, min, max };
 }
 
+function getConditionMultiplier(condition: string) {
+  switch (normalizeCondition(condition)) {
+    case "excellent":
+      return 1.04;
+    case "very_good":
+      return 1.02;
+    case "good":
+      return 1;
+    case "fair":
+      return 0.95;
+    case "poor":
+      return 0.9;
+    default:
+      return 1;
+  }
+}
+
 function getDescriptor(vehicleId: string, vehicle?: VehicleRecord | null): SearchDescriptor | null {
   if (vehicle) {
     return {
@@ -314,9 +331,17 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
     }
 
     const anchor = stats.median ?? stats.mean ?? stats.max ?? stats.min ?? descriptor.vehicle?.msrp ?? 0;
-    const tradeIn = Math.round(anchor * 0.92);
-    const privateParty = Math.round(anchor);
-    const dealerRetail = Math.round((stats.max ?? anchor * 1.06));
+    const conditionMultiplier = getConditionMultiplier(input.condition);
+    const adjustedAnchor = Math.round(anchor * conditionMultiplier);
+    const privatePartyLow = Math.round((stats.min ?? adjustedAnchor * 0.94) * conditionMultiplier);
+    const privatePartyHigh = Math.round((stats.max ?? adjustedAnchor * 1.06) * conditionMultiplier);
+    const tradeInLow = Math.round(privatePartyLow * 0.92);
+    const tradeInHigh = Math.round(privatePartyHigh * 0.92);
+    const dealerRetailLow = Math.round(privatePartyLow * 1.06);
+    const dealerRetailHigh = Math.round(privatePartyHigh * 1.08);
+    const tradeIn = Math.round(adjustedAnchor * 0.92);
+    const privateParty = Math.round(adjustedAnchor);
+    const dealerRetail = Math.round((stats.max ?? adjustedAnchor * 1.06) * conditionMultiplier);
 
     return {
       id: `live-valuation-${input.vehicleId}-${input.zip}-${input.mileage}`,
@@ -325,10 +350,20 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
       mileage: input.mileage,
       condition: normalizeCondition(input.condition),
       tradeIn,
+      tradeInLow,
+      tradeInHigh,
       privateParty,
+      privatePartyLow,
+      privatePartyHigh,
       dealerRetail,
+      dealerRetailLow,
+      dealerRetailHigh,
       currency: "USD",
       generatedAt: new Date().toISOString(),
+      sourceLabel: "Based on market data",
+      confidenceLabel: stats.min && stats.max && (stats.median || stats.mean) ? "High confidence" : "Moderate confidence",
+      modelType: "provider_range",
+      listingCount: null,
     };
   }
 
