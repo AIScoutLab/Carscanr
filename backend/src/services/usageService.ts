@@ -7,7 +7,7 @@ import { SubscriptionService } from "./subscriptionService.js";
 import { UnlockService } from "./unlockService.js";
 
 const LIFETIME_USAGE_DATE = "1970-01-01";
-const FREE_LIFETIME_SCAN_LIMIT = 5;
+const LEGACY_SCAN_COUNTER_LABEL = 5;
 
 export class UsageService {
   constructor(
@@ -16,8 +16,8 @@ export class UsageService {
   ) {}
 
   async canScan(userId: string) {
-    const summary = await this.getUsageSummary(userId);
-    return summary.isPro || summary.scansUsed < FREE_LIFETIME_SCAN_LIMIT;
+    await this.getUsageSummary(userId);
+    return true;
   }
 
   async getUsageSummary(userId: string): Promise<{
@@ -27,7 +27,7 @@ export class UsageService {
     scansUsed: number;
     scansRemaining: number | null;
     limitType: "lifetime";
-    limit: number;
+    limit: number | null;
     scansUsedToday: number;
     dailyScanLimit: number | null;
     scansRemainingToday: number | null;
@@ -42,18 +42,17 @@ export class UsageService {
       if (userId.startsWith("guest:")) {
         const record = await this.ensureLifetimeRecord(userId);
         const scansUsed = record.totalScans;
-        const scansRemaining = Math.max(FREE_LIFETIME_SCAN_LIMIT - scansUsed, 0);
         return {
           userId,
           plan: "free",
           isPro: false,
           scansUsed,
-          scansRemaining,
+          scansRemaining: null,
           limitType: "lifetime" as const,
-          limit: FREE_LIFETIME_SCAN_LIMIT,
+          limit: null,
           scansUsedToday: scansUsed,
-          dailyScanLimit: FREE_LIFETIME_SCAN_LIMIT,
-          scansRemainingToday: scansRemaining,
+          dailyScanLimit: null,
+          scansRemainingToday: null,
           abuseWindowLimit: env.ABUSE_MAX_SCAN_ATTEMPTS_PER_10_MIN,
           freeUnlocksTotal: 5,
           freeUnlocksUsed: 0,
@@ -67,19 +66,17 @@ export class UsageService {
       const record = await this.ensureLifetimeRecord(userId);
       const unlockStatus = await this.unlockService.getStatus(userId);
       const scansUsed = plan === "pro" ? record.totalScans : record.totalScans;
-      const scansRemaining = plan === "pro" ? null : Math.max(FREE_LIFETIME_SCAN_LIMIT - scansUsed, 0);
-
       return {
         userId,
         plan,
         isPro: plan === "pro",
         scansUsed,
-        scansRemaining,
+        scansRemaining: null,
         limitType: "lifetime" as const,
-        limit: FREE_LIFETIME_SCAN_LIMIT,
+        limit: null,
         scansUsedToday: scansUsed,
-        dailyScanLimit: plan === "pro" ? null : FREE_LIFETIME_SCAN_LIMIT,
-        scansRemainingToday: scansRemaining,
+        dailyScanLimit: null,
+        scansRemainingToday: null,
         abuseWindowLimit: env.ABUSE_MAX_SCAN_ATTEMPTS_PER_10_MIN,
         freeUnlocksTotal: unlockStatus.freeUnlocksTotal,
         freeUnlocksUsed: unlockStatus.freeUnlocksUsed,
@@ -109,6 +106,12 @@ export class UsageService {
     );
 
     if (recentAttempts.length >= summary.abuseWindowLimit) {
+      console.error("SCAN_BLOCKED_REASON", {
+        userId: auth.userId,
+        reason: "ABUSE_GUARD_TRIGGERED",
+        recentAttempts: recentAttempts.length,
+        abuseWindowLimit: summary.abuseWindowLimit,
+      });
       throw new AppError(
         429,
         "ABUSE_GUARD_TRIGGERED",
@@ -116,17 +119,17 @@ export class UsageService {
       );
     }
 
-    if (!summary.isPro && summary.scansUsed >= FREE_LIFETIME_SCAN_LIMIT) {
-      throw new AppError(
-        403,
-        "SCAN_LIMIT_REACHED",
-        "Free scan limit reached",
-        summary,
-      );
-    }
-
     record.recentAttemptTimestamps = [...recentAttempts, new Date().toISOString()];
     await repositories.usageCounters.upsertLifetime(record);
+
+    console.error("SCAN_ALLOWED_BASIC_RESULT", {
+      userId: auth.userId,
+      plan: summary.plan,
+      scansUsed: summary.scansUsed,
+      freeUnlocksUsed: summary.freeUnlocksUsed,
+      freeUnlocksRemaining: summary.freeUnlocksRemaining,
+      legacyCounterLabel: LEGACY_SCAN_COUNTER_LABEL,
+    });
 
     return summary;
   }

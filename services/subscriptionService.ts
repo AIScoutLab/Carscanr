@@ -100,7 +100,7 @@ let status: SubscriptionStatus = applyPlanOverride({
 
 function formatRenewalLabel(plan: "free" | "pro", expiresAt?: string) {
   if (plan === "free") {
-    return "Upgrade for unlimited scans";
+    return "Upgrade for unlimited Pro details";
   }
 
   if (!expiresAt) {

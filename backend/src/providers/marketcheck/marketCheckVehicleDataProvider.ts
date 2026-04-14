@@ -1,4 +1,5 @@
 import { env } from "../../config/env.js";
+import { AppError } from "../../errors/appError.js";
 import { normalizeCondition } from "../../lib/providerCache.js";
 import { logger } from "../../lib/logger.js";
 import { ListingRecord, ValuationRecord, VehicleRecord } from "../../types/domain.js";
@@ -230,7 +231,17 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
       });
 
       if (!response.ok) {
-        throw new Error(`MarketCheck inventory search failed with status ${response.status}.`);
+        const bodyText = await response.text().catch(() => "");
+        throw new AppError(
+          response.status,
+          response.status === 429 ? "MARKETCHECK_RATE_LIMITED" : "MARKETCHECK_REQUEST_FAILED",
+          `MarketCheck inventory search failed with status ${response.status}.`,
+          {
+            operation,
+            status: response.status,
+            body: bodyText.slice(0, 500),
+          },
+        );
       }
 
       return (await response.json()) as InventorySearchResponse;

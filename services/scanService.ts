@@ -38,7 +38,7 @@ type BackendUsageResponse = {
   scansUsed: number;
   scansRemaining: number | null;
   limitType: "lifetime";
-  limit: number;
+  limit: number | null;
   scansUsedToday: number;
   dailyScanLimit: number | null;
   scansRemainingToday: number | null;
@@ -149,7 +149,7 @@ function mapUsage(usage: BackendUsageResponse): SubscriptionStatus {
   }
   return applyPlanOverride({
     plan: usage.plan,
-    renewalLabel: usage.plan === "pro" ? "Pro active" : "Upgrade for unlimited scans",
+    renewalLabel: usage.plan === "pro" ? "Pro active" : "Upgrade for unlimited Pro details",
     scansUsed: usage.scansUsed,
     scansRemaining: usage.scansRemaining,
     limitType: usage.limitType,
@@ -276,6 +276,14 @@ export const scanService = {
     }
     const accessToken = await authService.getAccessToken();
     const guestId = accessToken ? null : await guestSessionService.getGuestId();
+    console.log("[scan-service] IDENTIFY_ENTITLEMENT_DECISION", {
+      premiumRequested: false,
+      signedIn: Boolean(accessToken),
+      guestIdPresent: Boolean(guestId),
+      freeUnlocksUsed: mutableUnlockStatus.freeUnlocksUsed,
+      freeUnlocksRemaining: mutableUnlockStatus.freeUnlocksRemaining,
+      decision: "basic_scan_allowed",
+    });
     const identifyUrl = getIdentifyEndpointUrl();
     await assertUploadSize(imageUri);
     const usage = mutableUsage;
@@ -395,6 +403,11 @@ export const scanService = {
     }
 
     const result = mapScanResponse(response.data, imageUri, usage);
+    console.log("[scan-service] SCAN_ALLOWED_BASIC_RESULT", {
+      scanId: result.id,
+      candidateCount: result.candidates.length,
+      freeUnlocksRemaining: mutableUnlockStatus.freeUnlocksRemaining,
+    });
     options?.onStage?.("parsed response", {
       scanId: result.id,
       candidateCount: result.candidates.length,

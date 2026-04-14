@@ -205,9 +205,10 @@ export default function ScanResultScreen() {
   let alternatives: RenderCandidate[] = [];
   let confidenceLine = "Confidence: 0% match";
   let insightLine = "Solid all-around vehicle.";
+  const isCatalogMatched = Boolean(bestMatch.id);
   const isPro = usage?.plan === "pro";
-  const unlockedForVehicle = bestMatch.id ? isVehicleUnlocked(bestMatch.id) : false;
-  const hasFullAccess = isPro || unlockedForVehicle;
+  const unlockedForVehicle = isCatalogMatched && bestMatch.id ? isVehicleUnlocked(bestMatch.id) : false;
+  const hasFullAccess = isCatalogMatched && (isPro || unlockedForVehicle);
   const displayConfidenceScore = safeNumber(normalized?.confidenceScore, 0) ?? 0;
   const isHighConfidence = displayConfidenceScore >= 0.82;
   const confidencePalette =
@@ -457,14 +458,20 @@ export default function ScanResultScreen() {
                   </Text>
                 </Animated.View>
                 <Text style={styles.confidenceNote}>This is the most likely match based on visible design cues from your photo.</Text>
-                {!bestMatch.id ? (
+                {!isCatalogMatched ? (
                   <Text style={styles.bestEffortNote}>Best-effort identification. Full specs catalog match is not available for this result yet.</Text>
                 ) : null}
-                {!hasFullAccess ? <Text style={styles.preview}>Premium details are locked until you use a free unlock or upgrade to Pro.</Text> : null}
+                {isCatalogMatched && !hasFullAccess ? <Text style={styles.preview}>Premium details are locked until you use a free unlock or upgrade to Pro.</Text> : null}
               </TouchableOpacity>
             </Animated.View>
           </>
-          {!hasFullAccess ? (
+          {!isCatalogMatched ? (
+            <View style={styles.unlockCard}>
+              <Text style={styles.unlockTitle}>Detailed specs are unavailable for this match right now.</Text>
+              <Text style={styles.unlockBody}>We identified the vehicle from the photo, but we could not fetch or link a full catalog record yet.</Text>
+              <Text style={styles.unlockNote}>This is not a paywall issue. Try another scan angle or check back after the catalog refreshes.</Text>
+            </View>
+          ) : !hasFullAccess ? (
             <>
               <ProLockCard onPress={() => { console.log("[tap] result-pro-lock-card"); router.push("/paywall"); }} />
               <LockedContentPreview

@@ -194,14 +194,14 @@ describe("API routes", () => {
     assert.equal(usageBody.success, true);
     assert.equal(usageBody.data.plan, "free");
     assert.equal(usageBody.data.scansUsed, 1);
-    assert.equal(usageBody.data.scansRemaining, 4);
+    assert.equal(usageBody.data.scansRemaining, null);
     assert.equal(usageBody.data.limitType, "lifetime");
-    assert.equal(usageBody.data.limit, 5);
+    assert.equal(usageBody.data.limit, null);
     assert.equal(usageBody.data.scansUsedToday, 1);
-    assert.equal(usageBody.data.dailyScanLimit, 5);
+    assert.equal(usageBody.data.dailyScanLimit, null);
   });
 
-  test("POST /api/scan/identify blocks free users after five lifetime scans", async () => {
+  test("POST /api/scan/identify still allows basic scans after five lifetime scans", async () => {
     const testRepositories = createTestRepositories({
       usageCounters: [
         {
@@ -229,10 +229,8 @@ describe("API routes", () => {
     });
     const body = parseJson<any>(response);
 
-    assert.equal(response.statusCode, 403);
-    assert.equal(body.success, false);
-    assert.equal(body.error.code, "SCAN_LIMIT_REACHED");
-    assert.equal(body.error.message, "Free scan limit reached");
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.success, true);
   });
 
   test("POST /api/subscription/cancel returns the user to the free plan", async () => {

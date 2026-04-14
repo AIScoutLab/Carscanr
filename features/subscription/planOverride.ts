@@ -22,7 +22,7 @@ export function applyPlanOverride(status: SubscriptionStatus): SubscriptionStatu
         ? backendBacked
           ? status.renewalLabel
           : "Pro active on this device"
-        : "Free plan on this device",
+        : "Free plan with unlock-based Pro access",
     scansRemaining: override === "pro" ? null : Math.max((status.limit ?? 5) - status.scansUsed, 0),
     limitType: "lifetime",
     limit: override === "pro" ? null : status.limit ?? 5,

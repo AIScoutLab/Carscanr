@@ -202,6 +202,30 @@ Current camera flow:
   - important nuance:
     - the scan spinner is tied to `isBusy` in [app/(tabs)/scan.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/scan.tsx), not directly to subscription `isLoading`
     - the dead/spinning behavior was likely caused by the usage refresh loop starving the photo-library flow before identify started, while `isBusy` remained true from scan start
+- Product rule correction applied:
+  - unlimited basic scans are now the intended rule
+  - the 5-count is for premium unlocks only
+  - root cause of the lingering `Free scan limit reached` failure:
+    - [backend/src/services/usageService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/usageService.ts) still threw `SCAN_LIMIT_REACHED` inside `assertScanAllowed(...)`
+    - that old backend gate was still hit by the normal camera identify path even when the UI correctly showed unlock-based messaging
+  - fix applied:
+    - normal identify no longer blocks after 5 lifetime scans
+    - only abuse-rate protection remains in `assertScanAllowed(...)`
+    - backend usage summaries now report unlock-based access without a remaining-scan cap
+  - new logs added across the active scan path:
+    - `CAMERA_SCAN_GATE_CHECK`
+    - `LIBRARY_SCAN_GATE_CHECK`
+    - `IDENTIFY_ENTITLEMENT_DECISION`
+    - `PREMIUM_UNLOCK_GATE_CHECK`
+    - `SCAN_ALLOWED_BASIC_RESULT`
+    - `SCAN_BLOCKED_REASON`
+  - client wording cleanup:
+    - scan UI copy now says `Upgrade for unlimited Pro details...`
+    - onboarding copy now says free users get unlimited basic scans plus 5 Pro unlocks
+  - defensive compatibility:
+    - [app/scan/camera.tsx](/Users/mattbrillman/Car_Identifier/app/scan/camera.tsx)
+    - [app/(tabs)/scan.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/scan.tsx)
+    - still remap any stray `SCAN_LIMIT_REACHED` error into a non-product-rule message so an old backend deploy cannot mislead users
 
 Key files:
 
@@ -307,6 +331,36 @@ Important debugging note:
   - provider enrichment returned no vehicles
   - provider enrichment threw
   - canonical upsert failed against Supabase
+- provider enrichment root cause for common enthusiast models like BMW M3/M4:
+  - the live scan matcher was fanning out too aggressively
+  - one scan could call:
+    - `provider-search-candidates`
+    - `provider-search-vehicles`
+    - `provider-direct-specs`
+    - then repeat similar attempts across alternate AI candidates
+  - that could burn through MarketCheck budget and trigger `429`, after which the scan still kept trying more provider branches
+- fix applied in [backend/src/services/scanService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/scanService.ts):
+  - canonical lookup still runs first
+  - provider enrichment is now capped per scan
+  - once any MarketCheck call returns `429`, the scan short-circuits remaining provider enrichment for that scan
+  - alternate candidates are skipped after the first `429`
+  - the active provider order is now:
+    1. canonical lookup
+    2. one provider search path
+    3. one optional direct-specs attempt only for a strong primary candidate
+    4. only then AI-only fallback
+  - new logs:
+    - `PROVIDER_RATE_LIMIT_SHORT_CIRCUIT`
+    - `PROVIDER_ENRICH_SKIPPED_AFTER_429`
+    - `VEHICLE_MATCH_FINAL_SUMMARY`
+  - `VEHICLE_MATCH_FINAL_SUMMARY` records:
+    - canonical hit/miss
+    - whether provider was attempted
+    - whether provider was skipped
+    - whether `429` occurred
+    - final result type (`canonical` vs `ai_only`)
+- [backend/src/providers/marketcheck/marketCheckVehicleDataProvider.ts](/Users/mattbrillman/Car_Identifier/backend/src/providers/marketcheck/marketCheckVehicleDataProvider.ts)
+  - now throws a real `AppError(429, "MARKETCHECK_RATE_LIMITED", ...)` on rate limit instead of a generic `Error`, so scan-level short-circuiting can work reliably
 
 Key files:
 
@@ -352,6 +406,14 @@ Changes made:
 - switched the main best-match card from `Pressable` to `TouchableOpacity`
 - added explicit tap helpers and tap logs for result actions
 - fallback AI-only results now show a clear explanation instead of silently doing nothing
+- AI-only fallback should no longer look like a paywall issue on the result screen:
+  - [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx)
+  - if the scan result has no catalog/canonical `vehicleId`:
+    - Pro lock / unlock CTA is hidden
+    - no premium-preview paywall copy is shown
+    - user sees:
+      - `Detailed specs are unavailable for this match right now.`
+    - tapping the best match still explains the best-effort state instead of acting broken
 - locked preview overlay now uses `pointerEvents="none"` so it cannot steal touches
 
 Key files:

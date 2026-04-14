@@ -92,7 +92,7 @@ export default function OnboardingScreen() {
         </TouchableOpacity>
         <Text style={styles.debugLabel}>Last tap: {lastTap ?? "none yet"}</Text>
         <View style={styles.footerWrap} pointerEvents="none">
-          <Text style={styles.footer}>Free includes 5 scans total. Pro unlocks unlimited scans and full specs for $6.99/month.</Text>
+          <Text style={styles.footer}>Free includes unlimited basic scans and 5 Pro unlocks. Pro unlocks full specs and premium details for $6.99/month.</Text>
         </View>
       </View>
     </AppContainer>

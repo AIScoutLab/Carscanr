@@ -308,15 +308,22 @@ export default function ScanScreen() {
         const message =
           error instanceof ApiRequestError && error.code === "AUTH_REQUIRED"
             ? "Guest scanning should be available, but this request still asked for sign-in. Please try again."
+            : error instanceof ApiRequestError && error.code === "SCAN_LIMIT_REACHED"
+              ? "Basic scans should remain available. Please try again."
             : error instanceof ApiRequestError && error.code === "BACKEND_WAKE_TIMEOUT"
-            ? "Waking backend, please wait, then try again."
+              ? "Waking backend, please wait, then try again."
             : error instanceof ApiRequestError && error.code === "REQUEST_TIMEOUT"
-            ? "Identification timed out. Please try again."
+              ? "Identification timed out. Please try again."
             : error instanceof ApiRequestError
               ? error.message
               : error instanceof Error
                 ? error.message
                 : "We couldn’t identify that vehicle right now.";
+        console.log("[scan] SCAN_BLOCKED_REASON", {
+          source,
+          code: error instanceof ApiRequestError ? error.code : undefined,
+          message,
+        });
         failScan(message, flowId);
       }
     },
@@ -325,6 +332,12 @@ export default function ScanScreen() {
 
   const beginLibraryScan = async () => {
     console.log("[tap] scan-library");
+    console.log("[scan] LIBRARY_SCAN_GATE_CHECK", {
+      allowed: true,
+      reason: "basic-scan-always-allowed",
+      freeUnlocksRemaining,
+      freeUnlocksUsed,
+    });
     const flowId = startFlow("library");
     console.log("[scan] PHOTO_PICK_START", { flowId, source: "library" });
     recordStage("tap received", "library", flowId);
@@ -475,7 +488,7 @@ export default function ScanScreen() {
           unlocksUsed={freeUnlocksUsed}
           unlocksRemaining={freeUnlocksRemaining}
           unlocksLimit={freeUnlocksLimit}
-          supportingText="Upgrade for unlimited scans, pricing insights, and listings."
+          supportingText="Upgrade for unlimited Pro details, pricing insights, and listings."
           ctaLabel="Go Pro"
           onCtaPress={() => {
             console.log("[tap] usage-meter-go-pro");

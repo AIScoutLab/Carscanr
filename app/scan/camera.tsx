@@ -86,7 +86,7 @@ export default function ScanCameraScreen() {
   const [sessionDetected, setSessionDetected] = useState(false);
   const [tokenPresent, setTokenPresent] = useState(false);
   const [zoom, setZoom] = useState(0);
-  const { status: usage } = useSubscription();
+  const { status: usage, freeUnlocksRemaining, freeUnlocksUsed } = useSubscription();
 
   const isFlowActive = useCallback((flowId: number) => activeFlowIdRef.current === flowId, []);
 
@@ -236,13 +236,19 @@ export default function ScanCameraScreen() {
       const message =
         error instanceof ApiRequestError && error.code === "AUTH_REQUIRED"
           ? "Guest scanning should be available, but this request still asked for sign-in. Please try again."
+          : error instanceof ApiRequestError && error.code === "SCAN_LIMIT_REACHED"
+            ? "Basic scans should remain available. Please try again."
           : error instanceof ApiRequestError && error.code === "BACKEND_WAKE_TIMEOUT"
-          ? "Waking backend, please wait, then try again."
+            ? "Waking backend, please wait, then try again."
           : error instanceof ApiRequestError && error.code === "REQUEST_TIMEOUT"
-          ? "Identification timed out. Please try again."
+            ? "Identification timed out. Please try again."
           : error instanceof Error
             ? error.message
             : "We couldn’t identify that vehicle right now.";
+      console.log("[scan-camera] SCAN_BLOCKED_REASON", {
+        code: error instanceof ApiRequestError ? error.code : undefined,
+        message,
+      });
       fail(message, flowId);
     }
   }, [appendStage, armWaitingIdentifyTimeout, clearWaitingIdentifyTimeout, fail, isFlowActive]);
@@ -251,6 +257,13 @@ export default function ScanCameraScreen() {
     if (!cameraRef.current || !cameraReady || isBusy) {
       return;
     }
+    console.log("[scan-camera] CAMERA_SCAN_GATE_CHECK", {
+      allowed: true,
+      reason: "basic-scan-always-allowed",
+      plan: usage?.plan ?? "free",
+      freeUnlocksRemaining,
+      freeUnlocksUsed,
+    });
 
     const flowId = startFlow("camera-capture");
     setIsBusy(true);

@@ -25,6 +25,18 @@ type ScanFailureStage =
   | "VISION_DEBUG_WRITE"
   | "USAGE_WRITE";
 
+type ProviderEnrichmentContext = {
+  scanId: string;
+  providerAttempted: boolean;
+  providerSkipped: boolean;
+  providerRateLimited: boolean;
+  providerAttemptCount: number;
+  canonicalHit: boolean;
+};
+
+const MAX_PROVIDER_CALLS_PER_SCAN = 2;
+const MAX_PROVIDER_CANDIDATES_TO_TRY = 1;
+
 function serializeScanError(error: unknown) {
   const baseError =
     error instanceof Error
@@ -107,6 +119,25 @@ function stageFailureMessage(stage: ScanFailureStage) {
   }
 }
 
+function isProviderRateLimitError(error: unknown) {
+  return error instanceof AppError && error.statusCode === 429;
+}
+
+function isHighPriorityAlternateCandidate(
+  primary: { confidence: number; make: string; model: string },
+  alternate: { confidence: number; make: string; model: string },
+) {
+  if (primary.confidence < 0.72) {
+    return true;
+  }
+
+  return (
+    alternate.confidence >= primary.confidence - 0.05 &&
+    normalizeMatchText(primary.make) === normalizeMatchText(alternate.make) &&
+    normalizeMatchText(primary.model) !== normalizeMatchText(alternate.model)
+  );
+}
+
 function logIdentifyStage(stage: ScanFailureStage, event: "start" | "success", context: Record<string, unknown>) {
   logger.error(
     {
@@ -155,6 +186,29 @@ export class ScanService {
       });
       const premiumRequested = Boolean(input.allowPremium);
       const entitlementCheck = await this.unlockService.canRequestPremium(input.auth.userId);
+      logger.error(
+        {
+          label: "IDENTIFY_ENTITLEMENT_DECISION",
+          scanId,
+          userId: input.auth.userId,
+          premiumRequested,
+          isPro: usage.isPro,
+          remainingUnlocks: entitlementCheck.remainingUnlocks,
+        },
+        "IDENTIFY_ENTITLEMENT_DECISION",
+      );
+      logger.error(
+        {
+          label: "PREMIUM_UNLOCK_GATE_CHECK",
+          scanId,
+          userId: input.auth.userId,
+          premiumRequested,
+          isPro: usage.isPro,
+          remainingUnlocks: entitlementCheck.remainingUnlocks,
+          decision: premiumRequested && !usage.isPro && entitlementCheck.remainingUnlocks <= 0 ? "premium_cached_only" : "basic_scan_allowed",
+        },
+        "PREMIUM_UNLOCK_GATE_CHECK",
+      );
       logIdentifyStage("ENTITLEMENT_CHECK", "success", {
         scanId,
         userId: input.auth.userId,
@@ -202,6 +256,15 @@ export class ScanService {
         visualHash,
       });
       if (premiumRequested && !usage.isPro && entitlementCheck.remainingUnlocks <= 0) {
+        logger.error(
+          {
+            label: "SCAN_BLOCKED_REASON",
+            scanId,
+            userId: input.auth.userId,
+            reason: "PREMIUM_UNLOCKS_EXHAUSTED_CACHED_ONLY",
+          },
+          "SCAN_BLOCKED_REASON",
+        );
         const cachedOnly = await this.identifyFromCacheOnly({
           imageKey,
           visualHash,
@@ -212,6 +275,16 @@ export class ScanService {
         }
         visionResult = cachedOnly;
       } else {
+        logger.error(
+          {
+            label: "SCAN_ALLOWED_BASIC_RESULT",
+            scanId,
+            userId: input.auth.userId,
+            premiumRequested,
+            path: "identifyWithCache",
+          },
+          "SCAN_ALLOWED_BASIC_RESULT",
+        );
         visionResult = await this.identifyWithCache(scanId, {
           ...input,
           imageKey,
@@ -255,7 +328,15 @@ export class ScanService {
         userId: input.auth.userId,
       });
       const normalizedResult = normalizeVisionResult(visionResult.normalized);
-      const matchedVehicles = await this.resolveCatalogMatches(normalizedResult);
+      const enrichmentContext: ProviderEnrichmentContext = {
+        scanId,
+        providerAttempted: false,
+        providerSkipped: false,
+        providerRateLimited: false,
+        providerAttemptCount: 0,
+        canonicalHit: false,
+      };
+      const matchedVehicles = await this.resolveCatalogMatches(normalizedResult, enrichmentContext);
       const resolvedVehicles =
         matchedVehicles.length > 0
           ? matchedVehicles
@@ -283,6 +364,20 @@ export class ScanService {
           "VEHICLE_MATCH_FALLBACK_RESULT",
         );
       }
+      logger.error(
+        {
+          label: "VEHICLE_MATCH_FINAL_SUMMARY",
+          scanId,
+          userId: input.auth.userId,
+          canonicalHit: enrichmentContext.canonicalHit,
+          providerAttempted: enrichmentContext.providerAttempted,
+          providerSkipped: enrichmentContext.providerSkipped,
+          providerRateLimited: enrichmentContext.providerRateLimited,
+          providerAttemptCount: enrichmentContext.providerAttemptCount,
+          finalResultType: matchedVehicles.length > 0 ? "canonical" : "ai_only",
+        },
+        "VEHICLE_MATCH_FINAL_SUMMARY",
+      );
       logIdentifyStage("VEHICLE_MATCH", "success", {
         scanId,
         userId: input.auth.userId,
@@ -696,7 +791,7 @@ export class ScanService {
     }
   }
 
-  private async resolveCatalogMatches(result: VisionResult): Promise<MatchedVehicleCandidate[]> {
+  private async resolveCatalogMatches(result: VisionResult, context: ProviderEnrichmentContext): Promise<MatchedVehicleCandidate[]> {
     logger.error(
       {
         label: "VEHICLE_MATCH_INPUT",
@@ -712,8 +807,9 @@ export class ScanService {
       },
       "VEHICLE_MATCH_INPUT",
     );
+    const primaryCandidate = { year: result.likely_year, make: result.likely_make, model: result.likely_model, trim: result.likely_trim, confidence: result.confidence };
     const candidates = [
-      { year: result.likely_year, make: result.likely_make, model: result.likely_model, trim: result.likely_trim, confidence: result.confidence },
+      primaryCandidate,
       ...result.alternate_candidates.map((candidate) => ({
         year: candidate.likely_year,
         make: candidate.likely_make,
@@ -723,11 +819,38 @@ export class ScanService {
       })),
     ];
 
+    const candidatesToTry = candidates.filter((candidate, index) => {
+      if (index === 0) {
+        return true;
+      }
+      return isHighPriorityAlternateCandidate(primaryCandidate, candidate);
+    }).slice(0, MAX_PROVIDER_CANDIDATES_TO_TRY + 1);
+
     const matched: MatchedVehicleCandidate[] = [];
 
-    for (const candidate of candidates) {
-      const matches = await this.findVehicleMatches(candidate);
+    for (const candidate of candidatesToTry) {
+      const matches = await this.findVehicleMatches(candidate, context);
       matched.push(...matches);
+      if (matches.length > 0) {
+        break;
+      }
+      if (context.providerRateLimited) {
+        logger.error(
+          {
+            label: "PROVIDER_ENRICH_SKIPPED_AFTER_429",
+            scanId: context.scanId,
+            skippedAlternateCandidates: candidatesToTry.slice(candidatesToTry.indexOf(candidate) + 1).map((entry) => ({
+              year: entry.year,
+              make: entry.make,
+              model: entry.model,
+              trim: entry.trim ?? null,
+              confidence: entry.confidence,
+            })),
+          },
+          "PROVIDER_ENRICH_SKIPPED_AFTER_429",
+        );
+        break;
+      }
     }
 
     const uniqueMatches = matched
@@ -774,13 +897,61 @@ export class ScanService {
     };
   }
 
+  private markProviderShortCircuit(context: ProviderEnrichmentContext, candidate: {
+    year: number;
+    make: string;
+    model: string;
+    trim?: string;
+    confidence: number;
+  }, branch: string, error: unknown) {
+    context.providerRateLimited = true;
+    context.providerSkipped = true;
+    logger.error(
+      {
+        label: "PROVIDER_RATE_LIMIT_SHORT_CIRCUIT",
+        scanId: context.scanId,
+        branch,
+        candidate,
+        providerAttemptCount: context.providerAttemptCount,
+        message: error instanceof Error ? error.message : "Provider rate limited",
+        code: error instanceof AppError ? error.code : undefined,
+        details: error instanceof AppError ? error.details : undefined,
+      },
+      "PROVIDER_RATE_LIMIT_SHORT_CIRCUIT",
+    );
+  }
+
+  private shouldSkipProviderEnrichment(context: ProviderEnrichmentContext, candidate: {
+    year: number;
+    make: string;
+    model: string;
+    trim?: string;
+    confidence: number;
+  }) {
+    if (context.providerRateLimited || context.providerAttemptCount >= MAX_PROVIDER_CALLS_PER_SCAN) {
+      context.providerSkipped = true;
+      logger.error(
+        {
+          label: "PROVIDER_ENRICH_SKIPPED_AFTER_429",
+          scanId: context.scanId,
+          candidate,
+          providerRateLimited: context.providerRateLimited,
+          providerAttemptCount: context.providerAttemptCount,
+        },
+        "PROVIDER_ENRICH_SKIPPED_AFTER_429",
+      );
+      return true;
+    }
+    return false;
+  }
+
   private async findVehicleMatches(candidate: {
     year: number;
     make: string;
     model: string;
     trim?: string;
     confidence: number;
-  }): Promise<MatchedVehicleCandidate[]> {
+  }, context: ProviderEnrichmentContext): Promise<MatchedVehicleCandidate[]> {
     const logStrategy = (
       strategy: string,
       vehicles: Array<VehicleRecord | MatchedVehicleCandidate | { id: string; year: number; make: string; model: string; trim?: string | null }>,
@@ -829,6 +1000,7 @@ export class ScanService {
 
     const exactCanonical = await repositories.canonicalVehicles.findByCanonicalKey(exactCanonicalKey);
     if (exactCanonical) {
+      context.canonicalHit = true;
       const exactCanonicalVehicle = mapCanonicalVehicleToRecord(exactCanonical);
       logStrategy("canonical-exact-key", exactCanonicalVehicle ? [exactCanonical] : [], {
         canonicalKey: exactCanonicalKey,
@@ -874,6 +1046,7 @@ export class ScanService {
       normalizedModel,
     });
     if (canonicalCandidates.length > 0) {
+      context.canonicalHit = true;
       logger.error(
         {
           label: "CANONICAL_LOOKUP_HIT",
@@ -902,6 +1075,7 @@ export class ScanService {
     });
     logStrategy("canonical-exact-year-make-model", exactCanonicalMatches);
     if (exactCanonicalMatches.length > 0) {
+      context.canonicalHit = true;
       return exactCanonicalMatches
         .map((record) => {
           const vehicle = mapCanonicalVehicleToRecord(record);
@@ -966,6 +1140,7 @@ export class ScanService {
       candidateModelFamily,
     });
     if (canonicalRankedMatches.length > 0) {
+      context.canonicalHit = true;
       const selected = canonicalRankedMatches.map((entry) =>
         this.buildCanonicalMatchedCandidate({
           vehicleId: entry.record.id,
@@ -985,6 +1160,10 @@ export class ScanService {
       return selected;
     }
 
+    if (this.shouldSkipProviderEnrichment(context, candidate)) {
+      return [];
+    }
+
     logger.error(
       {
         label: "CANONICAL_PROVIDER_ENRICH_START",
@@ -994,12 +1173,18 @@ export class ScanService {
       },
       "CANONICAL_PROVIDER_ENRICH_START",
     );
+    context.providerAttempted = true;
+    context.providerAttemptCount += 1;
     const providerCandidateResults = await providers.specsProvider.searchCandidates({
       year: candidate.year,
       make: candidate.make,
       model: candidate.model,
       trim: candidate.trim,
     }).catch((error) => {
+      if (isProviderRateLimitError(error)) {
+        this.markProviderShortCircuit(context, candidate, "provider-search-candidates", error);
+        return [];
+      }
       logger.error(
         {
           label: "CANONICAL_PROVIDER_ENRICH_FAILURE",
@@ -1018,44 +1203,14 @@ export class ScanService {
     });
     logStrategy("provider-search-candidates", providerCandidateResults);
 
-    if (providerCandidateResults.length === 0) {
-      logger.error(
-        {
-          label: "CANONICAL_PROVIDER_ENRICH_START",
-          source: "provider-search-vehicles",
-          candidate,
-          provider: providers.specsProviderName,
-        },
-        "CANONICAL_PROVIDER_ENRICH_START",
-      );
-    }
-    const providerBroadResults = providerCandidateResults.length > 0
-      ? providerCandidateResults
-      : await providers.specsProvider.searchVehicles({
-          year: String(candidate.year),
-          make: candidate.make,
-          model: candidate.model,
-        }).catch((error) => {
-          logger.error(
-            {
-              label: "CANONICAL_PROVIDER_ENRICH_FAILURE",
-              source: "provider-search-vehicles",
-              provider: providers.specsProviderName,
-              candidate,
-              message: error instanceof Error ? error.message : "Unknown provider searchVehicles error",
-              stack: error instanceof Error ? error.stack : undefined,
-              code: typeof error === "object" && error && "code" in error ? (error as { code?: unknown }).code : undefined,
-              details: typeof error === "object" && error && "details" in error ? (error as { details?: unknown }).details : undefined,
-              hint: typeof error === "object" && error && "hint" in error ? (error as { hint?: unknown }).hint : undefined,
-            },
-            "CANONICAL_PROVIDER_ENRICH_FAILURE",
-          );
-          return [];
-        });
-    logStrategy("provider-search-vehicles", providerBroadResults);
-
-    let enrichmentVehicles = providerBroadResults;
-    if (enrichmentVehicles.length === 0) {
+    let enrichmentVehicles = providerCandidateResults;
+    const shouldTryDirectSpecs =
+      enrichmentVehicles.length === 0 &&
+      !context.providerRateLimited &&
+      context.providerAttemptCount < MAX_PROVIDER_CALLS_PER_SCAN &&
+      candidate.confidence >= 0.82 &&
+      normalizeMatchText(candidate.model).split(" ").length <= 2;
+    if (shouldTryDirectSpecs) {
       const liveVehicleId = buildLiveVehicleId({
         year: candidate.year,
         make: candidate.make,
@@ -1072,10 +1227,16 @@ export class ScanService {
         },
         "CANONICAL_PROVIDER_ENRICH_START",
       );
+      context.providerAttempted = true;
+      context.providerAttemptCount += 1;
       const directVehicle = await providers.specsProvider.getVehicleSpecs({
         vehicleId: liveVehicleId,
         vehicle: null,
       }).catch((error) => {
+        if (isProviderRateLimitError(error)) {
+          this.markProviderShortCircuit(context, candidate, "provider-direct-specs", error);
+          return null;
+        }
         logger.error(
           {
             label: "CANONICAL_PROVIDER_ENRICH_FAILURE",

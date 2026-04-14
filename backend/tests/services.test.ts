@@ -60,18 +60,13 @@ describe("UsageService", () => {
     });
     setRepositories(testRepositories.repositories);
 
-    await assert.rejects(
-      () =>
-        service.assertScanAllowed({
-          userId: "demo-user",
-          email: "demo@example.com",
-          plan: "free",
-        }),
-      (error: unknown) =>
-        error instanceof AppError &&
-        error.code === "SCAN_LIMIT_REACHED" &&
-        error.statusCode === 403,
-    );
+    const summary = await service.assertScanAllowed({
+      userId: "demo-user",
+      email: "demo@example.com",
+      plan: "free",
+    });
+    assert.equal(summary.plan, "free");
+    assert.equal(summary.scansUsed, 5);
   });
 
   test("blocks rapid repeat scan attempts with the abuse guard", async () => {
@@ -212,7 +207,7 @@ describe("ScanService", () => {
       plan: "free",
     });
     assert.equal(usage.scansUsed, 1);
-    assert.equal(usage.scansRemaining, 4);
+    assert.equal(usage.scansRemaining, null);
     assert.equal(usage.limitType, "lifetime");
   });
 
