@@ -1,0 +1,1640 @@
+{
+  "offline_canonical_version": "2026.04.15.1",
+  "generated_at": "2026-04-15T00:06:51.862Z",
+  "vehicles": [
+    {
+      "id": "181f4d72-39de-4a2c-944a-ab73c613e282",
+      "canonicalKey": "canonical:2017:bmw:5-series:535i:car",
+      "year": 2017,
+      "make": "Bmw",
+      "model": "5 Series",
+      "trim": "535i",
+      "vehicleType": "car",
+      "normalizedMake": "bmw",
+      "normalizedModel": "5 series",
+      "normalizedTrim": "535i",
+      "basicSpecs": {
+        "engine": "3.0L I6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "18 city / 27 hwy",
+        "exteriorColors": [
+          "Black",
+          "Carbon Black Metallic"
+        ],
+        "msrp": 20800,
+        "bodyStyle": "Hatchback"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "1f84746b-d0de-4531-9593-9bfbc9ca4780",
+      "canonicalKey": "canonical:2014:toyota:4runner:limited:car",
+      "year": 2014,
+      "make": "Toyota",
+      "model": "4runner",
+      "trim": "Limited",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "4runner",
+      "normalizedTrim": "limited",
+      "basicSpecs": {
+        "engine": "4.0L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "RWD",
+        "mpgOrRange": "20 city / 24 hwy",
+        "exteriorColors": [],
+        "msrp": 20999,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "0eef3757-c0be-413c-b5d1-e45d18256975",
+      "canonicalKey": "canonical:2014:toyota:4runner:trail:car",
+      "year": 2014,
+      "make": "Toyota",
+      "model": "4runner",
+      "trim": "Trail",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "4runner",
+      "normalizedTrim": "trail",
+      "basicSpecs": {
+        "engine": "4.0L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "19 city / 25 hwy",
+        "exteriorColors": [
+          "White",
+          "White"
+        ],
+        "msrp": 19999,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "eea61c69-c1f7-414a-9a06-77a483b2f07a",
+      "canonicalKey": "canonical:2014:toyota:4runner:trail-premium:car",
+      "year": 2014,
+      "make": "Toyota",
+      "model": "4runner",
+      "trim": "Trail Premium",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "4runner",
+      "normalizedTrim": "trail premium",
+      "basicSpecs": {
+        "engine": "4.0L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "19 city / 25 hwy",
+        "exteriorColors": [
+          "Red",
+          "Red"
+        ],
+        "msrp": 20995,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "abee4b80-e442-487d-8c9e-8cfedb9794c7",
+      "canonicalKey": "canonical:2014:toyota:4runner:sr5:car",
+      "year": 2014,
+      "make": "Toyota",
+      "model": "4runner",
+      "trim": "SR5",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "4runner",
+      "normalizedTrim": "sr5",
+      "basicSpecs": {
+        "engine": "4.0L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "RWD",
+        "mpgOrRange": "20 city / 26 hwy",
+        "exteriorColors": [
+          "Gray",
+          "Gray"
+        ],
+        "msrp": 16990,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "a904da93-6093-4fb5-8402-2451c20809c3",
+      "canonicalKey": "canonical:2010:toyota:4runner:limited:car",
+      "year": 2010,
+      "make": "Toyota",
+      "model": "4runner",
+      "trim": "Limited",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "4runner",
+      "normalizedTrim": "limited",
+      "basicSpecs": {
+        "engine": "4.0L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "RWD",
+        "mpgOrRange": "20 city / 24 hwy",
+        "exteriorColors": [
+          "White",
+          "White"
+        ],
+        "msrp": 13995,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "16f6e149-99c7-44ef-b9f7-1de443fe026e",
+      "canonicalKey": "canonical:2020:toyota:4runner:night-shade:car",
+      "year": 2020,
+      "make": "Toyota",
+      "model": "4runner",
+      "trim": "Night Shade",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "4runner",
+      "normalizedTrim": "night shade",
+      "basicSpecs": {
+        "engine": "4.0L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "17 city / 20 hwy",
+        "exteriorColors": [
+          "Black",
+          "Black"
+        ],
+        "msrp": 33795,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "2cc98e39-b6cd-4754-bba3-ebcfaa159076",
+      "canonicalKey": "canonical:2010:toyota:4runner:base:car",
+      "year": 2010,
+      "make": "Toyota",
+      "model": "4runner",
+      "trim": "Base",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "4runner",
+      "normalizedTrim": "base",
+      "basicSpecs": {
+        "engine": "4.0L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "See live listing",
+        "drivetrain": "See live listing",
+        "mpgOrRange": "See live listing",
+        "exteriorColors": [],
+        "msrp": 0,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "78870b9d-31a0-462a-968d-6ce2e528aebf",
+      "canonicalKey": "canonical:2010:toyota:4runner:sr5:car",
+      "year": 2010,
+      "make": "Toyota",
+      "model": "4runner",
+      "trim": "SR5",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "4runner",
+      "normalizedTrim": "sr5",
+      "basicSpecs": {
+        "engine": "4.0L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "RWD",
+        "mpgOrRange": "20 city / 26 hwy",
+        "exteriorColors": [
+          "Black",
+          "Black"
+        ],
+        "msrp": 18990,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "6f41a6df-41dc-4979-8cd2-c41e61198fe8",
+      "canonicalKey": "canonical:2020:toyota:4runner:limited:car",
+      "year": 2020,
+      "make": "Toyota",
+      "model": "4runner",
+      "trim": "Limited",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "4runner",
+      "normalizedTrim": "limited",
+      "basicSpecs": {
+        "engine": "4.0L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "20 city / 24 hwy",
+        "exteriorColors": [
+          "White",
+          "Blizzard Pearl"
+        ],
+        "msrp": 34025,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "dd0f2de2-d623-47a6-a535-f7324beafba8",
+      "canonicalKey": "canonical:2006:toyota:4runner:limited:car",
+      "year": 2006,
+      "make": "Toyota",
+      "model": "4runner",
+      "trim": "Limited",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "4runner",
+      "normalizedTrim": "limited",
+      "basicSpecs": {
+        "engine": "4.0L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "RWD",
+        "mpgOrRange": "20 city / 24 hwy",
+        "exteriorColors": [
+          "Silver",
+          "Silver"
+        ],
+        "msrp": 7995,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "25ce5223-24cd-41fd-ae85-79d8dd835b8f",
+      "canonicalKey": "canonical:2017:bmw:5-series:530i:car",
+      "year": 2017,
+      "make": "Bmw",
+      "model": "5 Series",
+      "trim": "530i",
+      "vehicleType": "car",
+      "normalizedMake": "bmw",
+      "normalizedModel": "5 series",
+      "normalizedTrim": "530i",
+      "basicSpecs": {
+        "engine": "2.0L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "27 city / 35 hwy",
+        "exteriorColors": [
+          "Silver",
+          "Silver"
+        ],
+        "msrp": 13998,
+        "bodyStyle": "Sedan"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "7697f949-269a-4487-9c01-472c8b418820",
+      "canonicalKey": "canonical:2017:bmw:5-series:540i:car",
+      "year": 2017,
+      "make": "Bmw",
+      "model": "5 Series",
+      "trim": "540i",
+      "vehicleType": "car",
+      "normalizedMake": "bmw",
+      "normalizedModel": "5 series",
+      "normalizedTrim": "540i",
+      "basicSpecs": {
+        "engine": "3.0L I6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "RWD",
+        "mpgOrRange": "25 city / 32 hwy",
+        "exteriorColors": [],
+        "msrp": 0,
+        "bodyStyle": "Sedan"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "1ce088b0-cbe9-41f6-b4bb-9c9ed93d5156",
+      "canonicalKey": "canonical:2020:toyota:4runner:sr5-premium:car",
+      "year": 2020,
+      "make": "Toyota",
+      "model": "4runner",
+      "trim": "SR5 Premium",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "4runner",
+      "normalizedTrim": "sr5 premium",
+      "basicSpecs": {
+        "engine": "4.0L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "17 city / 21 hwy",
+        "exteriorColors": [
+          "Blue",
+          "Blue"
+        ],
+        "msrp": 41590,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "06e94a9a-6ab1-4754-8f50-2ac1158ebc58",
+      "canonicalKey": "canonical:2015:honda:fit:ex:car",
+      "year": 2015,
+      "make": "Honda",
+      "model": "Fit",
+      "trim": "EX",
+      "vehicleType": "car",
+      "normalizedMake": "honda",
+      "normalizedModel": "fit",
+      "normalizedTrim": "ex",
+      "basicSpecs": {
+        "engine": "1.5L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "CVT",
+        "drivetrain": "FWD",
+        "mpgOrRange": "32 city / 38 hwy",
+        "exteriorColors": [
+          "White",
+          "White"
+        ],
+        "msrp": 10500,
+        "bodyStyle": "Hatchback"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "d518e980-4674-43a8-b5ed-3d1f8f32bb0b",
+      "canonicalKey": "canonical:2006:toyota:4runner:sport:car",
+      "year": 2006,
+      "make": "Toyota",
+      "model": "4runner",
+      "trim": "Sport",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "4runner",
+      "normalizedTrim": "sport",
+      "basicSpecs": {
+        "engine": "4.0L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "17 city / 21 hwy",
+        "exteriorColors": [
+          "Gray",
+          "Shadow Mica"
+        ],
+        "msrp": 9576,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "28c7217e-4775-400b-bfb3-7f12ba915964",
+      "canonicalKey": "canonical:2020:toyota:4runner:sr5:car",
+      "year": 2020,
+      "make": "Toyota",
+      "model": "4runner",
+      "trim": "SR5",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "4runner",
+      "normalizedTrim": "sr5",
+      "basicSpecs": {
+        "engine": "4.0L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "19 city / 25 hwy",
+        "exteriorColors": [
+          "White",
+          "Super White"
+        ],
+        "msrp": 34592,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "547ad147-2dad-4815-a9b7-2831edabb6d3",
+      "canonicalKey": "canonical:2015:honda:fit:ex-l:car",
+      "year": 2015,
+      "make": "Honda",
+      "model": "Fit",
+      "trim": "EX-L",
+      "vehicleType": "car",
+      "normalizedMake": "honda",
+      "normalizedModel": "fit",
+      "normalizedTrim": "ex-l",
+      "basicSpecs": {
+        "engine": "1.5L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "CVT",
+        "drivetrain": "FWD",
+        "mpgOrRange": "32 city / 38 hwy",
+        "exteriorColors": [
+          "White",
+          "White Orchid Pearl"
+        ],
+        "msrp": 7900,
+        "bodyStyle": "Hatchback"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "f4fafbc2-a9b0-4e11-b4e4-83f59d809f29",
+      "canonicalKey": "canonical:2006:toyota:4runner:sr5:car",
+      "year": 2006,
+      "make": "Toyota",
+      "model": "4runner",
+      "trim": "SR5",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "4runner",
+      "normalizedTrim": "sr5",
+      "basicSpecs": {
+        "engine": "4.0L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "RWD",
+        "mpgOrRange": "20 city / 26 hwy",
+        "exteriorColors": [
+          "Not Specified"
+        ],
+        "msrp": 0,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "7c146e3c-ad61-471c-9308-977409c439b9",
+      "canonicalKey": "canonical:2020:toyota:4runner:venture:car",
+      "year": 2020,
+      "make": "Toyota",
+      "model": "4runner",
+      "trim": "Venture",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "4runner",
+      "normalizedTrim": "venture",
+      "basicSpecs": {
+        "engine": "4.0L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "16 city / 19 hwy",
+        "exteriorColors": [
+          "Gray",
+          "Magnetic Gray"
+        ],
+        "msrp": 35000,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "1bc98759-7aec-48fc-8e22-c418b9c4ac6e",
+      "canonicalKey": "canonical:2015:honda:fit:lx:car",
+      "year": 2015,
+      "make": "Honda",
+      "model": "Fit",
+      "trim": "LX",
+      "vehicleType": "car",
+      "normalizedMake": "honda",
+      "normalizedModel": "fit",
+      "normalizedTrim": "lx",
+      "basicSpecs": {
+        "engine": "1.5L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Manual",
+        "drivetrain": "FWD",
+        "mpgOrRange": "33 city / 38 hwy",
+        "exteriorColors": [
+          "Silver",
+          "Silver"
+        ],
+        "msrp": 13900,
+        "bodyStyle": "Hatchback"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "b904729b-5052-48a1-930e-078f4fd714ac",
+      "canonicalKey": "canonical:2020:toyota:rav4:le:car",
+      "year": 2020,
+      "make": "Toyota",
+      "model": "Rav4",
+      "trim": "LE",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "rav4",
+      "normalizedTrim": "le",
+      "basicSpecs": {
+        "engine": "2.5L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "27 city / 34 hwy",
+        "exteriorColors": [
+          "Black",
+          "Midnight Black Metallic"
+        ],
+        "msrp": 0,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "95c64a97-ccee-4756-940d-9d68448f79f7",
+      "canonicalKey": "canonical:2020:honda:cr-v:lx:car",
+      "year": 2020,
+      "make": "Honda",
+      "model": "Cr-v",
+      "trim": "LX",
+      "vehicleType": "car",
+      "normalizedMake": "honda",
+      "normalizedModel": "cr-v",
+      "normalizedTrim": "lx",
+      "basicSpecs": {
+        "engine": "1.5L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "CVT",
+        "drivetrain": "4WD",
+        "mpgOrRange": "27 city / 33 hwy",
+        "exteriorColors": [
+          "Gray",
+          "Modern Steel Metallic"
+        ],
+        "msrp": 21927,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "9ca04798-74dd-4256-aec4-0a9a33ed8eb9",
+      "canonicalKey": "canonical:2020:honda:cr-v:touring:car",
+      "year": 2020,
+      "make": "Honda",
+      "model": "Cr-v",
+      "trim": "Touring",
+      "vehicleType": "car",
+      "normalizedMake": "honda",
+      "normalizedModel": "cr-v",
+      "normalizedTrim": "touring",
+      "basicSpecs": {
+        "engine": "1.5L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "CVT",
+        "drivetrain": "4WD",
+        "mpgOrRange": "27 city / 33 hwy",
+        "exteriorColors": [
+          "Gray",
+          "Gray"
+        ],
+        "msrp": 0,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "a04a2f16-1dd6-4b34-a822-310624761a98",
+      "canonicalKey": "canonical:2020:honda:cr-v:ex:car",
+      "year": 2020,
+      "make": "Honda",
+      "model": "Cr-v",
+      "trim": "EX",
+      "vehicleType": "car",
+      "normalizedMake": "honda",
+      "normalizedModel": "cr-v",
+      "normalizedTrim": "ex",
+      "basicSpecs": {
+        "engine": "1.5L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "CVT",
+        "drivetrain": "FWD",
+        "mpgOrRange": "28 city / 34 hwy",
+        "exteriorColors": [
+          "Gray",
+          "Gray"
+        ],
+        "msrp": 24000,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "769709bb-8db0-46b9-9d1b-0e79e82d14a2",
+      "canonicalKey": "canonical:2020:honda:cr-v:ex-l:car",
+      "year": 2020,
+      "make": "Honda",
+      "model": "Cr-v",
+      "trim": "EX-L",
+      "vehicleType": "car",
+      "normalizedMake": "honda",
+      "normalizedModel": "cr-v",
+      "normalizedTrim": "ex-l",
+      "basicSpecs": {
+        "engine": "1.5L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "CVT",
+        "drivetrain": "4WD",
+        "mpgOrRange": "27 city / 33 hwy",
+        "exteriorColors": [
+          "White",
+          "Platinum White Pearl"
+        ],
+        "msrp": 24351,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "4939166f-d22d-4f5f-9fcf-9691a042179c",
+      "canonicalKey": "canonical:2020:toyota:rav4:xle-premium:car",
+      "year": 2020,
+      "make": "Toyota",
+      "model": "Rav4",
+      "trim": "XLE Premium",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "rav4",
+      "normalizedTrim": "xle premium",
+      "basicSpecs": {
+        "engine": "2.5L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "27 city / 33 hwy",
+        "exteriorColors": [
+          "Blue",
+          "Blue"
+        ],
+        "msrp": 0,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "99d42337-d898-418d-8edf-39b0b2771cc9",
+      "canonicalKey": "canonical:2020:toyota:rav4:limited:car",
+      "year": 2020,
+      "make": "Toyota",
+      "model": "Rav4",
+      "trim": "Limited",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "rav4",
+      "normalizedTrim": "limited",
+      "basicSpecs": {
+        "engine": "2.5L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "FWD",
+        "mpgOrRange": "27 city / 35 hwy",
+        "exteriorColors": [
+          "White",
+          "Blizzard Pearl"
+        ],
+        "msrp": 25794,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "3c89a602-45ff-47bc-bd00-5efdd895b3d9",
+      "canonicalKey": "canonical:2007:ford:expedition:eddie-bauer:car",
+      "year": 2007,
+      "make": "Ford",
+      "model": "Expedition",
+      "trim": "Eddie Bauer",
+      "vehicleType": "car",
+      "normalizedMake": "ford",
+      "normalizedModel": "expedition",
+      "normalizedTrim": "eddie bauer",
+      "basicSpecs": {
+        "engine": "5.4L V8",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "14 city / 18 hwy",
+        "exteriorColors": [
+          "Brown",
+          "Brown"
+        ],
+        "msrp": 0,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "4612da18-8cee-4ff2-b7c1-31e5f8b57663",
+      "canonicalKey": "canonical:2007:ford:expedition:limited:car",
+      "year": 2007,
+      "make": "Ford",
+      "model": "Expedition",
+      "trim": "Limited",
+      "vehicleType": "car",
+      "normalizedMake": "ford",
+      "normalizedModel": "expedition",
+      "normalizedTrim": "limited",
+      "basicSpecs": {
+        "engine": "5.4L V8",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "16 city / 23 hwy",
+        "exteriorColors": [],
+        "msrp": 8999,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "132ebc88-4110-481a-a089-519ccdb6c5bb",
+      "canonicalKey": "canonical:2020:toyota:rav4:xle:car",
+      "year": 2020,
+      "make": "Toyota",
+      "model": "Rav4",
+      "trim": "XLE",
+      "vehicleType": "car",
+      "normalizedMake": "toyota",
+      "normalizedModel": "rav4",
+      "normalizedTrim": "xle",
+      "basicSpecs": {
+        "engine": "2.5L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "FWD",
+        "mpgOrRange": "28 city / 35 hwy",
+        "exteriorColors": [
+          "Gray",
+          "Magnetic Gray Metallic"
+        ],
+        "msrp": 22878,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "984fcfdf-9980-4162-a901-e0e38860edb2",
+      "canonicalKey": "canonical:2007:ford:expedition:xlt:car",
+      "year": 2007,
+      "make": "Ford",
+      "model": "Expedition",
+      "trim": "XLT",
+      "vehicleType": "car",
+      "normalizedMake": "ford",
+      "normalizedModel": "expedition",
+      "normalizedTrim": "xlt",
+      "basicSpecs": {
+        "engine": "5.4L V8",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "RWD",
+        "mpgOrRange": "17 city / 24 hwy",
+        "exteriorColors": [
+          "Brown",
+          "Tan"
+        ],
+        "msrp": 9900,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "bee1c32e-27cd-4d17-877a-a132f024235d",
+      "canonicalKey": "canonical:2020:honda:hr-v:ex:car",
+      "year": 2020,
+      "make": "Honda",
+      "model": "Hr-v",
+      "trim": "EX",
+      "vehicleType": "car",
+      "normalizedMake": "honda",
+      "normalizedModel": "hr-v",
+      "normalizedTrim": "ex",
+      "basicSpecs": {
+        "engine": "1.8L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "CVT",
+        "drivetrain": "4WD",
+        "mpgOrRange": "27 city / 32 hwy",
+        "exteriorColors": [
+          "Silver",
+          "Silver"
+        ],
+        "msrp": 19344,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "0c265f1f-f6c2-4043-a109-21c61c4b991d",
+      "canonicalKey": "canonical:2020:honda:hr-v:lx:car",
+      "year": 2020,
+      "make": "Honda",
+      "model": "Hr-v",
+      "trim": "LX",
+      "vehicleType": "car",
+      "normalizedMake": "honda",
+      "normalizedModel": "hr-v",
+      "normalizedTrim": "lx",
+      "basicSpecs": {
+        "engine": "1.8L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "CVT",
+        "drivetrain": "4WD",
+        "mpgOrRange": "27 city / 32 hwy",
+        "exteriorColors": [
+          "Black",
+          "Black"
+        ],
+        "msrp": 13995,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "00853c09-1cf0-4664-bcc9-665ffbd7d672",
+      "canonicalKey": "canonical:2020:honda:hr-v:ex-l:car",
+      "year": 2020,
+      "make": "Honda",
+      "model": "Hr-v",
+      "trim": "EX-L",
+      "vehicleType": "car",
+      "normalizedMake": "honda",
+      "normalizedModel": "hr-v",
+      "normalizedTrim": "ex-l",
+      "basicSpecs": {
+        "engine": "1.8L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "CVT",
+        "drivetrain": "4WD",
+        "mpgOrRange": "27 city / 32 hwy",
+        "exteriorColors": [
+          "Purple",
+          "Purple"
+        ],
+        "msrp": 22025,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "809cb56a-dd9e-43cc-9ef6-e16d5119c962",
+      "canonicalKey": "canonical:2020:honda:hr-v:sport:car",
+      "year": 2020,
+      "make": "Honda",
+      "model": "Hr-v",
+      "trim": "Sport",
+      "vehicleType": "car",
+      "normalizedMake": "honda",
+      "normalizedModel": "hr-v",
+      "normalizedTrim": "sport",
+      "basicSpecs": {
+        "engine": "1.8L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "CVT",
+        "drivetrain": "4WD",
+        "mpgOrRange": "26 city / 31 hwy",
+        "exteriorColors": [
+          "White",
+          "W"
+        ],
+        "msrp": 12999,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "3e75bdd3-602f-4990-b9c9-004fb19aab38",
+      "canonicalKey": "canonical:2007:jeep:wrangler:x:car",
+      "year": 2007,
+      "make": "Jeep",
+      "model": "Wrangler",
+      "trim": "X",
+      "vehicleType": "car",
+      "normalizedMake": "jeep",
+      "normalizedModel": "wrangler",
+      "normalizedTrim": "x",
+      "basicSpecs": {
+        "engine": "3.8L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Manual",
+        "drivetrain": "4WD",
+        "mpgOrRange": "22 city / 25 hwy",
+        "exteriorColors": [
+          "Yellow",
+          "Yellow"
+        ],
+        "msrp": 13950,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "3dcf4598-6f54-4975-8890-f37e4785dca6",
+      "canonicalKey": "canonical:2007:jeep:wrangler:rubicon:car",
+      "year": 2007,
+      "make": "Jeep",
+      "model": "Wrangler",
+      "trim": "Rubicon",
+      "vehicleType": "car",
+      "normalizedMake": "jeep",
+      "normalizedModel": "wrangler",
+      "normalizedTrim": "rubicon",
+      "basicSpecs": {
+        "engine": "3.8L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "22 city / 25 hwy",
+        "exteriorColors": [
+          "Black",
+          "Black"
+        ],
+        "msrp": 10900,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "70080f0d-22f6-4937-bc58-0f8a2a5a7190",
+      "canonicalKey": "canonical:2007:jeep:wrangler:sahara:car",
+      "year": 2007,
+      "make": "Jeep",
+      "model": "Wrangler",
+      "trim": "Sahara",
+      "vehicleType": "car",
+      "normalizedMake": "jeep",
+      "normalizedModel": "wrangler",
+      "normalizedTrim": "sahara",
+      "basicSpecs": {
+        "engine": "3.8L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "17 city / 21 hwy",
+        "exteriorColors": [
+          "Black",
+          "Black"
+        ],
+        "msrp": 14000,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "9aae4ede-2582-48b5-9b3c-e2385fd800c8",
+      "canonicalKey": "canonical:2012:jeep:wrangler:sahara:car",
+      "year": 2012,
+      "make": "Jeep",
+      "model": "Wrangler",
+      "trim": "Sahara",
+      "vehicleType": "car",
+      "normalizedMake": "jeep",
+      "normalizedModel": "wrangler",
+      "normalizedTrim": "sahara",
+      "basicSpecs": {
+        "engine": "3.6L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "17 city / 21 hwy",
+        "exteriorColors": [
+          "Silver",
+          "Bright Silver Metallic Clearcoat"
+        ],
+        "msrp": 18999,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "779f1125-23ad-4173-b9a1-0f0991fc72ed",
+      "canonicalKey": "canonical:2012:jeep:wrangler:rubicon:car",
+      "year": 2012,
+      "make": "Jeep",
+      "model": "Wrangler",
+      "trim": "Rubicon",
+      "vehicleType": "car",
+      "normalizedMake": "jeep",
+      "normalizedModel": "wrangler",
+      "normalizedTrim": "rubicon",
+      "basicSpecs": {
+        "engine": "3.6L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "22 city / 25 hwy",
+        "exteriorColors": [
+          "Black",
+          "Black"
+        ],
+        "msrp": 14900,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "2509236c-8687-46ba-9752-aad5d8f85c3d",
+      "canonicalKey": "canonical:2012:jeep:wrangler:sport:car",
+      "year": 2012,
+      "make": "Jeep",
+      "model": "Wrangler",
+      "trim": "Sport",
+      "vehicleType": "car",
+      "normalizedMake": "jeep",
+      "normalizedModel": "wrangler",
+      "normalizedTrim": "sport",
+      "basicSpecs": {
+        "engine": "3.6L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "22 city / 25 hwy",
+        "exteriorColors": [
+          "Black",
+          "Black"
+        ],
+        "msrp": 0,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "6206f8ec-8952-4f06-9163-b7723fc4a962",
+      "canonicalKey": "canonical:2003:volkswagen:new-beetle:glx:car",
+      "year": 2003,
+      "make": "Volkswagen",
+      "model": "New Beetle",
+      "trim": "GLX",
+      "vehicleType": "car",
+      "normalizedMake": "volkswagen",
+      "normalizedModel": "new beetle",
+      "normalizedTrim": "glx",
+      "basicSpecs": {
+        "engine": "1.8L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "FWD",
+        "mpgOrRange": "23 city / 29 hwy",
+        "exteriorColors": [
+          "Red",
+          "Red"
+        ],
+        "msrp": 4650,
+        "bodyStyle": "Hatchback"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "c352cce3-eabd-41ae-a942-2a2a8e0282b0",
+      "canonicalKey": "canonical:2003:volkswagen:new-beetle:gl:car",
+      "year": 2003,
+      "make": "Volkswagen",
+      "model": "New Beetle",
+      "trim": "GL",
+      "vehicleType": "car",
+      "normalizedMake": "volkswagen",
+      "normalizedModel": "new beetle",
+      "normalizedTrim": "gl",
+      "basicSpecs": {
+        "engine": "2.0L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "See live listing",
+        "drivetrain": "FWD",
+        "mpgOrRange": "24 city / 31 hwy",
+        "exteriorColors": [
+          "Silver",
+          "Silver"
+        ],
+        "msrp": 5995,
+        "bodyStyle": "Hatchback"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "80fabb4c-b672-4870-a927-d977b8c6436b",
+      "canonicalKey": "canonical:2021:kia:sorento:ex:car",
+      "year": 2021,
+      "make": "Kia",
+      "model": "Sorento",
+      "trim": "EX",
+      "vehicleType": "car",
+      "normalizedMake": "kia",
+      "normalizedModel": "sorento",
+      "normalizedTrim": "ex",
+      "basicSpecs": {
+        "engine": "2.5L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "22 city / 28 hwy",
+        "exteriorColors": [
+          "White",
+          "Glacial White Pearl"
+        ],
+        "msrp": 29495,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "d6921935-962e-493b-8e18-4ed39820c208",
+      "canonicalKey": "canonical:2021:kia:sorento:x-line:car",
+      "year": 2021,
+      "make": "Kia",
+      "model": "Sorento",
+      "trim": "X-Line",
+      "vehicleType": "car",
+      "normalizedMake": "kia",
+      "normalizedModel": "sorento",
+      "normalizedTrim": "x-line",
+      "basicSpecs": {
+        "engine": "2.5L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "22 city / 29 hwy",
+        "exteriorColors": [
+          "Beige",
+          "Crystal Beige"
+        ],
+        "msrp": 39495,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "4be9a34f-df2c-4f33-ae91-694d509b3e66",
+      "canonicalKey": "canonical:2003:volkswagen:new-beetle:turbo-s:car",
+      "year": 2003,
+      "make": "Volkswagen",
+      "model": "New Beetle",
+      "trim": "Turbo S",
+      "vehicleType": "car",
+      "normalizedMake": "volkswagen",
+      "normalizedModel": "new beetle",
+      "normalizedTrim": "turbo s",
+      "basicSpecs": {
+        "engine": "1.8L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Manual",
+        "drivetrain": "FWD",
+        "mpgOrRange": "23 city / 30 hwy",
+        "exteriorColors": [
+          "Gray",
+          "Gray"
+        ],
+        "msrp": 5500,
+        "bodyStyle": "Hatchback"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "6f4aab35-91e8-429d-8a91-ce25d278321e",
+      "canonicalKey": "canonical:2021:kia:sorento:lx:car",
+      "year": 2021,
+      "make": "Kia",
+      "model": "Sorento",
+      "trim": "LX",
+      "vehicleType": "car",
+      "normalizedMake": "kia",
+      "normalizedModel": "sorento",
+      "normalizedTrim": "lx",
+      "basicSpecs": {
+        "engine": "2.5L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "23 city / 27 hwy",
+        "exteriorColors": [
+          "White",
+          "Glacial White Pearl"
+        ],
+        "msrp": 20680,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "a8953d94-8e96-4a0c-88e0-db7f22a49348",
+      "canonicalKey": "canonical:1998:volkswagen:new-beetle:base:car",
+      "year": 1998,
+      "make": "Volkswagen",
+      "model": "New Beetle",
+      "trim": "Base",
+      "vehicleType": "car",
+      "normalizedMake": "volkswagen",
+      "normalizedModel": "new beetle",
+      "normalizedTrim": "base",
+      "basicSpecs": {
+        "engine": "2.0L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Manual",
+        "drivetrain": "FWD",
+        "mpgOrRange": "24 city / 31 hwy",
+        "exteriorColors": [
+          "White",
+          "White"
+        ],
+        "msrp": 2495,
+        "bodyStyle": "Hatchback"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "172b7d8e-0465-4de7-a080-5f4d0afbef4c",
+      "canonicalKey": "canonical:2021:kia:sorento:s-hybrid:car",
+      "year": 2021,
+      "make": "Kia",
+      "model": "Sorento",
+      "trim": "S Hybrid",
+      "vehicleType": "car",
+      "normalizedMake": "kia",
+      "normalizedModel": "sorento",
+      "normalizedTrim": "s hybrid",
+      "basicSpecs": {
+        "engine": "1.6L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "FWD",
+        "mpgOrRange": "39 city / 35 hwy",
+        "exteriorColors": [
+          "Black",
+          "Aurora Black"
+        ],
+        "msrp": 18136,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "f5e574b4-0c9b-4665-b905-12c8b0eb661f",
+      "canonicalKey": "canonical:2003:volkswagen:new-beetle:gls:car",
+      "year": 2003,
+      "make": "Volkswagen",
+      "model": "New Beetle",
+      "trim": "GLS",
+      "vehicleType": "car",
+      "normalizedMake": "volkswagen",
+      "normalizedModel": "new beetle",
+      "normalizedTrim": "gls",
+      "basicSpecs": {
+        "engine": "2L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "FWD",
+        "mpgOrRange": "24 city / 30 hwy",
+        "exteriorColors": [
+          "Gray",
+          "Platinum Grey"
+        ],
+        "msrp": 6950,
+        "bodyStyle": "Hatchback"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "4fbc64ee-b9d3-4ecb-af19-623004d2bc03",
+      "canonicalKey": "canonical:2021:kia:sorento:ex-hybrid:car",
+      "year": 2021,
+      "make": "Kia",
+      "model": "Sorento",
+      "trim": "EX Hybrid",
+      "vehicleType": "car",
+      "normalizedMake": "kia",
+      "normalizedModel": "sorento",
+      "normalizedTrim": "ex hybrid",
+      "basicSpecs": {
+        "engine": "1.6L I4",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "FWD",
+        "mpgOrRange": "39 city / 36 hwy",
+        "exteriorColors": [
+          "Gray",
+          "Gray"
+        ],
+        "msrp": 22595,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "b5dbbbc5-172a-4c24-af30-c9de947fc2be",
+      "canonicalKey": "canonical:2014:jeep:grand-cherokee:overland:car",
+      "year": 2014,
+      "make": "Jeep",
+      "model": "Grand Cherokee",
+      "trim": "Overland",
+      "vehicleType": "car",
+      "normalizedMake": "jeep",
+      "normalizedModel": "grand cherokee",
+      "normalizedTrim": "overland",
+      "basicSpecs": {
+        "engine": "3.6L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "21 city / 28 hwy",
+        "exteriorColors": [
+          "Gray",
+          "Grey"
+        ],
+        "msrp": 12999,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "29f58dad-a815-4334-bd30-bab037f559b6",
+      "canonicalKey": "canonical:2014:jeep:grand-cherokee:laredo:car",
+      "year": 2014,
+      "make": "Jeep",
+      "model": "Grand Cherokee",
+      "trim": "Laredo",
+      "vehicleType": "car",
+      "normalizedMake": "jeep",
+      "normalizedModel": "grand cherokee",
+      "normalizedTrim": "laredo",
+      "basicSpecs": {
+        "engine": "3.6L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "9 city / 25 hwy",
+        "exteriorColors": [
+          "White",
+          "Bright White Clearcoat"
+        ],
+        "msrp": 9941,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "839012dd-2f0c-440a-ace0-8e0cee3a15a3",
+      "canonicalKey": "canonical:2021:jeep:grand-cherokee:overland:car",
+      "year": 2021,
+      "make": "Jeep",
+      "model": "Grand Cherokee",
+      "trim": "Overland",
+      "vehicleType": "car",
+      "normalizedMake": "jeep",
+      "normalizedModel": "grand cherokee",
+      "normalizedTrim": "overland",
+      "basicSpecs": {
+        "engine": "5.7L V8",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "21 city / 28 hwy",
+        "exteriorColors": [
+          "White",
+          "Bright White Clearcoat"
+        ],
+        "msrp": 0,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "6bf1c7fd-55b9-4ac8-9818-e47de0b44765",
+      "canonicalKey": "canonical:2014:jeep:grand-cherokee:limited:car",
+      "year": 2014,
+      "make": "Jeep",
+      "model": "Grand Cherokee",
+      "trim": "Limited",
+      "vehicleType": "car",
+      "normalizedMake": "jeep",
+      "normalizedModel": "grand cherokee",
+      "normalizedTrim": "limited",
+      "basicSpecs": {
+        "engine": "3.6L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "9 city / 28 hwy",
+        "exteriorColors": [
+          "Silver",
+          "Silver"
+        ],
+        "msrp": 9990,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "42e1304d-c431-411c-9787-59de7ec9bd28",
+      "canonicalKey": "canonical:2014:jeep:grand-cherokee:summit:car",
+      "year": 2014,
+      "make": "Jeep",
+      "model": "Grand Cherokee",
+      "trim": "Summit",
+      "vehicleType": "car",
+      "normalizedMake": "jeep",
+      "normalizedModel": "grand cherokee",
+      "normalizedTrim": "summit",
+      "basicSpecs": {
+        "engine": "5.7L V8",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "21 city / 28 hwy",
+        "exteriorColors": [
+          "White",
+          "White"
+        ],
+        "msrp": 0,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "1f3d9402-5169-42ca-853f-790c23fceaf3",
+      "canonicalKey": "canonical:2014:jeep:grand-cherokee:srt8:car",
+      "year": 2014,
+      "make": "Jeep",
+      "model": "Grand Cherokee",
+      "trim": "SRT8",
+      "vehicleType": "car",
+      "normalizedMake": "jeep",
+      "normalizedModel": "grand cherokee",
+      "normalizedTrim": "srt8",
+      "basicSpecs": {
+        "engine": "6.4L V8",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "13 city / 19 hwy",
+        "exteriorColors": [
+          "White",
+          "Bright White Clearcoat"
+        ],
+        "msrp": 31990,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "b3216001-ead2-4e8a-ba96-cef0f36ae52f",
+      "canonicalKey": "canonical:2021:jeep:grand-cherokee:80th-edition:car",
+      "year": 2021,
+      "make": "Jeep",
+      "model": "Grand Cherokee",
+      "trim": "80th Edition",
+      "vehicleType": "car",
+      "normalizedMake": "jeep",
+      "normalizedModel": "grand cherokee",
+      "normalizedTrim": "80th edition",
+      "basicSpecs": {
+        "engine": "3.6L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "18 city / 25 hwy",
+        "exteriorColors": [
+          "Black",
+          "Black"
+        ],
+        "msrp": 22499,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "ddf29716-e075-46df-b510-bc0800a11ea0",
+      "canonicalKey": "canonical:2021:jeep:grand-cherokee:trailhawk:car",
+      "year": 2021,
+      "make": "Jeep",
+      "model": "Grand Cherokee",
+      "trim": "Trailhawk",
+      "vehicleType": "car",
+      "normalizedMake": "jeep",
+      "normalizedModel": "grand cherokee",
+      "normalizedTrim": "trailhawk",
+      "basicSpecs": {
+        "engine": "3.6L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "21 city / 28 hwy",
+        "exteriorColors": [
+          "Gray",
+          "Sting-gray"
+        ],
+        "msrp": 26895,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    },
+    {
+      "id": "f5f37837-2f3d-45dc-85e4-2740d6c0b01e",
+      "canonicalKey": "canonical:2021:jeep:grand-cherokee:limited:car",
+      "year": 2021,
+      "make": "Jeep",
+      "model": "Grand Cherokee",
+      "trim": "Limited",
+      "vehicleType": "car",
+      "normalizedMake": "jeep",
+      "normalizedModel": "grand cherokee",
+      "normalizedTrim": "limited",
+      "basicSpecs": {
+        "engine": "3.6L V6",
+        "horsepower": 0,
+        "torque": "See live listing",
+        "transmission": "Automatic",
+        "drivetrain": "4WD",
+        "mpgOrRange": "9 city / 28 hwy",
+        "exteriorColors": [
+          "Gray",
+          "Granite Crystal Metallic Clearcoat"
+        ],
+        "msrp": 23500,
+        "bodyStyle": "SUV"
+      },
+      "lightweightValue": null
+    }
+  ]
+}
