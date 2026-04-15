@@ -82,7 +82,18 @@ function getInitialCondition(vehicle: VehicleRecord) {
 }
 
 export default function VehicleDetailScreen() {
-  const { id, imageUri, scanId } = useLocalSearchParams<{ id: string; imageUri?: string; scanId?: string }>();
+  const { id, imageUri, scanId, estimate, yearLabel, make, model, trimLabel, vehicleType, confidence } = useLocalSearchParams<{
+    id: string;
+    imageUri?: string;
+    scanId?: string;
+    estimate?: string;
+    yearLabel?: string;
+    make?: string;
+    model?: string;
+    trimLabel?: string;
+    vehicleType?: string;
+    confidence?: string;
+  }>();
   const [vehicle, setVehicle] = useState<VehicleRecord | null>(null);
   const [valuation, setValuation] = useState<ValuationResult>(createEmptyValuation());
   const [zipCode, setZipCode] = useState(defaultZip);
@@ -105,34 +116,118 @@ export default function VehicleDetailScreen() {
     isVehicleUnlocked,
     useFreeUnlockForVehicle,
   } = useSubscription();
+  const isEstimateMode = estimate === "1";
   const isPro = usage?.plan === "pro";
   const unlockedForVehicle = vehicle?.id ? isVehicleUnlocked(vehicle.id) : false;
-  const hasFullAccess = isPro || unlockedForVehicle;
+  const hasFullAccess = isEstimateMode ? true : isPro || unlockedForVehicle;
   const isLocked = !hasFullAccess;
+
+  const estimateHeaderTitle = [typeof yearLabel === "string" && yearLabel.trim().length > 0 ? yearLabel : null, make, model]
+    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    .join(" ");
+  const estimateOverview = [
+    "Estimated identification from photo analysis.",
+    typeof confidence === "string" && confidence ? `Confidence: ${Math.round(Number(confidence) * 100)}%.` : null,
+    "Full catalog specs may not be available for this vehicle yet.",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   useEffect(() => {
     setLoading(true);
+    let active = true;
+
+    if (isEstimateMode) {
+      const estimatedVehicle: VehicleRecord = {
+        id,
+        year: typeof yearLabel === "string" ? Number.parseInt(yearLabel, 10) || 0 : 0,
+        make: typeof make === "string" && make.trim().length > 0 ? make : "Unknown",
+        model: typeof model === "string" && model.trim().length > 0 ? model : "Vehicle",
+        trim: typeof trimLabel === "string" ? trimLabel : "",
+        bodyStyle: typeof vehicleType === "string" && vehicleType.trim().length > 0 ? vehicleType : "Estimated vehicle",
+        heroImage: "",
+        overview: estimateOverview,
+        specs: {
+          engine: "Unavailable",
+          horsepower: 0,
+          torque: "Unavailable",
+          transmission: "Unavailable",
+          drivetrain: "Unavailable",
+          mpgOrRange: "Unavailable",
+          exteriorColors: [],
+          msrp: 0,
+        },
+        valuation: createEmptyValuation(),
+        listings: [],
+      };
+      setVehicle(estimatedVehicle);
+      setValuation(createEmptyValuation());
+      setZipCode(defaultZip);
+      setMileage(defaultMileage);
+      setCondition(defaultCondition);
+      setError(null);
+      setLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    vehicleService
+      .getOfflineVehicleById(id)
+      .then((offlineResult) => {
+        if (!active || !offlineResult) {
+          return;
+        }
+        console.log("[vehicle-detail] OFFLINE_RESULT_RENDERED", {
+          source: "offline_canonical",
+          vehicleId: id,
+        });
+        setVehicle(offlineResult);
+        setValuation(offlineResult.valuation ?? createEmptyValuation());
+        setZipCode(defaultZip);
+        setMileage(getInitialMileage(offlineResult));
+        setCondition(getInitialCondition(offlineResult));
+        setError(null);
+        setLoading(false);
+      })
+      .catch(() => undefined);
+
     vehicleService
       .getVehicleById(id)
       .then((result) => {
+        if (!active) {
+          return;
+        }
         setVehicle(result ?? null);
         setValuation(result?.valuation ?? createEmptyValuation());
         if (result) {
           setZipCode(defaultZip);
           setMileage(getInitialMileage(result));
           setCondition(getInitialCondition(result));
+          console.log("[vehicle-detail] OFFLINE_RESULT_ENHANCED", {
+            vehicleId: id,
+            source: "backend",
+          });
         }
         setError(result ? null : "Vehicle not found.");
       })
       .catch((err) => {
-        setVehicle(null);
-        setValuation(createEmptyValuation());
-        setError(err instanceof Error ? err.message : "Unable to load vehicle.");
+        if (!active) {
+          return;
+        }
+        setVehicle((current) => current);
+        setValuation((current) => current ?? createEmptyValuation());
+        setError((current) => current ?? (err instanceof Error ? err.message : "Unable to load vehicle."));
       })
       .finally(() => {
-        setLoading(false);
+        if (active) {
+          setLoading(false);
+        }
       });
-  }, [id]);
+    return () => {
+      active = false;
+    };
+  }, [confidence, estimateHeaderTitle, estimateOverview, id, isEstimateMode, make, model, trimLabel, vehicleType, yearLabel]);
 
   useEffect(() => {
     if (typeof imageUri === "string" && imageUri.trim().length > 0) {
@@ -167,7 +262,7 @@ export default function VehicleDetailScreen() {
   }, [id, imageUri, scanId]);
 
   useEffect(() => {
-    if (!vehicle || tab !== "Value") {
+    if (!vehicle || tab !== "Value" || isEstimateMode) {
       return;
     }
 
@@ -219,7 +314,7 @@ export default function VehicleDetailScreen() {
     }, 250);
 
     return () => clearTimeout(timeout);
-  }, [vehicle, tab, zipCode, mileage, condition]);
+  }, [vehicle, tab, zipCode, mileage, condition, isEstimateMode]);
 
   useEffect(() => {
     if (!vehicle || tab !== "Value") {
@@ -231,6 +326,32 @@ export default function VehicleDetailScreen() {
       valuation,
     });
   }, [condition, tab, valuation, vehicle]);
+
+  const heroImageUri = resolvedImageUri ?? vehicle?.heroImage ?? "";
+  const selectedImageSourceLabel = resolvedImageUri ? imageSourceLabel : isEstimateMode ? "estimated result" : "provider/generic fallback";
+  const scannedImageSelected = selectedImageSourceLabel !== "provider/generic fallback";
+  const heroImageFitMode = scannedImageSelected ? "contain" : "cover";
+
+  useEffect(() => {
+    if (!vehicle || !heroImageUri) {
+      return;
+    }
+    console.log("[vehicle-detail] RESULT_IMAGE_SOURCE_SELECTED", {
+      source: selectedImageSourceLabel,
+      imageUri: heroImageUri,
+      vehicleId: vehicle.id,
+      scanId,
+    });
+    console.log("[vehicle-detail] RESULT_IMAGE_LAYOUT_SELECTED", {
+      source: selectedImageSourceLabel,
+      fitMode: heroImageFitMode,
+      vehicleId: vehicle.id,
+    });
+    console.log("[vehicle-detail] RESULT_IMAGE_FIT_MODE", {
+      fitMode: heroImageFitMode,
+      vehicleId: vehicle.id,
+    });
+  }, [heroImageFitMode, heroImageUri, scanId, selectedImageSourceLabel, vehicle]);
 
   if (loading) {
     return (
@@ -253,20 +374,13 @@ export default function VehicleDetailScreen() {
     );
   }
 
-  const heroImageUri = resolvedImageUri ?? vehicle.heroImage;
-  const selectedImageSourceLabel = resolvedImageUri ? imageSourceLabel : "provider/generic fallback";
-  console.log("[vehicle-detail] image source selected", {
-    source: selectedImageSourceLabel,
-    imageUri: heroImageUri,
-    vehicleId: vehicle.id,
-    scanId,
-  });
-
   return (
     <AppContainer>
       <BackButton fallbackHref="/(tabs)/scan" label="Back" />
-      <Image source={{ uri: heroImageUri }} style={styles.hero} />
-      <Text style={styles.imageDebug}>Image source: {selectedImageSourceLabel}</Text>
+      <View style={styles.heroFrame}>
+        <Image source={{ uri: heroImageUri }} style={styles.hero} resizeMode={heroImageFitMode} />
+      </View>
+      {__DEV__ ? <Text style={styles.imageDebug}>Image source: {selectedImageSourceLabel}</Text> : null}
       {usage ? (
         <ScanUsageMeter
           status={usage}
@@ -277,23 +391,32 @@ export default function VehicleDetailScreen() {
         />
       ) : null}
       <View style={styles.headerCard}>
-        <Text style={styles.title}>{vehicle.year} {vehicle.make} {vehicle.model}</Text>
-        <Text style={styles.subtitle}>{vehicle.trim} • {vehicle.bodyStyle}</Text>
+        <Text style={styles.title}>{isEstimateMode ? estimateHeaderTitle || `${vehicle.make} ${vehicle.model}` : `${vehicle.year} ${vehicle.make} ${vehicle.model}`}</Text>
+        <Text style={styles.subtitle}>
+          {isEstimateMode
+            ? `${vehicle.trim || "Estimated trim"}${vehicle.bodyStyle ? ` • ${vehicle.bodyStyle}` : ""}`
+            : `${vehicle.trim} • ${vehicle.bodyStyle}`}
+        </Text>
       </View>
       <SegmentedTabBar tabs={tabs} activeTab={tab} onChange={setTab} />
 
       {tab === "Overview" ? (
         <View style={styles.sectionCard}>
           <Text style={styles.body}>{vehicle.overview}</Text>
-          <DetailRow label="Year" value={`${vehicle.year}`} />
+          <DetailRow label="Year" value={isEstimateMode ? (typeof yearLabel === "string" && yearLabel.trim().length > 0 ? yearLabel : "Estimated") : `${vehicle.year}`} />
           <DetailRow label="Make" value={vehicle.make} />
           <DetailRow label="Model" value={vehicle.model} />
-          <DetailRow label="Trim" value={vehicle.trim} />
-          <DetailRow label="Body style" value={vehicle.bodyStyle} />
+          <DetailRow label="Trim" value={vehicle.trim || "Estimated / unavailable"} />
+          <DetailRow label="Body style" value={vehicle.bodyStyle || "Estimated vehicle"} />
         </View>
       ) : null}
 
       {tab === "Specs" ? (
+        isEstimateMode ? (
+          <View style={styles.sectionCard}>
+            <Text style={styles.body}>This result is an estimated identification from the scan photo. Full catalog specs are not linked for this vehicle yet.</Text>
+          </View>
+        ) : (
         <>
           <LockedContentPreview
             locked={isLocked}
@@ -328,9 +451,15 @@ export default function VehicleDetailScreen() {
             />
           ) : null}
         </>
+        )
       ) : null}
 
       {tab === "Value" ? (
+        isEstimateMode ? (
+          <View style={styles.sectionCard}>
+            <Text style={styles.body}>Market value is not available yet for this estimated result. Try rescanning from another angle or check again after catalog coverage improves.</Text>
+          </View>
+        ) : (
         <>
           <View style={styles.sectionCard}>
             <SectionHeader title="Value inputs" subtitle="Tune the estimate to your market and condition." />
@@ -401,9 +530,15 @@ export default function VehicleDetailScreen() {
             />
           ) : null}
         </>
+        )
       ) : null}
 
       {tab === "For Sale" ? (
+        isEstimateMode ? (
+          <View style={styles.sectionCard}>
+            <Text style={styles.body}>Nearby listings are not linked for this estimated result yet.</Text>
+          </View>
+        ) : (
         <>
           <View style={styles.sectionCard}>
             <Text style={styles.body}>
@@ -442,12 +577,15 @@ export default function VehicleDetailScreen() {
             />
           ) : null}
         </>
+        )
       ) : null}
 
       {tab === "Photos" ? (
         <View style={styles.sectionCard}>
           <Text style={styles.body}>Your saved scan photos live here for each vehicle. Add more photos as the Garage evolves.</Text>
-          <Image source={{ uri: heroImageUri }} style={styles.photo} />
+          <View style={styles.photoFrame}>
+            <Image source={{ uri: heroImageUri }} style={styles.photo} resizeMode={heroImageFitMode} />
+          </View>
         </View>
       ) : null}
       {isLocked ? (
@@ -502,7 +640,14 @@ function UnlockAccessCard({
 }
 
 const styles = StyleSheet.create({
-  hero: { width: "100%", height: 260, borderRadius: Radius.xl },
+  heroFrame: {
+    width: "100%",
+    height: 260,
+    borderRadius: Radius.xl,
+    overflow: "hidden",
+    backgroundColor: Colors.cardAlt,
+  },
+  hero: { width: "100%", height: "100%" },
   imageDebug: { ...Typography.caption, color: Colors.textMuted },
   headerCard: { ...cardStyles.primary, padding: 20, gap: 6 },
   title: { ...Typography.title, color: Colors.textStrong },
@@ -534,7 +679,14 @@ const styles = StyleSheet.create({
   conditionChipLabel: { ...Typography.caption, color: Colors.text },
   conditionChipLabelActive: { color: Colors.accent, fontWeight: "700" },
   valueLoading: { ...Typography.caption, color: Colors.textMuted },
-  photo: { width: "100%", height: 220, borderRadius: Radius.lg },
+  photoFrame: {
+    width: "100%",
+    height: 220,
+    borderRadius: Radius.lg,
+    overflow: "hidden",
+    backgroundColor: Colors.cardAlt,
+  },
+  photo: { width: "100%", height: "100%" },
   loadingPage: { flex: 1, gap: 20 },
   loadingWrap: { flex: 1, justifyContent: "center", alignItems: "center", gap: 12 },
   loadingText: { ...Typography.body, color: Colors.textMuted },

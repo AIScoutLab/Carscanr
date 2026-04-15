@@ -7,7 +7,9 @@ import {
   ScanRecord,
   SubscriptionRecord,
   UsageCounterRecord,
+  VehicleGlobalTrendingRecord,
   ValuationRecord,
+  VehicleScanPopularityRecord,
   VehicleRecord,
   VisionDebugRecord,
   CachedAnalysisRecord,
@@ -30,6 +32,8 @@ import {
   UsageCountersRepository,
   ValuationsRepository,
   ValuesCacheRepository,
+  VehicleGlobalTrendingRepository,
+  VehicleScanPopularityRepository,
   VehiclesRepository,
   VehicleUnlockRepository,
   VisionDebugRepository,
@@ -152,6 +156,96 @@ export class MockCanonicalVehiclesRepository implements CanonicalVehiclesReposit
           }
         : vehicle,
     );
+  }
+}
+
+export class MockVehicleScanPopularityRepository implements VehicleScanPopularityRepository {
+  async increment(input: {
+    normalizedKey: string;
+    year: number;
+    normalizedMake: string;
+    normalizedModel: string;
+    normalizedTrim: string;
+    lastSeenAt: string;
+  }): Promise<VehicleScanPopularityRecord> {
+    const existing = db.vehicleScanPopularity.find((entry) => entry.normalizedKey === input.normalizedKey);
+    const next: VehicleScanPopularityRecord = existing
+      ? {
+          ...existing,
+          year: input.year,
+          normalizedMake: input.normalizedMake,
+          normalizedModel: input.normalizedModel,
+          normalizedTrim: input.normalizedTrim,
+          scanCount: existing.scanCount + 1,
+          lastSeenAt: input.lastSeenAt,
+          updatedAt: input.lastSeenAt,
+        }
+      : {
+          id: crypto.randomUUID(),
+          normalizedKey: input.normalizedKey,
+          year: input.year,
+          normalizedMake: input.normalizedMake,
+          normalizedModel: input.normalizedModel,
+          normalizedTrim: input.normalizedTrim,
+          scanCount: 1,
+          lastSeenAt: input.lastSeenAt,
+          createdAt: input.lastSeenAt,
+          updatedAt: input.lastSeenAt,
+        };
+    db.vehicleScanPopularity = [next, ...db.vehicleScanPopularity.filter((entry) => entry.normalizedKey !== input.normalizedKey)];
+    return next;
+  }
+
+  async findByNormalizedKey(normalizedKey: string): Promise<VehicleScanPopularityRecord | null> {
+    return db.vehicleScanPopularity.find((entry) => entry.normalizedKey === normalizedKey) ?? null;
+  }
+
+  async searchLikelyMatches(input: { year: number; normalizedMake: string; normalizedModel: string }): Promise<VehicleScanPopularityRecord[]> {
+    return db.vehicleScanPopularity
+      .filter((entry) => entry.year === input.year && entry.normalizedMake === input.normalizedMake && entry.normalizedModel.includes(input.normalizedModel))
+      .sort((left, right) => right.scanCount - left.scanCount);
+  }
+
+  async findConflicts(input: {
+    year: number;
+    normalizedMake: string;
+    normalizedModel: string;
+    normalizedTrim: string;
+    minScanCount: number;
+  }): Promise<VehicleScanPopularityRecord[]> {
+    return db.vehicleScanPopularity
+      .filter((entry) =>
+        entry.year === input.year &&
+        entry.normalizedMake === input.normalizedMake &&
+        entry.normalizedModel !== input.normalizedModel &&
+        entry.scanCount >= input.minScanCount,
+      )
+      .sort((left, right) => right.scanCount - left.scanCount);
+  }
+
+  async listTop(limit: number): Promise<VehicleScanPopularityRecord[]> {
+    return [...db.vehicleScanPopularity].sort((left, right) => right.scanCount - left.scanCount).slice(0, limit);
+  }
+}
+
+export class MockVehicleGlobalTrendingRepository implements VehicleGlobalTrendingRepository {
+  async upsert(record: VehicleGlobalTrendingRecord): Promise<VehicleGlobalTrendingRecord> {
+    db.vehicleGlobalTrending = [record, ...db.vehicleGlobalTrending.filter((entry) => entry.normalizedKey !== record.normalizedKey)];
+    return record;
+  }
+
+  async findByNormalizedKey(normalizedKey: string): Promise<VehicleGlobalTrendingRecord | null> {
+    return db.vehicleGlobalTrending.find((entry) => entry.normalizedKey === normalizedKey) ?? null;
+  }
+
+  async searchLikelyMatches(input: { year: number; normalizedMake: string; normalizedModel: string }): Promise<VehicleGlobalTrendingRecord[]> {
+    return db.vehicleGlobalTrending
+      .filter((entry) => entry.year === input.year && entry.normalizedMake === input.normalizedMake && entry.normalizedModel.includes(input.normalizedModel))
+      .sort((left, right) => right.trendScore - left.trendScore);
+  }
+
+  async listTop(limit: number): Promise<VehicleGlobalTrendingRecord[]> {
+    return [...db.vehicleGlobalTrending].sort((left, right) => right.trendScore - left.trendScore).slice(0, limit);
   }
 }
 

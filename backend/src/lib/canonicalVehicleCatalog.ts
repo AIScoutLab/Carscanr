@@ -164,6 +164,44 @@ export async function upsertCanonicalVehicleFromProvider(input: {
   }
 }
 
+export async function upsertCanonicalVehicleFromAiLearned(input: {
+  year: number;
+  make: string;
+  model: string;
+  trim?: string | null;
+  vehicleType: "car" | "motorcycle";
+}): Promise<CanonicalVehicleRecord> {
+  const syntheticVehicle: VehicleRecord = {
+    id: crypto.randomUUID(),
+    year: input.year,
+    make: input.make,
+    model: input.model,
+    trim: input.trim ?? "",
+    bodyStyle: "Unknown",
+    vehicleType: input.vehicleType,
+    msrp: 0,
+    engine: "Unknown",
+    horsepower: 0,
+    torque: "Unknown",
+    transmission: "Unknown",
+    drivetrain: "Unknown",
+    mpgOrRange: "",
+    colors: [],
+  };
+  return upsertCanonicalVehicleFromProvider({
+    vehicle: syntheticVehicle,
+    sourceProvider: "ai_learned",
+    sourceVehicleId: buildCanonicalKey({
+      year: input.year,
+      make: input.make,
+      model: input.model,
+      trim: input.trim,
+      vehicleType: input.vehicleType,
+    }),
+    promotionStatus: "promoted",
+  });
+}
+
 export async function resolveStoredVehicleRecordById(vehicleId: string): Promise<VehicleRecord | null> {
   const canonicalVehicle = await repositories.canonicalVehicles.findById(vehicleId);
   if (canonicalVehicle) {

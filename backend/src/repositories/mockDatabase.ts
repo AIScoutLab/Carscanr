@@ -7,7 +7,9 @@ import {
   ScanRecord,
   SubscriptionRecord,
   UsageCounterRecord,
+  VehicleGlobalTrendingRecord,
   ValuationRecord,
+  VehicleScanPopularityRecord,
   VehicleRecord,
   VisionDebugRecord,
   CachedAnalysisRecord,
@@ -54,6 +56,8 @@ class MockDatabase {
   listingsCache: VehicleListingsCacheRow[] = [];
   providerApiUsageLogs: ProviderApiUsageLogRecord[] = [];
   canonicalVehicles: CanonicalVehicleRecord[] = [];
+  vehicleScanPopularity: VehicleScanPopularityRecord[] = [];
+  vehicleGlobalTrending: VehicleGlobalTrendingRecord[] = [];
   cachedAnalysis: CachedAnalysisRecord[] = [];
   imageCache: ImageCacheRecord[] = [];
   unlockBalances: UnlockBalanceRecord[] = [];

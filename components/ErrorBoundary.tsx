@@ -10,17 +10,24 @@ type Props = {
 
 type State = {
   hasError: boolean;
+  errorMessage: string | null;
 };
 
 export class ErrorBoundary extends Component<Props, State> {
-  state: State = { hasError: false };
+  state: State = { hasError: false, errorMessage: null };
 
   static getDerivedStateFromError() {
     return { hasError: true };
   }
 
-  componentDidCatch(error: unknown) {
-    console.log("[error-boundary] render error", error);
+  componentDidCatch(error: unknown, errorInfo: unknown) {
+    const errorMessage = error instanceof Error ? error.message : "Unexpected render error.";
+    console.log("[error-boundary] render error", {
+      error,
+      errorInfo,
+      errorMessage,
+    });
+    this.setState({ errorMessage });
   }
 
   render() {
@@ -31,6 +38,7 @@ export class ErrorBoundary extends Component<Props, State> {
           <Text style={styles.message}>
             {this.props.fallbackMessage ?? "We hit an unexpected issue while rendering this result. Please go back and try again."}
           </Text>
+          {this.state.errorMessage ? <Text style={styles.detail}>{this.state.errorMessage}</Text> : null}
         </View>
       );
     }
@@ -47,4 +55,5 @@ const styles = StyleSheet.create({
   },
   title: { ...Typography.heading, color: Colors.text },
   message: { ...Typography.body, color: Colors.textMuted },
+  detail: { ...Typography.caption, color: Colors.textMuted },
 });

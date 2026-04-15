@@ -1,4 +1,94 @@
+import Constants from "expo-constants";
+import * as Updates from "expo-updates";
+
 export type MobileAppEnv = "local" | "preview" | "production";
+
+type ExpoExtraPublicEnv = {
+  apiBaseUrl?: string;
+  supabaseUrl?: string;
+  supabaseAnonKey?: string;
+  planOverride?: string;
+};
+
+type ExpoExtraShape = {
+  appEnv?: string;
+  publicEnv?: ExpoExtraPublicEnv;
+  expoClient?: {
+    extra?: {
+      appEnv?: string;
+      publicEnv?: ExpoExtraPublicEnv;
+    };
+  };
+};
+
+function mergePublicEnv(target: ExpoExtraPublicEnv, source?: ExpoExtraPublicEnv | null) {
+  if (!source) {
+    return target;
+  }
+  return {
+    apiBaseUrl: target.apiBaseUrl || source.apiBaseUrl,
+    supabaseUrl: target.supabaseUrl || source.supabaseUrl,
+    supabaseAnonKey: target.supabaseAnonKey || source.supabaseAnonKey,
+    planOverride: target.planOverride || source.planOverride,
+  };
+}
+
+function getExpoExtraCandidates() {
+  const updatesManifestExtra = (Updates.manifest && "extra" in Updates.manifest ? Updates.manifest.extra : undefined) as ExpoExtraShape | undefined;
+  const manifest2Extra = Constants.manifest2?.extra as ExpoExtraShape | undefined;
+  const manifestValue = Constants.manifest as (ExpoExtraShape & { extra?: ExpoExtraShape }) | null;
+  const manifestExtra = (manifestValue?.extra ?? manifestValue) as ExpoExtraShape | undefined;
+  const expoConfigExtra = Constants.expoConfig?.extra as ExpoExtraShape | undefined;
+
+  return [
+    { source: "updates-manifest-extra-publicEnv", publicEnv: updatesManifestExtra?.publicEnv },
+    { source: "updates-manifest-expoClient-extra-publicEnv", publicEnv: updatesManifestExtra?.expoClient?.extra?.publicEnv },
+    { source: "expo-config-extra-publicEnv", publicEnv: expoConfigExtra?.publicEnv },
+    { source: "manifest2-extra-publicEnv", publicEnv: manifest2Extra?.publicEnv },
+    { source: "manifest2-expoClient-extra-publicEnv", publicEnv: manifest2Extra?.expoClient?.extra?.publicEnv },
+    { source: "manifest-extra-publicEnv", publicEnv: manifestExtra?.publicEnv },
+    { source: "manifest-expoClient-extra-publicEnv", publicEnv: manifestExtra?.expoClient?.extra?.publicEnv },
+  ] as const;
+}
+
+function getExpoExtraPublicEnv() {
+  const candidates = getExpoExtraCandidates();
+  let values: ExpoExtraPublicEnv = {};
+  const sourcesUsed: string[] = [];
+
+  candidates.forEach((candidate) => {
+    const before = JSON.stringify(values);
+    values = mergePublicEnv(values, candidate.publicEnv);
+    if (candidate.publicEnv && JSON.stringify(values) !== before) {
+      sourcesUsed.push(candidate.source);
+    }
+  });
+
+  return {
+    values,
+    sourcesUsed,
+  };
+}
+
+function getExpoAppEnvCandidate() {
+  const updatesManifestExtra = (Updates.manifest && "extra" in Updates.manifest ? Updates.manifest.extra : undefined) as ExpoExtraShape | undefined;
+  const manifest2Extra = Constants.manifest2?.extra as ExpoExtraShape | undefined;
+  const manifestValue = Constants.manifest as (ExpoExtraShape & { extra?: ExpoExtraShape }) | null;
+  const manifestExtra = (manifestValue?.extra ?? manifestValue) as ExpoExtraShape | undefined;
+  const expoConfigExtra = Constants.expoConfig?.extra as ExpoExtraShape | undefined;
+
+  return (
+    process.env.EXPO_PUBLIC_APP_ENV ??
+    expoConfigExtra?.appEnv ??
+    expoConfigExtra?.expoClient?.extra?.appEnv ??
+    updatesManifestExtra?.appEnv ??
+    updatesManifestExtra?.expoClient?.extra?.appEnv ??
+    manifest2Extra?.appEnv ??
+    manifest2Extra?.expoClient?.extra?.appEnv ??
+    manifestExtra?.appEnv ??
+    manifestExtra?.expoClient?.extra?.appEnv
+  );
+}
 
 function normalizeEnvName(value: string | undefined): MobileAppEnv {
   if (value === "preview" || value === "production") {
@@ -34,15 +124,54 @@ function isValidHttpUrl(value: string) {
   }
 }
 
-export const mobileAppEnv = normalizeEnvName(process.env.EXPO_PUBLIC_APP_ENV);
+const expoExtraPublicEnv = getExpoExtraPublicEnv();
+
+export const mobileAppEnv = normalizeEnvName(getExpoAppEnvCandidate());
 
 export const mobileEnv = {
   appEnv: mobileAppEnv,
-  apiBaseUrl: normalizeString(process.env.EXPO_PUBLIC_API_BASE_URL),
-  supabaseUrl: normalizeString(process.env.EXPO_PUBLIC_SUPABASE_URL),
-  supabaseAnonKey: normalizeString(process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY),
-  planOverride: normalizeString(process.env.EXPO_PUBLIC_PLAN_OVERRIDE),
+  apiBaseUrl: normalizeString(expoExtraPublicEnv.values.apiBaseUrl || process.env.EXPO_PUBLIC_API_BASE_URL),
+  supabaseUrl: normalizeString(expoExtraPublicEnv.values.supabaseUrl || process.env.EXPO_PUBLIC_SUPABASE_URL),
+  supabaseAnonKey: normalizeString(expoExtraPublicEnv.values.supabaseAnonKey || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY),
+  planOverride: normalizeString(expoExtraPublicEnv.values.planOverride || process.env.EXPO_PUBLIC_PLAN_OVERRIDE),
 };
+
+export const requiredExpoPublicEnvKeys = [
+  "EXPO_PUBLIC_API_BASE_URL",
+  "EXPO_PUBLIC_SUPABASE_URL",
+  "EXPO_PUBLIC_SUPABASE_ANON_KEY",
+] as const;
+
+export function getMobileEnvDiagnostics() {
+  return {
+    appEnv: mobileEnv.appEnv,
+    envSource: {
+      apiBaseUrl: expoExtraPublicEnv.values.apiBaseUrl ? expoExtraPublicEnv.sourcesUsed.join(",") || "expo-extra" : process.env.EXPO_PUBLIC_API_BASE_URL ? "process-env" : "missing",
+      supabaseUrl: expoExtraPublicEnv.values.supabaseUrl ? expoExtraPublicEnv.sourcesUsed.join(",") || "expo-extra" : process.env.EXPO_PUBLIC_SUPABASE_URL ? "process-env" : "missing",
+      supabaseAnonKey: expoExtraPublicEnv.values.supabaseAnonKey ? expoExtraPublicEnv.sourcesUsed.join(",") || "expo-extra" : process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ? "process-env" : "missing",
+    },
+    executionEnvironment: Constants.executionEnvironment,
+    expoConfigPresent: Boolean(Constants.expoConfig),
+    manifestPresent: Boolean(Constants.manifest),
+    manifest2Present: Boolean(Constants.manifest2),
+    updatesManifestPresent: Boolean(Updates.manifest && "extra" in Updates.manifest),
+    apiBaseUrlPresent: Boolean(mobileEnv.apiBaseUrl),
+    supabaseUrlPresent: Boolean(mobileEnv.supabaseUrl),
+    supabaseAnonKeyPresent: Boolean(mobileEnv.supabaseAnonKey),
+    missingKeys: requiredExpoPublicEnvKeys.filter((key) => {
+      switch (key) {
+        case "EXPO_PUBLIC_API_BASE_URL":
+          return !mobileEnv.apiBaseUrl;
+        case "EXPO_PUBLIC_SUPABASE_URL":
+          return !mobileEnv.supabaseUrl;
+        case "EXPO_PUBLIC_SUPABASE_ANON_KEY":
+          return !mobileEnv.supabaseAnonKey;
+        default:
+          return false;
+      }
+    }),
+  };
+}
 
 export function isPreviewLikeMobileEnv() {
   return mobileEnv.appEnv === "preview" || mobileEnv.appEnv === "production";

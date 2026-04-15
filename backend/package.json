@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "export:offline-canonical": "tsx scripts/exportOfflineCanonical.ts",
     "seed": "tsx src/seed.ts",
     "test": "NODE_ENV=test AUTH_DEV_BYPASS_ENABLED=true node --import tsx --test tests/**/*.test.ts"
   },

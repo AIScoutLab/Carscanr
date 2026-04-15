@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { SupabaseClient } from "@supabase/supabase-js";
 import { AppError } from "../errors/appError.js";
 import { logger } from "../lib/logger.js";
@@ -18,7 +19,9 @@ import {
   ScanRecord,
   SubscriptionRecord,
   UsageCounterRecord,
+  VehicleGlobalTrendingRecord,
   ValuationRecord,
+  VehicleScanPopularityRecord,
   VehicleRecord,
   VisionDebugRecord,
 } from "../types/domain.js";
@@ -32,6 +35,8 @@ import {
   ListingResultsRepository,
   ProviderApiUsageLogsRepository,
   ScansRepository,
+  VehicleGlobalTrendingRepository,
+  VehicleScanPopularityRepository,
   VehicleUnlockRepository,
   SpecsCacheRepository,
   SubscriptionsRepository,
@@ -326,6 +331,70 @@ function scanToRow(scan: ScanRecord) {
     created_at: scan.createdAt,
     normalized_result: scan.normalizedResult,
     candidates: scan.candidates,
+  };
+}
+
+function mapVehicleScanPopularityRow(row: any): VehicleScanPopularityRecord {
+  return {
+    id: row.id,
+    normalizedKey: row.normalized_key,
+    year: row.year,
+    normalizedMake: row.normalized_make,
+    normalizedModel: row.normalized_model,
+    normalizedTrim: row.normalized_trim,
+    scanCount: row.scan_count ?? 0,
+    lastSeenAt: row.last_seen_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function vehicleScanPopularityToRow(record: VehicleScanPopularityRecord) {
+  return {
+    id: record.id,
+    normalized_key: record.normalizedKey,
+    year: record.year,
+    normalized_make: record.normalizedMake,
+    normalized_model: record.normalizedModel,
+    normalized_trim: record.normalizedTrim,
+    scan_count: record.scanCount,
+    last_seen_at: record.lastSeenAt,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt,
+  };
+}
+
+function mapVehicleGlobalTrendingRow(row: any): VehicleGlobalTrendingRecord {
+  return {
+    id: row.id,
+    normalizedKey: row.normalized_key,
+    year: row.year,
+    normalizedMake: row.normalized_make,
+    normalizedModel: row.normalized_model,
+    normalizedTrim: row.normalized_trim,
+    globalScanCount: row.global_scan_count ?? 0,
+    recentScanCount: row.recent_scan_count ?? 0,
+    trendScore: Number(row.trend_score ?? 0),
+    lastSeenAt: row.last_seen_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function vehicleGlobalTrendingToRow(record: VehicleGlobalTrendingRecord) {
+  return {
+    id: record.id,
+    normalized_key: record.normalizedKey,
+    year: record.year,
+    normalized_make: record.normalizedMake,
+    normalized_model: record.normalizedModel,
+    normalized_trim: record.normalizedTrim,
+    global_scan_count: record.globalScanCount,
+    recent_scan_count: record.recentScanCount,
+    trend_score: record.trendScore,
+    last_seen_at: record.lastSeenAt,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt,
   };
 }
 
@@ -876,6 +945,175 @@ export class SupabaseCanonicalVehiclesRepository implements CanonicalVehiclesRep
       target_canonical_key: canonicalKey,
     });
     if (error) throw new AppError(500, "SUPABASE_UPDATE_FAILED", "Failed to increment canonical vehicle popularity.", error);
+  }
+}
+
+export class SupabaseVehicleScanPopularityRepository implements VehicleScanPopularityRepository {
+  constructor(private readonly client: DbClient) {}
+
+  async increment(input: {
+    normalizedKey: string;
+    year: number;
+    normalizedMake: string;
+    normalizedModel: string;
+    normalizedTrim: string;
+    lastSeenAt: string;
+  }): Promise<VehicleScanPopularityRecord> {
+    const existing = await this.findByNormalizedKey(input.normalizedKey);
+    const record: VehicleScanPopularityRecord = existing
+      ? {
+          ...existing,
+          year: input.year,
+          normalizedMake: input.normalizedMake,
+          normalizedModel: input.normalizedModel,
+          normalizedTrim: input.normalizedTrim,
+          scanCount: existing.scanCount + 1,
+          lastSeenAt: input.lastSeenAt,
+          updatedAt: input.lastSeenAt,
+        }
+      : {
+          id: crypto.randomUUID(),
+          normalizedKey: input.normalizedKey,
+          year: input.year,
+          normalizedMake: input.normalizedMake,
+          normalizedModel: input.normalizedModel,
+          normalizedTrim: input.normalizedTrim,
+          scanCount: 1,
+          lastSeenAt: input.lastSeenAt,
+          createdAt: input.lastSeenAt,
+          updatedAt: input.lastSeenAt,
+        };
+
+    const { data, error } = await this.client
+      .from("vehicle_scan_popularity")
+      .upsert(vehicleScanPopularityToRow(record), { onConflict: "normalized_key" })
+      .select("*")
+      .single();
+    if (error) {
+      logger.error(
+        {
+          label: "VEHICLE_POPULARITY_UPSERT_FAILURE",
+          table: "vehicle_scan_popularity",
+          operation: "upsert",
+          normalizedKey: input.normalizedKey,
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+        },
+        "VEHICLE_POPULARITY_UPSERT_FAILURE",
+      );
+      throw new AppError(500, "SUPABASE_UPSERT_FAILED", "Failed to persist vehicle popularity.", error);
+    }
+    return mapVehicleScanPopularityRow(requireData(data, "Vehicle popularity upsert returned no row."));
+  }
+
+  async findByNormalizedKey(normalizedKey: string): Promise<VehicleScanPopularityRecord | null> {
+    const { data, error } = await this.client
+      .from("vehicle_scan_popularity")
+      .select("*")
+      .eq("normalized_key", normalizedKey)
+      .maybeSingle();
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load vehicle popularity row.", error);
+    return data ? mapVehicleScanPopularityRow(data) : null;
+  }
+
+  async searchLikelyMatches(input: {
+    year: number;
+    normalizedMake: string;
+    normalizedModel: string;
+  }): Promise<VehicleScanPopularityRecord[]> {
+    const { data, error } = await this.client
+      .from("vehicle_scan_popularity")
+      .select("*")
+      .eq("year", input.year)
+      .eq("normalized_make", input.normalizedMake)
+      .ilike("normalized_model", `%${input.normalizedModel}%`)
+      .order("scan_count", { ascending: false })
+      .limit(25);
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to search vehicle popularity rows.", error);
+    return (data ?? []).map(mapVehicleScanPopularityRow);
+  }
+
+  async findConflicts(input: {
+    year: number;
+    normalizedMake: string;
+    normalizedModel: string;
+    normalizedTrim: string;
+    minScanCount: number;
+  }): Promise<VehicleScanPopularityRecord[]> {
+    const { data, error } = await this.client
+      .from("vehicle_scan_popularity")
+      .select("*")
+      .eq("year", input.year)
+      .eq("normalized_make", input.normalizedMake)
+      .gte("scan_count", input.minScanCount)
+      .neq("normalized_model", input.normalizedModel)
+      .order("scan_count", { ascending: false })
+      .limit(10);
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to search vehicle popularity conflicts.", error);
+    return (data ?? []).map(mapVehicleScanPopularityRow);
+  }
+
+  async listTop(limit: number): Promise<VehicleScanPopularityRecord[]> {
+    const { data, error } = await this.client
+      .from("vehicle_scan_popularity")
+      .select("*")
+      .order("scan_count", { ascending: false })
+      .limit(limit);
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to list top vehicle popularity rows.", error);
+    return (data ?? []).map(mapVehicleScanPopularityRow);
+  }
+}
+
+export class SupabaseVehicleGlobalTrendingRepository implements VehicleGlobalTrendingRepository {
+  constructor(private readonly client: DbClient) {}
+
+  async upsert(record: VehicleGlobalTrendingRecord): Promise<VehicleGlobalTrendingRecord> {
+    const { data, error } = await this.client
+      .from("vehicle_global_trending")
+      .upsert(vehicleGlobalTrendingToRow(record), { onConflict: "normalized_key" })
+      .select("*")
+      .single();
+    if (error) throw new AppError(500, "SUPABASE_UPSERT_FAILED", "Failed to persist global trending vehicle.", error);
+    return mapVehicleGlobalTrendingRow(requireData(data, "Vehicle global trending upsert returned no row."));
+  }
+
+  async findByNormalizedKey(normalizedKey: string): Promise<VehicleGlobalTrendingRecord | null> {
+    const { data, error } = await this.client
+      .from("vehicle_global_trending")
+      .select("*")
+      .eq("normalized_key", normalizedKey)
+      .maybeSingle();
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load global trending row.", error);
+    return data ? mapVehicleGlobalTrendingRow(data) : null;
+  }
+
+  async searchLikelyMatches(input: {
+    year: number;
+    normalizedMake: string;
+    normalizedModel: string;
+  }): Promise<VehicleGlobalTrendingRecord[]> {
+    const { data, error } = await this.client
+      .from("vehicle_global_trending")
+      .select("*")
+      .eq("year", input.year)
+      .eq("normalized_make", input.normalizedMake)
+      .ilike("normalized_model", `%${input.normalizedModel}%`)
+      .order("trend_score", { ascending: false })
+      .limit(25);
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to search global trending rows.", error);
+    return (data ?? []).map(mapVehicleGlobalTrendingRow);
+  }
+
+  async listTop(limit: number): Promise<VehicleGlobalTrendingRecord[]> {
+    const { data, error } = await this.client
+      .from("vehicle_global_trending")
+      .select("*")
+      .order("trend_score", { ascending: false })
+      .limit(limit);
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to list top trending vehicles.", error);
+    return (data ?? []).map(mapVehicleGlobalTrendingRow);
   }
 }
 

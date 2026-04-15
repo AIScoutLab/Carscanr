@@ -38,6 +38,11 @@ export type VisionResult = {
   confidence: number;
   alternate_candidates: VisionCandidate[];
   visible_clues: string[];
+  visible_badge_text?: string;
+  visible_make_text?: string;
+  visible_model_text?: string;
+  visible_trim_text?: string;
+  emblem_logo_clues?: string[];
 };
 
 export type VisionProviderResult = {
@@ -245,6 +250,34 @@ export type CanonicalVehicleRecord = {
   firstSeenAt: string;
   lastSeenAt: string;
   lastPromotedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type VehicleScanPopularityRecord = {
+  id: string;
+  normalizedKey: string;
+  year: number;
+  normalizedMake: string;
+  normalizedModel: string;
+  normalizedTrim: string;
+  scanCount: number;
+  lastSeenAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type VehicleGlobalTrendingRecord = {
+  id: string;
+  normalizedKey: string;
+  year: number;
+  normalizedMake: string;
+  normalizedModel: string;
+  normalizedTrim: string;
+  globalScanCount: number;
+  recentScanCount: number;
+  trendScore: number;
+  lastSeenAt: string;
   createdAt: string;
   updatedAt: string;
 };

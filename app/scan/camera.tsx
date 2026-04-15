@@ -14,7 +14,9 @@ const PERMISSION_PROMPT_TIMEOUT_MS = 10000;
 const CAMERA_READY_TIMEOUT_MS = 10000;
 const IMAGE_PROCESSING_TIMEOUT_MS = 15000;
 const IDENTIFY_TIMEOUT_MS = 60000;
-const MAX_CAMERA_ZOOM = 0.7;
+const MAX_CAMERA_ZOOM = 0.32;
+const MIN_PINCH_DISTANCE_DELTA = 12;
+const ZOOM_WARNING_THRESHOLD = 0.2;
 
 type CameraStatus =
   | "Requesting camera permission"
@@ -50,7 +52,11 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
 }
 
 function clampZoom(value: number) {
-  return Math.min(MAX_CAMERA_ZOOM, Math.max(0, value));
+  const clamped = Math.min(MAX_CAMERA_ZOOM, Math.max(0, value));
+  if (clamped !== value) {
+    console.log("[scan-camera] CAMERA_ZOOM_CLAMPED", { requested: value, clamped, maxZoom: MAX_CAMERA_ZOOM });
+  }
+  return clamped;
 }
 
 function getTouchDistance(touches: ArrayLike<{ pageX: number; pageY: number }>) {
@@ -74,6 +80,7 @@ export default function ScanCameraScreen() {
   const pinchStartDistanceRef = useRef<number | null>(null);
   const pinchStartZoomRef = useRef(0);
   const zoomGestureActiveRef = useRef(false);
+  const zoomWarningShownRef = useRef(false);
 
   const [permissionReady, setPermissionReady] = useState<boolean | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
@@ -270,6 +277,11 @@ export default function ScanCameraScreen() {
     setStatus("Opening camera");
     appendStage("capture start", undefined, flowId);
     console.log("[scan-camera] CAMERA_CAPTURE_WITH_ZOOM", { flowId, zoom });
+    console.log("[scan-camera] CAMERA_CAPTURE_FOCUS_STATE", {
+      autofocus: "on",
+      zoom,
+      cameraReady,
+    });
 
     try {
       const picture = await withTimeout(
@@ -367,10 +379,23 @@ export default function ScanCameraScreen() {
     if (distance == null || startDistance == null) {
       return;
     }
-    const nextZoom = clampZoom(pinchStartZoomRef.current + (distance - startDistance) / 300);
+    const rawDelta = distance - startDistance;
+    if (Math.abs(rawDelta) < MIN_PINCH_DISTANCE_DELTA) {
+      return;
+    }
+    const normalizedDelta = Math.sign(rawDelta) * Math.pow(Math.min(Math.abs(rawDelta) / 260, 1), 1.5);
+    const nextZoom = clampZoom(pinchStartZoomRef.current + normalizedDelta * MAX_CAMERA_ZOOM);
+    if (Math.abs(nextZoom - zoom) < 0.004) {
+      return;
+    }
     setZoom(nextZoom);
-    console.log("[scan-camera] CAMERA_ZOOM_CHANGE", { zoom: Number(nextZoom.toFixed(3)) });
-  }, []);
+    console.log("[scan-camera] CAMERA_ZOOM_CHANGE", {
+      zoom: Number(nextZoom.toFixed(3)),
+      rawDelta,
+      normalizedDelta,
+    });
+    console.log("[scan-camera] CAMERA_ZOOM_APPLIED", { zoom: Number(nextZoom.toFixed(3)), maxZoom: MAX_CAMERA_ZOOM });
+  }, [zoom]);
 
   const finishZoomGesture = useCallback(() => {
     if (!zoomGestureActiveRef.current) {
@@ -447,6 +472,22 @@ export default function ScanCameraScreen() {
     return styles.statusActive;
   }, [status]);
 
+  const showZoomWarning = zoom > ZOOM_WARNING_THRESHOLD;
+
+  useEffect(() => {
+    if (showZoomWarning && !zoomWarningShownRef.current) {
+      zoomWarningShownRef.current = true;
+      console.log("[scan-camera] CAMERA_ZOOM_WARNING_SHOWN", {
+        zoom: Number(zoom.toFixed(3)),
+        threshold: ZOOM_WARNING_THRESHOLD,
+      });
+      return;
+    }
+    if (!showZoomWarning) {
+      zoomWarningShownRef.current = false;
+    }
+  }, [showZoomWarning, zoom]);
+
   return (
     <View style={styles.screen}>
       {permissionReady ? (
@@ -461,6 +502,7 @@ export default function ScanCameraScreen() {
             ref={cameraRef}
             style={StyleSheet.absoluteFill}
             facing="back"
+            autofocus="on"
             zoom={zoom}
             onCameraReady={() => {
               const flowId = cameraMountFlowIdRef.current;
@@ -491,6 +533,7 @@ export default function ScanCameraScreen() {
       <View style={[styles.statusCard, statusTone]}>
         <Text style={styles.statusTitle}>{status}</Text>
         <Text style={styles.zoomMeta}>Zoom: {zoom.toFixed(2)}x digital</Text>
+        {showZoomWarning ? <Text style={styles.zoomWarning}>Zoom may reduce clarity</Text> : null}
         <Text style={styles.statusMeta}>Signed in: {signedIn ? "yes" : "no"} | Session detected: {sessionDetected ? "yes" : "no"} | Auth token present: {tokenPresent ? "yes" : "no"}</Text>
         <Text style={styles.statusMeta}>
           Permission timeout: {PERMISSION_PROMPT_TIMEOUT_MS}ms | Camera open timeout: {CAMERA_READY_TIMEOUT_MS}ms | Processing timeout: {IMAGE_PROCESSING_TIMEOUT_MS}ms | Identify timeout: {IDENTIFY_TIMEOUT_MS}ms
@@ -597,6 +640,10 @@ const styles = StyleSheet.create({
   zoomMeta: {
     ...Typography.caption,
     color: "#BAE6FD",
+  },
+  zoomWarning: {
+    ...Typography.caption,
+    color: "rgba(255,255,255,0.88)",
   },
   statusDetail: {
     ...Typography.caption,

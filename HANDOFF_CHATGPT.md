@@ -180,9 +180,16 @@ Current camera flow:
     - `CAMERA_ZOOM_CHANGE`
     - `CAMERA_ZOOM_END`
     - `CAMERA_CAPTURE_WITH_ZOOM`
+    - `CAMERA_ZOOM_CLAMPED`
+    - `CAMERA_ZOOM_APPLIED`
+    - `CAMERA_CAPTURE_FOCUS_STATE`
   - current implementation uses `CameraView.zoom`
   - this is digital zoom, not explicit multi-lens switching
-  - zoom is clamped to a safe range so capture flow remains stable
+  - zoom has been tuned to be more conservative:
+    - lower max zoom
+    - threshold before pinch movement changes zoom
+    - gentler non-linear zoom curve so early zoom stays cleaner
+  - autofocus is explicitly kept on for capture
 - Photo-library flow had a real app-side bug on device:
   - repeated `/api/usage/today` fetches could flood before identify ever started
   - the strongest cause was unstable `refreshStatus` callbacks inside [features/subscription/SubscriptionProvider.tsx](/Users/mattbrillman/Car_Identifier/features/subscription/SubscriptionProvider.tsx), combined with scan-tab `useFocusEffect`
@@ -211,6 +218,218 @@ Current camera flow:
   - fix applied:
     - normal identify no longer blocks after 5 lifetime scans
     - only abuse-rate protection remains in `assertScanAllowed(...)`
+
+### Identification stability / badge-text dominance
+
+The scan matcher now leans much harder on readable badge and model text:
+
+- [backend/src/providers/openai/openAIVisionProvider.ts](/Users/mattbrillman/Car_Identifier/backend/src/providers/openai/openAIVisionProvider.ts)
+  - vision prompt now explicitly extracts:
+    - `visible_badge_text`
+    - `visible_make_text`
+    - `visible_model_text`
+    - `visible_trim_text`
+    - `emblem_logo_clues`
+  - prompt instructs the model to anchor on readable badging before body-shape guessing
+- [backend/src/services/scanService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/scanService.ts)
+  - logs:
+    - `VISIBLE_TEXT_EVIDENCE`
+    - `BADGE_HARD_FILTER_APPLIED`
+    - `CANDIDATE_REMOVED_CONTRADICTS_TEXT`
+    - `BADGE_FILTER_FALLBACK_TRIGGERED`
+    - `BADGE_MATCH_BOOST_APPLIED`
+    - `IDENTIFY_RESULT_STABILITY_DECISION`
+    - `SCAN_STABILITY_CACHE_HIT`
+    - `SCAN_STABILITY_CACHE_WRITE`
+    - `CANONICAL_PROMOTED_FROM_PROVIDER`
+  - matching behavior:
+    - visible make/model text is now used as a hard candidate filter before ranking when confidence is strong enough
+    - conflicting candidates are removed instead of merely penalized
+    - model-family normalization now helps compare text like `M3 Competition` vs `M3`
+  - stability behavior:
+    - recent results are cached in-process by `visualHash`
+    - exact or prefix visual-hash matches can reuse a previous high-confidence normalized result and resolved vehicle selection
+    - this is intended to reduce repeated-scan drift without adding a heavy OCR or database dependency
+
+### Scan camera zoom clarity hint
+
+- [app/scan/camera.tsx](/Users/mattbrillman/Car_Identifier/app/scan/camera.tsx)
+  - still uses conservative digital pinch zoom
+  - now shows a subtle inline hint when zoom gets high enough to risk softness:
+    - `Zoom may reduce clarity`
+  - log added:
+    - `CAMERA_ZOOM_WARNING_SHOWN`
+
+### Canonical auto-learning / popularity tracking
+
+CarScanr now has a lightweight self-learning path for popular vehicles:
+
+- new migration:
+  - [backend/supabase/migrations/012_vehicle_scan_popularity.sql](/Users/mattbrillman/Car_Identifier/backend/supabase/migrations/012_vehicle_scan_popularity.sql)
+  - creates `public.vehicle_scan_popularity`
+- new repository support:
+  - [backend/src/repositories/interfaces.ts](/Users/mattbrillman/Car_Identifier/backend/src/repositories/interfaces.ts)
+  - [backend/src/repositories/supabaseRepositories.ts](/Users/mattbrillman/Car_Identifier/backend/src/repositories/supabaseRepositories.ts)
+  - [backend/src/repositories/mockRepositories.ts](/Users/mattbrillman/Car_Identifier/backend/src/repositories/mockRepositories.ts)
+  - [backend/src/lib/repositoryRegistry.ts](/Users/mattbrillman/Car_Identifier/backend/src/lib/repositoryRegistry.ts)
+- scan behavior in [backend/src/services/scanService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/scanService.ts):
+  - every successful identify increments a popularity row keyed by normalized year/make/model/trim
+  - logs:
+    - `VEHICLE_POPULARITY_INCREMENTED`
+    - `CANONICAL_AUTO_PROMOTED`
+    - `CANONICAL_PROMOTION_SKIPPED_LOW_CONFIDENCE`
+    - `CANONICAL_PROMOTION_CONFLICT_DETECTED`
+    - `POPULARITY_RANKING_BOOST_APPLIED`
+    - `CANONICAL_BACKGROUND_ENRICH_QUEUED`
+  - auto-promotion threshold is currently `5`
+  - if the result is already canonical-backed, it still increments popularity but does not need auto-promotion
+  - if the result is AI-only and confidence is at least `0.85`, repeated agreement can promote a lightweight `ai_learned` canonical record
+  - if conflicting popularity rows exist for the same year/make with a different model family, promotion is delayed
+- canonical helper:
+  - [backend/src/lib/canonicalVehicleCatalog.ts](/Users/mattbrillman/Car_Identifier/backend/src/lib/canonicalVehicleCatalog.ts)
+  - now supports creating a lightweight promoted canonical record from AI-learned results using synthetic baseline specs so future scans can reuse it immediately
+
+Important current flow truth:
+
+1. canonical exact/ranked lookup still happens before provider
+2. provider enrichment still only runs for the primary candidate
+3. successful provider enrich still upserts canonical immediately
+4. popularity learning is additive and should not slow the live user-facing identify path materially
+
+### Global trending / proactive canonical pre-seeding
+
+CarScanr now has a proactive trend layer in addition to per-scan learning:
+
+- new migration:
+  - [backend/supabase/migrations/013_vehicle_global_trending.sql](/Users/mattbrillman/Car_Identifier/backend/supabase/migrations/013_vehicle_global_trending.sql)
+  - creates `public.vehicle_global_trending`
+- new background service:
+  - [backend/src/services/trendingVehicleService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/trendingVehicleService.ts)
+  - scheduler starts from [backend/src/server.ts](/Users/mattbrillman/Car_Identifier/backend/src/server.ts)
+- schedule:
+  - every `15` minutes
+- current trend formula:
+  - `trend_score = (recent_scan_count * 2) + global_scan_count + priority_boost`
+  - current `recent_scan_count` is a recency heuristic based on `last_seen_at`:
+    - seen within 24h: full scan count
+    - seen within 72h: half scan count
+    - older: `0`
+  - current priority boost:
+    - popular brands: `+5`
+    - high-volume model/category hints: `+4`
+- current pre-seed threshold:
+  - `20`
+- preload batch:
+  - top `50` trending vehicles per run
+  - logs:
+    - `CANONICAL_PRELOAD_BATCH_STARTED`
+    - `CANONICAL_PRELOAD_BATCH_COMPLETED`
+- preseed behavior:
+  - if canonical already exists, skip
+  - otherwise try provider candidate enrichment first:
+    - `CANONICAL_PRESEEDED_FROM_TREND`
+  - if provider fails, use lightweight AI-learned canonical fallback:
+    - `CANONICAL_PRESEEDED_AI_FALLBACK`
+  - if provider returns `429`, stop the run immediately:
+    - `PRESEED_RATE_LIMIT_BACKOFF`
+- matching behavior:
+  - canonical still resolves before provider
+  - scan ranking can now get a trend-based confidence boost:
+    - `TRENDING_MATCH_BOOST_APPLIED`
+  - trend data is advisory and should not override canonical-first behavior
+
+### Offline-first canonical bundle
+
+CarScanr now ships a small bundled offline canonical dataset for fast local hydration:
+
+- export pipeline:
+  - [backend/scripts/exportOfflineCanonical.ts](/Users/mattbrillman/Car_Identifier/backend/scripts/exportOfflineCanonical.ts)
+  - npm script:
+    - `npm run export:offline-canonical` in [backend/package.json](/Users/mattbrillman/Car_Identifier/backend/package.json)
+  - current behavior:
+    - prefers live `canonical_vehicles` when Supabase is configured
+    - falls back to seed vehicle data when canonical DB is unavailable
+    - writes [assets/data/offline_canonical.json](/Users/mattbrillman/Car_Identifier/assets/data/offline_canonical.json)
+    - logs:
+      - `OFFLINE_CANONICAL_EXPORT_COMPLETED`
+- app loader:
+  - [services/offlineCanonicalService.ts](/Users/mattbrillman/Car_Identifier/services/offlineCanonicalService.ts)
+  - startup preload from [app/_layout.tsx](/Users/mattbrillman/Car_Identifier/app/_layout.tsx)
+  - logs:
+    - `OFFLINE_CANONICAL_LOADED`
+    - `OFFLINE_DATASET_UPDATE_AVAILABLE`
+    - `OFFLINE_DATASET_UPDATED`
+  - current dataset is bundled + AsyncStorage-synced, with version field `offline_canonical_version`
+- current bundled dataset:
+  - [assets/data/offline_canonical.json](/Users/mattbrillman/Car_Identifier/assets/data/offline_canonical.json)
+  - currently 7 vehicles
+  - current size is about 6.5 KB
+- current practical behavior:
+  - the app does **not** yet have an on-device vision model, so brand-new photos still need backend identify to produce year/make/model/trim
+  - however:
+    - repeat scans of the same local image can now short-circuit to cached local scan results before backend
+    - detail pages can render instantly from bundled offline canonical data before backend enhancement finishes
+  - logs:
+    - `OFFLINE_MATCH_HIT`
+    - `OFFLINE_MATCH_MISS`
+    - `OFFLINE_RESULT_RENDERED`
+    - `OFFLINE_RESULT_ENHANCED`
+- scan path nuance:
+  - [services/scanService.ts](/Users/mattbrillman/Car_Identifier/services/scanService.ts)
+  - local repeat-scan cache uses image fingerprinting to return a previously known result without network
+  - once backend identify returns, the app attempts an offline canonical match and marks the result as a quick result if found
+- vehicle detail path:
+  - [services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/services/vehicleService.ts)
+  - [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx)
+  - loads bundled offline specs/value first when possible, then silently upgrades from backend when live data arrives
+
+### TestFlight env/runtime fix
+
+Recent production/TestFlight issue:
+
+- users could hit:
+  - `Configuration error - missing API settings`
+- likely root cause:
+  - app runtime validation was depending too heavily on raw `process.env.EXPO_PUBLIC_*`
+  - in TestFlight / EAS production builds, those values can be less reliable at runtime than Expo `extra`
+
+Fix applied:
+
+- [app.config.ts](/Users/mattbrillman/Car_Identifier/app.config.ts)
+  - now mirrors public runtime config into `extra.publicEnv`:
+    - `apiBaseUrl`
+    - `supabaseUrl`
+    - `supabaseAnonKey`
+    - `planOverride`
+- [lib/env.ts](/Users/mattbrillman/Car_Identifier/lib/env.ts)
+  - now reads runtime config from a broader release-safe chain:
+    - `expo-updates` manifest `extra.publicEnv`
+    - `expo-updates` manifest `extra.expoClient.extra.publicEnv`
+    - `Constants.expoConfig.extra.publicEnv`
+    - `Constants.manifest2.extra.publicEnv`
+    - `Constants.manifest.extra.publicEnv`
+    - then `process.env.EXPO_PUBLIC_*`
+  - diagnostics now also report whether a value came from:
+    - specific Expo runtime source(s)
+    - `process-env`
+    - `missing`
+- [eas.json](/Users/mattbrillman/Car_Identifier/eas.json)
+  - production build profile explicitly sets:
+    - `"environment": "production"`
+- [app/_layout.tsx](/Users/mattbrillman/Car_Identifier/app/_layout.tsx)
+  - startup logs now emit clearer EXPO_PUBLIC diagnostics before showing the config error UI
+- [components/ErrorBoundary.tsx](/Users/mattbrillman/Car_Identifier/components/ErrorBoundary.tsx)
+  - root render crashes no longer show the misleading “missing API settings” title
+  - fallback now shows a generic app error plus the actual render error message inline
+
+Important current truth:
+
+- app-side env reads are still all `EXPO_PUBLIC_*`
+- no secrets are hardcoded
+- runtime config validation remains strict, but now uses a more reliable TestFlight-safe source
+- if TestFlight still fails after this build, the next screen should expose whether it is:
+  - a real missing-config problem
+  - or an unrelated render crash that was previously being mislabeled
     - backend usage summaries now report unlock-based access without a remaining-scan cap
   - new logs added across the active scan path:
     - `CAMERA_SCAN_GATE_CHECK`
@@ -342,6 +561,8 @@ Important debugging note:
 - fix applied in [backend/src/services/scanService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/scanService.ts):
   - canonical lookup still runs first
   - provider enrichment is now capped per scan
+  - provider enrichment now runs only for the primary normalized candidate
+  - alternate candidates still get canonical lookup, but they no longer trigger provider enrichment
   - once any MarketCheck call returns `429`, the scan short-circuits remaining provider enrichment for that scan
   - alternate candidates are skipped after the first `429`
   - the active provider order is now:
@@ -352,6 +573,9 @@ Important debugging note:
   - new logs:
     - `PROVIDER_RATE_LIMIT_SHORT_CIRCUIT`
     - `PROVIDER_ENRICH_SKIPPED_AFTER_429`
+    - `PROVIDER_ENRICH_PRIMARY_ONLY`
+    - `CANONICAL_CACHE_HIT`
+    - `CANONICAL_CACHE_MISS`
     - `VEHICLE_MATCH_FINAL_SUMMARY`
   - `VEHICLE_MATCH_FINAL_SUMMARY` records:
     - canonical hit/miss
@@ -379,6 +603,20 @@ Important matching logs:
 - `VEHICLE_MATCH_CANDIDATE_COUNT`
 - `VEHICLE_MATCH_SELECTED`
 - `VEHICLE_MATCH_FALLBACK_RESULT`
+- text-evidence logs:
+  - `VISIBLE_TEXT_EVIDENCE`
+  - `BADGE_MATCH_BOOST_APPLIED`
+  - `CANDIDATE_CONTRADICTS_VISIBLE_TEXT`
+  - `IDENTIFY_RESULT_STABILITY_DECISION`
+  - visible text now carries through the normalized result:
+    - `visible_badge_text`
+    - `visible_make_text`
+    - `visible_model_text`
+    - `visible_trim_text`
+    - `emblem_logo_clues`
+  - OpenAI vision prompt now explicitly asks for badge/model/make/trim text extraction first and tells the model to anchor on readable badge text before body-shape guessing
+  - ranking now strongly boosts candidates whose make/model/trim agree with visible text and penalizes candidates that contradict readable text
+  - if evidence is weak or contradictory, alternate candidate confidence is reduced instead of drifting confidently to unrelated vehicles
 
 Important diagnosis:
 
@@ -411,9 +649,32 @@ Changes made:
   - if the scan result has no catalog/canonical `vehicleId`:
     - Pro lock / unlock CTA is hidden
     - no premium-preview paywall copy is shown
-    - user sees:
-      - `Detailed specs are unavailable for this match right now.`
-    - tapping the best match still explains the best-effort state instead of acting broken
+    - the blocking fallback popup has been removed entirely
+    - user now sees a stronger inline state:
+      - badge: `Estimated match`
+      - body: `We identified this vehicle from the photo with high confidence, but full catalog specs are still being linked.`
+      - secondary line: `This is not a purchase issue. Try another scan angle, or check again after the catalog refreshes.`
+    - if confidence is at least `0.85`, result screen also renders lightweight quick facts derived from photo analysis:
+      - year
+      - make
+      - model
+      - trim if present
+      - vehicle type
+    - fallback logs now include:
+      - `FALLBACK_RESULT_RENDERED`
+      - `FALLBACK_INLINE_STATE_SHOWN`
+      - `FALLBACK_QUICK_FACTS_RENDERED`
+      - `FALLBACK_CARD_TAPPED`
+- scanned image presentation has been softened too:
+  - [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx)
+  - [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx)
+  - scanned/uploaded user photos now prefer `contain`-style presentation instead of aggressive crop-heavy `cover`
+  - provider/generic images can still use `cover`
+  - image layout logs:
+    - `RESULT_IMAGE_SOURCE_SELECTED`
+    - `RESULT_IMAGE_LAYOUT_SELECTED`
+    - `RESULT_IMAGE_FIT_MODE`
+  - vehicle detail debug-only image-source text is now hidden outside `__DEV__`
 - locked preview overlay now uses `pointerEvents="none"` so it cannot steal touches
 
 Key files:

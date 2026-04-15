@@ -5,7 +5,9 @@ import {
   ScanRecord,
   SubscriptionRecord,
   UsageCounterRecord,
+  VehicleGlobalTrendingRecord,
   ValuationRecord,
+  VehicleScanPopularityRecord,
   VehicleRecord,
   VisionDebugRecord,
   CachedAnalysisRecord,
@@ -53,6 +55,42 @@ export interface CanonicalVehiclesRepository {
   upsertCandidate(record: CanonicalVehicleRecord): Promise<CanonicalVehicleRecord>;
   promote(canonicalKey: string): Promise<void>;
   incrementPopularity(canonicalKey: string): Promise<void>;
+}
+
+export interface VehicleScanPopularityRepository {
+  increment(input: {
+    normalizedKey: string;
+    year: number;
+    normalizedMake: string;
+    normalizedModel: string;
+    normalizedTrim: string;
+    lastSeenAt: string;
+  }): Promise<VehicleScanPopularityRecord>;
+  findByNormalizedKey(normalizedKey: string): Promise<VehicleScanPopularityRecord | null>;
+  searchLikelyMatches(input: {
+    year: number;
+    normalizedMake: string;
+    normalizedModel: string;
+  }): Promise<VehicleScanPopularityRecord[]>;
+  findConflicts(input: {
+    year: number;
+    normalizedMake: string;
+    normalizedModel: string;
+    normalizedTrim: string;
+    minScanCount: number;
+  }): Promise<VehicleScanPopularityRecord[]>;
+  listTop(limit: number): Promise<VehicleScanPopularityRecord[]>;
+}
+
+export interface VehicleGlobalTrendingRepository {
+  upsert(record: VehicleGlobalTrendingRecord): Promise<VehicleGlobalTrendingRecord>;
+  findByNormalizedKey(normalizedKey: string): Promise<VehicleGlobalTrendingRecord | null>;
+  searchLikelyMatches(input: {
+    year: number;
+    normalizedMake: string;
+    normalizedModel: string;
+  }): Promise<VehicleGlobalTrendingRecord[]>;
+  listTop(limit: number): Promise<VehicleGlobalTrendingRecord[]>;
 }
 
 export interface GarageItemsRepository {

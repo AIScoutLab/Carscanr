@@ -14,11 +14,11 @@ const config: ExpoConfig = {
   name: appName,
   slug: "carscanr",
   scheme: "carscanr",
-  version: "1.0.0",
+  version: "1.0.2",
   orientation: "portrait",
   userInterfaceStyle: "light",
   icon: "./icon-1024.png",
-  runtimeVersion: "1.0.1",
+  runtimeVersion: "1.0.2",
   updates: {
     url: `https://u.expo.dev/${easProjectId}`,
     fallbackToCacheTimeout: 0,
@@ -38,6 +38,12 @@ const config: ExpoConfig = {
   },
   extra: {
     appEnv,
+    publicEnv: {
+      apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL || "",
+      supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL || "",
+      supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "",
+      planOverride: process.env.EXPO_PUBLIC_PLAN_OVERRIDE || "",
+    },
     eas: {
       projectId: easProjectId,
     },

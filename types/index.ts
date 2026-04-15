@@ -1,9 +1,11 @@
 export type VehicleCandidate = {
   id: string;
   year: number;
+  displayYearLabel?: string;
   make: string;
   model: string;
   trim?: string;
+  displayTrimLabel?: string;
   confidence: number;
   thumbnailUrl: string;
 };
@@ -56,6 +58,37 @@ export type VehicleRecord = {
   listings: ListingResult[];
 };
 
+export type OfflineCanonicalVehicle = {
+  id: string;
+  canonicalKey: string;
+  year: number;
+  make: string;
+  model: string;
+  trim: string;
+  vehicleType: "car" | "motorcycle";
+  normalizedMake: string;
+  normalizedModel: string;
+  normalizedTrim: string;
+  basicSpecs: {
+    engine: string;
+    horsepower: number;
+    torque: string;
+    transmission: string;
+    drivetrain: string;
+    mpgOrRange: string;
+    exteriorColors: string[];
+    msrp: number;
+    bodyStyle: string;
+  };
+  lightweightValue?: {
+    tradeIn: number;
+    privateParty: number;
+    dealerRetail: number;
+    sourceLabel: string;
+    confidenceLabel: string;
+  } | null;
+};
+
 export type VehicleSearchQuery = {
   year?: string;
   make?: string;
@@ -68,8 +101,12 @@ export type ScanResult = {
   identifiedVehicle: VehicleCandidate;
   candidates: VehicleCandidate[];
   confidenceScore: number;
+  detectedVehicleType?: "car" | "motorcycle";
   limitedPreview?: boolean;
   scannedAt: string;
+  quickResult?: boolean;
+  quickResultSource?: "offline_canonical" | "local_scan_cache";
+  offlineDatasetVersion?: string | null;
 };
 
 export type GarageItem = {

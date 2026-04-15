@@ -1,9 +1,11 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { getVehicleImage } from "@/constants/vehicleImages";
 import { applyPlanOverride } from "@/features/subscription/planOverride";
 import { getApiBaseUrlOrThrow } from "@/lib/env";
 import { authService } from "@/services/authService";
 import { guestSessionService } from "@/services/guestSessionService";
+import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { ApiRequestError, apiRequest, apiRequestEnvelope } from "@/services/apiClient";
 import { ScanResult, SubscriptionStatus, VehicleCandidate } from "@/types";
 import * as FileSystem from "expo-file-system";
@@ -23,6 +25,7 @@ const MAX_UPLOAD_BYTES = 4.8 * 1024 * 1024;
 const BACKEND_WAKE_TIMEOUT_MS = 45000;
 const IDENTIFY_TIMEOUT_MS = 60000;
 const IDENTIFY_TIMEOUT_MS_AFTER_SLOW_WAKE = 90000;
+const OFFLINE_SCAN_CACHE_KEY = "offline_scan_result_cache_v1";
 
 type IdentifyStageLogger = (stage: string, payload?: unknown) => void;
 type BackendHealthResponse = {
@@ -69,9 +72,15 @@ type BackendScanResponse = {
   createdAt: string;
   normalizedResult: {
     visible_clues: string[];
+    likely_year?: number;
+    likely_make?: string;
+    likely_model?: string;
+    likely_trim?: string;
   };
   candidates: BackendScanCandidate[];
 };
+
+type StoredOfflineScanCache = Record<string, ScanResult>;
 
 type BackendScanMeta = {
   provider?: string;
@@ -217,9 +226,42 @@ function mapScanResponse(scan: BackendScanResponse, imageUri: string, usage: Sub
       } satisfies VehicleCandidate),
     candidates,
     confidenceScore: normalized.confidence,
+    detectedVehicleType: normalized.detectedVehicleType,
     limitedPreview: usage.plan === "free",
     scannedAt: normalized.createdAt,
+    quickResult: false,
+    quickResultSource: undefined,
+    offlineDatasetVersion: null,
   };
+}
+
+async function getImageFingerprint(imageUri: string) {
+  try {
+    const info = await FileSystem.getInfoAsync(imageUri, { md5: true } as any);
+    return info.exists && "md5" in info ? ((info as any).md5 as string | null) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readOfflineScanCache(): Promise<StoredOfflineScanCache> {
+  try {
+    const stored = await AsyncStorage.getItem(OFFLINE_SCAN_CACHE_KEY);
+    if (!stored) {
+      return {};
+    }
+    return JSON.parse(stored) as StoredOfflineScanCache;
+  } catch {
+    return {};
+  }
+}
+
+async function writeOfflineScanCache(cache: StoredOfflineScanCache) {
+  try {
+    await AsyncStorage.setItem(OFFLINE_SCAN_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // Best-effort local cache only.
+  }
 }
 
 export const scanService = {
@@ -274,6 +316,7 @@ export const scanService = {
     if (typeof imageUri !== "string" || imageUri.length === 0) {
       throw new Error("Image URI is missing.");
     }
+    await offlineCanonicalService.preload();
     const accessToken = await authService.getAccessToken();
     const guestId = accessToken ? null : await guestSessionService.getGuestId();
     console.log("[scan-service] IDENTIFY_ENTITLEMENT_DECISION", {
@@ -287,6 +330,33 @@ export const scanService = {
     const identifyUrl = getIdentifyEndpointUrl();
     await assertUploadSize(imageUri);
     const usage = mutableUsage;
+    const imageFingerprint = await getImageFingerprint(imageUri);
+    if (imageFingerprint) {
+      const offlineScanCache = await readOfflineScanCache();
+      const cachedScan = offlineScanCache[imageFingerprint];
+      if (cachedScan) {
+        console.log("[scan-service] OFFLINE_MATCH_HIT", {
+          source: "local_scan_cache",
+          imageFingerprint,
+          scanId: cachedScan.id,
+        });
+        console.log("[scan-service] OFFLINE_RESULT_RENDERED", {
+          source: "local_scan_cache",
+          scanId: cachedScan.id,
+        });
+        const quickCached = {
+          ...cachedScan,
+          quickResult: true,
+          quickResultSource: "local_scan_cache" as const,
+        };
+        mutableRecentScans = [quickCached, ...mutableRecentScans.filter((entry) => entry.id !== quickCached.id)].slice(0, 6);
+        return quickCached;
+      }
+    }
+    console.log("[scan-service] OFFLINE_MATCH_MISS", {
+      source: "local_scan_cache",
+      imageFingerprintPresent: Boolean(imageFingerprint),
+    });
     options?.onStage?.("form-data creation start", { imageUri });
     const fileInfo = await FileSystem.getInfoAsync(imageUri, { size: true });
     if (__DEV__) {
@@ -403,25 +473,79 @@ export const scanService = {
     }
 
     const result = mapScanResponse(response.data, imageUri, usage);
+    const offlineMatch = await offlineCanonicalService.matchCandidate({
+      id: result.identifiedVehicle.id,
+      year: result.identifiedVehicle.year,
+      make: result.identifiedVehicle.make,
+      model: result.identifiedVehicle.model,
+      trim: result.identifiedVehicle.trim,
+      vehicleType: result.detectedVehicleType,
+    });
+    const finalResult = offlineMatch
+      ? {
+          ...result,
+          identifiedVehicle: {
+            ...result.identifiedVehicle,
+            id: offlineMatch.vehicle.id,
+            thumbnailUrl: getVehicleImage(offlineMatch.vehicle.id, offlineMatch.vehicle.vehicleType),
+          },
+          candidates: result.candidates.map((candidate, index) =>
+            index === 0
+              ? {
+                  ...candidate,
+                  id: offlineMatch.vehicle.id,
+                  thumbnailUrl: getVehicleImage(offlineMatch.vehicle.id, offlineMatch.vehicle.vehicleType),
+                }
+              : candidate,
+          ),
+          quickResult: true,
+          quickResultSource: "offline_canonical" as const,
+          offlineDatasetVersion: offlineMatch.datasetVersion,
+        }
+      : result;
+    if (offlineMatch) {
+      console.log("[scan-service] OFFLINE_MATCH_HIT", {
+        source: "offline_canonical",
+        matchType: offlineMatch.matchType,
+        vehicleId: offlineMatch.vehicle.id,
+        datasetVersion: offlineMatch.datasetVersion,
+      });
+      console.log("[scan-service] OFFLINE_RESULT_RENDERED", {
+        source: "offline_canonical",
+        vehicleId: offlineMatch.vehicle.id,
+      });
+    } else {
+      console.log("[scan-service] OFFLINE_MATCH_MISS", {
+        source: "offline_canonical",
+        year: result.identifiedVehicle.year,
+        make: result.identifiedVehicle.make,
+        model: result.identifiedVehicle.model,
+      });
+    }
     console.log("[scan-service] SCAN_ALLOWED_BASIC_RESULT", {
-      scanId: result.id,
-      candidateCount: result.candidates.length,
+      scanId: finalResult.id,
+      candidateCount: finalResult.candidates.length,
       freeUnlocksRemaining: mutableUnlockStatus.freeUnlocksRemaining,
     });
     options?.onStage?.("parsed response", {
-      scanId: result.id,
-      candidateCount: result.candidates.length,
+      scanId: finalResult.id,
+      candidateCount: finalResult.candidates.length,
     });
     if (__DEV__) {
       console.log("[scan-service] identify success", {
-        scanId: result.id,
-        imageUri: result.imageUri,
-        candidateCount: result.candidates.length,
+        scanId: finalResult.id,
+        imageUri: finalResult.imageUri,
+        candidateCount: finalResult.candidates.length,
       });
     }
-    mutableRecentScans = [result, ...mutableRecentScans.filter((entry) => entry.id !== result.id)].slice(0, 6);
+    if (imageFingerprint) {
+      const cache = await readOfflineScanCache();
+      cache[imageFingerprint] = finalResult;
+      await writeOfflineScanCache(cache);
+    }
+    mutableRecentScans = [finalResult, ...mutableRecentScans.filter((entry) => entry.id !== finalResult.id)].slice(0, 6);
     mutableUsage = await scanService.getUsage();
-    return result;
+    return finalResult;
   },
 
   async identifyPremium(imageUri: string): Promise<{ result: ScanResult; entitlement?: BackendScanMeta["premium"] }> {

@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { env } from "../config/env.js";
 import { AppError } from "../errors/appError.js";
-import { mapCanonicalVehicleToRecord, resolveStoredVehicleRecordById, upsertCanonicalVehicleFromProvider } from "../lib/canonicalVehicleCatalog.js";
+import { mapCanonicalVehicleToRecord, resolveStoredVehicleRecordById, upsertCanonicalVehicleFromAiLearned, upsertCanonicalVehicleFromProvider } from "../lib/canonicalVehicleCatalog.js";
 import { logger } from "../lib/logger.js";
 import { providers } from "../lib/providerRegistry.js";
 import { buildCanonicalKey, normalizeLookupText } from "../lib/providerCache.js";
@@ -32,10 +32,48 @@ type ProviderEnrichmentContext = {
   providerRateLimited: boolean;
   providerAttemptCount: number;
   canonicalHit: boolean;
+  visibleBadgeText?: string;
+  visibleMakeText?: string;
+  visibleModelText?: string;
+  visibleTrimText?: string;
+  popularityMatches?: Array<{
+    normalizedKey: string;
+    year: number;
+    normalizedMake: string;
+    normalizedModel: string;
+    normalizedTrim: string;
+    scanCount: number;
+  }>;
+  trendingMatches?: Array<{
+    normalizedKey: string;
+    year: number;
+    normalizedMake: string;
+    normalizedModel: string;
+    normalizedTrim: string;
+    trendScore: number;
+  }>;
 };
 
 const MAX_PROVIDER_CALLS_PER_SCAN = 2;
-const MAX_PROVIDER_CANDIDATES_TO_TRY = 1;
+const STABILITY_CACHE_TTL_MS = 20 * 60 * 1000;
+const STABILITY_CACHE_PREFIX_LENGTH = 12;
+const MAX_STABILITY_CACHE_ENTRIES = 200;
+const AUTO_PROMOTION_THRESHOLD = 5;
+
+type StabilityCacheEntry = {
+  userId: string;
+  visualHash: string;
+  normalizedResult: VisionResult;
+  resolvedVehicles: MatchedVehicleCandidate[];
+  confidence: number;
+  createdAt: number;
+};
+
+type StabilityCacheMatch = StabilityCacheEntry & {
+  matchType: "exact" | "prefix";
+};
+
+const scanStabilityCache: StabilityCacheEntry[] = [];
 
 function serializeScanError(error: unknown) {
   const baseError =
@@ -89,6 +127,83 @@ function tokenizeMatchText(value: string | undefined | null) {
     .filter(Boolean);
 }
 
+function tokenizeEvidence(value: string | undefined | null) {
+  return normalizeMatchText(value)
+    .split(" ")
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function normalizeModelFamily(model: string | undefined | null) {
+  return normalizeMatchText(model)
+    .replace(/\b(competition|comp|lariat|eddie bauer|platinum|limited|premium|luxury|sport|touring|special|standard|base|xlt|gt|ex|lx|se|sel|xle|le)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+function buildPopularityKey(input: {
+  year: number;
+  make: string;
+  model: string;
+  trim?: string | null;
+}) {
+  return [
+    input.year,
+    normalizeMatchText(input.make),
+    normalizeModelFamily(input.model),
+    normalizeModelFamily(input.trim ?? "base") || "base",
+  ].join(":");
+}
+
+function hasEvidenceTokenMatch(candidateText: string | undefined | null, evidenceText: string | undefined | null) {
+  const candidateNormalized = normalizeMatchText(candidateText);
+  const evidenceNormalized = normalizeMatchText(evidenceText);
+  if (!candidateNormalized || !evidenceNormalized) {
+    return false;
+  }
+  return (
+    candidateNormalized === evidenceNormalized ||
+    candidateNormalized.includes(evidenceNormalized) ||
+    evidenceNormalized.includes(candidateNormalized)
+  );
+}
+
+function contradictsEvidence(candidateText: string | undefined | null, evidenceText: string | undefined | null) {
+  const candidateTokens = tokenizeEvidence(candidateText);
+  const evidenceTokens = tokenizeEvidence(evidenceText);
+  if (candidateTokens.length === 0 || evidenceTokens.length === 0) {
+    return false;
+  }
+  return evidenceTokens.every((token) => !candidateTokens.includes(token));
+}
+
+function visualHashPrefix(hash: string) {
+  return hash.slice(0, STABILITY_CACHE_PREFIX_LENGTH);
+}
+
+function readScanStabilityCache(input: { userId: string; visualHash: string }): StabilityCacheMatch | null {
+  const now = Date.now();
+  const exact = scanStabilityCache.find((entry) => entry.userId === input.userId && entry.visualHash === input.visualHash && now - entry.createdAt < STABILITY_CACHE_TTL_MS);
+  if (exact) {
+    return { ...exact, matchType: "exact" };
+  }
+  const prefixMatch = scanStabilityCache.find(
+    (entry) =>
+      entry.userId === input.userId &&
+      visualHashPrefix(entry.visualHash) === visualHashPrefix(input.visualHash) &&
+      now - entry.createdAt < STABILITY_CACHE_TTL_MS,
+  );
+  return prefixMatch ? { ...prefixMatch, matchType: "prefix" } : null;
+}
+
+function writeScanStabilityCache(entry: StabilityCacheEntry) {
+  const filtered = scanStabilityCache.filter(
+    (existing) => !(existing.userId === entry.userId && existing.visualHash === entry.visualHash),
+  );
+  filtered.unshift(entry);
+  scanStabilityCache.splice(0, scanStabilityCache.length, ...filtered.slice(0, MAX_STABILITY_CACHE_ENTRIES));
+}
+
 function getTokenOverlapScore(left: string[], right: string[]) {
   if (left.length === 0 || right.length === 0) return 0;
   const rightSet = new Set(right);
@@ -121,21 +236,6 @@ function stageFailureMessage(stage: ScanFailureStage) {
 
 function isProviderRateLimitError(error: unknown) {
   return error instanceof AppError && error.statusCode === 429;
-}
-
-function isHighPriorityAlternateCandidate(
-  primary: { confidence: number; make: string; model: string },
-  alternate: { confidence: number; make: string; model: string },
-) {
-  if (primary.confidence < 0.72) {
-    return true;
-  }
-
-  return (
-    alternate.confidence >= primary.confidence - 0.05 &&
-    normalizeMatchText(primary.make) === normalizeMatchText(alternate.make) &&
-    normalizeMatchText(primary.model) !== normalizeMatchText(alternate.model)
-  );
 }
 
 function logIdentifyStage(stage: ScanFailureStage, event: "start" | "success", context: Record<string, unknown>) {
@@ -327,7 +427,7 @@ export class ScanService {
         scanId,
         userId: input.auth.userId,
       });
-      const normalizedResult = normalizeVisionResult(visionResult.normalized);
+      let normalizedResult = normalizeVisionResult(visionResult.normalized);
       const enrichmentContext: ProviderEnrichmentContext = {
         scanId,
         providerAttempted: false,
@@ -335,8 +435,48 @@ export class ScanService {
         providerRateLimited: false,
         providerAttemptCount: 0,
         canonicalHit: false,
+        visibleBadgeText: normalizedResult.visible_badge_text,
+        visibleMakeText: normalizedResult.visible_make_text,
+        visibleModelText: normalizedResult.visible_model_text,
+        visibleTrimText: normalizedResult.visible_trim_text,
+        popularityMatches: await repositories.vehicleScanPopularity.searchLikelyMatches({
+          year: normalizedResult.likely_year,
+          normalizedMake: normalizeMatchText(normalizedResult.likely_make),
+          normalizedModel: normalizeModelFamily(normalizedResult.likely_model),
+        }),
+        trendingMatches: await repositories.vehicleGlobalTrending.searchLikelyMatches({
+          year: normalizedResult.likely_year,
+          normalizedMake: normalizeMatchText(normalizedResult.likely_make),
+          normalizedModel: normalizeModelFamily(normalizedResult.likely_model),
+        }),
       };
-      const matchedVehicles = await this.resolveCatalogMatches(normalizedResult, enrichmentContext);
+      const stabilityCacheHit = readScanStabilityCache({
+        userId: input.auth.userId,
+        visualHash,
+      });
+      let matchedVehicles: MatchedVehicleCandidate[];
+      let usedStabilityCache = false;
+      if (stabilityCacheHit && stabilityCacheHit.confidence >= 0.8) {
+        usedStabilityCache = true;
+        normalizedResult = stabilityCacheHit.normalizedResult;
+        logger.error(
+          {
+            label: "SCAN_STABILITY_CACHE_HIT",
+            scanId,
+            userId: input.auth.userId,
+            visualHash,
+            matchType: stabilityCacheHit.matchType,
+            cachedVisualHash: stabilityCacheHit.visualHash,
+            cachedConfidence: stabilityCacheHit.confidence,
+            cachedNormalizedResult: stabilityCacheHit.normalizedResult,
+            cachedVehicleIds: stabilityCacheHit.resolvedVehicles.map((vehicle) => vehicle.vehicleId),
+          },
+          "SCAN_STABILITY_CACHE_HIT",
+        );
+        matchedVehicles = stabilityCacheHit.resolvedVehicles;
+      } else {
+        matchedVehicles = await this.resolveCatalogMatches(normalizedResult, enrichmentContext);
+      }
       const resolvedVehicles =
         matchedVehicles.length > 0
           ? matchedVehicles
@@ -348,11 +488,12 @@ export class ScanService {
                 model: normalizedResult.likely_model,
                 trim: normalizedResult.likely_trim ?? "",
                 confidence: normalizedResult.confidence,
-                matchReason: "Best-effort identification. Could not match full specs catalog, showing AI result.",
+                matchReason: "Estimated match. Full catalog details are still being linked.",
               },
             ];
+      const hasCanonicalVehicle = resolvedVehicles.some((vehicle) => Boolean(vehicle.vehicleId));
 
-      if (matchedVehicles.length === 0) {
+      if (!hasCanonicalVehicle) {
         logger.error(
           {
             label: "VEHICLE_MATCH_FALLBACK_RESULT",
@@ -374,9 +515,36 @@ export class ScanService {
           providerSkipped: enrichmentContext.providerSkipped,
           providerRateLimited: enrichmentContext.providerRateLimited,
           providerAttemptCount: enrichmentContext.providerAttemptCount,
-          finalResultType: matchedVehicles.length > 0 ? "canonical" : "ai_only",
+          usedStabilityCache,
+          finalResultType: hasCanonicalVehicle ? "canonical" : "ai_only",
         },
         "VEHICLE_MATCH_FINAL_SUMMARY",
+      );
+      await this.trackVehiclePopularityAndPromotion({
+        scanId,
+        normalizedResult,
+        resolvedVehicles,
+        hasCanonicalVehicle,
+      });
+      writeScanStabilityCache({
+        userId: input.auth.userId,
+        visualHash,
+        normalizedResult,
+        resolvedVehicles,
+        confidence: resolvedVehicles[0]?.confidence ?? normalizedResult.confidence,
+        createdAt: Date.now(),
+      });
+      logger.error(
+        {
+          label: "SCAN_STABILITY_CACHE_WRITE",
+          scanId,
+          userId: input.auth.userId,
+          visualHash,
+          confidence: resolvedVehicles[0]?.confidence ?? normalizedResult.confidence,
+          vehicleIds: resolvedVehicles.map((vehicle) => vehicle.vehicleId),
+          finalResultType: hasCanonicalVehicle ? "canonical" : "ai_only",
+        },
+        "SCAN_STABILITY_CACHE_WRITE",
       );
       logIdentifyStage("VEHICLE_MATCH", "success", {
         scanId,
@@ -794,6 +962,18 @@ export class ScanService {
   private async resolveCatalogMatches(result: VisionResult, context: ProviderEnrichmentContext): Promise<MatchedVehicleCandidate[]> {
     logger.error(
       {
+        label: "VISIBLE_TEXT_EVIDENCE",
+        scanId: context.scanId,
+        visibleBadgeText: result.visible_badge_text ?? null,
+        visibleMakeText: result.visible_make_text ?? null,
+        visibleModelText: result.visible_model_text ?? null,
+        visibleTrimText: result.visible_trim_text ?? null,
+        emblemLogoClues: result.emblem_logo_clues ?? [],
+      },
+      "VISIBLE_TEXT_EVIDENCE",
+    );
+    logger.error(
+      {
         label: "VEHICLE_MATCH_INPUT",
         rawAiOutput: result,
         normalizedMatchFields: {
@@ -807,8 +987,82 @@ export class ScanService {
       },
       "VEHICLE_MATCH_INPUT",
     );
-    const primaryCandidate = { year: result.likely_year, make: result.likely_make, model: result.likely_model, trim: result.likely_trim, confidence: result.confidence };
-    const candidates = [
+    const normalizeCandidateWithEvidence = (candidate: {
+      year: number;
+      make: string;
+      model: string;
+      trim?: string;
+      confidence: number;
+    }) => {
+      let nextConfidence = candidate.confidence;
+      const candidatePopularityKey = buildPopularityKey({
+        year: candidate.year,
+        make: candidate.make,
+        model: candidate.model,
+        trim: candidate.trim,
+      });
+      const contradictoryModel = contradictsEvidence(candidate.model, result.visible_model_text ?? result.visible_badge_text);
+      const contradictoryMake = contradictsEvidence(candidate.make, result.visible_make_text);
+      if (contradictoryModel || contradictoryMake) {
+        nextConfidence = Math.max(0.18, nextConfidence - 0.22);
+        logger.error(
+          {
+            label: "CANDIDATE_CONTRADICTS_VISIBLE_TEXT",
+            scanId: context.scanId,
+            candidate,
+            contradictoryModel,
+            contradictoryMake,
+            adjustedConfidence: nextConfidence,
+          },
+          "CANDIDATE_CONTRADICTS_VISIBLE_TEXT",
+        );
+      } else if (
+        hasEvidenceTokenMatch(candidate.model, result.visible_model_text ?? result.visible_badge_text) ||
+        hasEvidenceTokenMatch(candidate.make, result.visible_make_text)
+      ) {
+        nextConfidence = Math.min(0.99, nextConfidence + 0.05);
+      }
+      const popularityMatch = context.popularityMatches?.find((entry) => entry.normalizedKey === candidatePopularityKey);
+      if (popularityMatch) {
+        nextConfidence = Math.min(0.995, nextConfidence + Math.min(0.08, popularityMatch.scanCount * 0.01));
+        logger.error(
+          {
+            label: "POPULARITY_RANKING_BOOST_APPLIED",
+            scanId: context.scanId,
+            candidate,
+            normalizedKey: candidatePopularityKey,
+            scanCount: popularityMatch.scanCount,
+            adjustedConfidence: nextConfidence,
+          },
+          "POPULARITY_RANKING_BOOST_APPLIED",
+        );
+      }
+      const trendingMatch = context.trendingMatches?.find((entry) => entry.normalizedKey === candidatePopularityKey);
+      if (trendingMatch) {
+        nextConfidence = Math.min(0.998, nextConfidence + Math.min(0.06, trendingMatch.trendScore * 0.002));
+        logger.error(
+          {
+            label: "TRENDING_MATCH_BOOST_APPLIED",
+            scanId: context.scanId,
+            candidate,
+            normalizedKey: candidatePopularityKey,
+            trendScore: trendingMatch.trendScore,
+            adjustedConfidence: nextConfidence,
+          },
+          "TRENDING_MATCH_BOOST_APPLIED",
+        );
+      }
+      return { ...candidate, confidence: nextConfidence };
+    };
+
+    const primaryCandidate = normalizeCandidateWithEvidence({
+      year: result.likely_year,
+      make: result.likely_make,
+      model: result.likely_model,
+      trim: result.likely_trim,
+      confidence: result.confidence,
+    });
+    const baseCandidates = [
       primaryCandidate,
       ...result.alternate_candidates.map((candidate) => ({
         year: candidate.likely_year,
@@ -816,20 +1070,86 @@ export class ScanService {
         model: candidate.likely_model,
         trim: candidate.likely_trim,
         confidence: candidate.confidence,
-      })),
+      })).map(normalizeCandidateWithEvidence),
     ];
 
-    const candidatesToTry = candidates.filter((candidate, index) => {
-      if (index === 0) {
-        return true;
+    const visibleModelFamily = normalizeModelFamily(result.visible_model_text ?? result.visible_badge_text);
+    const visibleMakeFamily = normalizeMatchText(result.visible_make_text);
+    let candidates = baseCandidates;
+    const shouldApplyHardModelFilter = Boolean(visibleModelFamily) && result.confidence >= 0.75;
+    const shouldApplyHardMakeFilter = Boolean(visibleMakeFamily);
+    if (shouldApplyHardModelFilter || shouldApplyHardMakeFilter) {
+        const filteredCandidates = baseCandidates.filter((candidate) => {
+          const candidateModelFamily = normalizeModelFamily(candidate.model);
+          const candidateMake = normalizeMatchText(candidate.make);
+          const makeMatches = !shouldApplyHardMakeFilter || candidateMake === visibleMakeFamily;
+          const modelMatches =
+            !shouldApplyHardModelFilter ||
+            (Boolean(candidateModelFamily) &&
+              (candidateModelFamily.includes(visibleModelFamily) ||
+                visibleModelFamily.includes(candidateModelFamily)));
+        const keep = makeMatches && modelMatches;
+        if (!keep) {
+          logger.error(
+            {
+              label: "CANDIDATE_REMOVED_CONTRADICTS_TEXT",
+              scanId: context.scanId,
+              candidate,
+              visibleMakeText: result.visible_make_text ?? null,
+              visibleModelText: result.visible_model_text ?? result.visible_badge_text ?? null,
+              makeMatches,
+              modelMatches,
+            },
+            "CANDIDATE_REMOVED_CONTRADICTS_TEXT",
+          );
+        }
+        return keep;
+      });
+
+      if (filteredCandidates.length > 0) {
+        candidates = filteredCandidates;
+        logger.error(
+          {
+            label: "BADGE_HARD_FILTER_APPLIED",
+            scanId: context.scanId,
+            visibleMakeText: result.visible_make_text ?? null,
+            visibleModelText: result.visible_model_text ?? result.visible_badge_text ?? null,
+            originalCandidateCount: baseCandidates.length,
+            filteredCandidateCount: filteredCandidates.length,
+          },
+          "BADGE_HARD_FILTER_APPLIED",
+        );
+      } else {
+        logger.error(
+          {
+            label: "BADGE_FILTER_FALLBACK_TRIGGERED",
+            scanId: context.scanId,
+            visibleMakeText: result.visible_make_text ?? null,
+            visibleModelText: result.visible_model_text ?? result.visible_badge_text ?? null,
+            originalCandidateCount: baseCandidates.length,
+          },
+          "BADGE_FILTER_FALLBACK_TRIGGERED",
+        );
       }
-      return isHighPriorityAlternateCandidate(primaryCandidate, candidate);
-    }).slice(0, MAX_PROVIDER_CANDIDATES_TO_TRY + 1);
+    }
+
+    logger.error(
+      {
+        label: "IDENTIFY_RESULT_STABILITY_DECISION",
+        scanId: context.scanId,
+        primaryCandidate,
+        alternateCandidates: candidates.slice(1),
+        visibleModelText: result.visible_model_text ?? null,
+        visibleBadgeText: result.visible_badge_text ?? null,
+      },
+      "IDENTIFY_RESULT_STABILITY_DECISION",
+    );
 
     const matched: MatchedVehicleCandidate[] = [];
 
-    for (const candidate of candidatesToTry) {
-      const matches = await this.findVehicleMatches(candidate, context);
+    for (const [index, candidate] of candidates.entries()) {
+      const allowProviderEnrichment = index === 0;
+      const matches = await this.findVehicleMatches(candidate, context, allowProviderEnrichment);
       matched.push(...matches);
       if (matches.length > 0) {
         break;
@@ -839,7 +1159,7 @@ export class ScanService {
           {
             label: "PROVIDER_ENRICH_SKIPPED_AFTER_429",
             scanId: context.scanId,
-            skippedAlternateCandidates: candidatesToTry.slice(candidatesToTry.indexOf(candidate) + 1).map((entry) => ({
+            skippedAlternateCandidates: candidates.slice(index + 1).map((entry) => ({
               year: entry.year,
               make: entry.make,
               model: entry.model,
@@ -878,6 +1198,119 @@ export class ScanService {
       return uniqueMatches;
     }
     return [];
+  }
+
+  private async trackVehiclePopularityAndPromotion(input: {
+    scanId: string;
+    normalizedResult: VisionResult;
+    resolvedVehicles: MatchedVehicleCandidate[];
+    hasCanonicalVehicle: boolean;
+  }) {
+    const primary = input.resolvedVehicles[0];
+    if (!primary) {
+      return;
+    }
+
+    const normalizedKey = buildPopularityKey({
+      year: primary.year,
+      make: primary.make,
+      model: primary.model,
+      trim: primary.trim,
+    });
+    const popularity = await repositories.vehicleScanPopularity.increment({
+      normalizedKey,
+      year: primary.year,
+      normalizedMake: normalizeMatchText(primary.make),
+      normalizedModel: normalizeModelFamily(primary.model),
+      normalizedTrim: normalizeModelFamily(primary.trim || "base") || "base",
+      lastSeenAt: new Date().toISOString(),
+    });
+    logger.error(
+      {
+        label: "VEHICLE_POPULARITY_INCREMENTED",
+        scanId: input.scanId,
+        normalizedKey,
+        scanCount: popularity.scanCount,
+        hasCanonicalVehicle: input.hasCanonicalVehicle,
+      },
+      "VEHICLE_POPULARITY_INCREMENTED",
+    );
+
+    if (input.hasCanonicalVehicle) {
+      return;
+    }
+
+    if (input.normalizedResult.confidence < 0.85) {
+      logger.error(
+        {
+          label: "CANONICAL_PROMOTION_SKIPPED_LOW_CONFIDENCE",
+          scanId: input.scanId,
+          normalizedKey,
+          confidence: input.normalizedResult.confidence,
+          threshold: 0.85,
+          scanCount: popularity.scanCount,
+        },
+        "CANONICAL_PROMOTION_SKIPPED_LOW_CONFIDENCE",
+      );
+      return;
+    }
+
+    if (popularity.scanCount < AUTO_PROMOTION_THRESHOLD) {
+      return;
+    }
+
+    const conflictRows = await repositories.vehicleScanPopularity.findConflicts({
+      year: primary.year,
+      normalizedMake: normalizeMatchText(primary.make),
+      normalizedModel: normalizeModelFamily(primary.model),
+      normalizedTrim: normalizeModelFamily(primary.trim || "base") || "base",
+      minScanCount: Math.max(2, AUTO_PROMOTION_THRESHOLD - 1),
+    });
+    if (conflictRows.length > 0) {
+      logger.error(
+        {
+          label: "CANONICAL_PROMOTION_CONFLICT_DETECTED",
+          scanId: input.scanId,
+          normalizedKey,
+          conflicts: conflictRows.map((row) => ({
+            normalizedKey: row.normalizedKey,
+            scanCount: row.scanCount,
+            normalizedModel: row.normalizedModel,
+          })),
+        },
+        "CANONICAL_PROMOTION_CONFLICT_DETECTED",
+      );
+      return;
+    }
+
+    const canonical = await upsertCanonicalVehicleFromAiLearned({
+      year: primary.year,
+      make: primary.make,
+      model: primary.model,
+      trim: primary.trim,
+      vehicleType: input.normalizedResult.vehicle_type,
+    });
+    logger.error(
+      {
+        label: "CANONICAL_AUTO_PROMOTED",
+        scanId: input.scanId,
+        normalizedKey,
+        canonicalId: canonical.id,
+        scanCount: popularity.scanCount,
+        source: "ai_learned",
+      },
+      "CANONICAL_AUTO_PROMOTED",
+    );
+    logger.error(
+      {
+        label: "CANONICAL_BACKGROUND_ENRICH_QUEUED",
+        scanId: input.scanId,
+        normalizedKey,
+        canonicalId: canonical.id,
+        source: "ai_learned",
+      },
+      "CANONICAL_BACKGROUND_ENRICH_QUEUED",
+    );
   }
 
   private buildCanonicalMatchedCandidate(input: {
@@ -951,7 +1384,7 @@ export class ScanService {
     model: string;
     trim?: string;
     confidence: number;
-  }, context: ProviderEnrichmentContext): Promise<MatchedVehicleCandidate[]> {
+  }, context: ProviderEnrichmentContext, allowProviderEnrichment: boolean): Promise<MatchedVehicleCandidate[]> {
     const logStrategy = (
       strategy: string,
       vehicles: Array<VehicleRecord | MatchedVehicleCandidate | { id: string; year: number; make: string; model: string; trim?: string | null }>,
@@ -1001,6 +1434,16 @@ export class ScanService {
     const exactCanonical = await repositories.canonicalVehicles.findByCanonicalKey(exactCanonicalKey);
     if (exactCanonical) {
       context.canonicalHit = true;
+      logger.error(
+        {
+          label: "CANONICAL_CACHE_HIT",
+          canonicalKey: exactCanonicalKey,
+          source: "exact-key",
+          canonicalId: exactCanonical.id,
+          candidate,
+        },
+        "CANONICAL_CACHE_HIT",
+      );
       const exactCanonicalVehicle = mapCanonicalVehicleToRecord(exactCanonical);
       logStrategy("canonical-exact-key", exactCanonicalVehicle ? [exactCanonical] : [], {
         canonicalKey: exactCanonicalKey,
@@ -1028,6 +1471,15 @@ export class ScanService {
     } else {
       logger.error(
         {
+          label: "CANONICAL_CACHE_MISS",
+          canonicalKey: exactCanonicalKey,
+          source: "exact-key",
+          candidate,
+        },
+        "CANONICAL_CACHE_MISS",
+      );
+      logger.error(
+        {
           label: "CANONICAL_LOOKUP_MISS",
           canonicalKey: exactCanonicalKey,
           source: "exact-key",
@@ -1049,6 +1501,16 @@ export class ScanService {
       context.canonicalHit = true;
       logger.error(
         {
+          label: "CANONICAL_CACHE_HIT",
+          canonicalKey: exactCanonicalKey,
+          source: "promoted-search",
+          candidateCount: canonicalCandidates.length,
+          candidate,
+        },
+        "CANONICAL_CACHE_HIT",
+      );
+      logger.error(
+        {
           label: "CANONICAL_LOOKUP_HIT",
           canonicalKey: exactCanonicalKey,
           source: "promoted-search",
@@ -1057,6 +1519,15 @@ export class ScanService {
         "CANONICAL_LOOKUP_HIT",
       );
     } else {
+      logger.error(
+        {
+          label: "CANONICAL_CACHE_MISS",
+          canonicalKey: exactCanonicalKey,
+          source: "promoted-search",
+          candidate,
+        },
+        "CANONICAL_CACHE_MISS",
+      );
       logger.error(
         {
           label: "CANONICAL_LOOKUP_MISS",
@@ -1096,6 +1567,9 @@ export class ScanService {
     const strippedCandidateModel = stripTrimTokens(candidate.model);
     const candidateModelFamily = buildModelFamily(candidate.model);
     const candidateTokens = tokenizeMatchText(candidate.model);
+    const visibleModelEvidence = context.visibleModelText ?? context.visibleBadgeText;
+    const visibleMakeEvidence = context.visibleMakeText;
+    const visibleTrimEvidence = context.visibleTrimText;
 
     const canonicalRankedMatches = canonicalCandidates
       .map((record) => {
@@ -1108,6 +1582,9 @@ export class ScanService {
         const yearDistance = Math.abs(vehicle.year - candidate.year);
 
         let score = 0;
+        const badgeModelMatch = hasEvidenceTokenMatch(vehicle.model, candidate.model) && hasEvidenceTokenMatch(vehicle.model, visibleModelEvidence);
+        const badgeTrimMatch = hasEvidenceTokenMatch(vehicle.trim, visibleTrimEvidence);
+        const makeEvidenceMatch = hasEvidenceTokenMatch(vehicle.make, visibleMakeEvidence);
         if (vehicleModel === normalizedCandidateModel) score += 100;
         else if (normalizedCandidateModel && (vehicleModel.includes(normalizedCandidateModel) || normalizedCandidateModel.includes(vehicleModel))) score += 85;
         else if (candidateModelFamily && vehicleFamily === candidateModelFamily) score += 70;
@@ -1120,6 +1597,87 @@ export class ScanService {
 
         if (normalizedTrim && record.normalizedTrim && record.normalizedTrim.includes(normalizedTrim)) {
           score += 10;
+        }
+
+        const popularityMatch = context.popularityMatches?.find(
+          (entry) =>
+            entry.year === vehicle.year &&
+            entry.normalizedMake === normalizeMatchText(vehicle.make) &&
+            entry.normalizedModel === normalizeModelFamily(vehicle.model),
+        );
+        if (popularityMatch) {
+          const popularityBoost = Math.min(30, popularityMatch.scanCount * 2);
+          score += popularityBoost;
+          logger.error(
+            {
+              label: "POPULARITY_RANKING_BOOST_APPLIED",
+              scanId: context.scanId,
+              candidate,
+              vehicleId: record.id,
+              normalizedKey: popularityMatch.normalizedKey,
+              scanCount: popularityMatch.scanCount,
+              boost: popularityBoost,
+            },
+            "POPULARITY_RANKING_BOOST_APPLIED",
+          );
+        }
+        const trendingMatch = context.trendingMatches?.find(
+          (entry) =>
+            entry.year === vehicle.year &&
+            entry.normalizedMake === normalizeMatchText(vehicle.make) &&
+            entry.normalizedModel === normalizeModelFamily(vehicle.model),
+        );
+        if (trendingMatch) {
+          const trendBoost = Math.min(24, trendingMatch.trendScore * 0.4);
+          score += trendBoost;
+          logger.error(
+            {
+              label: "TRENDING_MATCH_BOOST_APPLIED",
+              scanId: context.scanId,
+              candidate,
+              vehicleId: record.id,
+              normalizedKey: trendingMatch.normalizedKey,
+              trendScore: trendingMatch.trendScore,
+              boost: trendBoost,
+            },
+            "TRENDING_MATCH_BOOST_APPLIED",
+          );
+        }
+
+        if (badgeModelMatch || makeEvidenceMatch || badgeTrimMatch) {
+          const boost = (badgeModelMatch ? 38 : 0) + (makeEvidenceMatch ? 16 : 0) + (badgeTrimMatch ? 12 : 0);
+          score += boost;
+          logger.error(
+            {
+              label: "BADGE_MATCH_BOOST_APPLIED",
+              scanId: context.scanId,
+              candidate,
+              vehicleId: record.id,
+              badgeModelMatch,
+              makeEvidenceMatch,
+              badgeTrimMatch,
+              boost,
+            },
+            "BADGE_MATCH_BOOST_APPLIED",
+          );
+        }
+
+        if (
+          contradictsEvidence(vehicle.model, visibleModelEvidence) ||
+          contradictsEvidence(vehicle.make, visibleMakeEvidence)
+        ) {
+          score -= 55;
+          logger.error(
+            {
+              label: "CANDIDATE_CONTRADICTS_VISIBLE_TEXT",
+              scanId: context.scanId,
+              candidate,
+              vehicleId: record.id,
+              vehicleMake: vehicle.make,
+              vehicleModel: vehicle.model,
+            },
+            "CANDIDATE_CONTRADICTS_VISIBLE_TEXT",
+          );
         }
 
         score += Math.round(overlapScore * 40);
@@ -1160,9 +1718,33 @@ export class ScanService {
       return selected;
     }
 
+    if (!allowProviderEnrichment) {
+      logger.error(
+        {
+          label: "PROVIDER_ENRICH_PRIMARY_ONLY",
+          scanId: context.scanId,
+          candidate,
+          decision: "alternate-candidate-skip-provider",
+        },
+        "PROVIDER_ENRICH_PRIMARY_ONLY",
+      );
+      return [];
+    }
+
     if (this.shouldSkipProviderEnrichment(context, candidate)) {
       return [];
     }
+
+    logger.error(
+      {
+        label: "PROVIDER_ENRICH_PRIMARY_ONLY",
+        scanId: context.scanId,
+        candidate,
+        decision: "primary-candidate-provider-allowed",
+        providerAttemptCount: context.providerAttemptCount,
+      },
+      "PROVIDER_ENRICH_PRIMARY_ONLY",
+    );
 
     logger.error(
       {
@@ -1278,6 +1860,20 @@ export class ScanService {
               sourceProvider: providers.specsProviderName,
               sourceVehicleId: vehicle.id,
             });
+            logger.error(
+              {
+                label: "CANONICAL_PROMOTED_FROM_PROVIDER",
+                provider: providers.specsProviderName,
+                candidate,
+                canonicalId: canonical.id,
+                sourceVehicleId: vehicle.id,
+                year: vehicle.year,
+                make: vehicle.make,
+                model: vehicle.model,
+                trim: vehicle.trim ?? null,
+              },
+              "CANONICAL_PROMOTED_FROM_PROVIDER",
+            );
             return this.buildCanonicalMatchedCandidate({
               vehicleId: canonical.id,
               vehicle,
@@ -1711,6 +2307,11 @@ export function normalizeVisionResult(result: VisionResult): VisionResult {
     likely_trim: result.likely_trim?.trim(),
     confidence: Math.max(0, Math.min(1, result.confidence)),
     visible_clues: result.visible_clues.map((clue) => clue.trim()).filter(Boolean),
+    visible_badge_text: result.visible_badge_text?.trim(),
+    visible_make_text: result.visible_make_text?.trim(),
+    visible_model_text: result.visible_model_text?.trim(),
+    visible_trim_text: result.visible_trim_text?.trim(),
+    emblem_logo_clues: (result.emblem_logo_clues ?? []).map((clue) => clue.trim()).filter(Boolean),
     alternate_candidates: result.alternate_candidates
       .map((candidate) => ({
         ...candidate,

@@ -12,6 +12,8 @@ import {
   ListingResultsRepository,
   ProviderApiUsageLogsRepository,
   ScansRepository,
+  VehicleGlobalTrendingRepository,
+  VehicleScanPopularityRepository,
   VehicleUnlockRepository,
   SpecsCacheRepository,
   SubscriptionsRepository,
@@ -31,6 +33,8 @@ import {
   SupabaseListingResultsRepository,
   SupabaseProviderApiUsageLogsRepository,
   SupabaseScansRepository,
+  SupabaseVehicleGlobalTrendingRepository,
+  SupabaseVehicleScanPopularityRepository,
   SupabaseVehicleUnlockRepository,
   SupabaseSpecsCacheRepository,
   SupabaseSubscriptionsRepository,
@@ -50,6 +54,8 @@ import {
   MockListingResultsRepository,
   MockProviderApiUsageLogsRepository,
   MockScansRepository,
+  MockVehicleGlobalTrendingRepository,
+  MockVehicleScanPopularityRepository,
   MockVehicleUnlockRepository,
   MockSpecsCacheRepository,
   MockSubscriptionsRepository,
@@ -78,6 +84,8 @@ export type RepositoryRegistry = {
   valuesCache: ValuesCacheRepository;
   listingsCache: ListingsCacheRepository;
   providerApiUsageLogs: ProviderApiUsageLogsRepository;
+  vehicleScanPopularity: VehicleScanPopularityRepository;
+  vehicleGlobalTrending: VehicleGlobalTrendingRepository;
 };
 
 function notConfigured(): never {
@@ -108,6 +116,8 @@ function createMissingRepositories(): RepositoryRegistry {
       valuesCache: new MockValuesCacheRepository(),
       listingsCache: new MockListingsCacheRepository(),
       providerApiUsageLogs: new MockProviderApiUsageLogsRepository(),
+      vehicleScanPopularity: new MockVehicleScanPopularityRepository(),
+      vehicleGlobalTrending: new MockVehicleGlobalTrendingRepository(),
     };
   }
 
@@ -190,6 +200,19 @@ function createMissingRepositories(): RepositoryRegistry {
       create: async () => notConfigured(),
       deleteOlderThan: async () => notConfigured(),
     },
+    vehicleScanPopularity: {
+      increment: async () => notConfigured(),
+      findByNormalizedKey: async () => notConfigured(),
+      searchLikelyMatches: async () => notConfigured(),
+      findConflicts: async () => notConfigured(),
+      listTop: async () => notConfigured(),
+    },
+    vehicleGlobalTrending: {
+      upsert: async () => notConfigured(),
+      findByNormalizedKey: async () => notConfigured(),
+      searchLikelyMatches: async () => notConfigured(),
+      listTop: async () => notConfigured(),
+    },
   };
 }
 
@@ -226,6 +249,8 @@ function createDefaultRepositories(): RepositoryRegistry {
     valuesCache: new SupabaseValuesCacheRepository(supabaseAdmin),
     listingsCache: new SupabaseListingsCacheRepository(supabaseAdmin),
     providerApiUsageLogs: new SupabaseProviderApiUsageLogsRepository(supabaseAdmin),
+    vehicleScanPopularity: new SupabaseVehicleScanPopularityRepository(supabaseAdmin),
+    vehicleGlobalTrending: new SupabaseVehicleGlobalTrendingRepository(supabaseAdmin),
   };
 }
 

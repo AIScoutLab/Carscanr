@@ -6,8 +6,9 @@ import { Linking, StyleSheet, Text, View } from "react-native";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Colors, Typography } from "@/constants/theme";
 import { SubscriptionProvider } from "@/features/subscription/SubscriptionProvider";
-import { assertMobileStartupConfig } from "@/lib/env";
+import { assertMobileStartupConfig, getMobileEnvDiagnostics, getMobileStartupConfigError, requiredExpoPublicEnvKeys } from "@/lib/env";
 import { supabase } from "@/lib/supabase";
+import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 
 function extractDeepLinkTokens(url: string) {
   try {
@@ -34,17 +35,22 @@ export default function RootLayout() {
   const params = useGlobalSearchParams();
 
   useEffect(() => {
-    console.log("ENV CHECK:", {
-      API: process.env.EXPO_PUBLIC_API_BASE_URL,
-      SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL,
-    });
+    const diagnostics = getMobileEnvDiagnostics();
+    console.log("[startup-config] EXPO_PUBLIC env diagnostics", diagnostics);
 
     try {
-      if (!process.env.EXPO_PUBLIC_API_BASE_URL) {
-        throw new Error("Missing EXPO_PUBLIC_API_BASE_URL");
+      const configError = getMobileStartupConfigError();
+      if (configError) {
+        console.error("[startup-config] missing or invalid EXPO_PUBLIC variables", {
+          requiredKeys: requiredExpoPublicEnvKeys,
+          ...diagnostics,
+          configError,
+        });
+        throw new Error(configError);
       }
 
       assertMobileStartupConfig();
+      void offlineCanonicalService.preload();
       setStartupError(null);
     } catch (error) {
       console.error("[startup-config] invalid mobile configuration", error);
@@ -158,8 +164,8 @@ export default function RootLayout() {
 
   return (
     <ErrorBoundary
-      fallbackTitle="Configuration error - missing API settings"
-      fallbackMessage="The app could not finish startup. Check the production EXPO_PUBLIC environment variables and review the console logs."
+      fallbackTitle="App error"
+      fallbackMessage="The app hit an unexpected rendering issue. Review the console logs and the detail message below."
     >
       <SubscriptionProvider>
         <StatusBar style="dark" />

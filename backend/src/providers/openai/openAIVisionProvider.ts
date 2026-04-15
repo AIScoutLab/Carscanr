@@ -24,6 +24,11 @@ type OpenAIVisionSchema = {
   likely_trim: string | null;
   confidence: number;
   visible_clues: string[];
+  visible_badge_text: string | null;
+  visible_make_text: string | null;
+  visible_model_text: string | null;
+  visible_trim_text: string | null;
+  emblem_logo_clues: string[];
   alternate_candidates: Array<{
     year: string;
     make: string;
@@ -44,6 +49,11 @@ const responseSchema = {
     "likely_trim",
     "confidence",
     "visible_clues",
+    "visible_badge_text",
+    "visible_make_text",
+    "visible_model_text",
+    "visible_trim_text",
+    "emblem_logo_clues",
     "alternate_candidates",
   ],
   properties: {
@@ -72,6 +82,23 @@ const responseSchema = {
       type: "array",
       items: { type: "string" },
       maxItems: 8,
+    },
+    visible_badge_text: {
+      anyOf: [{ type: "string" }, { type: "null" }],
+    },
+    visible_make_text: {
+      anyOf: [{ type: "string" }, { type: "null" }],
+    },
+    visible_model_text: {
+      anyOf: [{ type: "string" }, { type: "null" }],
+    },
+    visible_trim_text: {
+      anyOf: [{ type: "string" }, { type: "null" }],
+    },
+    emblem_logo_clues: {
+      type: "array",
+      items: { type: "string" },
+      maxItems: 6,
     },
     alternate_candidates: {
       type: "array",
@@ -105,8 +132,12 @@ const vehicleVisionInstructions = [
   "Determine whether the vehicle is a car or motorcycle.",
   "Estimate the most likely year, make, and model.",
   "Include trim only if reasonably visible or strongly inferable.",
+  "First extract any visible badge text, make text, model text, trim text, and emblem or logo clues.",
+  "If readable badge or model text is visible on the vehicle, anchor on that evidence before using body-shape guessing.",
+  "If text evidence contradicts a body-shape guess, prefer the readable text and lower confidence on contradictory guesses.",
+  "If evidence is partial or weak, lower confidence instead of drifting confidently to a different vehicle.",
   "If uncertain, provide best estimate and lower confidence.",
-  "Provide up to 3 alternate candidates.",
+  "Provide up to 3 alternate candidates only when they do not strongly contradict visible text or badge evidence.",
   "Base output only on visible evidence and common vehicle design cues.",
   "Do not invent VINs or hidden details.",
   "Keep confidence between 0 and 1.",
@@ -142,6 +173,11 @@ function normalizeVisionSchema(input: OpenAIVisionSchema): VisionResult {
     likely_trim: input.likely_trim?.trim() || undefined,
     confidence: normalizeConfidence(input.confidence),
     visible_clues: input.visible_clues.map((clue) => clue.trim()).filter(Boolean).slice(0, 8),
+    visible_badge_text: input.visible_badge_text?.trim() || undefined,
+    visible_make_text: input.visible_make_text?.trim() || undefined,
+    visible_model_text: input.visible_model_text?.trim() || undefined,
+    visible_trim_text: input.visible_trim_text?.trim() || undefined,
+    emblem_logo_clues: input.emblem_logo_clues.map((clue) => clue.trim()).filter(Boolean).slice(0, 6),
     alternate_candidates: input.alternate_candidates
       .map((candidate) => ({
         likely_year: parseYear(candidate.year),

@@ -1,6 +1,7 @@
 import { formatCurrency } from "@/lib/utils";
 import { getVehicleImage } from "@/constants/vehicleImages";
 import { apiRequest, apiRequestEnvelope } from "@/services/apiClient";
+import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { ListingResult, ValuationResult, VehicleRecord, VehicleSearchQuery } from "@/types";
 
 type BackendVehicle = {
@@ -136,6 +137,11 @@ function mapVehicle(vehicle: BackendVehicle, valuation?: BackendValuation | null
 }
 
 export const vehicleService = {
+  async getOfflineVehicleById(id: string): Promise<VehicleRecord | undefined> {
+    const offline = await offlineCanonicalService.findById(id);
+    return offline ? offlineCanonicalService.mapToVehicleRecord(offline) : undefined;
+  },
+
   async getVehicleById(id: string): Promise<VehicleRecord | undefined> {
     const [vehicle, valuation, listings] = await Promise.all([
       apiRequest<BackendVehicle>({
