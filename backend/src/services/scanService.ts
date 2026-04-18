@@ -76,6 +76,10 @@ type StabilityCacheMatch = StabilityCacheEntry & {
 
 const scanStabilityCache: StabilityCacheEntry[] = [];
 
+export function resetScanStabilityCache() {
+  scanStabilityCache.splice(0, scanStabilityCache.length);
+}
+
 function serializeScanError(error: unknown) {
   const baseError =
     error instanceof Error
@@ -346,6 +350,15 @@ function hasStructuredOcrConfirmation(input: { normalizedResult: VisionResult; r
   );
 }
 
+function hasStrongStructuredVisualResult(normalizedResult: VisionResult) {
+  return Boolean(
+    normalizedResult.likely_year &&
+      normalizedResult.likely_make &&
+      normalizedResult.likely_model &&
+      normalizedResult.confidence >= 0.9,
+  );
+}
+
 function buildOcrTracePayload(input: {
   scanId: string;
   normalizedResult: VisionResult;
@@ -356,8 +369,10 @@ function buildOcrTracePayload(input: {
 }) {
   const top = input.candidates[0] ?? null;
   const sourceIsOcrOverride = input.normalizedResult.source === "ocr_override";
+  const sourceIsVisualOverride = input.normalizedResult.source === "visual_override";
   const hardTextConfirmed = hasHardTextConfirmation(input.normalizedResult);
   const structuredOcr = input.rawResponse ? extractStructuredOcrFromRawResponse(input.rawResponse) : null;
+  const strongStructuredVisual = hasStrongStructuredVisualResult(input.normalizedResult);
   const derivedOcrConfirmed =
     input.ocrConfirmed ?? (sourceIsOcrOverride || hardTextConfirmed || Boolean(structuredOcr));
   return {
@@ -379,8 +394,10 @@ function buildOcrTracePayload(input: {
       : null,
     gateInputs: {
       sourceIsOcrOverride,
+      sourceIsVisualOverride,
       hardTextConfirmed,
       structuredOcrPresent: Boolean(structuredOcr),
+      strongStructuredVisual,
       structuredOcr: structuredOcr
         ? {
             year: structuredOcr.year ?? null,
@@ -419,6 +436,8 @@ function enforceFinalVisibleOcrCandidate(input: {
     normalizedResult: input.normalizedResult,
     rawResponse: input.rawResponse,
   });
+  const strongStructuredVisual = hasStrongStructuredVisualResult(input.normalizedResult);
+  const shouldApplyEnforcement = ocrConfirmed || strongStructuredVisual;
 
   logger.error(
     {
@@ -430,13 +449,15 @@ function enforceFinalVisibleOcrCandidate(input: {
         candidates: input.candidates,
         rawResponse: input.rawResponse,
         ocrConfirmed,
-        enforcementApplied: false,
+        enforcementApplied: shouldApplyEnforcement,
       }),
+      shouldApplyEnforcement,
+      strongStructuredVisual,
     },
     "OCR_TRACE_ENFORCE_DECISION",
   );
 
-  if (!ocrConfirmed) {
+  if (!shouldApplyEnforcement) {
     logger.error(
       {
         label: "OCR_TRACE_ENFORCE_DECISION",
@@ -449,6 +470,8 @@ function enforceFinalVisibleOcrCandidate(input: {
           ocrConfirmed,
           enforcementApplied: false,
         }),
+        shouldApplyEnforcement,
+        strongStructuredVisual,
       },
       "OCR_TRACE_ENFORCE_DECISION",
     );
@@ -463,6 +486,8 @@ function enforceFinalVisibleOcrCandidate(input: {
           ocrConfirmed,
           enforcementApplied: false,
         }),
+        shouldApplyEnforcement,
+        strongStructuredVisual,
       },
       "OCR_TRACE_ENFORCE_EXIT",
     );
@@ -473,12 +498,15 @@ function enforceFinalVisibleOcrCandidate(input: {
     };
   }
 
+  const pinnedSource = ocrConfirmed ? "ocr_override" : "visual_override";
+  const pinnedMatchReason = ocrConfirmed ? "OCR-confirmed result" : "Visual result override";
+
   const pinnedNormalizedResult =
-    input.normalizedResult.source === "ocr_override"
+    input.normalizedResult.source === pinnedSource
       ? input.normalizedResult
       : normalizeVisionResult({
           ...input.normalizedResult,
-          source: "ocr_override",
+          source: pinnedSource,
         });
 
   const desiredSignature = buildVisionResultSignature(pinnedNormalizedResult);
@@ -492,7 +520,7 @@ function enforceFinalVisibleOcrCandidate(input: {
     model: pinnedNormalizedResult.likely_model,
     trim: pinnedNormalizedResult.likely_trim ?? "",
     confidence: pinnedNormalizedResult.confidence,
-    matchReason: "OCR-confirmed result",
+    matchReason: pinnedMatchReason,
   };
 
   const normalizedPinnedCandidate: MatchedVehicleCandidate = {
@@ -501,7 +529,7 @@ function enforceFinalVisibleOcrCandidate(input: {
     make: pinnedNormalizedResult.likely_make,
     model: pinnedNormalizedResult.likely_model,
     confidence: pinnedNormalizedResult.confidence,
-    matchReason: "OCR-confirmed result",
+    matchReason: pinnedMatchReason,
   };
 
   const remaining = input.candidates.filter(
@@ -520,6 +548,8 @@ function enforceFinalVisibleOcrCandidate(input: {
         ocrConfirmed,
         enforcementApplied: true,
       }),
+      shouldApplyEnforcement,
+      strongStructuredVisual,
     },
     "OCR_TRACE_ENFORCE_DECISION",
   );
@@ -535,6 +565,8 @@ function enforceFinalVisibleOcrCandidate(input: {
         ocrConfirmed,
         enforcementApplied: true,
       }),
+      shouldApplyEnforcement,
+      strongStructuredVisual,
     },
     "OCR_TRACE_ENFORCE_EXIT",
   );

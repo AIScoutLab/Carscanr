@@ -35,7 +35,7 @@ export type VisionResult = {
   likely_make: string;
   likely_model: string;
   likely_trim?: string;
-  source?: "visual_candidate" | "ocr_override";
+  source?: "visual_candidate" | "ocr_override" | "visual_override";
   confidence: number;
   alternate_candidates: VisionCandidate[];
   visible_clues: string[];

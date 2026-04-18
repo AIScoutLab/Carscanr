@@ -71,7 +71,8 @@ export class ScanController {
             : null,
           ocrConfirmed: scan.normalizedResult?.source === "ocr_override",
           enforcementApplied:
-            scan.normalizedResult?.source === "ocr_override" &&
+            (scan.normalizedResult?.source === "ocr_override" ||
+              scan.normalizedResult?.source === "visual_override") &&
             scan.candidates?.[0]?.year === scan.normalizedResult?.likely_year &&
             scan.candidates?.[0]?.make === scan.normalizedResult?.likely_make &&
             scan.candidates?.[0]?.model === scan.normalizedResult?.likely_model,
@@ -83,7 +84,7 @@ export class ScanController {
         provider: visionProvider,
         topCandidateVehicleId: scan.candidates[0]?.vehicleId ?? null,
         premium: entitlement ?? null,
-        scanRuntimeVersion: "ocr-final-visible-enforce-v2",
+        scanRuntimeVersion: "ocr-visual-fallback-enforce-v3",
       });
     } catch (err) {
       const error = err instanceof Error ? err : new Error("Unknown identify controller error.");
@@ -149,7 +150,8 @@ export class ScanController {
           : null,
         ocrConfirmed: scan.normalizedResult?.source === "ocr_override",
         enforcementApplied:
-          scan.normalizedResult?.source === "ocr_override" &&
+          (scan.normalizedResult?.source === "ocr_override" ||
+            scan.normalizedResult?.source === "visual_override") &&
           scan.candidates?.[0]?.year === scan.normalizedResult?.likely_year &&
           scan.candidates?.[0]?.make === scan.normalizedResult?.likely_make &&
           scan.candidates?.[0]?.model === scan.normalizedResult?.likely_model,
@@ -161,7 +163,7 @@ export class ScanController {
       provider: visionProvider,
       topCandidateVehicleId: scan.candidates[0]?.vehicleId ?? null,
       premium: entitlement ?? null,
-      scanRuntimeVersion: "ocr-final-visible-enforce-v2",
+      scanRuntimeVersion: "ocr-visual-fallback-enforce-v3",
     });
   };
 }

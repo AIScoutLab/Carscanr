@@ -76,7 +76,7 @@ type BackendScanResponse = {
     likely_make?: string;
     likely_model?: string;
     likely_trim?: string;
-    source?: "visual_candidate" | "ocr_override";
+    source?: "visual_candidate" | "ocr_override" | "visual_override";
   };
   candidates: BackendScanCandidate[];
 };
@@ -193,7 +193,12 @@ function normalizeBackendScanResponse(raw: BackendScanResponse): BackendScanResp
     confidence: safeNumber(raw?.confidence, 0),
     createdAt: safeString(raw?.createdAt, new Date().toISOString()),
     normalizedResult: {
-      source: raw?.normalizedResult?.source === "ocr_override" ? "ocr_override" : "visual_candidate",
+      source:
+        raw?.normalizedResult?.source === "ocr_override"
+          ? "ocr_override"
+          : raw?.normalizedResult?.source === "visual_override"
+            ? "visual_override"
+            : "visual_candidate",
       visible_clues: Array.isArray(raw?.normalizedResult?.visible_clues)
         ? raw.normalizedResult.visible_clues.filter((clue) => typeof clue === "string")
         : [],

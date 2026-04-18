@@ -7,7 +7,7 @@ export type VehicleCandidate = {
   model: string;
   trim?: string;
   displayTrimLabel?: string;
-  source?: "visual_candidate" | "ocr_override";
+  source?: "visual_candidate" | "ocr_override" | "visual_override";
   confidence: number;
   thumbnailUrl: string;
 };
@@ -102,7 +102,7 @@ export type ScanResult = {
   imageUri: string;
   identifiedVehicle: VehicleCandidate;
   candidates: VehicleCandidate[];
-  source?: "visual_candidate" | "ocr_override";
+  source?: "visual_candidate" | "ocr_override" | "visual_override";
   confidenceScore: number;
   detectedVehicleType?: "car" | "motorcycle";
   limitedPreview?: boolean;

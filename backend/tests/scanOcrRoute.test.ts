@@ -6,6 +6,7 @@ import { createTestProviders, createTestRepositories } from "./helpers/testData.
 import { resetProviders, setProviders } from "../src/lib/providerRegistry.js";
 import { resetRepositories, setRepositories } from "../src/lib/repositoryRegistry.js";
 import { googleVisionOcrService } from "../src/services/googleVisionOcrService.js";
+import { resetScanStabilityCache } from "../src/services/scanService.js";
 
 const TEST_IMAGE_BUFFER = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2uoAAAAASUVORK5CYII=",
@@ -40,12 +41,14 @@ describe("scan OCR route", () => {
 
   beforeEach(() => {
     originalExtractVehicleText = googleVisionOcrService.extractVehicleText;
+    resetScanStabilityCache();
     const testRepositories = createTestRepositories();
     setRepositories(testRepositories.repositories);
   });
 
   afterEach(() => {
     googleVisionOcrService.extractVehicleText = originalExtractVehicleText;
+    resetScanStabilityCache();
     resetRepositories();
     resetProviders();
   });
@@ -140,6 +143,94 @@ describe("scan OCR route", () => {
     assert.equal(body.data.candidates[0].make, "Honda");
     assert.equal(body.data.candidates[0].model, "CR-V");
     assert.equal(body.data.candidates[0].matchReason, "OCR-confirmed result");
-    assert.equal(body.meta.scanRuntimeVersion, "ocr-final-visible-enforce-v2");
+    assert.equal(body.meta.scanRuntimeVersion, "ocr-visual-fallback-enforce-v3");
+  });
+
+  test("POST /api/scan/identify pins strong structured visual result when Google OCR is unavailable", async () => {
+    googleVisionOcrService.extractVehicleText = async () => ({
+      rawText: "",
+      textLines: [],
+      detectedYear: null,
+      detectedMake: null,
+      detectedModel: null,
+      detectedTrim: null,
+      decisionReason: "ocr_unavailable",
+      structuredVehicle: null,
+      confidence: 0,
+      credentialSource: "unavailable",
+    });
+
+    setProviders({
+      ...createTestProviders({
+        provider: "test-vision",
+        rawResponse: { source: "test" },
+        normalized: {
+          vehicle_type: "car",
+          likely_year: 2026,
+          likely_make: "Honda",
+          likely_model: "CR-V",
+          likely_trim: undefined,
+          source: "visual_candidate",
+          confidence: 0.95,
+          visible_clues: [],
+          alternate_candidates: [],
+        },
+      }),
+      specsProvider: {
+        async searchCandidates() {
+          return [
+            {
+              id: "provider-2024-honda-crv-ex",
+              year: 2024,
+              make: "Honda",
+              model: "Cr-v",
+              trim: "EX",
+              bodyStyle: "SUV",
+              vehicleType: "car",
+              msrp: 34500,
+              engine: "1.5L turbo I4",
+              horsepower: 190,
+              torque: "179 lb-ft",
+              transmission: "CVT",
+              drivetrain: "AWD",
+              mpgOrRange: "27 city / 32 highway",
+              colors: ["Urban Gray Pearl"],
+            },
+          ];
+        },
+        async getVehicleSpecs() {
+          throw new Error("Not used in visual override route test.");
+        },
+        async searchVehicles() {
+          throw new Error("Not used in visual override route test.");
+        },
+      },
+    });
+
+    const multipart = createMultipartImageBody();
+    const app = createApp();
+    const response = await inject(app as any, {
+      method: "POST",
+      url: "/api/scan/identify",
+      headers: {
+        ...multipart.headers,
+        authorization: "Bearer dev-session:demo-user:demo%40example.com",
+      },
+      payload: multipart.payload,
+    });
+
+    const body = JSON.parse(response.payload);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.success, true);
+    assert.equal(body.data.normalizedResult.source, "visual_override");
+    assert.equal(body.data.normalizedResult.likely_year, 2026);
+    assert.equal(body.data.normalizedResult.likely_make, "Honda");
+    assert.equal(body.data.normalizedResult.likely_model, "CR-V");
+    assert.equal(body.data.candidates[0].year, 2026);
+    assert.equal(body.data.candidates[0].make, "Honda");
+    assert.equal(body.data.candidates[0].model, "CR-V");
+    assert.equal(body.data.candidates[0].matchReason, "Visual result override");
+    assert.equal(body.meta.scanRuntimeVersion, "ocr-visual-fallback-enforce-v3");
   });
 });
