@@ -312,6 +312,120 @@ function hasValidStructuredOcrFields(ocr: GoogleVisionOcrResult | null) {
   return ocr.detectedYear >= 1980 && ocr.detectedYear <= currentYear + 1;
 }
 
+function extractStructuredOcrFromRawResponse(rawResponse: unknown): {
+  year: number;
+  make: string;
+  model: string;
+  trim?: string | null;
+} | null {
+  if (!rawResponse || typeof rawResponse !== "object" || !("ocr" in rawResponse)) {
+    return null;
+  }
+  const rawOcr = (rawResponse as { ocr?: GoogleVisionOcrResult | null }).ocr ?? null;
+  if (!hasValidStructuredOcrFields(rawOcr)) {
+    return null;
+  }
+  const ocr = rawOcr as GoogleVisionOcrResult & {
+    detectedYear: number;
+    detectedMake: string;
+    detectedModel: string;
+  };
+  return {
+    year: ocr.detectedYear,
+    make: ocr.detectedMake,
+    model: ocr.detectedModel,
+    trim: ocr.detectedTrim ?? null,
+  };
+}
+
+function hasStructuredOcrConfirmation(input: { normalizedResult: VisionResult; rawResponse: unknown }) {
+  return (
+    input.normalizedResult.source === "ocr_override" ||
+    hasHardTextConfirmation(input.normalizedResult) ||
+    Boolean(extractStructuredOcrFromRawResponse(input.rawResponse))
+  );
+}
+
+function buildOcrFinalTracePayload(input: {
+  scanId: string;
+  normalizedResult: VisionResult;
+  candidates: MatchedVehicleCandidate[];
+}) {
+  const top = input.candidates[0] ?? null;
+  return {
+    scanId: input.scanId,
+    normalizedResult: {
+      source: input.normalizedResult.source ?? null,
+      likely_year: input.normalizedResult.likely_year,
+      likely_make: input.normalizedResult.likely_make,
+      likely_model: input.normalizedResult.likely_model,
+    },
+    topCandidate: top
+      ? {
+          year: top.year,
+          make: top.make,
+          model: top.model,
+          matchReason: top.matchReason,
+        }
+      : null,
+  };
+}
+
+function enforceFinalVisibleOcrCandidate(input: {
+  normalizedResult: VisionResult;
+  candidates: MatchedVehicleCandidate[];
+  rawResponse: unknown;
+}) {
+  if (!hasStructuredOcrConfirmation({ normalizedResult: input.normalizedResult, rawResponse: input.rawResponse })) {
+    return {
+      normalizedResult: input.normalizedResult,
+      candidates: input.candidates,
+      applied: false,
+    };
+  }
+
+  const pinnedNormalizedResult =
+    input.normalizedResult.source === "ocr_override"
+      ? input.normalizedResult
+      : normalizeVisionResult({
+          ...input.normalizedResult,
+          source: "ocr_override",
+        });
+
+  const desiredSignature = buildVisionResultSignature(pinnedNormalizedResult);
+  const exactExisting =
+    input.candidates.find((candidate) => buildMatchedVehicleSignature(candidate) === desiredSignature) ?? null;
+
+  const pinnedCandidate: MatchedVehicleCandidate = exactExisting ?? {
+    vehicleId: "",
+    year: pinnedNormalizedResult.likely_year,
+    make: pinnedNormalizedResult.likely_make,
+    model: pinnedNormalizedResult.likely_model,
+    trim: pinnedNormalizedResult.likely_trim ?? "",
+    confidence: pinnedNormalizedResult.confidence,
+    matchReason: "OCR-confirmed result",
+  };
+
+  const normalizedPinnedCandidate: MatchedVehicleCandidate = {
+    ...pinnedCandidate,
+    year: pinnedNormalizedResult.likely_year,
+    make: pinnedNormalizedResult.likely_make,
+    model: pinnedNormalizedResult.likely_model,
+    confidence: pinnedNormalizedResult.confidence,
+    matchReason: "OCR-confirmed result",
+  };
+
+  const remaining = input.candidates.filter(
+    (candidate) => buildMatchedVehicleSignature(candidate) !== buildMatchedVehicleSignature(normalizedPinnedCandidate),
+  );
+
+  return {
+    normalizedResult: pinnedNormalizedResult,
+    candidates: [normalizedPinnedCandidate, ...remaining],
+    applied: true,
+  };
+}
+
 export function applyGoogleOcrOverride(result: VisionResult, ocr: GoogleVisionOcrResult | null): VisionResult {
   if (!hasValidStructuredOcrFields(ocr)) {
     return result;
@@ -439,10 +553,14 @@ function enforceOcrResolvedPrimaryCandidate(input: {
   normalizedResult: VisionResult;
   resolvedVehicles: MatchedVehicleCandidate[];
 }) {
-  if (input.normalizedResult.source !== "ocr_override") {
+  const shouldForceOcrPrimary =
+    input.normalizedResult.source === "ocr_override" || hasHardTextConfirmation(input.normalizedResult);
+
+  if (!shouldForceOcrPrimary) {
     return {
       resolvedVehicles: input.resolvedVehicles,
       overwrittenLater: false,
+      applied: false,
     };
   }
 
@@ -461,7 +579,7 @@ function enforceOcrResolvedPrimaryCandidate(input: {
     model: input.normalizedResult.likely_model,
     trim: input.normalizedResult.likely_trim ?? "",
     confidence: Math.max(input.normalizedResult.confidence, input.resolvedVehicles[0]?.confidence ?? 0),
-    matchReason: "Readable text in the image confirms this vehicle.",
+    matchReason: "OCR-confirmed result",
   };
 
   const remaining = input.resolvedVehicles.filter(
@@ -471,6 +589,7 @@ function enforceOcrResolvedPrimaryCandidate(input: {
   return {
     resolvedVehicles: [ocrPrimaryCandidate, ...remaining],
     overwrittenLater,
+    applied: true,
   };
 }
 
@@ -870,6 +989,12 @@ export class ScanService {
         normalizedResult,
         resolvedVehicles: resolvedVehiclesBeforeOcrLock,
       });
+      if (ocrLocked.applied && normalizedResult.source !== "ocr_override") {
+        normalizedResult = normalizeVisionResult({
+          ...normalizedResult,
+          source: "ocr_override",
+        });
+      }
       const resolvedVehicles = ocrLocked.resolvedVehicles;
       const hasCanonicalVehicle = resolvedVehicles.some((vehicle) => Boolean(vehicle.vehicleId));
 
@@ -900,25 +1025,52 @@ export class ScanService {
         },
         "VEHICLE_MATCH_FINAL_SUMMARY",
       );
+      logger.error(
+        {
+          label: "OCR_FINAL_TRACE_BEFORE_ENFORCE",
+          ...buildOcrFinalTracePayload({
+            scanId,
+            normalizedResult,
+            candidates: resolvedVehicles,
+          }),
+        },
+        "OCR_FINAL_TRACE_BEFORE_ENFORCE",
+      );
+      const finalVisible = enforceFinalVisibleOcrCandidate({
+        normalizedResult,
+        candidates: resolvedVehicles,
+        rawResponse: visionResult.rawResponse,
+      });
+      logger.error(
+        {
+          label: "OCR_FINAL_TRACE_AFTER_ENFORCE",
+          ...buildOcrFinalTracePayload({
+            scanId,
+            normalizedResult: finalVisible.normalizedResult,
+            candidates: finalVisible.candidates,
+          }),
+        },
+        "OCR_FINAL_TRACE_AFTER_ENFORCE",
+      );
       logger.info(
         {
           label: "OCR_FINAL_RESULT",
           requestedPath: "/api/scan/identify",
           parsed:
-            normalizedResult.source === "ocr_override"
+            finalVisible.normalizedResult.source === "ocr_override"
               ? {
-                  year: normalizedResult.likely_year,
-                  make: normalizedResult.likely_make,
-                  model: normalizedResult.likely_model,
+                  year: finalVisible.normalizedResult.likely_year,
+                  make: finalVisible.normalizedResult.likely_make,
+                  model: finalVisible.normalizedResult.likely_model,
                 }
               : null,
           final: {
-            year: resolvedVehicles[0]?.year ?? normalizedResult.likely_year,
-            make: resolvedVehicles[0]?.make ?? normalizedResult.likely_make,
-            model: resolvedVehicles[0]?.model ?? normalizedResult.likely_model,
-            source: normalizedResult.source ?? "visual_candidate",
+            year: finalVisible.candidates[0]?.year ?? finalVisible.normalizedResult.likely_year,
+            make: finalVisible.candidates[0]?.make ?? finalVisible.normalizedResult.likely_make,
+            model: finalVisible.candidates[0]?.model ?? finalVisible.normalizedResult.likely_model,
+            source: finalVisible.normalizedResult.source ?? "visual_candidate",
           },
-          overrideApplied: normalizedResult.source === "ocr_override",
+          overrideApplied: ocrLocked.applied || finalVisible.applied,
           confirmationApplied: false,
           overwrittenLater: ocrLocked.overwrittenLater,
         },
@@ -926,16 +1078,16 @@ export class ScanService {
       );
       await this.trackVehiclePopularityAndPromotion({
         scanId,
-        normalizedResult,
-        resolvedVehicles,
-        hasCanonicalVehicle,
+        normalizedResult: finalVisible.normalizedResult,
+        resolvedVehicles: finalVisible.candidates,
+        hasCanonicalVehicle: finalVisible.candidates.some((vehicle) => Boolean(vehicle.vehicleId)),
       });
       writeScanStabilityCache({
         userId: input.auth.userId,
         visualHash,
-        normalizedResult,
-        resolvedVehicles,
-        confidence: resolvedVehicles[0]?.confidence ?? normalizedResult.confidence,
+        normalizedResult: finalVisible.normalizedResult,
+        resolvedVehicles: finalVisible.candidates,
+        confidence: finalVisible.candidates[0]?.confidence ?? finalVisible.normalizedResult.confidence,
         createdAt: Date.now(),
       });
       logger.error(
@@ -944,28 +1096,39 @@ export class ScanService {
           scanId,
           userId: input.auth.userId,
           visualHash,
-          confidence: resolvedVehicles[0]?.confidence ?? normalizedResult.confidence,
-          vehicleIds: resolvedVehicles.map((vehicle) => vehicle.vehicleId),
-          finalResultType: hasCanonicalVehicle ? "canonical" : "ai_only",
+          confidence: finalVisible.candidates[0]?.confidence ?? finalVisible.normalizedResult.confidence,
+          vehicleIds: finalVisible.candidates.map((vehicle) => vehicle.vehicleId),
+          finalResultType: finalVisible.candidates.some((vehicle) => Boolean(vehicle.vehicleId)) ? "canonical" : "ai_only",
         },
         "SCAN_STABILITY_CACHE_WRITE",
       );
       logIdentifyStage("VEHICLE_MATCH", "success", {
         scanId,
         userId: input.auth.userId,
-        candidateCount: resolvedVehicles.length,
+        candidateCount: finalVisible.candidates.length,
       });
 
       const scanRecord: ScanRecord = {
         id: scanId,
         userId: input.auth.userId,
         imageUrl: input.imageUrl,
-        detectedVehicleType: normalizedResult.vehicle_type,
-        confidence: normalizedResult.confidence,
+        detectedVehicleType: finalVisible.normalizedResult.vehicle_type,
+        confidence: finalVisible.normalizedResult.confidence,
         createdAt: new Date().toISOString(),
-        normalizedResult,
-        candidates: resolvedVehicles,
+        normalizedResult: finalVisible.normalizedResult,
+        candidates: finalVisible.candidates,
       };
+      logger.error(
+        {
+          label: "OCR_FINAL_TRACE_BEFORE_PERSIST",
+          ...buildOcrFinalTracePayload({
+            scanId,
+            normalizedResult: scanRecord.normalizedResult,
+            candidates: scanRecord.candidates,
+          }),
+        },
+        "OCR_FINAL_TRACE_BEFORE_PERSIST",
+      );
 
       let entitlement: { usedUnlock: boolean; alreadyUnlocked: boolean; remainingUnlocks: number; isPro: boolean } | undefined;
       if (premiumRequested && !usage.isPro && resolvedVehicles[0]) {
@@ -1002,6 +1165,17 @@ export class ScanService {
         userId: input.auth.userId,
       });
       const persistedScan = await repositories.scans.create(scanRecord);
+      logger.error(
+        {
+          label: "OCR_FINAL_TRACE_AFTER_PERSIST",
+          ...buildOcrFinalTracePayload({
+            scanId,
+            normalizedResult: persistedScan.normalizedResult,
+            candidates: persistedScan.candidates,
+          }),
+        },
+        "OCR_FINAL_TRACE_AFTER_PERSIST",
+      );
       logIdentifyStage("SCAN_PERSIST", "success", {
         scanId,
         userId: input.auth.userId,
