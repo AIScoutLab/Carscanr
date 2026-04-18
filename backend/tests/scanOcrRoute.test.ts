@@ -139,6 +139,7 @@ describe("scan OCR route", () => {
     assert.equal(body.data.candidates[0].year, 2026);
     assert.equal(body.data.candidates[0].make, "Honda");
     assert.equal(body.data.candidates[0].model, "CR-V");
-    assert.equal(body.meta.scanRuntimeVersion, "ocr-hard-override-route-v1");
+    assert.equal(body.data.candidates[0].matchReason, "OCR-confirmed result");
+    assert.equal(body.meta.scanRuntimeVersion, "ocr-final-visible-enforce-v2");
   });
 });

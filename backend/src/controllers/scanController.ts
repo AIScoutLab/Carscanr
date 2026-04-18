@@ -50,11 +50,33 @@ export class ScanController {
         allowPremium: false,
       });
 
+      logger.error(
+        {
+          label: "OCR_FINAL_TRACE_BEFORE_RESPONSE",
+          requestId: res.locals.requestId,
+          normalizedResult: {
+            source: scan.normalizedResult?.source ?? null,
+            likely_year: scan.normalizedResult?.likely_year ?? null,
+            likely_make: scan.normalizedResult?.likely_make ?? null,
+            likely_model: scan.normalizedResult?.likely_model ?? null,
+          },
+          topCandidate: scan.candidates?.[0]
+            ? {
+                year: scan.candidates[0].year,
+                make: scan.candidates[0].make,
+                model: scan.candidates[0].model,
+                matchReason: scan.candidates[0].matchReason,
+              }
+            : null,
+        },
+        "OCR_FINAL_TRACE_BEFORE_RESPONSE",
+      );
+
       return sendSuccess(res, scan, {
         provider: visionProvider,
         topCandidateVehicleId: scan.candidates[0]?.vehicleId ?? null,
         premium: entitlement ?? null,
-        scanRuntimeVersion: "ocr-hard-override-route-v1",
+        scanRuntimeVersion: "ocr-final-visible-enforce-v2",
       });
     } catch (err) {
       const error = err instanceof Error ? err : new Error("Unknown identify controller error.");
@@ -99,11 +121,33 @@ export class ScanController {
       allowPremium: true,
     });
 
+    logger.error(
+      {
+        label: "OCR_FINAL_TRACE_BEFORE_RESPONSE",
+        requestId: res.locals.requestId,
+        normalizedResult: {
+          source: scan.normalizedResult?.source ?? null,
+          likely_year: scan.normalizedResult?.likely_year ?? null,
+          likely_make: scan.normalizedResult?.likely_make ?? null,
+          likely_model: scan.normalizedResult?.likely_model ?? null,
+        },
+        topCandidate: scan.candidates?.[0]
+          ? {
+              year: scan.candidates[0].year,
+              make: scan.candidates[0].make,
+              model: scan.candidates[0].model,
+              matchReason: scan.candidates[0].matchReason,
+            }
+          : null,
+      },
+      "OCR_FINAL_TRACE_BEFORE_RESPONSE",
+    );
+
     return sendSuccess(res, scan, {
       provider: visionProvider,
       topCandidateVehicleId: scan.candidates[0]?.vehicleId ?? null,
       premium: entitlement ?? null,
-      scanRuntimeVersion: "ocr-hard-override-route-v1",
+      scanRuntimeVersion: "ocr-final-visible-enforce-v2",
     });
   };
 }
