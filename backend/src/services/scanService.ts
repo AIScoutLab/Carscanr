@@ -346,12 +346,20 @@ function hasStructuredOcrConfirmation(input: { normalizedResult: VisionResult; r
   );
 }
 
-function buildOcrFinalTracePayload(input: {
+function buildOcrTracePayload(input: {
   scanId: string;
   normalizedResult: VisionResult;
   candidates: MatchedVehicleCandidate[];
+  rawResponse?: unknown;
+  ocrConfirmed?: boolean;
+  enforcementApplied?: boolean;
 }) {
   const top = input.candidates[0] ?? null;
+  const sourceIsOcrOverride = input.normalizedResult.source === "ocr_override";
+  const hardTextConfirmed = hasHardTextConfirmation(input.normalizedResult);
+  const structuredOcr = input.rawResponse ? extractStructuredOcrFromRawResponse(input.rawResponse) : null;
+  const derivedOcrConfirmed =
+    input.ocrConfirmed ?? (sourceIsOcrOverride || hardTextConfirmed || Boolean(structuredOcr));
   return {
     scanId: input.scanId,
     normalizedResult: {
@@ -359,6 +367,7 @@ function buildOcrFinalTracePayload(input: {
       likely_year: input.normalizedResult.likely_year,
       likely_make: input.normalizedResult.likely_make,
       likely_model: input.normalizedResult.likely_model,
+      visible_model_text: input.normalizedResult.visible_model_text ?? null,
     },
     topCandidate: top
       ? {
@@ -368,15 +377,95 @@ function buildOcrFinalTracePayload(input: {
           matchReason: top.matchReason,
         }
       : null,
+    gateInputs: {
+      sourceIsOcrOverride,
+      hardTextConfirmed,
+      structuredOcrPresent: Boolean(structuredOcr),
+      structuredOcr: structuredOcr
+        ? {
+            year: structuredOcr.year ?? null,
+            make: structuredOcr.make ?? null,
+            model: structuredOcr.model ?? null,
+            trim: structuredOcr.trim ?? null,
+          }
+        : null,
+    },
+    ocrConfirmed: derivedOcrConfirmed,
+    enforcementApplied: input.enforcementApplied ?? false,
   };
 }
 
 function enforceFinalVisibleOcrCandidate(input: {
+  scanId: string;
   normalizedResult: VisionResult;
   candidates: MatchedVehicleCandidate[];
   rawResponse: unknown;
 }) {
-  if (!hasStructuredOcrConfirmation({ normalizedResult: input.normalizedResult, rawResponse: input.rawResponse })) {
+  logger.error(
+    {
+      label: "OCR_TRACE_ENFORCE_ENTRY",
+      ...buildOcrTracePayload({
+        scanId: input.scanId,
+        normalizedResult: input.normalizedResult,
+        candidates: input.candidates,
+        rawResponse: input.rawResponse,
+        enforcementApplied: false,
+      }),
+    },
+    "OCR_TRACE_ENFORCE_ENTRY",
+  );
+
+  const ocrConfirmed = hasStructuredOcrConfirmation({
+    normalizedResult: input.normalizedResult,
+    rawResponse: input.rawResponse,
+  });
+
+  logger.error(
+    {
+      label: "OCR_TRACE_ENFORCE_DECISION",
+      phase: "before-gate-check",
+      ...buildOcrTracePayload({
+        scanId: input.scanId,
+        normalizedResult: input.normalizedResult,
+        candidates: input.candidates,
+        rawResponse: input.rawResponse,
+        ocrConfirmed,
+        enforcementApplied: false,
+      }),
+    },
+    "OCR_TRACE_ENFORCE_DECISION",
+  );
+
+  if (!ocrConfirmed) {
+    logger.error(
+      {
+        label: "OCR_TRACE_ENFORCE_DECISION",
+        phase: "after-gate-check",
+        ...buildOcrTracePayload({
+          scanId: input.scanId,
+          normalizedResult: input.normalizedResult,
+          candidates: input.candidates,
+          rawResponse: input.rawResponse,
+          ocrConfirmed,
+          enforcementApplied: false,
+        }),
+      },
+      "OCR_TRACE_ENFORCE_DECISION",
+    );
+    logger.error(
+      {
+        label: "OCR_TRACE_ENFORCE_EXIT",
+        ...buildOcrTracePayload({
+          scanId: input.scanId,
+          normalizedResult: input.normalizedResult,
+          candidates: input.candidates,
+          rawResponse: input.rawResponse,
+          ocrConfirmed,
+          enforcementApplied: false,
+        }),
+      },
+      "OCR_TRACE_ENFORCE_EXIT",
+    );
     return {
       normalizedResult: input.normalizedResult,
       candidates: input.candidates,
@@ -417,6 +506,37 @@ function enforceFinalVisibleOcrCandidate(input: {
 
   const remaining = input.candidates.filter(
     (candidate) => buildMatchedVehicleSignature(candidate) !== buildMatchedVehicleSignature(normalizedPinnedCandidate),
+  );
+
+  logger.error(
+    {
+      label: "OCR_TRACE_ENFORCE_DECISION",
+      phase: "after-gate-check",
+      ...buildOcrTracePayload({
+        scanId: input.scanId,
+        normalizedResult: pinnedNormalizedResult,
+        candidates: [normalizedPinnedCandidate, ...remaining],
+        rawResponse: input.rawResponse,
+        ocrConfirmed,
+        enforcementApplied: true,
+      }),
+    },
+    "OCR_TRACE_ENFORCE_DECISION",
+  );
+
+  logger.error(
+    {
+      label: "OCR_TRACE_ENFORCE_EXIT",
+      ...buildOcrTracePayload({
+        scanId: input.scanId,
+        normalizedResult: pinnedNormalizedResult,
+        candidates: [normalizedPinnedCandidate, ...remaining],
+        rawResponse: input.rawResponse,
+        ocrConfirmed,
+        enforcementApplied: true,
+      }),
+    },
+    "OCR_TRACE_ENFORCE_EXIT",
   );
 
   return {
@@ -1027,30 +1147,34 @@ export class ScanService {
       );
       logger.error(
         {
-          label: "OCR_FINAL_TRACE_BEFORE_ENFORCE",
-          ...buildOcrFinalTracePayload({
+          label: "OCR_TRACE_CALLSITE_BEFORE_FINAL_ENFORCE",
+          ...buildOcrTracePayload({
             scanId,
             normalizedResult,
             candidates: resolvedVehicles,
+            rawResponse: visionResult.rawResponse,
           }),
         },
-        "OCR_FINAL_TRACE_BEFORE_ENFORCE",
+        "OCR_TRACE_CALLSITE_BEFORE_FINAL_ENFORCE",
       );
       const finalVisible = enforceFinalVisibleOcrCandidate({
+        scanId,
         normalizedResult,
         candidates: resolvedVehicles,
         rawResponse: visionResult.rawResponse,
       });
       logger.error(
         {
-          label: "OCR_FINAL_TRACE_AFTER_ENFORCE",
-          ...buildOcrFinalTracePayload({
+          label: "OCR_TRACE_AFTER_FINAL_ENFORCE",
+          ...buildOcrTracePayload({
             scanId,
             normalizedResult: finalVisible.normalizedResult,
             candidates: finalVisible.candidates,
+            rawResponse: visionResult.rawResponse,
+            enforcementApplied: finalVisible.applied,
           }),
         },
-        "OCR_FINAL_TRACE_AFTER_ENFORCE",
+        "OCR_TRACE_AFTER_FINAL_ENFORCE",
       );
       logger.info(
         {
@@ -1108,6 +1232,19 @@ export class ScanService {
         candidateCount: finalVisible.candidates.length,
       });
 
+      logger.error(
+        {
+          label: "OCR_TRACE_BEFORE_SCAN_RECORD",
+          ...buildOcrTracePayload({
+            scanId,
+            normalizedResult: finalVisible.normalizedResult,
+            candidates: finalVisible.candidates,
+            rawResponse: visionResult.rawResponse,
+            enforcementApplied: finalVisible.applied,
+          }),
+        },
+        "OCR_TRACE_BEFORE_SCAN_RECORD",
+      );
       const scanRecord: ScanRecord = {
         id: scanId,
         userId: input.auth.userId,
@@ -1120,14 +1257,16 @@ export class ScanService {
       };
       logger.error(
         {
-          label: "OCR_FINAL_TRACE_BEFORE_PERSIST",
-          ...buildOcrFinalTracePayload({
+          label: "OCR_TRACE_BEFORE_PERSIST",
+          ...buildOcrTracePayload({
             scanId,
             normalizedResult: scanRecord.normalizedResult,
             candidates: scanRecord.candidates,
+            rawResponse: visionResult.rawResponse,
+            enforcementApplied: finalVisible.applied,
           }),
         },
-        "OCR_FINAL_TRACE_BEFORE_PERSIST",
+        "OCR_TRACE_BEFORE_PERSIST",
       );
 
       let entitlement: { usedUnlock: boolean; alreadyUnlocked: boolean; remainingUnlocks: number; isPro: boolean } | undefined;
@@ -1167,14 +1306,16 @@ export class ScanService {
       const persistedScan = await repositories.scans.create(scanRecord);
       logger.error(
         {
-          label: "OCR_FINAL_TRACE_AFTER_PERSIST",
-          ...buildOcrFinalTracePayload({
+          label: "OCR_TRACE_AFTER_PERSIST",
+          ...buildOcrTracePayload({
             scanId,
             normalizedResult: persistedScan.normalizedResult,
             candidates: persistedScan.candidates,
+            rawResponse: visionResult.rawResponse,
+            enforcementApplied: finalVisible.applied,
           }),
         },
-        "OCR_FINAL_TRACE_AFTER_PERSIST",
+        "OCR_TRACE_AFTER_PERSIST",
       );
       logIdentifyStage("SCAN_PERSIST", "success", {
         scanId,

@@ -52,13 +52,14 @@ export class ScanController {
 
       logger.error(
         {
-          label: "OCR_FINAL_TRACE_BEFORE_RESPONSE",
+          label: "OCR_TRACE_BEFORE_RESPONSE",
           requestId: res.locals.requestId,
           normalizedResult: {
             source: scan.normalizedResult?.source ?? null,
             likely_year: scan.normalizedResult?.likely_year ?? null,
             likely_make: scan.normalizedResult?.likely_make ?? null,
             likely_model: scan.normalizedResult?.likely_model ?? null,
+            visible_model_text: scan.normalizedResult?.visible_model_text ?? null,
           },
           topCandidate: scan.candidates?.[0]
             ? {
@@ -68,8 +69,14 @@ export class ScanController {
                 matchReason: scan.candidates[0].matchReason,
               }
             : null,
+          ocrConfirmed: scan.normalizedResult?.source === "ocr_override",
+          enforcementApplied:
+            scan.normalizedResult?.source === "ocr_override" &&
+            scan.candidates?.[0]?.year === scan.normalizedResult?.likely_year &&
+            scan.candidates?.[0]?.make === scan.normalizedResult?.likely_make &&
+            scan.candidates?.[0]?.model === scan.normalizedResult?.likely_model,
         },
-        "OCR_FINAL_TRACE_BEFORE_RESPONSE",
+        "OCR_TRACE_BEFORE_RESPONSE",
       );
 
       return sendSuccess(res, scan, {
@@ -123,13 +130,14 @@ export class ScanController {
 
     logger.error(
       {
-        label: "OCR_FINAL_TRACE_BEFORE_RESPONSE",
+        label: "OCR_TRACE_BEFORE_RESPONSE",
         requestId: res.locals.requestId,
         normalizedResult: {
           source: scan.normalizedResult?.source ?? null,
           likely_year: scan.normalizedResult?.likely_year ?? null,
           likely_make: scan.normalizedResult?.likely_make ?? null,
           likely_model: scan.normalizedResult?.likely_model ?? null,
+          visible_model_text: scan.normalizedResult?.visible_model_text ?? null,
         },
         topCandidate: scan.candidates?.[0]
           ? {
@@ -139,8 +147,14 @@ export class ScanController {
               matchReason: scan.candidates[0].matchReason,
             }
           : null,
+        ocrConfirmed: scan.normalizedResult?.source === "ocr_override",
+        enforcementApplied:
+          scan.normalizedResult?.source === "ocr_override" &&
+          scan.candidates?.[0]?.year === scan.normalizedResult?.likely_year &&
+          scan.candidates?.[0]?.make === scan.normalizedResult?.likely_make &&
+          scan.candidates?.[0]?.model === scan.normalizedResult?.likely_model,
       },
-      "OCR_FINAL_TRACE_BEFORE_RESPONSE",
+      "OCR_TRACE_BEFORE_RESPONSE",
     );
 
     return sendSuccess(res, scan, {
