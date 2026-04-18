@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { logger } from "./logger.js";
 import { buildCacheDescriptor, buildCanonicalKey } from "./providerCache.js";
+import { resolveHorsepower } from "./vehicleData.js";
 import { repositories } from "./repositoryRegistry.js";
 import { CanonicalVehicleRecord, VehicleRecord } from "../types/domain.js";
 
@@ -39,7 +40,7 @@ export function mapCanonicalVehicleToRecord(record: CanonicalVehicleRecord): Veh
     vehicleType: record.vehicleType,
     msrp: record.msrp,
     engine: record.engine,
-    horsepower: record.horsepower,
+    horsepower: resolveHorsepower(record.horsepower),
     torque: record.torque,
     transmission: record.transmission,
     drivetrain: record.drivetrain,
@@ -72,7 +73,7 @@ export function buildCanonicalVehicleCandidate(input: {
     drivetrain: input.vehicle.drivetrain,
     transmission: input.vehicle.transmission,
     fuelType: null,
-    horsepower: input.vehicle.horsepower,
+    horsepower: resolveHorsepower(input.vehicle.horsepower),
     torque: input.vehicle.torque,
     msrp: input.vehicle.msrp,
     normalizedMake: descriptor.normalizedMake,
@@ -181,7 +182,7 @@ export async function upsertCanonicalVehicleFromAiLearned(input: {
     vehicleType: input.vehicleType,
     msrp: 0,
     engine: "Unknown",
-    horsepower: 0,
+    horsepower: null,
     torque: "Unknown",
     transmission: "Unknown",
     drivetrain: "Unknown",

@@ -38,7 +38,7 @@ const styles = StyleSheet.create({
   blur: {
     padding: 20,
     gap: 12,
-    backgroundColor: "rgba(255,255,255,0.75)",
+    backgroundColor: "rgba(17, 32, 57, 0.92)",
   },
   eyebrowPill: {
     alignSelf: "flex-start",
@@ -48,9 +48,9 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   eyebrow: { ...Typography.caption, color: Colors.premium },
-  title: { ...Typography.heading, color: Colors.text },
+  title: { ...Typography.heading, color: Colors.textStrong },
   row: { flexDirection: "row", gap: 10, flexWrap: "wrap" },
-  item: { ...Typography.caption, color: Colors.textMuted },
+  item: { ...Typography.caption, color: Colors.textSoft },
   ctaWrap: {
     alignSelf: "flex-start",
     backgroundColor: Colors.accentSoft,
@@ -58,5 +58,5 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: Radius.pill,
   },
-  cta: { ...Typography.caption, color: Colors.accent, fontWeight: "700" },
+  cta: { ...Typography.caption, color: Colors.accent, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.7 },
 });

@@ -1,6 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import bundledDataset from "@/assets/data/offline_canonical.json";
+import { getVehicleImage } from "@/constants/vehicleImages";
 import { formatCurrency } from "@/lib/utils";
+import { parseHorsepower } from "@/lib/vehicleData";
 import { OfflineCanonicalVehicle, VehicleRecord } from "@/types";
 
 const OFFLINE_CANONICAL_STORAGE_KEY = "offline_canonical_dataset_v1";
@@ -62,6 +64,44 @@ function buildFamilyKey(input: { year: number; make: string; model: string }) {
 
 function buildMakeModelFamilyKey(input: { make: string; model: string }) {
   return `${normalizeText(input.make)}:${normalizeModelFamily(input.model)}`;
+}
+
+function isWranglerVehicle(vehicle: Pick<OfflineCanonicalVehicle, "make" | "model">) {
+  return normalizeText(vehicle.make) === "jeep" && normalizeText(vehicle.model).includes("wrangler");
+}
+
+function getWranglerGenerationFromYear(year: number) {
+  if (year >= 1997 && year <= 2006) {
+    return "TJ" as const;
+  }
+  if (year >= 2007 && year <= 2018) {
+    return "JK" as const;
+  }
+  if (year >= 2018) {
+    return "JL" as const;
+  }
+  return null;
+}
+
+function selectPresentationVehicles(
+  groundedVehicles: OfflineCanonicalVehicle[],
+  bestVehicle: OfflineCanonicalVehicle | null,
+) {
+  if (!bestVehicle || !isWranglerVehicle(bestVehicle)) {
+    return groundedVehicles;
+  }
+
+  const generation = getWranglerGenerationFromYear(bestVehicle.year);
+  if (!generation) {
+    return groundedVehicles;
+  }
+
+  const generationVehicles = groundedVehicles.filter((vehicle) => getWranglerGenerationFromYear(vehicle.year) === generation);
+  return generationVehicles.length > 0 ? generationVehicles : groundedVehicles;
+}
+
+function formatHorsepowerValue(value: number) {
+  return `${value} hp`;
 }
 
 function createEmptyListings() {
@@ -190,6 +230,12 @@ async function syncBundledDataset() {
 }
 
 function mapOfflineVehicleToRecord(vehicle: OfflineCanonicalVehicle): VehicleRecord {
+  const parsedHorsepower = parseHorsepower(vehicle.basicSpecs.horsepower);
+  console.log("[offline-canonical] HORSEPOWER_MAPPING", {
+    vehicleId: vehicle.id,
+    rawHorsepower: vehicle.basicSpecs.horsepower ?? null,
+    parsedHorsepower,
+  });
   const valuation = vehicle.lightweightValue
     ? {
         tradeIn: formatCurrency(vehicle.lightweightValue.tradeIn),
@@ -221,11 +267,11 @@ function mapOfflineVehicleToRecord(vehicle: OfflineCanonicalVehicle): VehicleRec
     model: vehicle.model,
     trim: vehicle.trim,
     bodyStyle: vehicle.basicSpecs.bodyStyle,
-    heroImage: "",
+    heroImage: getVehicleImage(vehicle.id, vehicle.vehicleType),
     overview: `${vehicle.year} ${vehicle.make} ${vehicle.model} ${vehicle.trim} from bundled offline canonical data.`,
     specs: {
       engine: vehicle.basicSpecs.engine,
-      horsepower: vehicle.basicSpecs.horsepower,
+      horsepower: parsedHorsepower,
       torque: vehicle.basicSpecs.torque,
       transmission: vehicle.basicSpecs.transmission,
       drivetrain: vehicle.basicSpecs.drivetrain,
@@ -336,7 +382,8 @@ export const offlineCanonicalService = {
     }
 
     const bestVehicle = direct ?? exact ?? chooseBestGroundedVehicle(groundedVehicles, input);
-    const years = groundedVehicles.map((vehicle) => vehicle.year).sort((a, b) => a - b);
+    const presentationVehicles = selectPresentationVehicles(groundedVehicles, bestVehicle);
+    const years = presentationVehicles.map((vehicle) => vehicle.year).sort((a, b) => a - b);
     return {
       vehicle: bestVehicle,
       yearRange: {
@@ -345,7 +392,80 @@ export const offlineCanonicalService = {
       },
       datasetVersion: index.dataset.offline_canonical_version,
       matchType: direct ? ("id" as const) : exact ? ("exact" as const) : ("model-family-range" as const),
-      candidateCount: groundedVehicles.length,
+      candidateCount: presentationVehicles.length,
+    };
+  },
+
+  async resolveHorsepowerSupport(input: {
+    year?: number | null;
+    make: string;
+    model: string;
+    trim?: string | null;
+    vehicleType?: string | null;
+  }) {
+    const index = await this.preload();
+    const familyMatches = index.byMakeModelFamily.get(
+      buildMakeModelFamilyKey({
+        make: input.make,
+        model: input.model,
+      }),
+    ) ?? [];
+
+    if (familyMatches.length === 0) {
+      return null;
+    }
+
+    const bestVehicle = chooseBestGroundedVehicle(familyMatches, input);
+    const presentationVehicles = selectPresentationVehicles(familyMatches, bestVehicle);
+    const nearbyVehicles =
+      typeof input.year === "number"
+        ? presentationVehicles.filter((vehicle) => Math.abs(vehicle.year - input.year!) <= (isWranglerVehicle(vehicle) ? 1 : 2))
+        : presentationVehicles;
+    const horsepowerVehicles = (nearbyVehicles.length > 0 ? nearbyVehicles : presentationVehicles)
+      .map((vehicle) => ({
+        vehicle,
+        horsepower: parseHorsepower(vehicle.basicSpecs.horsepower),
+      }))
+      .filter((entry): entry is { vehicle: OfflineCanonicalVehicle; horsepower: number } => typeof entry.horsepower === "number");
+
+    if (horsepowerVehicles.length === 0) {
+      return null;
+    }
+
+    const exactTrimMatches =
+      input.trim && input.trim.trim().length > 0
+        ? horsepowerVehicles.filter((entry) => scoreTrimCompatibility(entry.vehicle, input.trim) >= 3)
+        : [];
+    const exactYearMatches =
+      typeof input.year === "number"
+        ? horsepowerVehicles.filter((entry) => entry.vehicle.year === input.year)
+        : [];
+
+    const preferredExact = exactTrimMatches[0] ?? exactYearMatches[0] ?? null;
+    if (preferredExact) {
+      return {
+        label: "Horsepower",
+        value: formatHorsepowerValue(preferredExact.horsepower),
+        numericValue: preferredExact.horsepower,
+        exact: true,
+      };
+    }
+
+    const uniqueHorsepower = [...new Set(horsepowerVehicles.map((entry) => entry.horsepower))].sort((a, b) => a - b);
+    if (uniqueHorsepower.length === 1) {
+      return {
+        label: "Typical horsepower",
+        value: formatHorsepowerValue(uniqueHorsepower[0]),
+        numericValue: uniqueHorsepower[0],
+        exact: false,
+      };
+    }
+
+    return {
+      label: "Horsepower varies by trim",
+      value: `${uniqueHorsepower[0]}-${uniqueHorsepower[uniqueHorsepower.length - 1]} hp`,
+      numericValue: null,
+      exact: false,
     };
   },
 

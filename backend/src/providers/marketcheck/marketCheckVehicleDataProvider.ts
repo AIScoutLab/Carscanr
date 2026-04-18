@@ -1,6 +1,7 @@
 import { env } from "../../config/env.js";
 import { AppError } from "../../errors/appError.js";
 import { normalizeCondition } from "../../lib/providerCache.js";
+import { resolveHorsepower } from "../../lib/vehicleData.js";
 import { logger } from "../../lib/logger.js";
 import { ListingRecord, ValuationRecord, VehicleRecord } from "../../types/domain.js";
 import { VehicleListingsProvider, VehicleSpecsProvider, VehicleValueProvider } from "../interfaces.js";
@@ -40,6 +41,8 @@ type MarketCheckListing = {
     transmission?: string;
     drivetrain?: string;
     engine?: string;
+    horsepower?: number | string;
+    engine_hp?: number | string;
     fuel_type?: string;
     made_in?: string;
     city_mpg?: number;
@@ -50,6 +53,8 @@ type MarketCheckListing = {
   drivetrain?: string;
   transmission?: string;
   engine?: string;
+  horsepower?: number | string;
+  engine_hp?: number | string;
   cylinders?: number;
   city_mpg?: number;
   highway_mpg?: number;
@@ -165,6 +170,30 @@ function mapListingToVehicle(listing: MarketCheckListing): VehicleRecord | null 
   const engine = listing.engine ?? listing.build?.engine ?? "See live listing";
   const drivetrain = listing.drivetrain ?? listing.build?.drivetrain ?? "See live listing";
   const transmission = listing.transmission ?? listing.build?.transmission ?? "See live listing";
+  const parsedHorsepower = resolveHorsepower(
+    listing.horsepower,
+    listing.engine_hp,
+    listing.build?.horsepower,
+    listing.build?.engine_hp,
+  );
+  logger.info(
+    {
+      label: "HORSEPOWER_PROVIDER_MAPPING",
+      provider: "marketcheck",
+      rawHorsepowerFields: {
+        horsepower: listing.horsepower ?? null,
+        engine_hp: listing.engine_hp ?? null,
+        build_horsepower: listing.build?.horsepower ?? null,
+        build_engine_hp: listing.build?.engine_hp ?? null,
+      },
+      parsedHorsepower,
+      year,
+      make,
+      model,
+      trim,
+    },
+    "HORSEPOWER_PROVIDER_MAPPING",
+  );
 
   return {
     id: buildLiveVehicleId({
@@ -181,7 +210,7 @@ function mapListingToVehicle(listing: MarketCheckListing): VehicleRecord | null 
     vehicleType: String(listing.vehicle_type ?? listing.build?.vehicle_type ?? "car").toLowerCase() === "motorcycle" ? "motorcycle" : "car",
     msrp: listing.msrp ?? listing.price ?? 0,
     engine,
-    horsepower: 0,
+    horsepower: parsedHorsepower,
     torque: "See live listing",
     transmission,
     drivetrain,

@@ -1,5 +1,6 @@
 import { apiRequest } from "@/services/apiClient";
 import { getVehicleImage } from "@/constants/vehicleImages";
+import { resolveHorsepower } from "@/lib/vehicleData";
 import { GarageItem, VehicleRecord } from "@/types";
 
 let mutableGarage: GarageItem[] = [];
@@ -13,7 +14,9 @@ type BackendVehicle = {
   bodyStyle: string;
   msrp: number;
   engine: string;
-  horsepower: number;
+  horsepower?: number | string | null;
+  hp?: number | string | null;
+  engine_hp?: number | string | null;
   torque: string;
   transmission: string;
   drivetrain: string;
@@ -45,7 +48,7 @@ function mapVehicle(vehicle: BackendVehicle | null, vehicleId: string): VehicleR
       overview: "Vehicle details unavailable.",
       specs: {
         engine: "",
-        horsepower: 0,
+        horsepower: null,
         torque: "",
         transmission: "",
         drivetrain: "",
@@ -79,7 +82,7 @@ function mapVehicle(vehicle: BackendVehicle | null, vehicleId: string): VehicleR
     overview: `${vehicle.year} ${vehicle.make} ${vehicle.model} ${vehicle.trim} saved from your Garage.`,
     specs: {
       engine: vehicle.engine,
-      horsepower: vehicle.horsepower,
+      horsepower: resolveHorsepower(vehicle.horsepower, vehicle.hp, vehicle.engine_hp),
       torque: vehicle.torque,
       transmission: vehicle.transmission,
       drivetrain: vehicle.drivetrain,

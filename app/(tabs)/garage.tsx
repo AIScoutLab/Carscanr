@@ -1,8 +1,11 @@
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { AppContainer } from "@/components/AppContainer";
 import { EmptyState } from "@/components/EmptyState";
+import { PremiumSkeleton } from "@/components/PremiumSkeleton";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { ScanUsageMeter } from "@/components/ScanUsageMeter";
 import { UpgradePromptCard } from "@/components/UpgradePromptCard";
@@ -56,8 +59,14 @@ export default function GarageScreen() {
 
   return (
     <AppContainer>
-      <Text style={styles.title}>Garage</Text>
-      <Text style={styles.subtitle}>Saved scans, notes, and favorites in one clean collection.</Text>
+      <LinearGradient colors={["rgba(29,140,255,0.18)", "rgba(94,231,255,0.05)", "rgba(4,8,18,0.2)"]} style={styles.heroCard}>
+        <View style={styles.heroBadge}>
+          <Ionicons name="car-sport-outline" size={18} color={Colors.premium} />
+          <Text style={styles.heroBadgeLabel}>Garage archive</Text>
+        </View>
+        <Text style={styles.title}>Your saved machines</Text>
+        <Text style={styles.subtitle}>Collect scans, keep notes, and revisit the vehicles that deserve a second look.</Text>
+      </LinearGradient>
       {usage ? <ScanUsageMeter status={usage} mode="unlocks" unlocksUsed={freeUnlocksLimit - freeUnlocksRemaining} unlocksRemaining={freeUnlocksRemaining} unlocksLimit={freeUnlocksLimit} /> : null}
       <TextInput value={query} onChangeText={setQuery} placeholder="Search your garage" placeholderTextColor={Colors.textMuted} style={styles.input} />
       <Pressable style={[styles.filter, favoritesOnly && styles.filterActive]} onPress={() => setFavoritesOnly((current) => !current)}>
@@ -73,20 +82,34 @@ export default function GarageScreen() {
       ) : null}
       {loading ? (
         <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color={Colors.accent} />
-          <Text style={styles.loadingText}>Loading your garage</Text>
+          <View style={styles.loadingHeroCard}>
+            <Text style={styles.loadingEyebrow}>Collection sync</Text>
+            <Text style={styles.loadingTitle}>Preparing your garage archive</Text>
+            <Text style={styles.loadingText}>Loading saved vehicles, favorites, and collection cards.</Text>
+          </View>
+          <PremiumSkeleton height={110} radius={Radius.xl} />
+          <PremiumSkeleton height={148} radius={Radius.xl} />
+          <PremiumSkeleton height={148} radius={Radius.xl} />
+          <ActivityIndicator size="small" color={Colors.accent} />
         </View>
       ) : requiresAuth ? (
         <View style={styles.authCard}>
           <Text style={styles.authTitle}>Sign in to use Garage</Text>
-          <Text style={styles.authBody}>Garage saves, synced history, restore across devices, and account management all live behind your account.</Text>
+          <Text style={styles.authBody}>Sign in to sync your saved vehicles, restore your collection on new devices, and keep your garage archive with you.</Text>
           <PrimaryButton label="Sign In" onPress={() => router.push("/auth?mode=sign-in")} />
         </View>
       ) : filtered.length === 0 ? (
-        <EmptyState
-          title="No saved vehicles yet"
-          description={error ?? "Save a scan to your Garage to keep notes, favorites, and photos attached to each vehicle."}
-        />
+        <View style={styles.emptyWrap}>
+          <View style={styles.emptyBadge}>
+            <Ionicons name="albums-outline" size={18} color={Colors.premium} />
+            <Text style={styles.emptyBadgeLabel}>Collection ready</Text>
+          </View>
+          <EmptyState
+            title="No saved vehicles yet"
+            description={error ?? "Save a scan to your Garage to start building a curated vehicle archive with notes, favorites, and photos."}
+          />
+          <PrimaryButton label="Scan Another Vehicle" onPress={() => router.push("/(tabs)/scan")} />
+        </View>
       ) : (
         filtered.map((item) => (
           <VehicleCard
@@ -102,16 +125,61 @@ export default function GarageScreen() {
 }
 
 const styles = StyleSheet.create({
-  title: { ...Typography.largeTitle, color: Colors.text, marginTop: 12 },
-  subtitle: { ...Typography.body, color: Colors.textMuted },
-  input: { backgroundColor: Colors.card, borderRadius: Radius.md, padding: 16, color: Colors.text, ...Typography.body },
-  filter: { alignSelf: "flex-start", paddingHorizontal: 16, paddingVertical: 10, backgroundColor: Colors.cardAlt, borderRadius: Radius.pill },
+  title: { ...Typography.largeTitle, color: Colors.text, marginTop: 4 },
+  subtitle: { ...Typography.body, color: Colors.textSoft },
+  heroCard: {
+    borderRadius: Radius.xl,
+    padding: 20,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  heroBadge: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: Radius.pill,
+    backgroundColor: "rgba(12, 21, 36, 0.82)",
+    borderWidth: 1,
+    borderColor: Colors.borderSoft,
+  },
+  heroBadgeLabel: { ...Typography.caption, color: Colors.premium, textTransform: "uppercase", letterSpacing: 0.8 },
+  input: { backgroundColor: Colors.cardSoft, borderRadius: Radius.md, padding: 16, color: Colors.textStrong, borderWidth: 1, borderColor: Colors.border, ...Typography.body },
+  filter: { alignSelf: "flex-start", paddingHorizontal: 16, paddingVertical: 10, backgroundColor: Colors.cardAlt, borderRadius: Radius.pill, borderWidth: 1, borderColor: Colors.borderSoft },
   filterActive: { backgroundColor: Colors.primary },
-  filterLabel: { ...Typography.caption, color: Colors.text },
+  filterLabel: { ...Typography.caption, color: Colors.textStrong },
   filterLabelActive: { color: "#FFFFFF" },
-  loadingWrap: { backgroundColor: Colors.card, borderRadius: Radius.xl, padding: 24, alignItems: "center", gap: 12 },
-  loadingText: { ...Typography.body, color: Colors.textMuted },
-  authCard: { backgroundColor: Colors.card, borderRadius: Radius.xl, padding: 24, gap: 12 },
-  authTitle: { ...Typography.heading, color: Colors.text },
-  authBody: { ...Typography.body, color: Colors.textMuted },
+  loadingWrap: { backgroundColor: Colors.cardSoft, borderRadius: Radius.xl, padding: 24, alignItems: "center", gap: 12, borderWidth: 1, borderColor: Colors.border },
+  loadingHeroCard: {
+    width: "100%",
+    backgroundColor: Colors.card,
+    borderRadius: Radius.xl,
+    padding: 18,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  loadingEyebrow: { ...Typography.caption, color: Colors.premium, textTransform: "uppercase", letterSpacing: 1.1 },
+  loadingTitle: { ...Typography.heading, color: Colors.textStrong },
+  loadingText: { ...Typography.body, color: Colors.textSoft, textAlign: "center" },
+  authCard: { backgroundColor: Colors.cardSoft, borderRadius: Radius.xl, padding: 24, gap: 12, borderWidth: 1, borderColor: Colors.border },
+  authTitle: { ...Typography.heading, color: Colors.textStrong },
+  authBody: { ...Typography.body, color: Colors.textSoft },
+  emptyWrap: { gap: 14 },
+  emptyBadge: {
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "rgba(0, 194, 255, 0.12)",
+    borderRadius: Radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: Colors.cyanGlow,
+  },
+  emptyBadgeLabel: { ...Typography.caption, color: Colors.premium, textTransform: "uppercase", letterSpacing: 0.9 },
 });

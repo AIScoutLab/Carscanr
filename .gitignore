@@ -13,3 +13,5 @@ app-example-secrets.json
 
 expo-env.d.ts
 # @end expo-cli
+
+backend/credentials/*.json

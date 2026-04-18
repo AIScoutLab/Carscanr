@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { seedValuations, seedVehicles } from "../src/data/seedVehicles.js";
 import { buildCanonicalKey, normalizeLookupText } from "../src/lib/providerCache.js";
 import { supabaseAdmin } from "../src/lib/supabase.js";
+import { resolveHorsepower } from "../src/lib/vehicleData.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const outputPath = path.resolve(__dirname, "../../assets/data/offline_canonical.json");
@@ -31,7 +32,7 @@ function buildOfflineVehicle(vehicle: typeof seedVehicles[number]) {
     normalizedTrim: normalizeLookupText(vehicle.trim),
     basicSpecs: {
       engine: vehicle.engine,
-      horsepower: vehicle.horsepower,
+      horsepower: resolveHorsepower(vehicle.horsepower),
       torque: vehicle.torque,
       transmission: vehicle.transmission,
       drivetrain: vehicle.drivetrain,
@@ -82,7 +83,7 @@ function buildOfflineVehicleFromCanonical(row: any) {
     normalizedTrim: row.normalized_trim ?? "base",
     basicSpecs: {
       engine: specs.engine ?? row.engine ?? "Unknown",
-      horsepower: specs.horsepower ?? row.horsepower ?? 0,
+      horsepower: resolveHorsepower(specs.horsepower, row.horsepower),
       torque: specs.torque ?? row.torque ?? "Unknown",
       transmission: specs.transmission ?? row.transmission ?? "Unknown",
       drivetrain: specs.drivetrain ?? row.drivetrain ?? "Unknown",

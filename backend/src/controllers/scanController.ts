@@ -54,6 +54,7 @@ export class ScanController {
         provider: visionProvider,
         topCandidateVehicleId: scan.candidates[0]?.vehicleId ?? null,
         premium: entitlement ?? null,
+        scanRuntimeVersion: "ocr-hard-override-route-v1",
       });
     } catch (err) {
       const error = err instanceof Error ? err : new Error("Unknown identify controller error.");
@@ -102,6 +103,7 @@ export class ScanController {
       provider: visionProvider,
       topCandidateVehicleId: scan.candidates[0]?.vehicleId ?? null,
       premium: entitlement ?? null,
+      scanRuntimeVersion: "ocr-hard-override-route-v1",
     });
   };
 }

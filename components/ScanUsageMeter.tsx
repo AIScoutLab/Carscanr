@@ -49,7 +49,7 @@ export function ScanUsageMeter({
     <View style={styles.card}>
       <View style={styles.row}>
         <Text style={styles.title}>{title}</Text>
-        <Text style={styles.caption}>{status.plan === "pro" ? "Pro" : isUnlockMode ? "Unlocks" : "Free"}</Text>
+        <Text style={styles.caption}>{status.plan === "pro" ? "Pro Active" : isUnlockMode ? "Unlocks" : "Free Scan"}</Text>
       </View>
       <View style={styles.track}>
         <View style={[styles.fill, { width: `${progress * 100}%` }]} />
@@ -71,11 +71,19 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  title: { ...Typography.bodyStrong, color: Colors.text, flex: 1, marginRight: 12 },
-  caption: { ...Typography.caption, color: Colors.premium },
-  track: { height: 8, backgroundColor: Colors.cardAlt, borderRadius: Radius.pill, overflow: "hidden" },
+  title: { ...Typography.bodyStrong, color: Colors.textStrong, flex: 1, marginRight: 12 },
+  caption: {
+    ...Typography.caption,
+    color: Colors.premium,
+    backgroundColor: Colors.premiumSoft,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: Radius.pill,
+    overflow: "hidden",
+  },
+  track: { height: 10, backgroundColor: Colors.cardAlt, borderRadius: Radius.pill, overflow: "hidden", borderWidth: 1, borderColor: Colors.borderSoft },
   fill: { height: "100%", borderRadius: Radius.pill, backgroundColor: Colors.accent },
-  note: { ...Typography.caption, color: Colors.textMuted },
-  supporting: { ...Typography.caption, color: Colors.textSoft },
-  cta: { ...Typography.caption, color: Colors.accent, fontWeight: "700" },
+  note: { ...Typography.caption, color: Colors.textSoft },
+  supporting: { ...Typography.caption, color: Colors.textMuted },
+  cta: { ...Typography.caption, color: Colors.accent, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.6 },
 });

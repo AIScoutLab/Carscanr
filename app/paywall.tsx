@@ -1,5 +1,7 @@
 import { router } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { AppContainer } from "@/components/AppContainer";
 import { BackButton } from "@/components/BackButton";
 import { PaywallCard } from "@/components/PaywallCard";
@@ -25,11 +27,19 @@ export default function PaywallScreen() {
       ? isPurchasing
         ? "Preparing purchase flow..."
         : "Start Free Trial"
-      : "Purchases Coming Soon";
+      : "Purchases Unavailable In This Build";
 
   return (
     <AppContainer>
       <BackButton fallbackHref="/(tabs)/scan" label="Back" />
+      <LinearGradient colors={["rgba(29,140,255,0.2)", "rgba(94,231,255,0.08)", "rgba(4,8,18,0.18)"]} style={styles.heroBanner}>
+        <View style={styles.heroBadge}>
+          <Ionicons name="flash-outline" size={18} color={Colors.premium} />
+          <Text style={styles.heroBadgeLabel}>Premium depth</Text>
+        </View>
+        <Text style={styles.heroTitle}>A cleaner performance tier</Text>
+        <Text style={styles.heroBody}>Unlimited free scans stay in front. Pro simply opens deeper specs, richer value context, and more shopping intelligence.</Text>
+      </LinearGradient>
       <View style={styles.heroSection}>
         {!backendProActive ? <PaywallCard status={status} unlocksRemaining={freeUnlocksRemaining} unlocksLimit={freeUnlocksLimit} /> : null}
         {status ? (
@@ -39,7 +49,7 @@ export default function PaywallScreen() {
             unlocksUsed={freeUnlocksLimit - freeUnlocksRemaining}
             unlocksRemaining={freeUnlocksRemaining}
             unlocksLimit={freeUnlocksLimit}
-            supportingText="Basic scan results stay available even after your free Pro unlocks run out."
+            supportingText="Unlimited basic scans stay free. Unlock full details when you want."
           />
         ) : null}
       </View>
@@ -52,9 +62,9 @@ export default function PaywallScreen() {
       ) : (
         <View style={styles.detailCard}>
           <Text style={styles.title}>Everything behind Pro</Text>
-          <Text style={styles.subtitle}>Use your 5 free Pro unlocks first, then upgrade later for unlimited premium details.</Text>
+          <Text style={styles.subtitle}>Unlimited scans stay free. Use your 5 free Pro unlocks first, then upgrade later only if you want unlimited full details.</Text>
           <PlanColumn title="Included" items={planBenefits.pro} highlight />
-          {!purchaseAvailable ? <Text style={styles.notice}>In-app purchase is not live in this build yet. This screen is informational for the current debug cycle.</Text> : null}
+          {!purchaseAvailable ? <Text style={styles.notice}>Purchases are disabled in this build. You can still keep scanning for free and use any remaining free Pro unlocks.</Text> : null}
         </View>
       )}
       <PrimaryButton
@@ -114,18 +124,40 @@ function PlanColumn({ title, items, highlight = false }: { title: string; items:
 }
 
 const styles = StyleSheet.create({
+  heroBanner: {
+    borderRadius: Radius.xl,
+    padding: 20,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  heroBadge: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: Radius.pill,
+    backgroundColor: "rgba(12, 21, 36, 0.82)",
+    borderWidth: 1,
+    borderColor: Colors.borderSoft,
+  },
+  heroBadgeLabel: { ...Typography.caption, color: Colors.premium, textTransform: "uppercase", letterSpacing: 0.8 },
+  heroTitle: { ...Typography.title, color: Colors.textStrong },
+  heroBody: { ...Typography.body, color: Colors.textSoft },
   heroSection: { gap: 14 },
   detailCard: { ...cardStyles.standard, padding: 20, gap: 14 },
   title: { ...Typography.title, color: Colors.textStrong },
-  subtitle: { ...Typography.body, color: Colors.textMuted },
+  subtitle: { ...Typography.body, color: Colors.textSoft },
   plan: { backgroundColor: Colors.cardAlt, borderRadius: Radius.lg, padding: 16, gap: 8 },
   planHighlight: { backgroundColor: Colors.primary },
   planTitle: { ...Typography.heading, color: Colors.textStrong },
   planTitleHighlight: { color: "#FFFFFF" },
-  item: { ...Typography.body, color: Colors.textMuted },
+  item: { ...Typography.body, color: Colors.textSoft },
   itemHighlight: { color: "rgba(255,255,255,0.86)" },
   notice: { ...Typography.caption, color: Colors.textMuted, textAlign: "center" },
-  feedback: { ...Typography.caption, color: Colors.textMuted, textAlign: "center" },
-  error: { ...Typography.caption, color: "#A14D52", textAlign: "center" },
+  feedback: { ...Typography.caption, color: Colors.textSoft, textAlign: "center" },
+  error: { ...Typography.caption, color: Colors.danger, textAlign: "center" },
   footnote: { ...Typography.caption, color: Colors.textMuted, textAlign: "center" },
 });

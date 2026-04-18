@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Animated, Easing, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { CameraView, type CameraCapturedPicture } from "expo-camera";
 import { useSubscription } from "@/hooks/useSubscription";
 import { supabase } from "@/lib/supabase";
@@ -81,6 +81,7 @@ export default function ScanCameraScreen() {
   const pinchStartZoomRef = useRef(0);
   const zoomGestureActiveRef = useRef(false);
   const zoomWarningShownRef = useRef(false);
+  const scanBarProgress = useRef(new Animated.Value(0)).current;
 
   const [permissionReady, setPermissionReady] = useState<boolean | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
@@ -93,6 +94,7 @@ export default function ScanCameraScreen() {
   const [sessionDetected, setSessionDetected] = useState(false);
   const [tokenPresent, setTokenPresent] = useState(false);
   const [zoom, setZoom] = useState(0);
+  const [capturedPreviewUri, setCapturedPreviewUri] = useState<string | null>(null);
   const { status: usage, freeUnlocksRemaining, freeUnlocksUsed } = useSubscription();
 
   const isFlowActive = useCallback((flowId: number) => activeFlowIdRef.current === flowId, []);
@@ -298,6 +300,7 @@ export default function ScanCameraScreen() {
       }
 
       const captured = picture as CameraCapturedPicture;
+      setCapturedPreviewUri(captured.uri);
       setStatus("Capture complete");
       appendStage("capture complete", {
         uri: captured.uri,
@@ -410,6 +413,7 @@ export default function ScanCameraScreen() {
     const flowId = startFlow("camera-permission");
     setPermissionReady(null);
     setCameraReady(false);
+    setCapturedPreviewUri(null);
     setStatus("Requesting camera permission");
     appendStage("permission request start", undefined, flowId);
 
@@ -462,6 +466,37 @@ export default function ScanCameraScreen() {
     };
   }, [clearCameraReadyTimeout, clearWaitingIdentifyTimeout, requestPermissionFlow]);
 
+  useEffect(() => {
+    if (!(capturedPreviewUri && isBusy)) {
+      scanBarProgress.stopAnimation();
+      scanBarProgress.setValue(0);
+      return;
+    }
+
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(scanBarProgress, {
+          toValue: 1,
+          duration: 1100,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(scanBarProgress, {
+          toValue: 0,
+          duration: 1100,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => {
+      loop.stop();
+      scanBarProgress.stopAnimation();
+      scanBarProgress.setValue(0);
+    };
+  }, [capturedPreviewUri, isBusy, scanBarProgress]);
+
   const statusTone = useMemo(() => {
     if (status.startsWith("Scan failed:")) {
       return styles.statusError;
@@ -473,6 +508,38 @@ export default function ScanCameraScreen() {
   }, [status]);
 
   const showZoomWarning = zoom > ZOOM_WARNING_THRESHOLD;
+  const processingHeadline = status === "Identifying vehicle..." || status === "Waiting for identification" ? "Analyzing vehicle..." : "Preparing scan...";
+  const visibleStatusTitle = useMemo(() => {
+    if (status.startsWith("Scan failed:")) {
+      return "Scan failed";
+    }
+    if (status === "Requesting camera permission") {
+      return "Preparing camera...";
+    }
+    if (status === "Opening camera") {
+      return "Opening camera...";
+    }
+    if (status === "Camera ready") {
+      return "Frame the vehicle";
+    }
+    if (status === "Capture complete" || status === "Photo selected" || status === "File copy" || status === "File info" || status === "Optimizing image") {
+      return "Preparing your photo...";
+    }
+    if (status === "Preparing upload" || status === "Uploading image") {
+      return "Reading visible text...";
+    }
+    if (status === "Identifying vehicle..." || status === "Waiting for identification" || status === "Waking backend, please wait...") {
+      return "Analyzing vehicle...";
+    }
+    if (status === "Identify succeeded" || status === "Opening result") {
+      return "Opening result...";
+    }
+    return status;
+  }, [status]);
+  const processingSubhead =
+    status === "Identifying vehicle..." || status === "Waiting for identification"
+      ? "Detecting make & model..."
+      : "Optimizing your captured photo...";
 
   useEffect(() => {
     if (showZoomWarning && !zoomWarningShownRef.current) {
@@ -491,60 +558,115 @@ export default function ScanCameraScreen() {
   return (
     <View style={styles.screen}>
       {permissionReady ? (
-        <View
-          style={StyleSheet.absoluteFill}
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={finishZoomGesture}
-          onTouchCancel={finishZoomGesture}
-        >
-          <CameraView
-            ref={cameraRef}
+        capturedPreviewUri ? (
+          <View style={styles.capturedPreviewFrame}>
+            <Image source={{ uri: capturedPreviewUri }} style={styles.capturedPreviewImage} resizeMode="contain" />
+            {isBusy ? (
+              <View style={styles.processingOverlay} pointerEvents="none">
+                <View style={styles.processingCard}>
+                  <View style={styles.processingPill}>
+                    <Text style={styles.processingPillLabel}>Analyzing photo</Text>
+                  </View>
+                  <Text style={styles.processingTitle}>{processingHeadline}</Text>
+                  <Text style={styles.processingBody}>{processingSubhead}</Text>
+                </View>
+                <Animated.View
+                  style={[
+                    styles.previewScanLineGlow,
+                    {
+                      transform: [
+                        {
+                          translateY: scanBarProgress.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0, 720],
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                />
+                <Animated.View
+                  style={[
+                    styles.previewScanLineCore,
+                    {
+                      transform: [
+                        {
+                          translateY: scanBarProgress.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0, 720],
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                />
+              </View>
+            ) : null}
+          </View>
+        ) : (
+          <View
             style={StyleSheet.absoluteFill}
-            facing="back"
-            autofocus="on"
-            zoom={zoom}
-            onCameraReady={() => {
-              const flowId = cameraMountFlowIdRef.current;
-              if (typeof flowId === "number" && !isFlowActive(flowId)) {
-                return;
-              }
-              clearCameraReadyTimeout();
-              setCameraReady(true);
-              setStatus("Camera ready");
-              appendStage("camera ready", undefined, flowId ?? undefined);
-            }}
-            onMountError={(event) => {
-              const flowId = cameraMountFlowIdRef.current;
-              fail(event.message || "Camera took too long to open.", flowId ?? undefined);
-            }}
-          />
-        </View>
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={finishZoomGesture}
+            onTouchCancel={finishZoomGesture}
+          >
+            <CameraView
+              ref={cameraRef}
+              style={StyleSheet.absoluteFill}
+              facing="back"
+              autofocus="on"
+              zoom={zoom}
+              onCameraReady={() => {
+                const flowId = cameraMountFlowIdRef.current;
+                if (typeof flowId === "number" && !isFlowActive(flowId)) {
+                  return;
+                }
+                clearCameraReadyTimeout();
+                setCameraReady(true);
+                setStatus("Camera ready");
+                appendStage("camera ready", undefined, flowId ?? undefined);
+              }}
+              onMountError={(event) => {
+                const flowId = cameraMountFlowIdRef.current;
+                fail(event.message || "Camera took too long to open.", flowId ?? undefined);
+              }}
+            />
+          </View>
+        )
       ) : (
         <View style={styles.cameraPlaceholder} />
       )}
 
-      <View style={styles.topBar}>
-        <Pressable style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonLabel}>Back</Text>
-        </Pressable>
-      </View>
+      {!(capturedPreviewUri && isBusy) ? (
+        <>
+          <View style={styles.topBar}>
+            <Pressable style={styles.backButton} onPress={() => router.back()}>
+              <Text style={styles.backButtonLabel}>Back</Text>
+            </Pressable>
+          </View>
 
-      <View style={[styles.statusCard, statusTone]}>
-        <Text style={styles.statusTitle}>{status}</Text>
-        <Text style={styles.zoomMeta}>Zoom: {zoom.toFixed(2)}x digital</Text>
-        {showZoomWarning ? <Text style={styles.zoomWarning}>Zoom may reduce clarity</Text> : null}
-        <Text style={styles.statusMeta}>Signed in: {signedIn ? "yes" : "no"} | Session detected: {sessionDetected ? "yes" : "no"} | Auth token present: {tokenPresent ? "yes" : "no"}</Text>
-        <Text style={styles.statusMeta}>
-          Permission timeout: {PERMISSION_PROMPT_TIMEOUT_MS}ms | Camera open timeout: {CAMERA_READY_TIMEOUT_MS}ms | Processing timeout: {IMAGE_PROCESSING_TIMEOUT_MS}ms | Identify timeout: {IDENTIFY_TIMEOUT_MS}ms
-        </Text>
-        {details.map((detail) => (
-          <Text key={detail} style={styles.statusDetail}>
-            {detail}
-          </Text>
-        ))}
-        {isBusy ? <ActivityIndicator size="small" color={Colors.accent} /> : null}
-      </View>
+          <View style={[styles.statusCard, statusTone]}>
+            <Text style={styles.statusTitle}>{__DEV__ ? status : visibleStatusTitle}</Text>
+            <Text style={styles.zoomMeta}>{zoom > 0 ? `Zoom: ${zoom.toFixed(2)}x digital` : "Zoom stays sharpest near 1x."}</Text>
+            {showZoomWarning ? <Text style={styles.zoomWarning}>Zoom may reduce clarity</Text> : null}
+            {__DEV__ ? <Text style={styles.statusMeta}>Signed in: {signedIn ? "yes" : "no"} | Session detected: {sessionDetected ? "yes" : "no"} | Auth token present: {tokenPresent ? "yes" : "no"}</Text> : null}
+            {__DEV__ ? (
+              <Text style={styles.statusMeta}>
+                Permission timeout: {PERMISSION_PROMPT_TIMEOUT_MS}ms | Camera open timeout: {CAMERA_READY_TIMEOUT_MS}ms | Processing timeout: {IMAGE_PROCESSING_TIMEOUT_MS}ms | Identify timeout: {IDENTIFY_TIMEOUT_MS}ms
+              </Text>
+            ) : null}
+            {__DEV__
+              ? details.map((detail) => (
+                  <Text key={detail} style={styles.statusDetail}>
+                    {detail}
+                  </Text>
+                ))
+              : null}
+            {isBusy ? <ActivityIndicator size="small" color={Colors.accent} /> : null}
+          </View>
+        </>
+      ) : null}
 
       {error ? (
         <View style={styles.errorCard}>
@@ -569,11 +691,13 @@ export default function ScanCameraScreen() {
         </View>
       ) : null}
 
-      <View style={styles.bottomBar}>
-        <Pressable style={[styles.captureButton, (!cameraReady || isBusy) && styles.captureButtonDisabled]} onPress={() => capturePhoto().catch(() => undefined)} disabled={!cameraReady || isBusy}>
-          <View style={styles.captureButtonInner} />
-        </Pressable>
-      </View>
+      {!(capturedPreviewUri && isBusy) ? (
+        <View style={styles.bottomBar}>
+          <Pressable style={[styles.captureButton, (!cameraReady || isBusy) && styles.captureButtonDisabled]} onPress={() => capturePhoto().catch(() => undefined)} disabled={!cameraReady || isBusy}>
+            <View style={styles.captureButtonInner} />
+          </Pressable>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -581,11 +705,85 @@ export default function ScanCameraScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#020617",
+    backgroundColor: Colors.background,
   },
   cameraPlaceholder: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "#0F172A",
+    backgroundColor: Colors.cardAlt,
+  },
+  capturedPreviewFrame: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: Colors.background,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  capturedPreviewImage: {
+    width: "100%",
+    height: "100%",
+  },
+  processingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(3, 8, 22, 0.44)",
+    paddingHorizontal: 24,
+  },
+  processingCard: {
+    width: "100%",
+    maxWidth: 360,
+    backgroundColor: "rgba(9, 16, 32, 0.88)",
+    borderRadius: Radius.xl,
+    padding: 20,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: Colors.accentGlow,
+    shadowColor: Colors.accent,
+    shadowOpacity: 0.24,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 14 },
+  },
+  processingPill: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(0, 194, 255, 0.12)",
+    borderRadius: Radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: Colors.cyanGlow,
+  },
+  processingPillLabel: {
+    ...Typography.caption,
+    color: Colors.premium,
+    textTransform: "uppercase",
+    letterSpacing: 1.2,
+  },
+  processingTitle: {
+    ...Typography.title,
+    color: Colors.textStrong,
+  },
+  processingBody: {
+    ...Typography.body,
+    color: Colors.textSoft,
+  },
+  previewScanLineGlow: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    height: 26,
+    borderRadius: Radius.pill,
+    backgroundColor: "rgba(94, 231, 255, 0.16)",
+    shadowColor: Colors.accent,
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  previewScanLineCore: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    height: 2,
+    borderRadius: Radius.pill,
+    backgroundColor: Colors.premium,
   },
   topBar: {
     position: "absolute",
@@ -597,14 +795,16 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   backButton: {
-    backgroundColor: "rgba(15, 23, 42, 0.78)",
+    backgroundColor: "rgba(9, 16, 32, 0.78)",
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   backButtonLabel: {
     ...Typography.bodyStrong,
-    color: "#FFFFFF",
+    color: Colors.textStrong,
   },
   statusCard: {
     position: "absolute",
@@ -618,47 +818,49 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   statusActive: {
-    backgroundColor: "rgba(15, 23, 42, 0.82)",
-    borderColor: "rgba(148, 163, 184, 0.45)",
+    backgroundColor: "rgba(9, 16, 32, 0.86)",
+    borderColor: Colors.border,
   },
   statusReady: {
-    backgroundColor: "rgba(3, 105, 161, 0.82)",
-    borderColor: "rgba(125, 211, 252, 0.55)",
+    backgroundColor: "rgba(8, 42, 95, 0.88)",
+    borderColor: Colors.accentGlow,
   },
   statusError: {
-    backgroundColor: "rgba(127, 29, 29, 0.86)",
-    borderColor: "rgba(252, 165, 165, 0.55)",
+    backgroundColor: "rgba(88, 16, 26, 0.9)",
+    borderColor: Colors.dangerSoft,
   },
   statusTitle: {
     ...Typography.bodyStrong,
-    color: "#FFFFFF",
+    color: Colors.textStrong,
   },
   statusMeta: {
     ...Typography.caption,
-    color: "rgba(255,255,255,0.74)",
+    color: Colors.textSoft,
   },
   zoomMeta: {
     ...Typography.caption,
-    color: "#BAE6FD",
+    color: Colors.premium,
   },
   zoomWarning: {
     ...Typography.caption,
-    color: "rgba(255,255,255,0.88)",
+    color: Colors.textStrong,
   },
   statusDetail: {
     ...Typography.caption,
-    color: "#E2E8F0",
+    color: Colors.textSoft,
   },
   errorCard: {
     position: "absolute",
     left: 20,
     right: 20,
     bottom: 150,
-    backgroundColor: "rgba(255,255,255,0.96)",
+    backgroundColor: "rgba(9, 16, 32, 0.96)",
     borderRadius: Radius.xl,
     padding: 18,
     gap: 10,
     zIndex: 10,
+    borderWidth: 1,
+    borderColor: Colors.dangerSoft,
   },
   errorTitle: {
     ...Typography.heading,
@@ -666,18 +868,20 @@ const styles = StyleSheet.create({
   },
   errorBody: {
     ...Typography.body,
-    color: Colors.text,
+    color: Colors.textSoft,
   },
   retryButton: {
     alignSelf: "flex-start",
-    backgroundColor: "#0F172A",
+    backgroundColor: Colors.cardAlt,
     borderRadius: 999,
     paddingHorizontal: 18,
     paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   retryLabel: {
     ...Typography.bodyStrong,
-    color: "#FFFFFF",
+    color: Colors.textStrong,
   },
   bottomBar: {
     position: "absolute",
@@ -692,10 +896,14 @@ const styles = StyleSheet.create({
     height: 86,
     borderRadius: 43,
     borderWidth: 4,
-    borderColor: "rgba(255,255,255,0.92)",
+    borderColor: Colors.premium,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.16)",
+    backgroundColor: "rgba(0, 194, 255, 0.12)",
+    shadowColor: Colors.accent,
+    shadowOpacity: 0.28,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
   },
   captureButtonDisabled: {
     opacity: 0.45,
@@ -704,6 +912,6 @@ const styles = StyleSheet.create({
     width: 66,
     height: 66,
     borderRadius: 33,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: Colors.textStrong,
   },
 });

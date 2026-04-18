@@ -1,8 +1,9 @@
 import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Animated, Easing, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
+import { Ionicons } from "@expo/vector-icons";
 import { AppContainer } from "@/components/AppContainer";
 import { PaywallCard } from "@/components/PaywallCard";
 import { PrimaryButton } from "@/components/PrimaryButton";
@@ -69,8 +70,25 @@ export default function ScanScreen() {
   const lastStageAtRef = useRef<number | null>(null);
   const pendingIdentifyStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeFlowIdRef = useRef(0);
+  const scanBarProgress = useRef(new Animated.Value(0)).current;
   const { status: usage, freeUnlocksUsed, freeUnlocksRemaining, freeUnlocksLimit, refreshStatus } = useSubscription();
   const samplePhotos = getSampleScanPhotos();
+
+  const resetTransientScanState = useCallback(() => {
+    activeFlowIdRef.current += 1;
+    if (pendingIdentifyStatusTimerRef.current) {
+      clearTimeout(pendingIdentifyStatusTimerRef.current);
+      pendingIdentifyStatusTimerRef.current = null;
+    }
+    setIsBusy(false);
+    setLoadingSampleId(null);
+    setSamplePickerOpen(false);
+    setScanError(null);
+    setRetryImageUri(null);
+    setRetrySource(null);
+    setDebugStatus("Idle");
+    setDebugDetails([]);
+  }, []);
 
   useEffect(() => {
     scanService.getRecentScans().then(setRecentScans);
@@ -81,6 +99,38 @@ export default function ScanScreen() {
       clearTimeout(pendingIdentifyStatusTimerRef.current);
     }
   }, []);
+
+  useEffect(() => {
+    if (!isBusy || !retryImageUri) {
+      scanBarProgress.stopAnimation();
+      scanBarProgress.setValue(0);
+      return;
+    }
+
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(scanBarProgress, {
+          toValue: 1,
+          duration: 1400,
+          easing: Easing.inOut(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(scanBarProgress, {
+          toValue: 0,
+          duration: 1400,
+          easing: Easing.inOut(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    animation.start();
+
+    return () => {
+      animation.stop();
+      scanBarProgress.stopAnimation();
+      scanBarProgress.setValue(0);
+    };
+  }, [isBusy, retryImageUri, scanBarProgress]);
 
   useEffect(() => {
     const preloadPermissions = async () => {
@@ -103,6 +153,7 @@ export default function ScanScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      resetTransientScanState();
       Promise.all([supabase.auth.getSession(), authService.getCurrentUser()])
         .then(([{ data }, currentUser]) => {
           const session = data.session;
@@ -120,7 +171,10 @@ export default function ScanScreen() {
         lastFocusRefreshAtRef.current = now;
         refreshStatus().catch(() => undefined);
       }
-    }, [refreshStatus]),
+      return () => {
+        resetTransientScanState();
+      };
+    }, [refreshStatus, resetTransientScanState]),
   );
 
   const routeToResult = (result: ScanResult) => {
@@ -245,6 +299,7 @@ export default function ScanScreen() {
         mimeType: selection.mimeType,
         fileSize: selection.fileSize,
       }, flowId);
+      setRetryImageUri(selection.cachedUri);
       setRetrySource(source);
       setScanError(null);
       setDebugStatus("Photo selected");
@@ -396,9 +451,9 @@ export default function ScanScreen() {
   const beginScan = async (source: "camera" | "library") => {
     console.log("[tap] begin-scan", { source, freeUnlocksRemaining });
     if (source === "library") {
-      setDebugStatus("Opening photo library");
-      const flowId = startFlow("library");
-      recordStage("tap received", "library", flowId);
+      setScanError(null);
+      setDebugStatus("Idle");
+      setDebugDetails([]);
       setSamplePickerOpen(true);
       return;
     }
@@ -477,10 +532,72 @@ export default function ScanScreen() {
     return styles.statusActive;
   }, [debugStatus]);
 
+  const visibleStatusLabel = useMemo(() => {
+    if (debugStatus.startsWith("Scan failed:")) {
+      return "Scan failed";
+    }
+    if (debugStatus === "Requesting photo library permission" || debugStatus === "Opening photo library") {
+      return "Opening your photos...";
+    }
+    if (debugStatus === "Photo selected" || debugStatus === "Optimizing image") {
+      return "Preparing your photo...";
+    }
+    if (debugStatus === "Preparing upload" || debugStatus === "Uploading image") {
+      return "Reading visible text...";
+    }
+    if (debugStatus === "Identifying vehicle..." || debugStatus === "Waiting for identification" || debugStatus === "Waking backend, please wait...") {
+      return "Analyzing vehicle...";
+    }
+    return debugStatus;
+  }, [debugStatus]);
+
+  const analysisStepLabel = useMemo(() => {
+    if (debugStatus === "Opening photo library" || debugStatus === "Photo selected" || debugStatus === "Optimizing image") {
+      return "Preparing your photo...";
+    }
+    if (debugStatus === "Preparing upload" || debugStatus === "Uploading image") {
+      return "Reading visible text...";
+    }
+    if (debugStatus === "Identifying vehicle..." || debugStatus === "Waiting for identification" || debugStatus === "Waking backend, please wait...") {
+      return "Matching year, make, and model...";
+    }
+    return "Analyzing vehicle...";
+  }, [debugStatus]);
+
+  if (isBusy && retryImageUri && !scanError) {
+    const scanBarTranslate = scanBarProgress.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0, 332],
+    });
+
+    return (
+      <AppContainer scroll={false} contentContainerStyle={styles.loadingScreen}>
+        <View style={styles.loadingHeroFrame}>
+          <Image source={{ uri: retryImageUri }} style={styles.loadingHeroImage} resizeMode="contain" />
+          <View style={styles.loadingOverlay} pointerEvents="none">
+            <Animated.View style={[styles.scanLineGlow, { transform: [{ translateY: scanBarTranslate }] }]} />
+            <Animated.View style={[styles.scanLineCore, { transform: [{ translateY: scanBarTranslate }] }]} />
+          </View>
+        </View>
+        <View style={styles.loadingCopyCard}>
+          <Text style={styles.loadingTitle}>Analyzing vehicle...</Text>
+          <Text style={styles.loadingBody}>{analysisStepLabel}</Text>
+          <ActivityIndicator size="small" color={Colors.accent} />
+        </View>
+      </AppContainer>
+    );
+  }
+
   return (
     <AppContainer>
-      <Text style={styles.title}>Scan a vehicle</Text>
-      <Text style={styles.subtitle}>Snap a photo and get instant specs, value, and market insights.</Text>
+      <LinearGradient colors={["rgba(29,140,255,0.22)", "rgba(94,231,255,0.06)", "rgba(4,8,18,0.2)"]} style={styles.heroCard}>
+        <View style={styles.heroHeader}>
+          <View style={styles.heroCopy}>
+            <Text style={styles.title}>Scan a vehicle</Text>
+            <Text style={styles.subtitle}>Take a photo or choose one from your library to identify the vehicle and open the strongest match we can support.</Text>
+          </View>
+        </View>
+      </LinearGradient>
       {usage ? (
         <ScanUsageMeter
           status={usage}
@@ -488,7 +605,7 @@ export default function ScanScreen() {
           unlocksUsed={freeUnlocksUsed}
           unlocksRemaining={freeUnlocksRemaining}
           unlocksLimit={freeUnlocksLimit}
-          supportingText="Upgrade for unlimited Pro details, pricing insights, and listings."
+          supportingText="Unlimited basic scans stay free. Unlock full details only when you want them."
           ctaLabel="Go Pro"
           onCtaPress={() => {
             console.log("[tap] usage-meter-go-pro");
@@ -496,21 +613,27 @@ export default function ScanScreen() {
           }}
         />
       ) : null}
-      <View style={[styles.statusCard, statusTone]}>
-        <Text style={styles.statusLabel}>{debugStatus}</Text>
-        <Text style={styles.statusSubtle}>
-          Camera permission: {cameraPermissionReady === null ? "checking" : cameraPermissionReady ? "ready" : "not granted"} | Library permission:{" "}
-          {libraryPermissionReady === null ? "checking" : libraryPermissionReady ? "ready" : "not granted"}
-        </Text>
-        <Text style={styles.statusSubtle}>Signed in: {signedIn ? "yes" : "no"} | Session detected: {sessionDetected ? "yes" : "no"} | Auth token present: {tokenPresent ? "yes" : "no"}</Text>
-        <Text style={styles.statusSubtle}>Identify timeout: {IDENTIFY_TIMEOUT_MS}ms</Text>
-        {debugDetails.map((detail) => (
-          <Text key={detail} style={styles.statusDetail}>
-            {detail}
-          </Text>
-        ))}
-        {isBusy ? <ActivityIndicator size="small" color={Colors.accent} /> : null}
-      </View>
+      {(scanError || __DEV__) ? (
+        <View style={[styles.statusCard, statusTone]}>
+          <Text style={styles.statusLabel}>{__DEV__ ? debugStatus : visibleStatusLabel}</Text>
+          {__DEV__ ? (
+            <Text style={styles.statusSubtle}>
+              Camera permission: {cameraPermissionReady === null ? "checking" : cameraPermissionReady ? "ready" : "not granted"} | Library permission:{" "}
+              {libraryPermissionReady === null ? "checking" : libraryPermissionReady ? "ready" : "not granted"}
+            </Text>
+          ) : null}
+          {__DEV__ ? <Text style={styles.statusSubtle}>Signed in: {signedIn ? "yes" : "no"} | Session detected: {sessionDetected ? "yes" : "no"} | Auth token present: {tokenPresent ? "yes" : "no"}</Text> : null}
+          {__DEV__ ? <Text style={styles.statusSubtle}>Identify timeout: {IDENTIFY_TIMEOUT_MS}ms</Text> : null}
+          {__DEV__
+            ? debugDetails.map((detail) => (
+                <Text key={detail} style={styles.statusDetail}>
+                  {detail}
+                </Text>
+              ))
+            : null}
+          {scanError ? <ActivityIndicator size="small" color={Colors.accent} /> : null}
+        </View>
+      ) : null}
       {scanError ? (
         <View style={styles.errorCard}>
           <Text style={styles.errorTitle}>Scan failed</Text>
@@ -520,11 +643,11 @@ export default function ScanScreen() {
       ) : null}
       <View style={styles.scanCard}>
         <Pressable style={({ pressed }) => [styles.cameraButton, pressed && styles.cameraPressed]} onPress={() => beginScan("camera")} disabled={isBusy}>
-          <LinearGradient colors={["#0F172A", "#1E293B"]} style={styles.cameraGradient}>
-            <Text style={styles.cameraButtonLabel}>{isBusy ? "Working..." : "Scan Vehicle"}</Text>
+          <LinearGradient colors={["#0A72E8", "#1D8CFF", "#5EE7FF"]} style={styles.cameraGradient}>
+            <Text style={styles.cameraButtonLabel}>{isBusy ? "Analyzing..." : "Scan Vehicle"}</Text>
           </LinearGradient>
         </Pressable>
-        <PrimaryButton label={isBusy ? "Working..." : "Choose From Photos"} secondary onPress={() => beginScan("library")} disabled={isBusy} />
+        <PrimaryButton label={isBusy ? "Analyzing..." : "Choose From Photos"} secondary onPress={() => beginScan("library")} disabled={isBusy} />
         <Text style={styles.helper}>In the simulator, you can use sample vehicle photos if you do not have camera access.</Text>
       </View>
       {showSoftUpsell ? (
@@ -560,7 +683,7 @@ export default function ScanScreen() {
             overview: `Confidence ${Math.round(scan.confidenceScore * 100)}%. ${scan.limitedPreview ? "Free preview active." : "Full detail available."}`,
             specs: {
               engine: "",
-              horsepower: 0,
+              horsepower: null,
               torque: "",
               transmission: "",
               drivetrain: "",
@@ -597,6 +720,9 @@ export default function ScanScreen() {
         onClose={() => {
           if (!loadingSampleId) {
             setSamplePickerOpen(false);
+            if (!isBusy) {
+              setDebugStatus("Idle");
+            }
           }
         }}
         onOpenLibrary={() => {
@@ -611,8 +737,17 @@ export default function ScanScreen() {
 }
 
 const styles = StyleSheet.create({
-  title: { ...Typography.largeTitle, color: Colors.textStrong, marginTop: 12 },
-  subtitle: { ...Typography.body, color: Colors.textMuted, marginBottom: 4 },
+  title: { ...Typography.largeTitle, color: Colors.textStrong, marginTop: 4 },
+  subtitle: { ...Typography.body, color: Colors.textSoft, marginBottom: 4 },
+  heroCard: {
+    borderRadius: Radius.xl,
+    padding: 20,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  heroHeader: { flexDirection: "row", gap: 16, alignItems: "center" },
+  heroCopy: { flex: 1, gap: 6 },
   statusCard: {
     borderRadius: Radius.lg,
     padding: 16,
@@ -620,16 +755,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   statusIdle: {
-    backgroundColor: "#F8FAFC",
-    borderColor: "#CBD5E1",
+    backgroundColor: Colors.cardSoft,
+    borderColor: Colors.border,
   },
   statusActive: {
-    backgroundColor: "#EFF6FF",
-    borderColor: "#93C5FD",
+    backgroundColor: Colors.cardTint,
+    borderColor: Colors.accent,
   },
   statusError: {
-    backgroundColor: "#FEF2F2",
-    borderColor: "#FCA5A5",
+    backgroundColor: Colors.dangerSoft,
+    borderColor: "#F87171",
   },
   statusLabel: {
     ...Typography.bodyStrong,
@@ -641,12 +776,12 @@ const styles = StyleSheet.create({
   },
   statusDetail: {
     ...Typography.caption,
-    color: Colors.text,
+    color: Colors.textSoft,
   },
   errorCard: {
-    backgroundColor: "#FFF1F2",
+    backgroundColor: Colors.dangerSoft,
     borderWidth: 1,
-    borderColor: "#FDA4AF",
+    borderColor: "#F87171",
     borderRadius: Radius.xl,
     padding: 18,
     gap: 12,
@@ -657,9 +792,9 @@ const styles = StyleSheet.create({
   },
   errorBody: {
     ...Typography.body,
-    color: Colors.text,
+    color: Colors.textSoft,
   },
-  scanCard: { ...cardStyles.primary, gap: 14 },
+  scanCard: { ...cardStyles.primary, gap: 14, backgroundColor: Colors.cardSoft },
   cameraButton: {
     borderRadius: Radius.xl,
     minHeight: 180,
@@ -681,5 +816,54 @@ const styles = StyleSheet.create({
     paddingVertical: 24,
   },
   cameraButtonLabel: { ...Typography.title, color: "#FFFFFF" },
-  helper: { ...Typography.caption, color: Colors.textMuted },
+  helper: { ...Typography.caption, color: Colors.textSoft },
+  loadingScreen: { flex: 1, gap: 16 },
+  loadingHeroFrame: {
+    width: "100%",
+    height: 360,
+    borderRadius: Radius.xl,
+    overflow: "hidden",
+    backgroundColor: Colors.cardSoft,
+  },
+  loadingHeroImage: {
+    width: "100%",
+    height: "100%",
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "flex-start",
+    alignItems: "stretch",
+    overflow: "hidden",
+  },
+  scanLineGlow: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    height: 28,
+    borderRadius: Radius.lg,
+    backgroundColor: "rgba(94,231,255,0.18)",
+    shadowColor: Colors.premium,
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  scanLineCore: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    height: 2,
+    borderRadius: Radius.pill,
+    backgroundColor: Colors.premium,
+  },
+  loadingCopyCard: {
+    backgroundColor: Colors.cardSoft,
+    borderRadius: Radius.xl,
+    padding: 18,
+    gap: 8,
+    alignItems: "flex-start",
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  loadingTitle: { ...Typography.heading, color: Colors.textStrong },
+  loadingBody: { ...Typography.body, color: Colors.textSoft },
 });

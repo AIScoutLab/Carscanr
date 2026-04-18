@@ -111,7 +111,7 @@ export default function ResetPasswordScreen() {
         <ScrollView
           ref={scrollRef}
           style={styles.flex}
-          contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top, 12) + 24, paddingBottom: Math.max(insets.bottom, 24) + 120 }]}
+          contentContainerStyle={[styles.content, { paddingTop: 14, paddingBottom: Math.max(insets.bottom, 24) + 120 }]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
@@ -122,13 +122,15 @@ export default function ResetPasswordScreen() {
             <Text style={styles.title}>Reset your password.</Text>
             <Text style={styles.subtitle}>Choose a new password for your CarScanr account, then sign in again.</Text>
           </View>
-          <View style={styles.debugBanner}>
-            {resetDiagnostics.map((line) => (
-              <Text key={line} style={styles.debugBannerText}>
-                {line}
-              </Text>
-            ))}
-          </View>
+          {__DEV__ ? (
+            <View style={styles.debugBanner}>
+              {resetDiagnostics.map((line) => (
+                <Text key={line} style={styles.debugBannerText}>
+                  {line}
+                </Text>
+              ))}
+            </View>
+          ) : null}
 
           <View style={styles.card}>
             <View ref={passwordFieldRef} collapsable={false}>

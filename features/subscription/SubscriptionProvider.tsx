@@ -20,7 +20,7 @@ type SubscriptionContextValue = {
   purchasePro: () => Promise<SubscriptionActionResult>;
   restorePurchases: () => Promise<SubscriptionActionResult>;
   cancelPro: () => Promise<SubscriptionActionResult>;
-  useFreeUnlockForVehicle: (vehicleId: string) => Promise<boolean>;
+  useFreeUnlockForVehicle: (vehicleId: string) => Promise<{ ok: boolean; message: string; reason: string; alreadyUnlocked: boolean }>;
   isVehicleUnlocked: (vehicleId: string) => boolean;
   clearFeedback: () => void;
 };
@@ -117,8 +117,22 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const useFreeUnlockForVehicle = useCallback(async (vehicleId: string) => {
-    if (isUnlocking) return false;
-    if (!vehicleId) return false;
+    if (isUnlocking) {
+      return {
+        ok: false,
+        message: "Unlock already in progress.",
+        reason: "unknown",
+        alreadyUnlocked: false,
+      };
+    }
+    if (!vehicleId) {
+      return {
+        ok: false,
+        message: "This vehicle cannot be unlocked yet.",
+        reason: "vehicle_not_found",
+        alreadyUnlocked: false,
+      };
+    }
     try {
       setIsUnlocking(true);
       setErrorMessage(null);
@@ -128,17 +142,38 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       setFreeUnlocksLimit(result.limit);
       setUnlockedVehicleIds(result.state.unlockedVehicleIds);
       if (!result.ok) {
-        setFeedbackMessage("No free unlocks remaining. Upgrade to Pro for full access.");
-        return false;
+        if (result.reason === "no_free_unlocks") {
+          setFeedbackMessage(result.message);
+        } else {
+          setErrorMessage(result.message);
+        }
+        return {
+          ok: false,
+          message: result.message,
+          reason: result.reason,
+          alreadyUnlocked: result.alreadyUnlocked,
+        };
       }
-      if (!result.alreadyUnlocked) {
-        setFeedbackMessage("Free unlock applied. This vehicle is now fully unlocked.");
+      if (result.alreadyUnlocked) {
+        setFeedbackMessage(result.message);
+      } else {
+        setFeedbackMessage(result.message);
       }
-      return true;
+      return {
+        ok: true,
+        message: result.message,
+        reason: result.reason,
+        alreadyUnlocked: result.alreadyUnlocked,
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to use a free unlock right now.";
       setErrorMessage(message);
-      return false;
+      return {
+        ok: false,
+        message,
+        reason: "unknown",
+        alreadyUnlocked: false,
+      };
     } finally {
       setIsUnlocking(false);
     }

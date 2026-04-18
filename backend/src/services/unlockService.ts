@@ -5,6 +5,7 @@ import { resolveStoredVehicleRecordById } from "../lib/canonicalVehicleCatalog.j
 import { repositories } from "../lib/repositoryRegistry.js";
 import { VehicleRecord } from "../types/domain.js";
 import { SubscriptionService } from "./subscriptionService.js";
+import { VehicleService } from "./vehicleService.js";
 
 export type UnlockEntitlementResult = {
   isPro: boolean;
@@ -16,7 +17,24 @@ export type UnlockEntitlementResult = {
 };
 
 export class UnlockService {
-  constructor(private readonly subscriptionService = new SubscriptionService()) {}
+  constructor(
+    private readonly subscriptionService = new SubscriptionService(),
+    private readonly vehicleService = new VehicleService(),
+  ) {}
+
+  private async resolveUnlockableVehicle(vehicleId: string): Promise<VehicleRecord | null> {
+    const storedVehicle = await resolveStoredVehicleRecordById(vehicleId);
+    if (storedVehicle) {
+      return storedVehicle;
+    }
+
+    try {
+      const liveVehicle = await this.vehicleService.getSpecs(vehicleId);
+      return liveVehicle.data ?? null;
+    } catch {
+      return null;
+    }
+  }
 
   async getStatus(userId: string) {
     const balance = await repositories.unlockBalances.getOrCreate(userId);
@@ -127,7 +145,7 @@ export class UnlockService {
     vehicleId: string;
     scanId?: string | null;
   }): Promise<UnlockEntitlementResult> {
-    const vehicle = await resolveStoredVehicleRecordById(input.vehicleId);
+    const vehicle = await this.resolveUnlockableVehicle(input.vehicleId);
     if (!vehicle) {
       throw new AppError(404, "VEHICLE_NOT_FOUND", "Vehicle not found.");
     }

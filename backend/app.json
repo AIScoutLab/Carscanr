@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "ef52e5ec-2a2f-4fea-aa75-b5994f0d2747"
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "com.eus090474.caridentifierbackend",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    }
+  }
+}

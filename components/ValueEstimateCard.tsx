@@ -6,6 +6,7 @@ import { cardStyles } from "@/design/patterns";
 export function ValueEstimateCard({ result }: { result: ValuationResult }) {
   return (
     <View style={styles.card}>
+      <Text style={styles.kicker}>Performance market</Text>
       <Text style={styles.heading}>Estimated market value</Text>
       <View style={styles.row}>
         <Metric label="Trade-in" value={result.tradeIn} range={result.tradeInRange} />
@@ -30,10 +31,19 @@ function Metric({ label, value, range }: { label: string; value: string; range: 
 
 const styles = StyleSheet.create({
   card: { ...cardStyles.standard, padding: 18, gap: 14 },
+  kicker: { ...Typography.caption, color: Colors.premium, textTransform: "uppercase", letterSpacing: 1 },
   heading: { ...Typography.heading, color: Colors.textStrong },
   row: { flexDirection: "row", gap: 10 },
-  metric: { flex: 1, backgroundColor: Colors.cardAlt, borderRadius: 14, padding: 12, gap: 4 },
-  metricLabel: { ...Typography.caption, color: Colors.textMuted },
+  metric: {
+    flex: 1,
+    backgroundColor: Colors.cardAlt,
+    borderRadius: 14,
+    padding: 12,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: Colors.borderSoft,
+  },
+  metricLabel: { ...Typography.caption, color: Colors.textSoft },
   metricValue: { ...Typography.bodyStrong, color: Colors.textStrong },
   metricRange: { ...Typography.caption, color: Colors.textMuted },
   source: { ...Typography.caption, color: Colors.textStrong },

@@ -383,6 +383,262 @@ CarScanr now ships a small bundled offline canonical dataset for fast local hydr
   - [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx)
   - loads bundled offline specs/value first when possible, then silently upgrades from backend when live data arrives
 
+### Scan-result trust model: generation-first, conservative year display, safer estimate detail
+
+This is the current product truth for result accuracy and trustworthiness:
+
+- CarScanr should prefer being broadly right over precisely wrong
+- family and generation/body-style are more trustworthy than exact year in most scans
+- exact year should now be rare
+- estimate-detail should stay useful, but must remain obviously approximate
+
+Recent high-signal frontend work:
+
+- [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx)
+- [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx)
+- [components/CandidateMatchCard.tsx](/Users/mattbrillman/Car_Identifier/components/CandidateMatchCard.tsx)
+- [services/offlineCanonicalService.ts](/Users/mattbrillman/Car_Identifier/services/offlineCanonicalService.ts)
+- [types/index.ts](/Users/mattbrillman/Car_Identifier/types/index.ts)
+
+#### Result-card / candidate-card clickability
+
+Current rule:
+
+- if a real grounded catalog id exists:
+  - result card opens normal vehicle detail
+- if no grounded id exists, but make/model confidence is still strong enough:
+  - result card opens estimate-detail mode through the same vehicle route
+- only very weak/unusable results remain non-tappable
+
+Important current behavior:
+
+- main result card and `Open Full Vehicle Detail` / `Open Estimated Detail` button now share the same target resolution logic
+- candidate cards follow the same rule
+- `CandidateMatchCard` no longer silently depends on a real id to be tappable if an estimated-detail route is valid
+- vague detail CTAs were cleaned up:
+  - `Continue Browsing` / `Continue Exploring` on vehicle detail were replaced with `Scan Another Vehicle`
+  - those CTAs now intentionally route back to [app/(tabs)/scan.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/scan.tsx)
+
+#### Estimate-detail routing semantics
+
+Estimate detail and grounded detail now have explicit separation:
+
+- grounded detail uses the real vehicle id
+- estimate detail uses an `estimate:` id prefix
+- [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx) treats either:
+  - `estimate=1`
+  - or `id.startsWith("estimate:")`
+  as estimate mode
+
+This prevents estimate pages from being mistaken for real catalog records.
+
+#### Estimate-detail quality / approximation safeguards
+
+Estimate-detail is intentionally useful, but conservative.
+
+Current top-of-screen behavior in [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx):
+
+- estimate page gets a stronger visual distinction:
+  - `Estimated vehicle detail` eyebrow
+  - `Photo-based estimate` badge
+  - `Approximate detail, not a verified catalog record` notice
+- section titles in estimate mode are explicit:
+  - `Estimated Identification`
+  - `Approximate Specs`
+  - `Similar Market Range`
+  - `Similar Listings`
+
+Estimate-detail can now show:
+
+- likely year range
+- estimated make/model
+- possible trim only when very well supported
+- approximate specs from a nearby grounded family
+- similar-market value context
+- similar listings
+
+But those are now gated more aggressively.
+
+Current fallback gates:
+
+- `Approximate Specs`
+  - allowed when:
+    - match type is `id` or `exact`, or
+    - `model-family-range` is strong enough
+  - strong enough currently means:
+    - risky families (`Wrangler`, trucks, muscle cars, classics, motorcycles):
+      - exactly 1 family candidate
+      - year delta <= 1 when year exists
+    - non-risky families:
+      - up to 2 family candidates
+      - year delta <= 2 when year exists
+- `Similar Market Range`
+  - stricter than specs
+  - allowed only when:
+    - match type is `id` or `exact`, or
+    - exactly 1 family candidate
+    - non-risky families year delta <= 1
+    - risky families exact year match
+- `Similar Listings`
+  - now uses its own gate instead of piggybacking loosely on market fallback
+  - allowed only when:
+    - match type is `id` or `exact`, or
+    - exactly 1 family candidate
+    - non-risky families year delta <= 1
+    - risky families exact year match
+  - estimate listings are capped to 2 items
+
+Important runtime safety:
+
+- estimate-mode live value refresh is now blocked unless `showApproximateMarket` is true
+- estimate-mode listings fetch is now blocked unless `showApproximateListings` is true
+- this keeps runtime behavior aligned with the UI promises
+
+Trim leakage safeguards:
+
+- estimate-mode trim is now much stricter
+- risky families:
+  - trim only appears if confidence >= `0.98`
+  - and grounding is `id` or `exact`
+- other families:
+  - trim only appears if confidence >= `0.93`
+  - and grounding is still strong
+- otherwise the UI says:
+  - `Not confidently supported`
+
+#### Wrangler generation-first behavior
+
+Wrangler remains the most explicitly guarded family.
+
+Current generation buckets:
+
+- `TJ` = `1997-2006`
+- `JK` = `2007-2018`
+- `JL` = `2018-present`
+
+Current logic in [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx):
+
+- Wrangler generation is resolved before exact year / trim display
+- broad family grounding is checked for generation compatibility before it can help with display
+- if broad Wrangler grounding conflicts with the likely generation:
+  - it cannot supply the effective year range
+  - it cannot supply a hard detail id
+  - it cannot push the wrong trim into display
+
+Current Wrangler display behavior:
+
+- exact year requires very strong support
+- otherwise result title prefers:
+  - `Jeep Wrangler (likely JK, 2007-2018)`
+  - `Jeep Wrangler (likely JL, 2018-present)`
+  - `Jeep Wrangler (likely TJ, 1997-2006)`
+- Wrangler trim stays conservative:
+  - `Willys` needs stronger support
+  - `Rubicon` needs even stronger support
+  - if uncertain, trim is omitted
+
+Current Wrangler ranking behavior:
+
+- generation-compatible Wrangler candidates are ranked ahead of generation-conflicting ones
+- a broad grounded TJ family match should no longer outrank a more plausible JK/JL candidate just because it has stronger catalog coverage
+
+#### Exact-year tightening / generation-first year logic
+
+The app now uses a derived year-decision layer instead of treating overall match confidence as exact-year confidence.
+
+Current derived concepts:
+
+- family confidence:
+  - still mostly reflected by overall candidate confidence plus grounding
+- generation/body-style confidence:
+  - derived from family sensitivity, grounded year range shape, candidate count, and special-family rules
+- year confidence:
+  - derived separately from:
+    - canonical agreement
+    - grounding strength
+    - nearby range conflict
+    - generation support
+- trim confidence:
+  - handled separately and more conservatively
+
+Current year display rules in [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx):
+
+- exact year:
+  - only if:
+    - exact canonical agreement
+    - strong grounding (`id` or `exact`)
+    - strong generation support
+    - no nearby year conflict
+    - very high confidence
+- year range:
+  - preferred when family/generation grounding is stronger than exact-year evidence
+  - this is now the default for many families when the photo supports the general generation more than the exact model year
+- estimated year:
+  - only when:
+    - exact year is still plausible
+    - range support is weak or absent
+    - confidence is high enough
+- omitted year:
+  - if even estimated-year precision would be too risky
+
+Recent tuning:
+
+- exact-year display was relaxed slightly for clearly supported non-risky modern mainstream vehicles
+- this is meant to stop obvious clean scans like a modern Corolla from falling into `(est.)` too often
+- the looser path only applies when:
+  - the family is not one of the risky families
+  - the vehicle is modern mainstream
+  - canonical agreement is strong
+  - nearby year conflict is low
+  - confidence is still high
+
+Generation-sensitive families currently include:
+
+- Wrangler
+- trucks
+- muscle cars
+- classics
+
+Current ranking effect:
+
+- result ranking now prefers generation/range-safe candidates over weak exact-year-looking candidates
+- a generation-correct range result can beat a wrong exact-year result
+
+#### Consistency between result screen and detail screen
+
+Current consistency behavior:
+
+- result cards can carry `displayTitleLabel`
+- estimate-detail route now receives `titleLabel`
+- [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx) uses that safer label for estimated detail headers
+
+This prevents a conservative result card from opening into a more overly precise detail header.
+
+#### Production UI debug cleanup
+
+Visible internal diagnostics are now being removed or gated behind `__DEV__`.
+
+Current user-facing cleanup:
+
+- [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx)
+  - removed visible debug banners such as `RESULT SCREEN LOADED`
+- [app/scan/camera.tsx](/Users/mattbrillman/Car_Identifier/app/scan/camera.tsx)
+  - keeps user-visible scan status
+  - auth/session/timeout/detail diagnostics are now `__DEV__` only
+- [app/(tabs)/scan.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/scan.tsx)
+  - keeps meaningful busy/error status
+  - detailed permission/auth/timeout traces are now `__DEV__` only
+- [app/auth.tsx](/Users/mattbrillman/Car_Identifier/app/auth.tsx)
+  - debug banner is now `__DEV__` only
+- [app/onboarding.tsx](/Users/mattbrillman/Car_Identifier/app/onboarding.tsx)
+  - debug banner is now `__DEV__` only
+- [app/reset-password.tsx](/Users/mattbrillman/Car_Identifier/app/reset-password.tsx)
+  - diagnostics block is now `__DEV__` only
+- [app/(tabs)/profile.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/profile.tsx)
+  - auth/session/API debug block is now `__DEV__` only
+
+Console logs remain for debugging, but TestFlight / production UI should no longer render those internal traces.
+
 ### TestFlight env/runtime fix
 
 Recent production/TestFlight issue:
@@ -785,6 +1041,201 @@ Vehicle detail for canonical matches now has three important product fixes in pr
     2. recent saved scan image by `scanId`
     3. provider/generic fallback image
   - detail screen temporarily shows visible image-source debug text
+
+### Phase 1 hardening status: OCR verification, deterministic manual search, and spec usefulness
+
+This is the current Phase 1 truth before the next TestFlight build:
+
+- the premium dark redesign is considered done enough for Phase 1
+- the remaining focus is scan/detail trustworthiness, not broad UI redesign
+- the biggest remaining pre-build question is whether Google OCR is firing and winning on a real labeled image in local smoke testing
+
+#### Google Vision OCR is now a real backend layer
+
+CarScanr now has a real backend OCR path in addition to OpenAI visible-text extraction.
+
+Key files:
+
+- [backend/src/services/googleVisionOcrService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/googleVisionOcrService.ts)
+- [backend/src/services/scanService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/scanService.ts)
+- [backend/scripts/smokeGoogleVisionOcr.ts](/Users/mattbrillman/Car_Identifier/backend/scripts/smokeGoogleVisionOcr.ts)
+- [backend/tests/googleVisionOcrOverride.test.ts](/Users/mattbrillman/Car_Identifier/backend/tests/googleVisionOcrOverride.test.ts)
+
+Current implementation:
+
+- OCR runs backend-only through `@google-cloud/vision`
+- auth uses `GOOGLE_APPLICATION_CREDENTIALS` when present
+- local dev can fall back to a JSON file in `backend/credentials/`
+- no Google credentials are exposed to the Expo/mobile client
+- OCR uses candidate hints from the current visual result plus alternates
+- OCR is intended to confirm or correct:
+  - 4-digit year
+  - make
+  - model
+  - trim when readable
+
+Current OCR logs:
+
+- `GOOGLE_VISION_OCR_SUMMARY`
+- `GOOGLE_VISION_OCR_APPLIED`
+- `GOOGLE_VISION_OCR_DECISION`
+- `GOOGLE_VISION_OCR_UNAVAILABLE`
+- `GOOGLE_VISION_OCR_LOCAL_FALLBACK`
+- `GOOGLE_VISION_OCR_CLIENT_INIT_FAILED`
+- `GOOGLE_VISION_OCR_FAILED`
+
+#### Hard OCR override semantics
+
+Current product intent:
+
+- if OCR can resolve a valid year + make + model from readable text, that evidence should override weaker visual-only year guesses
+- OCR is now intended to be primary, not secondary, when structured readable vehicle text exists
+
+Current decision fields:
+
+- `overrideTriggered`
+  - `true` only when OCR replaces a weaker/different winner
+- `confirmationApplied`
+  - currently retained for smoke/log shape compatibility, but no longer the primary expected path for structured OCR
+- `finalWinningSource`
+  - one of:
+    - `text_override`
+    - `visual_candidate`
+
+Current acceptance rule:
+
+- accept OCR as authoritative when all of the following are true:
+  - valid 4-digit year
+  - year is between `1980` and `currentYear + 1`
+  - make is non-empty
+  - model is non-empty
+- do not require family agreement or visual confirmation before applying OCR override
+
+Important current behavior in [backend/src/services/scanService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/scanService.ts):
+
+- OCR evidence is now applied on:
+  - fresh live vision results
+  - image-cache hits
+  - cached-analysis hits
+  - similar-image cache hits
+- OCR-confirmed results can bypass stability-cache reuse if the cached winner conflicts with hard readable-text confirmation:
+  - `SCAN_STABILITY_CACHE_BYPASSED_FOR_OCR`
+- smoke output now distinguishes:
+  - OCR replaced the winner
+  - OCR was unavailable / ignored
+- OCR override now stamps the normalized result with:
+  - `source: "ocr_override"`
+- log added:
+  - `OCR_OVERRIDE_APPLIED`
+
+#### Local OCR smoke test
+
+Current local smoke test command:
+
+```bash
+cd /Users/mattbrillman/Car_Identifier/backend
+GOOGLE_APPLICATION_CREDENTIALS=/Users/mattbrillman/Car_Identifier/backend/credentials/google-vision.json \
+npm run smoke:ocr -- /absolute/path/to/your-image.jpg Honda "CR-V" 2026
+```
+
+Current smoke-test script:
+
+- [backend/scripts/smokeGoogleVisionOcr.ts](/Users/mattbrillman/Car_Identifier/backend/scripts/smokeGoogleVisionOcr.ts)
+
+Current output shape includes:
+
+- `ocr.rawTextSummary`
+- `ocr.detectedYear`
+- `ocr.detectedMake`
+- `ocr.detectedModel`
+- `ocr.decisionReason`
+- `before`
+- `after`
+- `overrideTriggered`
+- `confirmationApplied`
+
+Important reality check:
+
+- the script path itself now works
+- the last failed run was only because the example image path was still a placeholder
+- before shipping the next TestFlight build, run this on a real labeled image like `2026 Honda CR-V`
+- Phase 1 should not be called fully complete until one real local OCR smoke image confirms that the override is firing as expected
+
+#### Manual search is now the intended deterministic / safe path
+
+Current product intent:
+
+- manual search should be the least guessy path in the app
+- if a user narrows to an exact trim, detail should preserve the strongest available image/spec/horsepower path
+
+Current behavior:
+
+- [app/(tabs)/search.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/search.tsx)
+  - trim narrowing is now explicit when multiple trims are present
+  - “all trims” escape hatch was removed in that state
+  - exact-detail open is blocked until a trim is selected when multiple trims exist
+  - supporting copy now tells the user trim selection is needed to keep image/spec detail exact
+- [services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/services/vehicleService.ts)
+  - exact manual-search detail now prefers:
+    1. exact live/provider image
+    2. exact canonical/offline hero image
+    3. exact matched provider image
+    4. generic fallback only as a true last resort
+  - horsepower/spec merge is intended to preserve exact live/provider/canonical detail before falling back
+
+Current limitation:
+
+- this is still not a full structured `Year -> Make -> Model -> Trim` selector flow
+- manual search is now more deterministic for exact hits, but not architecturally complete
+
+#### Horsepower/spec usefulness truth
+
+Current horsepower priority:
+
+1. exact provider/backend horsepower
+2. parsed exact horsepower from real horsepower-like fields
+3. exact canonical/offline horsepower
+4. family-level fallback when family support is strong enough
+5. `Unknown`
+
+Current family-level fallback rule:
+
+- only allowed when the family/generation grounding is strong enough to be useful and safe
+- not allowed for broad/weak matches
+
+Current UI labels in [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx):
+
+- `Horsepower`
+- `Typical horsepower`
+- `Horsepower varies by trim`
+
+Safeguards that should remain true:
+
+- never treat `0 hp` as real
+- never parse displacement like `4.0L` into `4 hp`
+- if fallback is too weak, stay honest and show unknown instead of fake precision
+
+#### Phase 1 readiness truth
+
+Current honest status:
+
+- OCR + hard text override:
+  - mostly complete
+- exact-year trust for clear labeled images:
+  - mostly complete
+- horsepower/spec usefulness:
+  - mostly complete
+- manual search trustworthiness:
+  - mostly complete
+- scan/detail trustworthiness for everyday users:
+  - mostly complete
+
+Biggest remaining pre-build hole:
+
+- run the local OCR smoke test on a real labeled image and confirm:
+  - `overrideTriggered: true`
+  - `after.year/make/model` match the readable text
+  - `source` is treated as OCR override in the app result flow
 
 ## Important Files
 

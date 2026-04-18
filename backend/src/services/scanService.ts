@@ -11,6 +11,7 @@ import { resizeForVision, computeDhashHex } from "../lib/imageProcessing.js";
 import { buildLiveVehicleId } from "../providers/marketcheck/vehicleId.js";
 import { AuthContext, MatchedVehicleCandidate, ScanRecord, VehicleRecord, VisionProviderResult, VisionResult } from "../types/domain.js";
 import { AnalysisCacheService } from "./analysisCacheService.js";
+import { GoogleVisionOcrResult, googleVisionOcrService } from "./googleVisionOcrService.js";
 import { UsageService } from "./usageService.js";
 import { UnlockService } from "./unlockService.js";
 
@@ -141,6 +142,25 @@ function normalizeModelFamily(model: string | undefined | null) {
     .trim();
 }
 
+function extractVisibleYearEvidence(...values: Array<string | string[] | undefined | null>) {
+  for (const value of values) {
+    const text = Array.isArray(value) ? value.join(" ") : value;
+    const normalized = normalizeLookupText(text);
+    if (!normalized) {
+      continue;
+    }
+    const matched = normalized.match(/\b(19[5-9]\d|20[0-4]\d)\b/);
+    if (!matched) {
+      continue;
+    }
+    const parsed = Number(matched[1]);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
 function buildPopularityKey(input: {
   year: number;
   make: string;
@@ -211,6 +231,249 @@ function getTokenOverlapScore(left: string[], right: string[]) {
   return matches / Math.max(left.length, right.length);
 }
 
+function buildCandidateSignature(input: {
+  year: number;
+  make: string;
+  model: string;
+  trim?: string | null;
+}) {
+  return [
+    input.year,
+    normalizeMatchText(input.make),
+    normalizeModelFamily(input.model),
+    normalizeModelFamily(input.trim ?? "base") || "base",
+  ].join("|");
+}
+
+function buildVisionResultSignature(result: Pick<VisionResult, "likely_year" | "likely_make" | "likely_model" | "likely_trim">) {
+  return buildCandidateSignature({
+    year: result.likely_year,
+    make: result.likely_make,
+    model: result.likely_model,
+    trim: result.likely_trim,
+  });
+}
+
+function buildMatchedVehicleSignature(candidate: Pick<MatchedVehicleCandidate, "year" | "make" | "model" | "trim">) {
+  return buildCandidateSignature({
+    year: candidate.year,
+    make: candidate.make,
+    model: candidate.model,
+    trim: candidate.trim,
+  });
+}
+
+function hasHardTextConfirmation(result: VisionResult) {
+  return result.visible_clues.some((clue) => clue.toLowerCase().startsWith("readable text confirms "));
+}
+
+function buildOcrCandidateHints(result: VisionResult) {
+  const hints: Array<{
+    year: number;
+    make: string;
+    model: string;
+    trim?: string;
+  } | null> = [
+    {
+      year: result.likely_year,
+      make: result.likely_make,
+      model: result.likely_model,
+      trim: result.likely_trim,
+    },
+    ...(result.alternate_candidates ?? []).map((candidate) => ({
+      year: candidate.likely_year,
+      make: candidate.likely_make,
+      model: candidate.likely_model,
+      trim: candidate.likely_trim,
+    })),
+    result.visible_make_text && result.visible_model_text
+      ? {
+          year: result.likely_year,
+          make: result.visible_make_text,
+          model: result.visible_model_text,
+          trim: result.visible_trim_text,
+        }
+      : null,
+  ];
+
+  return hints.filter((candidate) => Boolean(candidate?.make && candidate.model)) as Array<{
+    year: number;
+    make: string;
+    model: string;
+    trim?: string;
+  }>;
+}
+
+function hasValidStructuredOcrFields(ocr: GoogleVisionOcrResult | null) {
+  if (!ocr?.detectedYear || !ocr.detectedMake || !ocr.detectedModel) {
+    return false;
+  }
+  const currentYear = new Date().getFullYear();
+  return ocr.detectedYear >= 1980 && ocr.detectedYear <= currentYear + 1;
+}
+
+export function applyGoogleOcrOverride(result: VisionResult, ocr: GoogleVisionOcrResult | null): VisionResult {
+  if (!hasValidStructuredOcrFields(ocr)) {
+    return result;
+  }
+  const structuredOcr = ocr as GoogleVisionOcrResult & {
+    detectedYear: number;
+    detectedMake: string;
+    detectedModel: string;
+  };
+
+  const structured = {
+    year: structuredOcr.detectedYear,
+    make: structuredOcr.detectedMake,
+    model: structuredOcr.detectedModel,
+    trim: structuredOcr.detectedTrim ?? result.likely_trim,
+  };
+
+  const previousPrimary = {
+    likely_year: result.likely_year,
+    likely_make: result.likely_make,
+    likely_model: result.likely_model,
+    likely_trim: result.likely_trim,
+    confidence: Math.max(0.6, Math.min(result.confidence, 0.96)),
+  };
+
+  const overridden = normalizeVisionResult({
+    ...result,
+    likely_year: structured.year,
+    likely_make: structured.make,
+    likely_model: structured.model,
+    likely_trim: structured.trim ?? result.likely_trim,
+    source: "ocr_override",
+    confidence: Math.max(result.confidence, 0.993),
+    visible_make_text: structured.make,
+    visible_model_text: structured.model,
+    visible_trim_text: structured.trim ?? result.visible_trim_text,
+    visible_clues: [
+      `Readable text confirms ${structured.year} ${structured.make} ${structured.model}`.trim(),
+      ...result.visible_clues,
+    ],
+    alternate_candidates: [
+      previousPrimary,
+      ...result.alternate_candidates,
+    ].filter(
+      (candidate, index, array) =>
+        array.findIndex(
+          (entry) =>
+            entry.likely_year === candidate.likely_year &&
+            normalizeMatchText(entry.likely_make) === normalizeMatchText(candidate.likely_make) &&
+            normalizeModelFamily(entry.likely_model) === normalizeModelFamily(candidate.likely_model),
+        ) === index,
+    ),
+  });
+  logger.info(
+    {
+      label: "OCR_OVERRIDE_APPLIED",
+      before: {
+        year: result.likely_year,
+        make: result.likely_make,
+        model: result.likely_model,
+      },
+      after: {
+        year: overridden.likely_year,
+        make: overridden.likely_make,
+        model: overridden.likely_model,
+      },
+    },
+    "OCR_OVERRIDE_APPLIED",
+  );
+  return overridden;
+}
+
+function summarizeOcrDecision(input: {
+  before: VisionResult;
+  after: VisionResult;
+  ocrResult: GoogleVisionOcrResult | null;
+}) {
+  if (!input.ocrResult) {
+    return {
+      ocrAvailable: false,
+      overrideTriggered: false,
+      confirmationApplied: false,
+      ignoredReason: "ocr_unavailable",
+      finalWinningSource: "visual_candidate" as const,
+    };
+  }
+
+  const beforeSignature = buildCandidateSignature({
+    year: input.before.likely_year,
+    make: input.before.likely_make,
+    model: input.before.likely_model,
+    trim: input.before.likely_trim,
+  });
+  const afterSignature = buildCandidateSignature({
+    year: input.after.likely_year,
+    make: input.after.likely_make,
+    model: input.after.likely_model,
+    trim: input.after.likely_trim,
+  });
+  const overrideTriggered = beforeSignature !== afterSignature;
+  const confirmationApplied = false;
+
+  if (overrideTriggered) {
+    return {
+      ocrAvailable: true,
+      overrideTriggered: true,
+      confirmationApplied: false,
+      ignoredReason: null,
+      finalWinningSource: "text_override" as const,
+    };
+  }
+
+  return {
+    ocrAvailable: true,
+    overrideTriggered: false,
+    confirmationApplied: false,
+    ignoredReason: hasValidStructuredOcrFields(input.ocrResult)
+      ? "already_aligned_with_visual_result"
+      : input.ocrResult.decisionReason,
+    finalWinningSource: "visual_candidate" as const,
+  };
+}
+
+function enforceOcrResolvedPrimaryCandidate(input: {
+  normalizedResult: VisionResult;
+  resolvedVehicles: MatchedVehicleCandidate[];
+}) {
+  if (input.normalizedResult.source !== "ocr_override") {
+    return {
+      resolvedVehicles: input.resolvedVehicles,
+      overwrittenLater: false,
+    };
+  }
+
+  const normalizedSignature = buildVisionResultSignature(input.normalizedResult);
+  const topCandidate = input.resolvedVehicles[0] ?? null;
+  const topSignature = topCandidate ? buildMatchedVehicleSignature(topCandidate) : null;
+  const overwrittenLater = Boolean(topCandidate) && topSignature !== normalizedSignature;
+
+  const exactResolvedCandidate =
+    input.resolvedVehicles.find((candidate) => buildMatchedVehicleSignature(candidate) === normalizedSignature) ?? null;
+
+  const ocrPrimaryCandidate: MatchedVehicleCandidate = exactResolvedCandidate ?? {
+    vehicleId: "",
+    year: input.normalizedResult.likely_year,
+    make: input.normalizedResult.likely_make,
+    model: input.normalizedResult.likely_model,
+    trim: input.normalizedResult.likely_trim ?? "",
+    confidence: Math.max(input.normalizedResult.confidence, input.resolvedVehicles[0]?.confidence ?? 0),
+    matchReason: "Readable text in the image confirms this vehicle.",
+  };
+
+  const remaining = input.resolvedVehicles.filter(
+    (candidate) => buildMatchedVehicleSignature(candidate) !== buildMatchedVehicleSignature(ocrPrimaryCandidate),
+  );
+
+  return {
+    resolvedVehicles: [ocrPrimaryCandidate, ...remaining],
+    overwrittenLater,
+  };
+}
+
 function stageFailureMessage(stage: ScanFailureStage) {
   switch (stage) {
     case "VISION_REQUEST":
@@ -256,6 +519,90 @@ export class ScanService {
     private readonly analysisCacheService = new AnalysisCacheService(),
     private readonly unlockService = new UnlockService(),
   ) {}
+
+  private async applyGoogleOcrEvidence(input: {
+    scanId: string;
+    normalized: VisionResult;
+    imageBuffer: Buffer;
+    mimeType: string;
+  }) {
+    const ocrResult = await googleVisionOcrService.extractVehicleText({
+      imageBuffer: input.imageBuffer,
+      mimeType: input.mimeType,
+      candidateHints: buildOcrCandidateHints(input.normalized),
+    });
+
+    if (!ocrResult) {
+      logger.info(
+        {
+          label: "GOOGLE_VISION_OCR_DECISION",
+          scanId: input.scanId,
+          ocrAvailable: false,
+          parsedStructuredCandidate: null,
+          overrideTriggered: false,
+          confirmationApplied: false,
+          ignoredReason: "ocr_unavailable",
+          finalWinningSource: "visual_candidate",
+        },
+        "GOOGLE_VISION_OCR_DECISION",
+      );
+      return { normalized: input.normalized, ocrResult: null as GoogleVisionOcrResult | null };
+    }
+
+    const normalizedWithOcr = applyGoogleOcrOverride(input.normalized, ocrResult);
+    const decision = summarizeOcrDecision({
+      before: input.normalized,
+      after: normalizedWithOcr,
+      ocrResult,
+    });
+    logger.error(
+      {
+        label: "GOOGLE_VISION_OCR_APPLIED",
+        scanId: input.scanId,
+        detectedYear: ocrResult.detectedYear,
+        detectedMake: ocrResult.detectedMake,
+        detectedModel: ocrResult.detectedModel,
+        detectedTrim: ocrResult.detectedTrim,
+        structuredVehicle: ocrResult.structuredVehicle,
+        credentialSource: ocrResult.credentialSource,
+        before: {
+          year: input.normalized.likely_year,
+          make: input.normalized.likely_make,
+          model: input.normalized.likely_model,
+          trim: input.normalized.likely_trim ?? null,
+          confidence: input.normalized.confidence,
+        },
+        after: {
+          year: normalizedWithOcr.likely_year,
+          make: normalizedWithOcr.likely_make,
+          model: normalizedWithOcr.likely_model,
+          trim: normalizedWithOcr.likely_trim ?? null,
+          confidence: normalizedWithOcr.confidence,
+        },
+      },
+      "GOOGLE_VISION_OCR_APPLIED",
+    );
+    logger.info(
+      {
+        label: "GOOGLE_VISION_OCR_DECISION",
+        scanId: input.scanId,
+        rawTextSummary: ocrResult.rawText.replace(/\s+/g, " ").trim().slice(0, 220),
+        parsedStructuredCandidate: ocrResult.structuredVehicle,
+        detectedYear: ocrResult.detectedYear,
+        detectedMake: ocrResult.detectedMake,
+        detectedModel: ocrResult.detectedModel,
+        detectedTrim: ocrResult.detectedTrim,
+        textCandidateValidated: Boolean(ocrResult.structuredVehicle),
+        overrideTriggered: decision.overrideTriggered,
+        confirmationApplied: decision.confirmationApplied,
+        ignoredReason: decision.ignoredReason,
+        finalWinningSource: decision.finalWinningSource,
+      },
+      "GOOGLE_VISION_OCR_DECISION",
+    );
+
+    return { normalized: normalizedWithOcr, ocrResult };
+  }
 
   async identifyVehicle(input: {
     auth: AuthContext;
@@ -456,7 +803,22 @@ export class ScanService {
       });
       let matchedVehicles: MatchedVehicleCandidate[];
       let usedStabilityCache = false;
-      if (stabilityCacheHit && stabilityCacheHit.confidence >= 0.8) {
+      const shouldBypassStabilityCache =
+        Boolean(stabilityCacheHit) &&
+        hasHardTextConfirmation(normalizedResult) &&
+        buildCandidateSignature({
+          year: normalizedResult.likely_year,
+          make: normalizedResult.likely_make,
+          model: normalizedResult.likely_model,
+          trim: normalizedResult.likely_trim,
+        }) !==
+          buildCandidateSignature({
+            year: stabilityCacheHit!.normalizedResult.likely_year,
+            make: stabilityCacheHit!.normalizedResult.likely_make,
+            model: stabilityCacheHit!.normalizedResult.likely_model,
+            trim: stabilityCacheHit!.normalizedResult.likely_trim,
+          });
+      if (stabilityCacheHit && stabilityCacheHit.confidence >= 0.8 && !shouldBypassStabilityCache) {
         usedStabilityCache = true;
         normalizedResult = stabilityCacheHit.normalizedResult;
         logger.error(
@@ -475,9 +837,22 @@ export class ScanService {
         );
         matchedVehicles = stabilityCacheHit.resolvedVehicles;
       } else {
+        if (shouldBypassStabilityCache) {
+          logger.error(
+            {
+              label: "SCAN_STABILITY_CACHE_BYPASSED_FOR_OCR",
+              scanId,
+              userId: input.auth.userId,
+              visualHash,
+              cachedResult: stabilityCacheHit?.normalizedResult,
+              ocrConfirmedResult: normalizedResult,
+            },
+            "SCAN_STABILITY_CACHE_BYPASSED_FOR_OCR",
+          );
+        }
         matchedVehicles = await this.resolveCatalogMatches(normalizedResult, enrichmentContext);
       }
-      const resolvedVehicles =
+      const resolvedVehiclesBeforeOcrLock =
         matchedVehicles.length > 0
           ? matchedVehicles
           : [
@@ -491,6 +866,11 @@ export class ScanService {
                 matchReason: "Estimated match. Full catalog details are still being linked.",
               },
             ];
+      const ocrLocked = enforceOcrResolvedPrimaryCandidate({
+        normalizedResult,
+        resolvedVehicles: resolvedVehiclesBeforeOcrLock,
+      });
+      const resolvedVehicles = ocrLocked.resolvedVehicles;
       const hasCanonicalVehicle = resolvedVehicles.some((vehicle) => Boolean(vehicle.vehicleId));
 
       if (!hasCanonicalVehicle) {
@@ -519,6 +899,30 @@ export class ScanService {
           finalResultType: hasCanonicalVehicle ? "canonical" : "ai_only",
         },
         "VEHICLE_MATCH_FINAL_SUMMARY",
+      );
+      logger.info(
+        {
+          label: "OCR_FINAL_RESULT",
+          requestedPath: "/api/scan/identify",
+          parsed:
+            normalizedResult.source === "ocr_override"
+              ? {
+                  year: normalizedResult.likely_year,
+                  make: normalizedResult.likely_make,
+                  model: normalizedResult.likely_model,
+                }
+              : null,
+          final: {
+            year: resolvedVehicles[0]?.year ?? normalizedResult.likely_year,
+            make: resolvedVehicles[0]?.make ?? normalizedResult.likely_make,
+            model: resolvedVehicles[0]?.model ?? normalizedResult.likely_model,
+            source: normalizedResult.source ?? "visual_candidate",
+          },
+          overrideApplied: normalizedResult.source === "ocr_override",
+          confirmationApplied: false,
+          overwrittenLater: ocrLocked.overwrittenLater,
+        },
+        "OCR_FINAL_RESULT",
       );
       await this.trackVehiclePopularityAndPromotion({
         scanId,
@@ -714,10 +1118,16 @@ export class ScanService {
         scanId,
         source: "primary-image-key",
       });
-      const normalized = normalizeVisionResult(cachedImage.normalizedVehicleJson as VisionResult);
+      const baseNormalized = normalizeVisionResult(cachedImage.normalizedVehicleJson as VisionResult);
+      const { normalized } = await this.applyGoogleOcrEvidence({
+        scanId,
+        normalized: baseNormalized,
+        imageBuffer: input.processedBuffer,
+        mimeType: input.processedMime,
+      });
       return {
         normalized,
-        rawResponse: { source: "image_cache", imageKey: input.imageKey },
+        rawResponse: { source: "image_cache", imageKey: input.imageKey, ocr: cachedImage.ocrJson ?? null },
         provider: "cache:image",
       };
     }
@@ -732,10 +1142,16 @@ export class ScanService {
         scanId,
         source: "similar-image-hash",
       });
-      const normalized = normalizeVisionResult(similarImage.normalizedVehicleJson as VisionResult);
+      const baseNormalized = normalizeVisionResult(similarImage.normalizedVehicleJson as VisionResult);
+      const { normalized } = await this.applyGoogleOcrEvidence({
+        scanId,
+        normalized: baseNormalized,
+        imageBuffer: input.processedBuffer,
+        mimeType: input.processedMime,
+      });
       return {
         normalized,
-        rawResponse: { source: "image_cache_similar", imageKey: similarImage.imageKey, visualHash: input.visualHash },
+        rawResponse: { source: "image_cache_similar", imageKey: similarImage.imageKey, visualHash: input.visualHash, ocr: similarImage.ocrJson ?? null },
         provider: "cache:image_similar",
       };
     }
@@ -750,7 +1166,13 @@ export class ScanService {
         scanId,
         source: "analysis-key",
       });
-      const normalized = normalizeVisionResult(cachedAnalysis.resultJson as VisionResult);
+      const baseNormalized = normalizeVisionResult(cachedAnalysis.resultJson as VisionResult);
+      const { normalized } = await this.applyGoogleOcrEvidence({
+        scanId,
+        normalized: baseNormalized,
+        imageBuffer: input.processedBuffer,
+        mimeType: input.processedMime,
+      });
       return {
         normalized,
         rawResponse: { source: "analysis_cache", analysisKey },
@@ -768,7 +1190,13 @@ export class ScanService {
           scanId,
           source: "analysis-wait",
         });
-        const normalized = normalizeVisionResult(waited.resultJson as VisionResult);
+        const baseNormalized = normalizeVisionResult(waited.resultJson as VisionResult);
+        const { normalized } = await this.applyGoogleOcrEvidence({
+          scanId,
+          normalized: baseNormalized,
+          imageBuffer: input.processedBuffer,
+          mimeType: input.processedMime,
+        });
         return {
           normalized,
           rawResponse: { source: "analysis_cache_wait", analysisKey },
@@ -806,7 +1234,13 @@ export class ScanService {
           scanId,
           source: "analysis-begin-wait",
         });
-        const normalized = normalizeVisionResult(waited.resultJson as VisionResult);
+        const baseNormalized = normalizeVisionResult(waited.resultJson as VisionResult);
+        const { normalized } = await this.applyGoogleOcrEvidence({
+          scanId,
+          normalized: baseNormalized,
+          imageBuffer: input.processedBuffer,
+          mimeType: input.processedMime,
+        });
         return {
           normalized,
           rawResponse: { source: "analysis_cache_wait", analysisKey },
@@ -846,7 +1280,13 @@ export class ScanService {
         userId: input.auth.userId,
         provider: result.provider,
       });
-      const normalized = normalizeVisionResult(result.normalized);
+      const baseNormalized = normalizeVisionResult(result.normalized);
+      const { normalized, ocrResult } = await this.applyGoogleOcrEvidence({
+        scanId,
+        normalized: baseNormalized,
+        imageBuffer: input.processedBuffer,
+        mimeType: input.processedMime,
+      });
       const vehicleKey = buildVehicleKey({
         year: normalized.likely_year,
         make: normalized.likely_make,
@@ -877,7 +1317,7 @@ export class ScanService {
           fileWidth: input.width,
           fileHeight: input.height,
           normalizedVehicleJson: normalized,
-          ocrJson: null,
+          ocrJson: ocrResult,
           extractionJson: normalized,
           createdAt: cachedImage?.createdAt ?? new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -889,7 +1329,7 @@ export class ScanService {
           source: "primary-upload-result",
         },
       );
-      return { ...result, normalized };
+      return { ...result, normalized, rawResponse: { providerRaw: result.rawResponse, ocr: ocrResult } };
     } catch (error) {
       markDegradedToLiveVision();
       logger.warn(
@@ -960,6 +1400,13 @@ export class ScanService {
   }
 
   private async resolveCatalogMatches(result: VisionResult, context: ProviderEnrichmentContext): Promise<MatchedVehicleCandidate[]> {
+    const visibleYearEvidence = extractVisibleYearEvidence(
+      result.visible_badge_text,
+      result.visible_make_text,
+      result.visible_model_text,
+      result.visible_trim_text,
+      result.visible_clues,
+    );
     logger.error(
       {
         label: "VISIBLE_TEXT_EVIDENCE",
@@ -968,6 +1415,7 @@ export class ScanService {
         visibleMakeText: result.visible_make_text ?? null,
         visibleModelText: result.visible_model_text ?? null,
         visibleTrimText: result.visible_trim_text ?? null,
+        visibleYearEvidence,
         emblemLogoClues: result.emblem_logo_clues ?? [],
       },
       "VISIBLE_TEXT_EVIDENCE",
@@ -1003,8 +1451,11 @@ export class ScanService {
       });
       const contradictoryModel = contradictsEvidence(candidate.model, result.visible_model_text ?? result.visible_badge_text);
       const contradictoryMake = contradictsEvidence(candidate.make, result.visible_make_text);
+      const trimEvidenceMatch = hasEvidenceTokenMatch(candidate.trim, result.visible_trim_text ?? result.visible_badge_text);
+      const modelEvidenceMatch = hasEvidenceTokenMatch(candidate.model, result.visible_model_text ?? result.visible_badge_text);
+      const makeEvidenceMatch = hasEvidenceTokenMatch(candidate.make, result.visible_make_text);
       if (contradictoryModel || contradictoryMake) {
-        nextConfidence = Math.max(0.18, nextConfidence - 0.22);
+        nextConfidence = Math.max(0.05, nextConfidence - 0.4);
         logger.error(
           {
             label: "CANDIDATE_CONTRADICTS_VISIBLE_TEXT",
@@ -1016,11 +1467,16 @@ export class ScanService {
           },
           "CANDIDATE_CONTRADICTS_VISIBLE_TEXT",
         );
-      } else if (
-        hasEvidenceTokenMatch(candidate.model, result.visible_model_text ?? result.visible_badge_text) ||
-        hasEvidenceTokenMatch(candidate.make, result.visible_make_text)
-      ) {
-        nextConfidence = Math.min(0.99, nextConfidence + 0.05);
+      } else if (modelEvidenceMatch || makeEvidenceMatch || trimEvidenceMatch) {
+        const evidenceBoost = (modelEvidenceMatch ? 0.24 : 0) + (makeEvidenceMatch ? 0.14 : 0) + (trimEvidenceMatch ? 0.1 : 0);
+        nextConfidence = Math.min(0.995, nextConfidence + evidenceBoost);
+      }
+      if (typeof visibleYearEvidence === "number") {
+        if (candidate.year === visibleYearEvidence) {
+          nextConfidence = Math.min(0.999, nextConfidence + 0.3);
+        } else if (Math.abs(candidate.year - visibleYearEvidence) > 1) {
+          nextConfidence = Math.max(0.05, nextConfidence - 0.22);
+        }
       }
       const popularityMatch = context.popularityMatches?.find((entry) => entry.normalizedKey === candidatePopularityKey);
       if (popularityMatch) {
@@ -1062,8 +1518,40 @@ export class ScanService {
       trim: result.likely_trim,
       confidence: result.confidence,
     });
+    const visibleTextSupportsPrimaryFamily =
+      hasEvidenceTokenMatch(result.likely_make, result.visible_make_text) ||
+      hasEvidenceTokenMatch(result.likely_model, result.visible_model_text ?? result.visible_badge_text);
+    const visibleTextDominantCandidate =
+      visibleTextSupportsPrimaryFamily &&
+      (Boolean(result.visible_make_text) || Boolean(result.visible_model_text ?? result.visible_badge_text) || typeof visibleYearEvidence === "number")
+        ? normalizeCandidateWithEvidence({
+            year: visibleYearEvidence ?? result.likely_year,
+            make: result.visible_make_text ?? result.likely_make,
+            model: result.visible_model_text ?? result.visible_badge_text ?? result.likely_model,
+            trim: result.visible_trim_text ?? result.likely_trim,
+            confidence:
+              typeof visibleYearEvidence === "number"
+                ? 0.997
+                : 0.985,
+          })
+        : null;
+    const visibleYearCandidate =
+      typeof visibleYearEvidence === "number" &&
+      visibleYearEvidence !== result.likely_year &&
+      visibleTextSupportsPrimaryFamily
+        ? normalizeCandidateWithEvidence({
+            year: visibleYearEvidence,
+            make: result.likely_make,
+            model: result.likely_model,
+            trim: result.likely_trim,
+            confidence: 0.994,
+          })
+        : null;
+
     const baseCandidates = [
       primaryCandidate,
+      visibleTextDominantCandidate,
+      visibleYearCandidate,
       ...result.alternate_candidates.map((candidate) => ({
         year: candidate.likely_year,
         make: candidate.likely_make,
@@ -1071,7 +1559,13 @@ export class ScanService {
         trim: candidate.likely_trim,
         confidence: candidate.confidence,
       })).map(normalizeCandidateWithEvidence),
-    ];
+    ]
+      .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
+      .sort((left, right) => (right.confidence ?? 0) - (left.confidence ?? 0))
+      .filter((candidate, index, array) => {
+        const signature = buildCandidateSignature(candidate);
+        return array.findIndex((entry) => buildCandidateSignature(entry) === signature) === index;
+      });
 
     const visibleModelFamily = normalizeModelFamily(result.visible_model_text ?? result.visible_badge_text);
     const visibleMakeFamily = normalizeMatchText(result.visible_make_text);
@@ -1570,6 +2064,12 @@ export class ScanService {
     const visibleModelEvidence = context.visibleModelText ?? context.visibleBadgeText;
     const visibleMakeEvidence = context.visibleMakeText;
     const visibleTrimEvidence = context.visibleTrimText;
+    const visibleYearEvidence = extractVisibleYearEvidence(
+      context.visibleBadgeText,
+      context.visibleMakeText,
+      context.visibleModelText,
+      context.visibleTrimText,
+    );
 
     const canonicalRankedMatches = canonicalCandidates
       .map((record) => {
@@ -1645,7 +2145,7 @@ export class ScanService {
         }
 
         if (badgeModelMatch || makeEvidenceMatch || badgeTrimMatch) {
-          const boost = (badgeModelMatch ? 38 : 0) + (makeEvidenceMatch ? 16 : 0) + (badgeTrimMatch ? 12 : 0);
+          const boost = (badgeModelMatch ? 52 : 0) + (makeEvidenceMatch ? 24 : 0) + (badgeTrimMatch ? 18 : 0);
           score += boost;
           logger.error(
             {
@@ -1666,7 +2166,7 @@ export class ScanService {
           contradictsEvidence(vehicle.model, visibleModelEvidence) ||
           contradictsEvidence(vehicle.make, visibleMakeEvidence)
         ) {
-          score -= 55;
+          score -= 72;
           logger.error(
             {
               label: "CANDIDATE_CONTRADICTS_VISIBLE_TEXT",
@@ -1681,6 +2181,8 @@ export class ScanService {
         }
 
         score += Math.round(overlapScore * 40);
+        if (typeof visibleYearEvidence === "number" && vehicle.year === visibleYearEvidence) score += 28;
+        else if (typeof visibleYearEvidence === "number" && Math.abs(vehicle.year - visibleYearEvidence) > 1) score -= 18;
         if (yearDistance === 0) score += 20;
         else if (yearDistance === 1) score += 12;
         else if (yearDistance === 2) score += 8;
@@ -2100,7 +2602,7 @@ export class ScanService {
       fileWidth: number;
       fileHeight: number;
       normalizedVehicleJson: VisionResult;
-      ocrJson: null;
+      ocrJson: unknown | null;
       extractionJson: VisionResult;
       createdAt: string;
       updatedAt: string;

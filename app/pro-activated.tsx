@@ -11,7 +11,7 @@ export default function ProActivatedScreen() {
         <Text style={styles.eyebrow}>Pro activated</Text>
         <Text style={styles.title}>Unlimited scans and full vehicle details are now unlocked.</Text>
         <Text style={styles.body}>
-          You can go back to scanning, open listings and values, and keep browsing without the five-scan free limit.
+          You can go back to scanning, open listings and values, and use full premium detail without worrying about free unlock limits.
         </Text>
       </View>
       <PrimaryButton label="Continue" onPress={() => router.replace("/(tabs)/scan")} />
@@ -25,7 +25,7 @@ const styles = StyleSheet.create({
     borderRadius: Radius.xl,
     padding: 24,
     gap: 12,
-    marginTop: 80,
+    marginTop: 28,
   },
   eyebrow: { ...Typography.caption, color: Colors.accent },
   title: { ...Typography.title, color: Colors.text },

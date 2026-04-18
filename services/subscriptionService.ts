@@ -36,6 +36,23 @@ type BackendUnlockUseResponse = {
   status: BackendUnlockStatus;
 };
 
+type FreeUnlockActionResult = {
+  ok: boolean;
+  state: FreeUnlockState;
+  remaining: number;
+  limit: number;
+  alreadyUnlocked: boolean;
+  reason:
+    | "already_unlocked"
+    | "consumed"
+    | "no_free_unlocks"
+    | "vehicle_not_found"
+    | "auth_required"
+    | "network_error"
+    | "unknown";
+  message: string;
+};
+
 const FREE_UNLOCKS_LIMIT = 5;
 const FREE_UNLOCK_STORAGE_KEY = "carscanr.freeUnlocks.v1";
 
@@ -207,7 +224,7 @@ export const subscriptionService = {
     }
   },
 
-  async useFreeUnlockForVehicle(vehicleId: string) {
+  async useFreeUnlockForVehicle(vehicleId: string): Promise<FreeUnlockActionResult> {
     const user = await authService.getCurrentUser();
     const token = await authService.getAccessToken();
     if (!token) {
@@ -220,6 +237,8 @@ export const subscriptionService = {
           remaining: Math.max(0, FREE_UNLOCKS_LIMIT - unlockState.used),
           limit: FREE_UNLOCKS_LIMIT,
           alreadyUnlocked: true,
+          reason: "already_unlocked",
+          message: "This vehicle is already unlocked.",
         };
       }
 
@@ -230,6 +249,8 @@ export const subscriptionService = {
           remaining: 0,
           limit: FREE_UNLOCKS_LIMIT,
           alreadyUnlocked: false,
+          reason: "no_free_unlocks",
+          message: "No free unlocks remaining. Upgrade to Pro for full access.",
         };
       }
 
@@ -244,6 +265,8 @@ export const subscriptionService = {
         remaining: Math.max(0, FREE_UNLOCKS_LIMIT - nextState.used),
         limit: FREE_UNLOCKS_LIMIT,
         alreadyUnlocked: false,
+        reason: "consumed",
+        message: "Free unlock applied. This vehicle is now fully unlocked.",
       };
     }
     if (!user?.id) {
@@ -254,6 +277,8 @@ export const subscriptionService = {
         remaining: Math.max(0, FREE_UNLOCKS_LIMIT - unlockState.used),
         limit: FREE_UNLOCKS_LIMIT,
         alreadyUnlocked: unlockState.unlockedVehicleIds.includes(vehicleId),
+        reason: "auth_required",
+        message: "Sign in to keep unlocks synced across devices.",
       };
     }
     try {
@@ -274,15 +299,47 @@ export const subscriptionService = {
         remaining: status.freeUnlocksRemaining ?? Math.max(0, status.freeUnlocksTotal - status.freeUnlocksUsed),
         limit: status.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT,
         alreadyUnlocked: response.entitlement.alreadyUnlocked,
+        reason: response.entitlement.alreadyUnlocked
+          ? "already_unlocked"
+          : response.entitlement.allowed
+            ? "consumed"
+            : "no_free_unlocks",
+        message: response.entitlement.alreadyUnlocked
+          ? "This vehicle is already unlocked."
+          : response.entitlement.allowed
+            ? "Free unlock applied. This vehicle is now fully unlocked."
+            : "No free unlocks remaining. Upgrade to Pro for full access.",
       };
-    } catch {
+    } catch (error) {
       const unlockState = await loadFreeUnlockState(user.id);
+      const code =
+        typeof error === "object" && error && "code" in error && typeof (error as { code?: unknown }).code === "string"
+          ? (error as { code: string }).code
+          : null;
+      const reason =
+        code === "VEHICLE_NOT_FOUND"
+          ? "vehicle_not_found"
+          : code === "AUTH_REQUIRED"
+            ? "auth_required"
+            : code === "BACKEND_UNREACHABLE" || code === "REQUEST_TIMEOUT"
+              ? "network_error"
+              : "unknown";
+      const message =
+        code === "VEHICLE_NOT_FOUND"
+          ? "This vehicle can be viewed, but it is not unlockable yet. Try another catalog-linked result."
+          : code === "AUTH_REQUIRED"
+            ? "Sign in to use your free unlocks on this device."
+            : error instanceof Error
+              ? error.message
+              : "We couldn’t apply your free unlock right now.";
       return {
         ok: false,
         state: unlockState,
         remaining: Math.max(0, FREE_UNLOCKS_LIMIT - unlockState.used),
         limit: FREE_UNLOCKS_LIMIT,
         alreadyUnlocked: unlockState.unlockedVehicleIds.includes(vehicleId),
+        reason,
+        message,
       };
     }
   },

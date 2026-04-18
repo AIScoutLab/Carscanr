@@ -23,9 +23,16 @@ export function SegmentedTabBar({ tabs, activeTab, onChange }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flexDirection: "row", backgroundColor: Colors.cardAlt, borderRadius: Radius.pill, padding: 4 },
-  tab: { flex: 1, paddingVertical: 10, borderRadius: Radius.pill, alignItems: "center" },
-  activeTab: { backgroundColor: Colors.card },
-  label: { ...Typography.caption, color: Colors.textMuted },
-  activeLabel: { color: Colors.text, fontWeight: "700" },
+  container: {
+    flexDirection: "row",
+    backgroundColor: Colors.cardSoft,
+    borderRadius: Radius.pill,
+    padding: 5,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  tab: { flex: 1, paddingVertical: 11, borderRadius: Radius.pill, alignItems: "center" },
+  activeTab: { backgroundColor: Colors.cardAlt },
+  label: { ...Typography.caption, color: Colors.textMuted, textTransform: "uppercase", letterSpacing: 0.7 },
+  activeLabel: { color: Colors.textStrong, fontWeight: "700" },
 });

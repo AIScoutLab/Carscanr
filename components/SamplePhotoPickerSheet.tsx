@@ -1,4 +1,5 @@
 import { Modal, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { Colors, Radius, Shadows, Typography } from "@/constants/theme";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { SampleScanPhoto } from "@/features/scan/useScanActions";
@@ -26,8 +27,13 @@ export function SamplePhotoPickerSheet({
         <TouchableOpacity style={styles.scrim} onPress={onClose} activeOpacity={1} />
         <View style={styles.sheet}>
           <View style={styles.handle} />
-          <Text style={styles.title}>Choose a photo source</Text>
-          <Text style={styles.subtitle}>Use your library or try a few sample vehicles so the scan flow still feels real in the simulator.</Text>
+          <LinearGradient colors={["rgba(29,140,255,0.18)", "rgba(94,231,255,0.05)", "rgba(4,8,18,0.12)"]} style={styles.heroCard}>
+            <View style={styles.heroBadge}>
+              <Text style={styles.heroBadgeLabel}>Photo source</Text>
+            </View>
+            <Text style={styles.title}>Choose a photo source</Text>
+            <Text style={styles.subtitle}>Use your library or try a few sample vehicles so the scan flow still feels real in the simulator.</Text>
+          </LinearGradient>
           <PrimaryButton label="Open Photo Library" onPress={onOpenLibrary} secondary />
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Sample Vehicles</Text>
@@ -55,7 +61,7 @@ export function SamplePhotoPickerSheet({
 
 const styles = StyleSheet.create({
   backdrop: { flex: 1, justifyContent: "flex-end" },
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(15, 23, 42, 0.28)" },
+  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(4, 8, 18, 0.52)" },
   sheet: {
     backgroundColor: Colors.background,
     borderTopLeftRadius: Radius.xl,
@@ -63,6 +69,8 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 18,
     ...Shadows.card,
+    borderTopWidth: 1,
+    borderColor: Colors.border,
   },
   handle: {
     alignSelf: "center",
@@ -71,10 +79,32 @@ const styles = StyleSheet.create({
     borderRadius: Radius.pill,
     backgroundColor: Colors.border,
   },
+  heroCard: {
+    borderRadius: Radius.xl,
+    padding: 18,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  heroBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(0, 194, 255, 0.12)",
+    borderRadius: Radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: Colors.cyanGlow,
+  },
+  heroBadgeLabel: {
+    ...Typography.caption,
+    color: Colors.premium,
+    textTransform: "uppercase",
+    letterSpacing: 1.1,
+  },
   title: { ...Typography.title, color: Colors.text },
-  subtitle: { ...Typography.body, color: Colors.textMuted },
+  subtitle: { ...Typography.body, color: Colors.textSoft },
   section: { gap: 12 },
-  sectionTitle: { ...Typography.heading, color: Colors.text },
+  sectionTitle: { ...Typography.heading, color: Colors.textStrong },
   row: { gap: 14, paddingRight: 20 },
   card: {
     width: 240,
@@ -82,10 +112,12 @@ const styles = StyleSheet.create({
     borderRadius: Radius.lg,
     overflow: "hidden",
     ...Shadows.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   image: { width: "100%", height: 144 },
   cardBody: { padding: 14, gap: 6 },
-  cardTitle: { ...Typography.heading, color: Colors.text },
-  cardSubtitle: { ...Typography.caption, color: Colors.textMuted },
-  cardCta: { ...Typography.caption, color: Colors.accent },
+  cardTitle: { ...Typography.heading, color: Colors.textStrong },
+  cardSubtitle: { ...Typography.caption, color: Colors.textSoft },
+  cardCta: { ...Typography.caption, color: Colors.premium },
 });

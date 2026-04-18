@@ -1,6 +1,7 @@
 import { router, useLocalSearchParams, usePathname } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Radius, Typography } from "@/constants/theme";
@@ -241,46 +242,49 @@ export default function AuthScreen() {
         <ScrollView
           ref={scrollRef}
           style={styles.flex}
-          contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top, 12) + 12, paddingBottom: Math.max(insets.bottom, 24) + 120 }]}
+          contentContainerStyle={[styles.content, { paddingTop: 4, paddingBottom: Math.max(insets.bottom, 24) + 120 }]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
         >
       <View ref={contentRef} collapsable={false}>
-      <View style={styles.debugBanner}>
-        <Text style={styles.debugBannerTitle}>LIVE AUTH SCREEN V2</Text>
-        <Text style={styles.debugBannerText}>AUTH SCREEN LOADED</Text>
-        <Text style={styles.debugBannerText}>pathname: {pathname}</Text>
-        <Text style={styles.debugBannerText}>mode: {mode}</Text>
-        <Text style={styles.debugBannerText}>API base URL present: {hasApiBaseUrl ? "yes" : "no"}</Text>
-        <Text style={styles.debugBannerText}>Supabase URL present: {hasSupabaseUrl ? "yes" : "no"}</Text>
-        <Text style={styles.debugBannerText}>Network target: {networkTarget}</Text>
-        <Text style={styles.debugBannerText}>Supabase host: {supabaseTarget}</Text>
-        <Text style={styles.debugBannerText}>API host: {apiTarget}</Text>
-        {authDebugLines.map((line) => (
-          <Text key={line} style={styles.debugBannerText}>
-            {line}
-          </Text>
-        ))}
-      </View>
-      <View style={styles.brandWrap}>
+      {__DEV__ ? (
+        <View style={styles.debugBanner}>
+          <Text style={styles.debugBannerTitle}>LIVE AUTH SCREEN V2</Text>
+          <Text style={styles.debugBannerText}>AUTH SCREEN LOADED</Text>
+          <Text style={styles.debugBannerText}>pathname: {pathname}</Text>
+          <Text style={styles.debugBannerText}>mode: {mode}</Text>
+          <Text style={styles.debugBannerText}>API base URL present: {hasApiBaseUrl ? "yes" : "no"}</Text>
+          <Text style={styles.debugBannerText}>Supabase URL present: {hasSupabaseUrl ? "yes" : "no"}</Text>
+          <Text style={styles.debugBannerText}>Network target: {networkTarget}</Text>
+          <Text style={styles.debugBannerText}>Supabase host: {supabaseTarget}</Text>
+          <Text style={styles.debugBannerText}>API host: {apiTarget}</Text>
+          {authDebugLines.map((line) => (
+            <Text key={line} style={styles.debugBannerText}>
+              {line}
+            </Text>
+          ))}
+        </View>
+      ) : null}
+      <LinearGradient colors={["rgba(16,56,148,0.38)", "rgba(0,194,255,0.12)", "rgba(7,13,28,0.94)"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.brandWrap}>
         <View style={styles.logoShell}>
           <Image source={require("@/carscanr_app_icon_1024.png")} style={styles.logoImage} resizeMode="cover" />
         </View>
         <View style={styles.brandTextWrap}>
-          <View style={styles.brandPill}>
-            <Text style={styles.brandEyebrow}>CarScanr</Text>
-          </View>
-          <Text style={styles.brandName}>Identify. Value. Shop.</Text>
-          <Text style={styles.brandNote}>Photo-first vehicle recognition with pricing and listings in one flow.</Text>
+          <Text style={styles.brandName}>Use CarScanr free right away.</Text>
+          <Text style={styles.brandNote}>Create an account only if you want Garage sync, saved history, and restore across devices.</Text>
         </View>
-      </View>
+      </LinearGradient>
       <Text style={styles.title}>{mode === "sign-in" ? "Welcome back." : "Create your account."}</Text>
       <Text style={styles.subtitle}>
         {mode === "sign-in"
-          ? "Sign in to sync your Garage, usage, and future subscription access."
-          : "Start free and save your Garage, usage, and subscription access to your account."}
+          ? "Sign in to sync your Garage, saved history, and unlocks across devices."
+          : "Create an account if you want Garage sync, saved history, and restore across devices. Scanning still works without one."}
       </Text>
+      <View style={styles.guestNoteCard}>
+        <Text style={styles.guestNoteTitle}>Account optional</Text>
+        <Text style={styles.guestNoteBody}>Unlimited basic scans stay free. Accounts are mainly for sync, saved history, and restore.</Text>
+      </View>
       <View style={styles.quickActions}>
         <TouchableOpacity
           style={styles.quickActionButton}
@@ -297,11 +301,11 @@ export default function AuthScreen() {
           activeOpacity={0.86}
           accessibilityRole="button"
           onPress={() => {
-            console.log("[tap] auth-continue-exploring");
+            console.log("[tap] auth-continue-as-guest");
             router.replace("/(tabs)/scan");
           }}
         >
-          <Text style={styles.quickActionLabel}>Continue Exploring</Text>
+          <Text style={styles.quickActionLabel}>Continue as Guest</Text>
         </TouchableOpacity>
       </View>
       <View style={styles.card}>
@@ -425,6 +429,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 14,
     marginTop: 8,
+    padding: 18,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: "hidden",
   },
   logoShell: {
     width: 72,
@@ -434,7 +443,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: Colors.accentGlow,
     overflow: "hidden",
   },
   logoImage: {
@@ -446,31 +455,34 @@ const styles = StyleSheet.create({
     gap: 4,
     flex: 1,
   },
-  brandPill: {
-    alignSelf: "flex-start",
-    backgroundColor: Colors.accentSoft,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: Radius.pill,
-  },
-  brandEyebrow: {
-    ...Typography.caption,
-    color: Colors.accent,
-    textTransform: "uppercase",
-    letterSpacing: 1.2,
-  },
   brandName: {
-    ...Typography.heading,
-    color: Colors.text,
+    ...Typography.title,
+    color: Colors.textStrong,
   },
   brandNote: {
-    ...Typography.caption,
-    color: Colors.textMuted,
+    ...Typography.body,
+    color: Colors.textSoft,
   },
-  title: { ...Typography.largeTitle, color: Colors.text, marginTop: 16 },
-  subtitle: { ...Typography.body, color: Colors.textMuted },
+  title: { ...Typography.largeTitle, color: Colors.text, marginTop: 10 },
+  subtitle: { ...Typography.body, color: Colors.textSoft },
   quickActions: {
     gap: 10,
+  },
+  guestNoteCard: {
+    backgroundColor: Colors.cardAlt,
+    borderRadius: Radius.lg,
+    padding: 14,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  guestNoteTitle: {
+    ...Typography.bodyStrong,
+    color: Colors.text,
+  },
+  guestNoteBody: {
+    ...Typography.caption,
+    color: Colors.textMuted,
   },
   quickActionButton: {
     backgroundColor: Colors.card,
@@ -488,7 +500,15 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   card: { backgroundColor: Colors.card, borderRadius: Radius.xl, padding: 20, gap: 14 },
-  input: { backgroundColor: Colors.cardAlt, borderRadius: Radius.md, padding: 16, color: Colors.text, ...Typography.body },
+  input: {
+    backgroundColor: Colors.cardAlt,
+    borderRadius: Radius.md,
+    padding: 16,
+    color: Colors.text,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    ...Typography.body,
+  },
   forgotPasswordButton: {
     alignSelf: "flex-end",
     marginTop: -2,

@@ -2,7 +2,9 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Redirect, usePathname } from "expo-router";
 import { useEffect, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { AppContainer } from "@/components/AppContainer";
+import { PremiumSkeleton } from "@/components/PremiumSkeleton";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { authService } from "@/services/authService";
@@ -78,8 +80,11 @@ export default function Index() {
     return (
       <AppContainer>
         <View style={styles.card}>
-          <Text style={styles.title}>Startup error</Text>
-          <Text style={styles.message}>Configuration error - missing API settings or startup session restore failed.</Text>
+          <View style={styles.errorBadge}>
+            <Text style={styles.errorBadgeLabel}>Startup issue</Text>
+          </View>
+          <Text style={styles.title}>CarScanr couldn’t finish startup</Text>
+          <Text style={styles.message}>Try loading the app again. If this keeps happening, reinstall the latest build.</Text>
           <Text style={styles.detail}>{startupError}</Text>
           <PrimaryButton label="Try Again" onPress={() => setReloadKey((value) => value + 1)} />
         </View>
@@ -89,10 +94,15 @@ export default function Index() {
 
   if (!target) {
     return (
-      <AppContainer>
-        <View style={styles.card}>
-          <Text style={styles.title}>Loading CarScanr</Text>
-          <Text style={styles.message}>Checking your configuration and restoring your session.</Text>
+      <AppContainer scroll={false} contentContainerStyle={styles.loadingPage}>
+        <LinearGradient colors={["rgba(29,140,255,0.24)", "rgba(94,231,255,0.08)", "rgba(4,8,18,0.08)"]} style={styles.loadingHero}>
+          <Text style={styles.title}>Starting CarScanr</Text>
+          <Text style={styles.message}>Restoring your session and getting the next scan ready.</Text>
+        </LinearGradient>
+        <View style={styles.loadingStack}>
+          <PremiumSkeleton height={132} radius={Radius.xl} />
+          <PremiumSkeleton height={108} radius={Radius.xl} />
+          <PremiumSkeleton height={168} radius={Radius.xl} />
         </View>
       </AppContainer>
     );
@@ -107,15 +117,47 @@ const styles = StyleSheet.create({
     borderRadius: Radius.xl,
     padding: 24,
     gap: 12,
-    marginTop: 48,
+    marginTop: 24,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  loadingPage: {
+    flex: 1,
+    justifyContent: "center",
+    gap: 18,
+  },
+  loadingHero: {
+    borderRadius: Radius.xl,
+    padding: 22,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  loadingStack: {
+    gap: 14,
+  },
+  errorBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: Colors.dangerSoft,
+    borderRadius: Radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: Colors.danger,
+  },
+  errorBadgeLabel: {
+    ...Typography.caption,
+    color: Colors.danger,
+    textTransform: "uppercase",
+    letterSpacing: 1,
   },
   title: {
     ...Typography.heading,
-    color: Colors.text,
+    color: Colors.textStrong,
   },
   message: {
     ...Typography.body,
-    color: Colors.text,
+    color: Colors.textSoft,
   },
   detail: {
     ...Typography.caption,

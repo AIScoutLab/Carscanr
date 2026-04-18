@@ -26,6 +26,7 @@ export function OwnershipInsightsCard({ mpg, reliability, maintenance }: Props) 
 
   return (
     <View style={styles.card}>
+      <Text style={styles.kicker}>Ownership brief</Text>
       <Text style={styles.title}>Ownership Insights</Text>
       {rows.map((row, index) => (
         <View
@@ -46,10 +47,11 @@ const styles = StyleSheet.create({
     padding: 18,
     gap: 10,
   },
+  kicker: { ...Typography.caption, color: Colors.premium, textTransform: "uppercase", letterSpacing: 1 },
   title: { ...Typography.heading, color: Colors.textStrong },
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 8 },
   rowDivider: { borderBottomWidth: 1, borderBottomColor: Colors.borderSoft },
-  label: { ...Typography.caption, color: Colors.textMuted },
+  label: { ...Typography.caption, color: Colors.textSoft },
   value: { ...Typography.bodyStrong, color: Colors.textStrong },
-  empty: { ...Typography.body, color: Colors.textMuted },
+  empty: { ...Typography.body, color: Colors.textSoft },
 });

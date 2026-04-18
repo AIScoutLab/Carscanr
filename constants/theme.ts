@@ -22,12 +22,15 @@ export const Colors = {
   successSoft: colors.successSoft,
   warning: colors.warning,
   warningSoft: colors.warningSoft,
-  danger: "#B23838",
+  danger: "#D94B5B",
   premium: colors.premium,
   premiumSoft: colors.premiumSoft,
   overlay: colors.overlay,
   shadow: colors.shadow,
   gold: colors.premium,
+  accentGlow: "rgba(29, 140, 255, 0.34)",
+  cyanGlow: "rgba(94, 231, 255, 0.22)",
+  dangerSoft: "rgba(217, 75, 91, 0.18)",
 };
 
 export const Spacing = {
@@ -52,39 +55,39 @@ export const Radius = {
 export const Typography = {
   hero: {
     ...type.hero,
-    fontFamily: Platform.select({ ios: "System", default: "sans-serif" }),
+    fontFamily: Platform.select({ ios: "Avenir Next", default: "sans-serif" }),
   },
   largeTitle: {
     ...type.hero,
-    fontFamily: Platform.select({ ios: "System", default: "sans-serif" }),
+    fontFamily: Platform.select({ ios: "Avenir Next", default: "sans-serif" }),
   },
   title: {
     ...type.h2,
-    fontFamily: Platform.select({ ios: "System", default: "sans-serif" }),
+    fontFamily: Platform.select({ ios: "Avenir Next", default: "sans-serif" }),
   },
   heading: {
     ...type.h3,
-    fontFamily: Platform.select({ ios: "System", default: "sans-serif" }),
+    fontFamily: Platform.select({ ios: "Avenir Next", default: "sans-serif" }),
   },
   body: {
     ...type.body,
-    fontFamily: Platform.select({ ios: "System", default: "sans-serif" }),
+    fontFamily: Platform.select({ ios: "Avenir Next", default: "sans-serif" }),
   },
   bodyStrong: {
     ...type.bodyStrong,
-    fontFamily: Platform.select({ ios: "System", default: "sans-serif" }),
+    fontFamily: Platform.select({ ios: "Avenir Next", default: "sans-serif" }),
   },
   meta: {
     ...type.meta,
-    fontFamily: Platform.select({ ios: "System", default: "sans-serif" }),
+    fontFamily: Platform.select({ ios: "Avenir Next", default: "sans-serif" }),
   },
   caption: {
     ...type.caption,
-    fontFamily: Platform.select({ ios: "System", default: "sans-serif" }),
+    fontFamily: Platform.select({ ios: "Avenir Next", default: "sans-serif" }),
   },
   price: {
     ...type.price,
-    fontFamily: Platform.select({ ios: "System", default: "sans-serif" }),
+    fontFamily: Platform.select({ ios: "Avenir Next", default: "sans-serif" }),
   },
 };
 

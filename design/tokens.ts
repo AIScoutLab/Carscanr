@@ -1,36 +1,36 @@
 export const colors = {
-  page: "#F3F5F8",
-  pageAlt: "#EEF2F6",
+  page: "#040812",
+  pageAlt: "#07101D",
 
-  surface: "#FFFFFF",
-  surfaceSoft: "#FAFBFC",
-  surfaceTint: "#F7F9FC",
-  surfaceStrong: "#F1F5F9",
+  surface: "#0C1524",
+  surfaceSoft: "#101C2E",
+  surfaceTint: "#112039",
+  surfaceStrong: "#16253C",
 
-  text: "#111827",
-  textStrong: "#0F172A",
-  textSoft: "#475569",
-  textMuted: "#6B7280",
-  textFaint: "#94A3B8",
+  text: "#E6EEF9",
+  textStrong: "#F6FAFF",
+  textSoft: "#A8B8CE",
+  textMuted: "#8090A7",
+  textFaint: "#5F7088",
 
-  line: "#E5E7EB",
-  lineSoft: "#EDF1F5",
+  line: "rgba(120, 152, 196, 0.24)",
+  lineSoft: "rgba(120, 152, 196, 0.14)",
 
-  primary: "#2563EB",
-  primarySoft: "#DBEAFE",
-  primaryDeep: "#0F172A",
+  primary: "#1D8CFF",
+  primarySoft: "rgba(29, 140, 255, 0.18)",
+  primaryDeep: "#0A72E8",
 
-  success: "#16A34A",
-  successSoft: "#DCFCE7",
+  success: "#30D18C",
+  successSoft: "rgba(48, 209, 140, 0.14)",
 
-  warning: "#B7791F",
-  warningSoft: "#FEF3C7",
+  warning: "#E1A949",
+  warningSoft: "rgba(225, 169, 73, 0.14)",
 
-  premium: "#C9972B",
-  premiumSoft: "#FFF7E8",
+  premium: "#5EE7FF",
+  premiumSoft: "rgba(94, 231, 255, 0.14)",
 
-  overlay: "rgba(15, 23, 42, 0.04)",
-  shadow: "#0F172A",
+  overlay: "rgba(4, 8, 18, 0.42)",
+  shadow: "#02060D",
 } as const;
 
 export const radius = {
@@ -114,24 +114,24 @@ export const type = {
 export const shadow = {
   card: {
     shadowColor: colors.shadow,
-    shadowOpacity: 0.06,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 2,
+    shadowOpacity: 0.26,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 7,
   },
   cardStrong: {
     shadowColor: colors.shadow,
-    shadowOpacity: 0.09,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 4,
+    shadowOpacity: 0.34,
+    shadowRadius: 30,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 10,
   },
   floating: {
     shadowColor: colors.shadow,
-    shadowOpacity: 0.12,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 6,
+    shadowOpacity: 0.42,
+    shadowRadius: 34,
+    shadowOffset: { width: 0, height: 18 },
+    elevation: 14,
   },
 } as const;
 

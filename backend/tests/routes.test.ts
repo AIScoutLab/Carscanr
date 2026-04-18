@@ -1,10 +1,11 @@
-import { beforeEach, describe, test } from "node:test";
+import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import inject from "light-my-request";
 import type { InjectOptions, Response } from "light-my-request";
 import { createApp } from "../src/app.js";
 import { resetProviders, setProviders } from "../src/lib/providerRegistry.js";
 import { resetRepositories, setRepositories } from "../src/lib/repositoryRegistry.js";
+import { googleVisionOcrService } from "../src/services/googleVisionOcrService.js";
 import { createTestProviders, createTestRepositories } from "./helpers/testData.js";
 
 const TEST_IMAGE_BUFFER = Buffer.from(
@@ -51,10 +52,18 @@ function authHeaders(userId = "demo-user", email = "demo@example.com") {
 }
 
 describe("API routes", () => {
+  let originalExtractVehicleText: typeof googleVisionOcrService.extractVehicleText;
+
   beforeEach(() => {
+    originalExtractVehicleText = googleVisionOcrService.extractVehicleText;
+    googleVisionOcrService.extractVehicleText = async () => null;
     const testRepositories = createTestRepositories();
     setRepositories(testRepositories.repositories);
     setProviders(createTestProviders());
+  });
+
+  afterEach(() => {
+    googleVisionOcrService.extractVehicleText = originalExtractVehicleText;
   });
 
   test("POST /api/scan/identify returns a normalized scan response", async () => {
@@ -76,6 +85,98 @@ describe("API routes", () => {
     assert.equal(body.data.detectedVehicleType, "car");
     assert.equal(body.data.candidates[0].vehicleId, "2021-cadillac-ct4-premium-luxury");
     assert.equal(body.meta.topCandidateVehicleId, "2021-cadillac-ct4-premium-luxury");
+  });
+
+  test("POST /api/scan/identify keeps OCR override as the final visible winner", async () => {
+    googleVisionOcrService.extractVehicleText = async () => ({
+      rawText: "2026 Honda CR-V",
+      textLines: ["2026 Honda CR-V"],
+      detectedYear: 2026,
+      detectedMake: "Honda",
+      detectedModel: "CR-V",
+      detectedTrim: null,
+      decisionReason: "structured_vehicle_confirmed",
+      structuredVehicle: {
+        year: 2026,
+        make: "Honda",
+        model: "CR-V",
+        trim: null,
+      },
+      confidence: 0.99,
+      credentialSource: "env",
+    });
+
+    const testRepositories = createTestRepositories();
+    setRepositories(testRepositories.repositories);
+    setProviders({
+      ...createTestProviders({
+        provider: "test-vision",
+        rawResponse: { source: "test" },
+        normalized: {
+          vehicle_type: "car",
+          likely_year: 2024,
+          likely_make: "Honda",
+          likely_model: "CR-V",
+          likely_trim: undefined,
+          source: "visual_candidate",
+          confidence: 0.84,
+          visible_clues: [],
+          alternate_candidates: [],
+        },
+      }),
+      specsProvider: {
+        async searchCandidates() {
+          return [
+            {
+              id: "provider-2024-honda-crv-ex",
+              year: 2024,
+              make: "Honda",
+              model: "CR-V",
+              trim: "EX",
+              bodyStyle: "SUV",
+              vehicleType: "car",
+              msrp: 34500,
+              engine: "1.5L turbo I4",
+              horsepower: 190,
+              torque: "179 lb-ft",
+              transmission: "CVT",
+              drivetrain: "AWD",
+              mpgOrRange: "27 city / 32 highway",
+              colors: ["Urban Gray Pearl"],
+            },
+          ];
+        },
+        async getVehicleSpecs() {
+          throw new Error("Not used in this OCR route test.");
+        },
+        async searchVehicles() {
+          throw new Error("Not used in this OCR route test.");
+        },
+      },
+    });
+
+    const multipart = createMultipartImageBody("ocr-test.jpg", "image/jpeg");
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/scan/identify",
+      headers: {
+        ...multipart.headers,
+        ...authHeaders(),
+      },
+      payload: multipart.payload,
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.success, true);
+    assert.equal(body.data.normalizedResult.source, "ocr_override");
+    assert.equal(body.data.normalizedResult.likely_year, 2026);
+    assert.equal(body.data.normalizedResult.likely_make, "Honda");
+    assert.equal(body.data.normalizedResult.likely_model, "CR-V");
+    assert.equal(body.data.candidates[0].year, 2026);
+    assert.equal(body.data.candidates[0].make, "Honda");
+    assert.equal(body.data.candidates[0].model, "CR-V");
+    assert.equal(body.meta.scanRuntimeVersion, "ocr-hard-override-route-v1");
   });
 
   test("GET /api/usage/today requires an explicit auth token in development", async () => {

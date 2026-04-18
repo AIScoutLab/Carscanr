@@ -32,6 +32,7 @@ const styles = StyleSheet.create({
   card: {
     ...cardStyles.secondary,
     gap: 10,
+    borderColor: Colors.premium,
   },
   eyebrowPill: {
     alignSelf: "flex-start",
@@ -41,6 +42,6 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   eyebrow: { ...Typography.caption, color: Colors.premium },
-  title: { ...Typography.heading, color: Colors.text },
-  description: { ...Typography.body, color: Colors.textMuted },
+  title: { ...Typography.heading, color: Colors.textStrong },
+  description: { ...Typography.body, color: Colors.textSoft },
 });

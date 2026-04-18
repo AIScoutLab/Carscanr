@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { SupabaseClient } from "@supabase/supabase-js";
 import { AppError } from "../errors/appError.js";
 import { logger } from "../lib/logger.js";
+import { resolveHorsepower } from "../lib/vehicleData.js";
 import {
   ProviderApiUsageLogRecord,
   VehicleListingsCacheRow,
@@ -59,6 +60,7 @@ function requireData<T>(value: T | null, message: string): T {
 }
 
 function mapVehicleRow(row: any): VehicleRecord {
+  const parsedHorsepower = resolveHorsepower(row.horsepower, row.hp, row.engine_hp);
   return {
     id: row.id,
     year: row.year,
@@ -69,7 +71,7 @@ function mapVehicleRow(row: any): VehicleRecord {
     vehicleType: row.vehicle_type,
     msrp: row.msrp,
     engine: row.engine,
-    horsepower: row.horsepower,
+    horsepower: parsedHorsepower,
     torque: row.torque,
     transmission: row.transmission,
     drivetrain: row.drivetrain,
@@ -79,6 +81,7 @@ function mapVehicleRow(row: any): VehicleRecord {
 }
 
 function mapCanonicalVehicleRow(row: any): CanonicalVehicleRecord {
+  const parsedHorsepower = resolveHorsepower(row.horsepower);
   return {
     id: row.id,
     year: row.year,
@@ -91,7 +94,7 @@ function mapCanonicalVehicleRow(row: any): CanonicalVehicleRecord {
     drivetrain: row.drivetrain ?? null,
     transmission: row.transmission ?? null,
     fuelType: row.fuel_type ?? null,
-    horsepower: row.horsepower ?? null,
+    horsepower: parsedHorsepower,
     torque: row.torque ?? null,
     msrp: row.msrp ?? null,
     normalizedMake: row.normalized_make,

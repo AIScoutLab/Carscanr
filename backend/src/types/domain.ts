@@ -13,7 +13,7 @@ export type VehicleRecord = {
   vehicleType: VehicleType;
   msrp: number;
   engine: string;
-  horsepower: number;
+  horsepower: number | null;
   torque: string;
   transmission: string;
   drivetrain: string;
@@ -35,6 +35,7 @@ export type VisionResult = {
   likely_make: string;
   likely_model: string;
   likely_trim?: string;
+  source?: "visual_candidate" | "ocr_override";
   confidence: number;
   alternate_candidates: VisionCandidate[];
   visible_clues: string[];

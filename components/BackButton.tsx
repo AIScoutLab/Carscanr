@@ -36,15 +36,17 @@ const styles = StyleSheet.create({
   button: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    backgroundColor: Colors.card,
+    gap: 6,
+    backgroundColor: "rgba(12, 21, 36, 0.78)",
     borderRadius: Radius.pill,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   label: {
     ...Typography.body,
-    color: Colors.text,
+    color: Colors.textStrong,
     fontWeight: "600",
   },
 });

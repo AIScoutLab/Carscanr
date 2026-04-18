@@ -6,9 +6,11 @@ const appEnv = process.env.EXPO_PUBLIC_APP_ENV === "preview" || process.env.EXPO
   : "local";
 const isPreview = appEnv === "preview";
 const isLocal = appEnv === "local";
+const isProduction = appEnv === "production";
 const appName = process.env.EXPO_PUBLIC_APP_NAME || (isPreview ? "CarScanr Preview" : "CarScanr");
 const bundleIdentifier =
   process.env.EXPO_PUBLIC_IOS_BUNDLE_ID || (isPreview ? "com.mattbrillman.carscanr.preview" : "com.mattbrillman.carscanr");
+const localIosBuildNumber = process.env.EXPO_PUBLIC_IOS_BUILD_NUMBER || "1";
 
 const config: ExpoConfig = {
   name: appName,
@@ -51,7 +53,7 @@ const config: ExpoConfig = {
   ios: {
     supportsTablet: false,
     bundleIdentifier,
-    buildNumber: process.env.EXPO_PUBLIC_IOS_BUILD_NUMBER || "1",
+    ...(!isProduction ? { buildNumber: localIosBuildNumber } : {}),
     infoPlist: {
       NSCameraUsageDescription: "Allow CarScanr to use your camera to identify vehicles.",
       NSPhotoLibraryUsageDescription: "Allow CarScanr to access your photos to identify vehicles and save scans.",

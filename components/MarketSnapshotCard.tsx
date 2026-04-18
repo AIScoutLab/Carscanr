@@ -17,6 +17,7 @@ export function MarketSnapshotCard({ avgPrice, priceRange, dealRating }: Props) 
 
   return (
     <View style={styles.card}>
+      <Text style={styles.kicker}>Market telemetry</Text>
       <Text style={styles.title}>Market Snapshot</Text>
       {items.map((item, index) => (
         <View
@@ -38,10 +39,11 @@ const styles = StyleSheet.create({
     padding: 18,
     gap: 10,
   },
+  kicker: { ...Typography.caption, color: Colors.premium, textTransform: "uppercase", letterSpacing: 1 },
   title: { ...Typography.heading, color: Colors.textStrong },
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 8 },
   rowDivider: { borderBottomWidth: 1, borderBottomColor: Colors.borderSoft },
-  label: { ...Typography.caption, color: Colors.textMuted },
+  label: { ...Typography.caption, color: Colors.textSoft },
   value: { ...Typography.bodyStrong, color: Colors.textStrong },
   note: { ...Typography.caption, color: Colors.textMuted },
 });

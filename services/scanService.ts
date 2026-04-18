@@ -76,6 +76,7 @@ type BackendScanResponse = {
     likely_make?: string;
     likely_model?: string;
     likely_trim?: string;
+    source?: "visual_candidate" | "ocr_override";
   };
   candidates: BackendScanCandidate[];
 };
@@ -85,6 +86,7 @@ type StoredOfflineScanCache = Record<string, ScanResult>;
 type BackendScanMeta = {
   provider?: string;
   topCandidateVehicleId?: string | null;
+  scanRuntimeVersion?: string;
   premium?: {
     usedUnlock: boolean;
     alreadyUnlocked: boolean;
@@ -176,6 +178,7 @@ function mapCandidate(candidate: Partial<BackendScanCandidate>): VehicleCandidat
     make: safeString(candidate.make, "Unknown"),
     model: safeString(candidate.model, "Vehicle"),
     trim: safeString(candidate.trim, ""),
+    source: undefined,
     confidence: safeNumber(candidate.confidence, 0),
     thumbnailUrl: getVehicleImage(candidateId || "unknown-vehicle"),
   };
@@ -190,6 +193,7 @@ function normalizeBackendScanResponse(raw: BackendScanResponse): BackendScanResp
     confidence: safeNumber(raw?.confidence, 0),
     createdAt: safeString(raw?.createdAt, new Date().toISOString()),
     normalizedResult: {
+      source: raw?.normalizedResult?.source === "ocr_override" ? "ocr_override" : "visual_candidate",
       visible_clues: Array.isArray(raw?.normalizedResult?.visible_clues)
         ? raw.normalizedResult.visible_clues.filter((clue) => typeof clue === "string")
         : [],
@@ -215,16 +219,23 @@ function mapScanResponse(scan: BackendScanResponse, imageUri: string, usage: Sub
     id: normalized.id,
     imageUri: safeString(imageUri, normalized.imageUrl),
     identifiedVehicle:
-      candidates[0] ??
+      (candidates[0]
+        ? {
+            ...candidates[0],
+            source: normalized.normalizedResult.source,
+          }
+        : null) ??
       ({
         id: "unknown-vehicle",
         year: 0,
         make: "Unknown",
         model: "Vehicle",
+        source: normalized.normalizedResult.source,
         confidence: normalized.confidence,
         thumbnailUrl: getVehicleImage("unknown-vehicle"),
       } satisfies VehicleCandidate),
     candidates,
+    source: normalized.normalizedResult.source,
     confidenceScore: normalized.confidence,
     detectedVehicleType: normalized.detectedVehicleType,
     limitedPreview: usage.plan === "free",
@@ -465,6 +476,7 @@ export const scanService = {
     console.log("[scan-service] IDENTIFY_REQUEST_SUCCESS", {
       requestId: response.requestId,
       provider: response.meta?.provider,
+      scanRuntimeVersion: response.meta?.scanRuntimeVersion,
       elapsedMs: Date.now() - identifyStartedAt,
     });
 

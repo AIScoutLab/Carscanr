@@ -11,6 +11,7 @@ import { MarketSnapshotCard } from "@/components/MarketSnapshotCard";
 import { OwnershipInsightsCard } from "@/components/OwnershipInsightsCard";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { ProLockCard } from "@/components/ProLockCard";
+import { PremiumSkeleton } from "@/components/PremiumSkeleton";
 import { ScanUsageMeter } from "@/components/ScanUsageMeter";
 import { SectionHeader } from "@/components/SectionHeader";
 import { UpgradePromptCard } from "@/components/UpgradePromptCard";
@@ -31,18 +32,33 @@ type GroundedYearRange = {
   end: number;
 };
 
+type WranglerGeneration = "TJ" | "JK" | "JL";
+type VehicleYearSupport = {
+  stableFamily: boolean;
+  yearSpread: number | null;
+  noGenerationConflict: boolean;
+  candidateCount: number;
+};
+
 type NormalizedVehicle = {
   id: string | null;
   year: number | null;
   make: string;
   model: string;
   trim: string | null;
+  source: "visual_candidate" | "ocr_override" | null;
   displayTrimLabel: string | null;
+  displayTitleLabel: string | null;
   confidence: number | null;
   thumbnailUrl: string | null;
   displayYearLabel: string | null;
   groundedYearRange: GroundedYearRange | null;
   groundedMatchType: string | null;
+  groundedCandidateCount: number | null;
+  groundedExactYear: number | null;
+  wranglerGeneration: WranglerGeneration | null;
+  wranglerGenerationLabel: string | null;
+  wranglerGenerationCompatible: boolean | null;
 };
 
 type RenderCandidate = NormalizedVehicle & { renderKey: string };
@@ -50,6 +66,7 @@ type RenderCandidate = NormalizedVehicle & { renderKey: string };
 type NormalizedScan = {
   id: string | null;
   imageUri: string | null;
+  source: "visual_candidate" | "ocr_override" | null;
   confidenceScore: number | null;
   detectedVehicleType: "car" | "motorcycle" | null;
   candidates: NormalizedVehicle[];
@@ -90,12 +107,19 @@ function normalizeVehicleForResult(raw: unknown): NormalizedVehicle {
     make: safeString((input as any).make, "Unknown"),
     model: safeString((input as any).model, "Vehicle"),
     trim: typeof (input as any).trim === "string" ? (input as any).trim : null,
+    source: (input as any).source === "ocr_override" ? "ocr_override" : (input as any).source === "visual_candidate" ? "visual_candidate" : null,
     displayTrimLabel: typeof (input as any).trim === "string" ? (input as any).trim : null,
+    displayTitleLabel: null,
     confidence: safeNumber((input as any).confidence),
     thumbnailUrl: typeof (input as any).thumbnailUrl === "string" ? (input as any).thumbnailUrl : null,
     displayYearLabel: safeNumber((input as any).year) ? String(safeNumber((input as any).year)) : null,
     groundedYearRange: null,
     groundedMatchType: null,
+    groundedCandidateCount: null,
+    groundedExactYear: null,
+    wranglerGeneration: null,
+    wranglerGenerationLabel: null,
+    wranglerGenerationCompatible: null,
   };
 }
 
@@ -107,6 +131,7 @@ function normalizeScanForResult(raw: ScanResult): NormalizedScan {
   return {
     id: typeof raw.id === "string" ? raw.id : null,
     imageUri: typeof raw.imageUri === "string" ? raw.imageUri : null,
+    source: raw.source === "ocr_override" ? "ocr_override" : raw.source === "visual_candidate" ? "visual_candidate" : null,
     confidenceScore: safeNumber(raw.confidenceScore),
     detectedVehicleType: raw.detectedVehicleType === "motorcycle" ? "motorcycle" : raw.detectedVehicleType === "car" ? "car" : null,
     candidates,
@@ -150,39 +175,348 @@ function buildYearRangeLabel(yearRange: GroundedYearRange | null) {
   return yearRange.start === yearRange.end ? `${yearRange.start}` : `${yearRange.start}-${yearRange.end}`;
 }
 
+function getWranglerGenerationFromExactYear(year: number | null): WranglerGeneration | null {
+  if (typeof year !== "number") {
+    return null;
+  }
+  if (year >= 1997 && year <= 2006) {
+    return "TJ";
+  }
+  if (year >= 2007 && year <= 2017) {
+    return "JK";
+  }
+  if (year >= 2019) {
+    return "JL";
+  }
+  return null;
+}
+
+function isWranglerGenerationCompatibleWithYear(generation: WranglerGeneration, year: number | null) {
+  if (typeof year !== "number") {
+    return null;
+  }
+  if (generation === "TJ") {
+    return year >= 1997 && year <= 2006;
+  }
+  if (generation === "JK") {
+    return year >= 2007 && year <= 2018;
+  }
+  return year >= 2018;
+}
+
+function getWranglerGenerationFromRange(
+  yearRange: GroundedYearRange | null,
+  candidateCount: number | null,
+): WranglerGeneration | null {
+  if (!yearRange) {
+    return null;
+  }
+  if (typeof candidateCount === "number" && candidateCount > 4) {
+    return null;
+  }
+  if (yearRange.start >= 1997 && yearRange.end <= 2006) {
+    return "TJ";
+  }
+  if (yearRange.start >= 2007 && yearRange.end <= 2018) {
+    return "JK";
+  }
+  if (yearRange.start >= 2018) {
+    return "JL";
+  }
+  return null;
+}
+
+function buildWranglerGenerationLabel(generation: WranglerGeneration | null) {
+  if (generation === "TJ") {
+    return "likely TJ, 1997-2006";
+  }
+  if (generation === "JK") {
+    return "likely JK, 2007-2018";
+  }
+  if (generation === "JL") {
+    return "likely JL, 2018-present";
+  }
+  return null;
+}
+
+function resolveWranglerGeneration(input: {
+  rawYear: number | null;
+  confidence: number | null;
+  yearRange: GroundedYearRange | null;
+  exactGroundedYear: number | null;
+  groundedMatchType: string | null;
+  groundedCandidateCount: number | null;
+}) {
+  const confidence = input.confidence ?? 0;
+  const rawGeneration = confidence >= 0.72 ? getWranglerGenerationFromExactYear(input.rawYear) : null;
+  const groundedExactGeneration =
+    input.groundedMatchType === "id" || input.groundedMatchType === "exact"
+      ? getWranglerGenerationFromExactYear(input.exactGroundedYear)
+      : null;
+  const groundedRangeGeneration = getWranglerGenerationFromRange(input.yearRange, input.groundedCandidateCount);
+  const resolvedGeneration = rawGeneration ?? groundedExactGeneration ?? groundedRangeGeneration;
+  const compatibilityChecks = [
+    rawGeneration && groundedExactGeneration ? rawGeneration === groundedExactGeneration : null,
+    resolvedGeneration ? isWranglerGenerationCompatibleWithYear(resolvedGeneration, input.rawYear) : null,
+    resolvedGeneration && typeof input.exactGroundedYear === "number"
+      ? isWranglerGenerationCompatibleWithYear(resolvedGeneration, input.exactGroundedYear)
+      : null,
+  ].filter((value): value is boolean => typeof value === "boolean");
+
+  const compatible = compatibilityChecks.length > 0 ? compatibilityChecks.every(Boolean) : null;
+
+  return {
+    generation: compatible === false ? rawGeneration ?? groundedRangeGeneration ?? null : resolvedGeneration,
+    label: buildWranglerGenerationLabel(compatible === false ? rawGeneration ?? groundedRangeGeneration ?? null : resolvedGeneration),
+    compatible,
+  };
+}
+
+function buildDisplayTitleLabel(vehicle: NormalizedVehicle) {
+  if (isWranglerFamily(vehicle) && vehicle.wranglerGenerationLabel) {
+    return `${vehicle.make} ${vehicle.model} (${vehicle.wranglerGenerationLabel})`;
+  }
+  return [vehicle.displayYearLabel ?? null, vehicle.make, vehicle.model].filter(Boolean).join(" ");
+}
+
+function getYearRangeSpan(yearRange: GroundedYearRange | null) {
+  if (!yearRange) {
+    return null;
+  }
+  return Math.max(0, yearRange.end - yearRange.start);
+}
+
+function isGenerationSensitiveFamily(vehicle: Pick<NormalizedVehicle, "make" | "model" | "year">) {
+  const make = vehicle.make.toLowerCase();
+  const model = vehicle.model.toLowerCase();
+  const combined = `${make} ${model}`;
+  const isTruck = /(f150|f250|f350|silverado|sierra|ram|tacoma|tundra|colorado|canyon|ranger)/.test(combined);
+  const isMuscle = /(mustang|camaro|challenger|charger|corvette)/.test(combined);
+  const isClassic = typeof vehicle.year === "number" && vehicle.year > 0 && vehicle.year < 1996;
+  return isWranglerFamily(vehicle) || isTruck || isMuscle || isClassic;
+}
+
+function isModernMainstreamFamily(vehicle: Pick<NormalizedVehicle, "make" | "model" | "year">) {
+  if (isGenerationSensitiveFamily(vehicle)) {
+    return false;
+  }
+  if (typeof vehicle.year !== "number" || vehicle.year < 2016) {
+    return false;
+  }
+  const make = vehicle.make.toLowerCase();
+  const mainstreamMakes = new Set([
+    "toyota",
+    "honda",
+    "hyundai",
+    "kia",
+    "nissan",
+    "mazda",
+    "subaru",
+    "chevrolet",
+    "ford",
+    "volkswagen",
+  ]);
+  return mainstreamMakes.has(make);
+}
+
+function buildVehicleFamilyKey(vehicle: Pick<NormalizedVehicle, "make" | "model">) {
+  return `${safeString(vehicle.make).trim().toLowerCase()}:${safeString(vehicle.model).trim().toLowerCase()}`;
+}
+
+function getVehicleGenerationSignal(vehicle: NormalizedVehicle) {
+  if (isWranglerFamily(vehicle)) {
+    return vehicle.wranglerGeneration ?? null;
+  }
+  if (typeof vehicle.groundedYearRange?.start === "number" && typeof vehicle.groundedYearRange?.end === "number") {
+    return `${vehicle.groundedYearRange.start}-${vehicle.groundedYearRange.end}`;
+  }
+  if (typeof vehicle.year === "number" && vehicle.year > 0) {
+    return `${vehicle.year}`;
+  }
+  return null;
+}
+
+function buildYearSupportMap(candidates: NormalizedVehicle[]) {
+  const supportByFamily = new Map<string, VehicleYearSupport>();
+  const topCandidates = [...candidates].slice(0, 3);
+  const familyKeys = Array.from(new Set(topCandidates.map((candidate) => buildVehicleFamilyKey(candidate))));
+
+  familyKeys.forEach((familyKey) => {
+    const familyCandidates = topCandidates.filter((candidate) => buildVehicleFamilyKey(candidate) === familyKey);
+    const years = familyCandidates
+      .map((candidate) => (typeof candidate.year === "number" && candidate.year > 0 ? candidate.year : null))
+      .filter((year): year is number => typeof year === "number");
+    const generationSignals = familyCandidates
+      .map((candidate) => getVehicleGenerationSignal(candidate))
+      .filter((signal): signal is string => typeof signal === "string" && signal.length > 0);
+
+    supportByFamily.set(familyKey, {
+      stableFamily: familyCandidates.length >= 2,
+      yearSpread: years.length >= 2 ? Math.max(...years) - Math.min(...years) : years.length === 1 ? 0 : null,
+      noGenerationConflict: new Set(generationSignals).size <= 1,
+      candidateCount: familyCandidates.length,
+    });
+  });
+
+  return supportByFamily;
+}
+
+function getYearConfidenceDecision(input: {
+  rawYear: number | null;
+  confidence: number | null;
+  yearRange: GroundedYearRange | null;
+  exactGroundedYear: number | null;
+  vehicle: NormalizedVehicle;
+  yearSupport?: VehicleYearSupport | null;
+}) {
+  const confidence = input.confidence ?? 0;
+  const rangeSpan = getYearRangeSpan(input.yearRange);
+  const yearRange = input.yearRange;
+  const generationSensitive = isGenerationSensitiveFamily(input.vehicle);
+  const modernMainstream = isModernMainstreamFamily(input.vehicle);
+  const yearSupport = input.yearSupport ?? null;
+  const groundedMatchType = input.vehicle.groundedMatchType;
+  const strongCanonicalGrounding = groundedMatchType === "id" || groundedMatchType === "exact";
+  const candidateCount = input.vehicle.groundedCandidateCount ?? Number.POSITIVE_INFINITY;
+  const exactYearAgrees =
+    typeof input.rawYear === "number" &&
+    typeof input.exactGroundedYear === "number" &&
+    input.rawYear === input.exactGroundedYear;
+  const rawYearWithinRange =
+    typeof input.rawYear === "number" &&
+    !!yearRange &&
+    input.rawYear >= yearRange.start &&
+    input.rawYear <= yearRange.end;
+  const noNearbyConflict =
+    !yearRange ||
+    (typeof rangeSpan === "number" && rangeSpan <= (generationSensitive ? 1 : 2) && candidateCount <= (generationSensitive ? 1 : 2));
+  const strongGenerationSupport =
+    strongCanonicalGrounding ||
+    (!!yearRange &&
+      typeof rangeSpan === "number" &&
+      rangeSpan <= (generationSensitive ? 5 : 7) &&
+      candidateCount <= (generationSensitive ? 2 : 3));
+  const stableModernFamily =
+    modernMainstream &&
+    !generationSensitive &&
+    (yearSupport?.stableFamily ?? false) &&
+    (yearSupport?.noGenerationConflict ?? true) &&
+    ((yearSupport?.yearSpread ?? 4) <= 3);
+  const stableHighConfidenceFamily =
+    !generationSensitive &&
+    (yearSupport?.stableFamily ?? false) &&
+    (yearSupport?.noGenerationConflict ?? true) &&
+    ((yearSupport?.yearSpread ?? 2) <= 2);
+  const narrowRangePromotion = stableModernFamily && confidence >= 0.88;
+  const stableHighConfidencePromotion =
+    stableHighConfidenceFamily &&
+    confidence >= (modernMainstream ? 0.88 : 0.91) &&
+    (exactYearAgrees || rawYearWithinRange || !yearRange || noNearbyConflict);
+  const nearCertainOverride =
+    !generationSensitive &&
+    typeof input.rawYear === "number" &&
+    confidence >= (modernMainstream ? 0.985 : 0.992) &&
+    (exactYearAgrees || rawYearWithinRange || !yearRange || noNearbyConflict);
+  const modernHighConfidenceOverride =
+    modernMainstream &&
+    !generationSensitive &&
+    confidence >= 0.88 &&
+    (yearSupport?.noGenerationConflict ?? true) &&
+    ((yearSupport?.yearSpread ?? rangeSpan ?? 4) <= 3) &&
+    ((yearSupport?.stableFamily ?? false) || strongCanonicalGrounding) &&
+    (exactYearAgrees || rawYearWithinRange || noNearbyConflict);
+  const canShowExactYear =
+    (
+      exactYearAgrees &&
+      strongCanonicalGrounding &&
+      strongGenerationSupport &&
+      noNearbyConflict &&
+      confidence >= (generationSensitive ? 0.97 : modernMainstream ? 0.91 : 0.94)
+    ) ||
+    nearCertainOverride ||
+    (stableHighConfidencePromotion && typeof input.rawYear === "number") ||
+    (modernHighConfidenceOverride && typeof input.rawYear === "number") ||
+    (narrowRangePromotion && typeof input.rawYear === "number");
+  const shouldPreferRange =
+    !!yearRange &&
+    typeof rangeSpan === "number" &&
+    rangeSpan > 0 &&
+    !narrowRangePromotion &&
+    (
+      strongGenerationSupport ||
+      (rawYearWithinRange && confidence >= (generationSensitive ? 0.86 : 0.82))
+    );
+  const canShowEstimatedYear =
+    typeof input.rawYear === "number" &&
+    !shouldPreferRange &&
+    !canShowExactYear &&
+    confidence >= (generationSensitive ? 0.92 : modernMainstream ? 0.85 : 0.9) &&
+    (
+      generationSensitive
+        ? (!yearRange || (rawYearWithinRange && typeof rangeSpan === "number" && rangeSpan <= 1 && strongCanonicalGrounding))
+        : !stableModernFamily || (typeof yearSupport?.yearSpread === "number" && yearSupport.yearSpread > 3) || yearSupport?.noGenerationConflict === false
+    );
+
+  return {
+    canShowExactYear,
+    shouldPreferRange,
+    canShowEstimatedYear,
+    strongGenerationSupport,
+    noNearbyConflict,
+  };
+}
+
 function resolveDisplayYearLabel(input: {
   rawYear: number | null;
   confidence: number | null;
   yearRange: GroundedYearRange | null;
   exactGroundedYear: number | null;
   vehicle: NormalizedVehicle;
+  yearSupport?: VehicleYearSupport | null;
 }) {
-  const confidence = input.confidence ?? 0;
+  if (input.vehicle.source === "ocr_override" && typeof input.rawYear === "number") {
+    return `${input.rawYear}`;
+  }
   const rangeLabel = buildYearRangeLabel(input.yearRange);
   const isWrangler = isWranglerFamily(input.vehicle);
-  const canonicalAgreesExactly =
-    typeof input.rawYear === "number" &&
-    typeof input.exactGroundedYear === "number" &&
-    input.rawYear === input.exactGroundedYear;
+  const wranglerGeneration = isWrangler
+    ? resolveWranglerGeneration({
+        rawYear: input.rawYear,
+        confidence: input.confidence,
+        yearRange: input.yearRange,
+        exactGroundedYear: input.exactGroundedYear,
+        groundedMatchType: input.vehicle.groundedMatchType,
+        groundedCandidateCount: input.vehicle.groundedCandidateCount,
+      })
+    : null;
+  const yearDecision = getYearConfidenceDecision(input);
 
-  if (canonicalAgreesExactly && confidence >= (isWrangler ? 0.95 : 0.9)) {
+  if (
+    yearDecision.canShowExactYear &&
+    (!isWrangler || wranglerGeneration?.compatible !== false)
+  ) {
     return `${input.rawYear}`;
   }
 
-  if (rangeLabel && input.yearRange && input.yearRange.start !== input.yearRange.end) {
+  if (isWrangler && wranglerGeneration?.generation) {
+    return null;
+  }
+
+  if (
+    rangeLabel &&
+    input.yearRange &&
+    input.yearRange.start !== input.yearRange.end &&
+    yearDecision.shouldPreferRange &&
+    (!isWrangler || wranglerGeneration?.compatible !== false)
+  ) {
     return rangeLabel;
   }
 
-  if (typeof input.rawYear === "number") {
-    if (confidence >= 0.9 && !input.yearRange && !isWrangler) {
-      return `${input.rawYear} (est.)`;
-    }
-    if (confidence >= 0.75) {
-      return `${input.rawYear} (est.)`;
-    }
+  if (typeof input.rawYear === "number" && yearDecision.canShowEstimatedYear) {
+    return `${input.rawYear} (est.)`;
   }
 
-  if (rangeLabel) {
+  if (rangeLabel && yearDecision.strongGenerationSupport) {
     return rangeLabel;
   }
 
@@ -195,6 +529,17 @@ function normalizeTrimText(value: string | null | undefined) {
 
 function isWranglerFamily(vehicle: Pick<NormalizedVehicle, "make" | "model">) {
   return vehicle.make.toLowerCase() === "jeep" && vehicle.model.toLowerCase().includes("wrangler");
+}
+
+function isRiskSensitiveTrimFamily(vehicle: Pick<NormalizedVehicle, "make" | "model">) {
+  const make = vehicle.make.toLowerCase();
+  const model = vehicle.model.toLowerCase();
+  const combined = `${make} ${model}`;
+  return (
+    isWranglerFamily(vehicle) ||
+    /(f150|f250|f350|silverado|sierra|ram|tacoma|tundra|colorado|canyon|ranger)/.test(combined) ||
+    /(mustang|camaro|challenger|charger|corvette)/.test(combined)
+  );
 }
 
 function resolveDisplayTrimLabel(input: {
@@ -214,11 +559,29 @@ function resolveDisplayTrimLabel(input: {
   }
 
   if (isWranglerFamily(input.vehicle)) {
+    const generation = resolveWranglerGeneration({
+      rawYear: input.vehicle.year,
+      confidence: input.confidence,
+      yearRange: input.vehicle.groundedYearRange,
+      exactGroundedYear: input.vehicle.groundedExactYear,
+      groundedMatchType: input.vehicle.groundedMatchType,
+      groundedCandidateCount: input.vehicle.groundedCandidateCount,
+    });
+    if (!generation.generation || generation.compatible === false || confidence < 0.88) {
+      return null;
+    }
     if (groundedTrimText.includes("willys") || rawTrimText.includes("willys")) {
-      return confidence >= 0.8 ? "Willys" : null;
+      return confidence >= 0.9 ? "Willys" : null;
     }
     if (groundedTrimText.includes("rubicon") || rawTrimText.includes("rubicon")) {
-      return confidence >= 0.95 ? "Rubicon" : null;
+      return confidence >= 0.97 ? "Rubicon" : null;
+    }
+    return null;
+  }
+
+  if (isRiskSensitiveTrimFamily(input.vehicle)) {
+    if (groundedTrim && groundedTrimText === rawTrimText && confidence >= 0.95) {
+      return groundedTrim;
     }
     return null;
   }
@@ -248,7 +611,7 @@ async function enrichVehicleWithCanonicalGrounding(
   });
 
   if (!grounding?.vehicle) {
-    return {
+    const baseVehicle: NormalizedVehicle = {
       ...vehicle,
       displayYearLabel: resolveDisplayYearLabel({
         rawYear: vehicle.year,
@@ -262,38 +625,175 @@ async function enrichVehicleWithCanonicalGrounding(
         groundedTrim: null,
         confidence: vehicle.confidence,
       }),
+      groundedCandidateCount: null,
+      groundedExactYear: null,
+    };
+    const wranglerGeneration = isWranglerFamily(baseVehicle)
+      ? resolveWranglerGeneration({
+          rawYear: baseVehicle.year,
+          confidence: baseVehicle.confidence,
+          yearRange: baseVehicle.groundedYearRange,
+          exactGroundedYear: baseVehicle.groundedExactYear,
+          groundedMatchType: baseVehicle.groundedMatchType,
+          groundedCandidateCount: baseVehicle.groundedCandidateCount,
+        })
+      : null;
+    return {
+      ...baseVehicle,
+      wranglerGeneration: wranglerGeneration?.generation ?? null,
+      wranglerGenerationLabel: wranglerGeneration?.label ?? null,
+      wranglerGenerationCompatible: wranglerGeneration?.compatible ?? null,
+      displayTitleLabel: buildDisplayTitleLabel({
+        ...baseVehicle,
+        wranglerGeneration: wranglerGeneration?.generation ?? null,
+        wranglerGenerationLabel: wranglerGeneration?.label ?? null,
+        wranglerGenerationCompatible: wranglerGeneration?.compatible ?? null,
+      }),
     };
   }
 
   const groundedVehicle = grounding.vehicle;
-  const displayTrimLabel = resolveDisplayTrimLabel({
-    vehicle,
-    groundedTrim: groundedVehicle.trim || null,
-    confidence: vehicle.confidence,
-  });
-  return {
+  const provisionalVehicle: NormalizedVehicle = {
     ...vehicle,
     id: vehicle.id || (grounding.matchType === "id" || grounding.matchType === "exact" ? groundedVehicle.id : null),
     make: groundedVehicle.make || vehicle.make,
     model: groundedVehicle.model || vehicle.model,
     trim: groundedVehicle.trim || vehicle.trim,
-    displayTrimLabel,
     groundedYearRange: grounding.yearRange,
     groundedMatchType: grounding.matchType,
-    displayYearLabel: resolveDisplayYearLabel({
-      rawYear: vehicle.year,
-      confidence: vehicle.confidence,
-      yearRange: grounding.yearRange,
-      exactGroundedYear: groundedVehicle.year,
-      vehicle,
-    }),
+    groundedCandidateCount: grounding.candidateCount,
+    groundedExactYear: groundedVehicle.year,
+    displayTrimLabel: vehicle.displayTrimLabel,
+    displayYearLabel: vehicle.displayYearLabel,
+    displayTitleLabel: vehicle.displayTitleLabel,
+    wranglerGeneration: null,
+    wranglerGenerationLabel: null,
+    wranglerGenerationCompatible: null,
+  };
+  const wranglerGeneration = isWranglerFamily(provisionalVehicle)
+    ? resolveWranglerGeneration({
+        rawYear: vehicle.year,
+        confidence: vehicle.confidence,
+        yearRange: grounding.yearRange,
+        exactGroundedYear: groundedVehicle.year,
+        groundedMatchType: grounding.matchType,
+        groundedCandidateCount: grounding.candidateCount,
+      })
+    : null;
+  const allowWranglerGrounding = !isWranglerFamily(provisionalVehicle) || wranglerGeneration?.compatible !== false;
+  const groundedVehicleForDisplay = allowWranglerGrounding ? groundedVehicle : null;
+  const groundedRangeForDisplay = allowWranglerGrounding ? grounding.yearRange : null;
+  const groundedMatchTypeForDisplay = allowWranglerGrounding ? grounding.matchType : null;
+  const groundedCandidateCountForDisplay = allowWranglerGrounding ? grounding.candidateCount : null;
+  const vehicleForDisplay: NormalizedVehicle = {
+    ...vehicle,
+    id:
+      vehicle.id ||
+      (allowWranglerGrounding && (grounding.matchType === "id" || grounding.matchType === "exact") ? groundedVehicle.id : null),
+    make: groundedVehicle.make || vehicle.make,
+    model: groundedVehicle.model || vehicle.model,
+    trim: allowWranglerGrounding && groundedVehicleForDisplay?.trim ? groundedVehicleForDisplay.trim : vehicle.trim,
+    groundedYearRange: groundedRangeForDisplay,
+    groundedMatchType: groundedMatchTypeForDisplay,
+    groundedCandidateCount: groundedCandidateCountForDisplay,
+    groundedExactYear: allowWranglerGrounding ? groundedVehicle.year : null,
+    displayTrimLabel: null,
+    displayYearLabel: null,
+    displayTitleLabel: null,
+    wranglerGeneration: wranglerGeneration?.generation ?? null,
+    wranglerGenerationLabel: wranglerGeneration?.label ?? null,
+    wranglerGenerationCompatible: wranglerGeneration?.compatible ?? null,
+  };
+  const displayTrimLabel = resolveDisplayTrimLabel({
+    vehicle: vehicleForDisplay,
+    groundedTrim: groundedVehicleForDisplay?.trim || null,
+    confidence: vehicle.confidence,
+  });
+  const displayYearLabel = resolveDisplayYearLabel({
+    rawYear: vehicle.year,
+    confidence: vehicle.confidence,
+    yearRange: groundedRangeForDisplay,
+    exactGroundedYear: allowWranglerGrounding ? groundedVehicle.year : null,
+    vehicle: vehicleForDisplay,
+  });
+  const resolvedVehicle = {
+    ...vehicleForDisplay,
+    displayTrimLabel,
+    displayYearLabel,
+  };
+  return {
+    ...resolvedVehicle,
+    displayTitleLabel: buildDisplayTitleLabel(resolvedVehicle),
   };
 }
 
 function canRenderEstimatedDetail(vehicle: NormalizedVehicle) {
   const makeKnown = vehicle.make.trim().toLowerCase() !== "unknown";
   const modelKnown = vehicle.model.trim().toLowerCase() !== "vehicle";
-  return makeKnown && modelKnown;
+  const confidence = vehicle.confidence ?? 0;
+  const groundedSupport = Boolean(vehicle.groundedYearRange || vehicle.groundedMatchType);
+  return makeKnown && modelKnown && (confidence >= 0.8 || (groundedSupport && confidence >= 0.72));
+}
+
+function getWranglerGenerationSortScore(vehicle: NormalizedVehicle) {
+  if (!isWranglerFamily(vehicle)) {
+    return 0;
+  }
+  if (vehicle.wranglerGenerationCompatible === false) {
+    return -3;
+  }
+  if (vehicle.wranglerGeneration) {
+    return 3;
+  }
+  if (vehicle.groundedMatchType === "id" || vehicle.groundedMatchType === "exact") {
+    return 2;
+  }
+  return 0;
+}
+
+function getYearConsistencySortScore(vehicle: NormalizedVehicle) {
+  const yearDecision = getYearConfidenceDecision({
+    rawYear: vehicle.year,
+    confidence: vehicle.confidence,
+    yearRange: vehicle.groundedYearRange,
+    exactGroundedYear: vehicle.groundedExactYear,
+    vehicle,
+  });
+  if (yearDecision.canShowExactYear) {
+    return 4;
+  }
+  if (yearDecision.shouldPreferRange) {
+    return 3;
+  }
+  if (yearDecision.canShowEstimatedYear) {
+    return 1;
+  }
+  if (vehicle.groundedYearRange) {
+    return -1;
+  }
+  return 0;
+}
+
+function resolveResultSubtitle(vehicle: NormalizedVehicle) {
+  if (vehicle.displayTrimLabel) {
+    return vehicle.displayTrimLabel;
+  }
+  if (isWranglerFamily(vehicle)) {
+    return vehicle.wranglerGeneration ? "Trim not confidently supported" : "Generation still being verified";
+  }
+  if (vehicle.trim && (vehicle.confidence ?? 0) >= 0.9) {
+    return vehicle.trim;
+  }
+  return "Likely model family";
+}
+
+function buildEstimateDetailId(scanId: string | null | undefined, vehicle: NormalizedVehicle) {
+  const suffix = [scanId ?? null, vehicle.make, vehicle.model, vehicle.displayYearLabel ?? null]
+    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    .join(":")
+    .replace(/\s+/g, "-")
+    .toLowerCase();
+  return `estimate:${suffix || "vehicle"}`;
 }
 
 async function enrichScanForDisplay(raw: ScanResult) {
@@ -308,7 +808,19 @@ async function enrichScanForDisplay(raw: ScanResult) {
     normalizedScan.detectedVehicleType,
   );
 
-  const rankedCandidates = [...candidates].sort((left, right) => {
+  const initiallyRankedCandidates = [...candidates].sort((left, right) => {
+    const leftWranglerGeneration = getWranglerGenerationSortScore(left);
+    const rightWranglerGeneration = getWranglerGenerationSortScore(right);
+    if (leftWranglerGeneration !== rightWranglerGeneration) {
+      return rightWranglerGeneration - leftWranglerGeneration;
+    }
+
+    const leftYearConsistency = getYearConsistencySortScore(left);
+    const rightYearConsistency = getYearConsistencySortScore(right);
+    if (leftYearConsistency !== rightYearConsistency) {
+      return rightYearConsistency - leftYearConsistency;
+    }
+
     const leftGrounded = left.id ? 1 : 0;
     const rightGrounded = right.id ? 1 : 0;
     if (leftGrounded !== rightGrounded) {
@@ -330,12 +842,85 @@ async function enrichScanForDisplay(raw: ScanResult) {
     return (right.confidence ?? 0) - (left.confidence ?? 0);
   });
 
+  const yearSupportMap = buildYearSupportMap(initiallyRankedCandidates);
+  const mappedCandidates = initiallyRankedCandidates.map((candidate) => {
+    const yearSupport = yearSupportMap.get(buildVehicleFamilyKey(candidate)) ?? null;
+    const displayYearLabel = resolveDisplayYearLabel({
+      rawYear: candidate.year,
+      confidence: candidate.confidence,
+      yearRange: candidate.groundedYearRange,
+      exactGroundedYear: candidate.groundedExactYear,
+      vehicle: candidate,
+      yearSupport,
+    });
+    const resolvedCandidate = {
+      ...candidate,
+      displayYearLabel,
+    };
+    return {
+      ...resolvedCandidate,
+      displayTitleLabel: buildDisplayTitleLabel(resolvedCandidate),
+    };
+  });
+
+  const leadingCandidate = mappedCandidates[0] ?? null;
+  const promotedModernCandidate =
+    leadingCandidate && isModernMainstreamFamily(leadingCandidate)
+      ? (() => {
+          const support = yearSupportMap.get(buildVehicleFamilyKey(leadingCandidate)) ?? null;
+          if (!support?.stableFamily || support.yearSpread == null || support.yearSpread > 3 || !support.noGenerationConflict) {
+            return null;
+          }
+          const familyKey = buildVehicleFamilyKey(leadingCandidate);
+          const leadingConfidence = leadingCandidate.confidence ?? 0;
+          const closeFamilyCandidates = mappedCandidates.filter(
+            (candidate) =>
+              buildVehicleFamilyKey(candidate) === familyKey &&
+              Math.abs((candidate.confidence ?? 0) - leadingConfidence) <= 0.08,
+          );
+          if (closeFamilyCandidates.length < 2) {
+            return null;
+          }
+          return [...closeFamilyCandidates].sort((left, right) => {
+            const yearDelta = (right.year ?? 0) - (left.year ?? 0);
+            if (yearDelta !== 0) {
+              return yearDelta;
+            }
+            return (right.confidence ?? 0) - (left.confidence ?? 0);
+          })[0] ?? null;
+        })()
+      : null;
+  const rankedCandidates = promotedModernCandidate
+    ? [
+        promotedModernCandidate,
+        ...mappedCandidates.filter(
+          (candidate) => buildCandidateBaseKey(candidate) !== buildCandidateBaseKey(promotedModernCandidate),
+        ),
+      ]
+    : mappedCandidates;
+
   const matchedIdentifiedVehicle = rankedCandidates.find((candidate) => candidate.id === identifiedVehicle.id);
   const bestCandidate = rankedCandidates[0] ?? identifiedVehicle;
+  const resolvedIdentifiedVehicleBase = matchedIdentifiedVehicle ?? bestCandidate;
+  const identifiedYearSupport = yearSupportMap.get(buildVehicleFamilyKey(resolvedIdentifiedVehicleBase)) ?? null;
+  const resolvedIdentifiedVehicle = {
+    ...resolvedIdentifiedVehicleBase,
+    displayYearLabel: resolveDisplayYearLabel({
+      rawYear: resolvedIdentifiedVehicleBase.year,
+      confidence: resolvedIdentifiedVehicleBase.confidence,
+      yearRange: resolvedIdentifiedVehicleBase.groundedYearRange,
+      exactGroundedYear: resolvedIdentifiedVehicleBase.groundedExactYear,
+      vehicle: resolvedIdentifiedVehicleBase,
+      yearSupport: identifiedYearSupport,
+    }),
+  };
 
   return {
     ...normalizedScan,
-    identifiedVehicle: matchedIdentifiedVehicle ?? bestCandidate,
+    identifiedVehicle: {
+      ...resolvedIdentifiedVehicle,
+      displayTitleLabel: buildDisplayTitleLabel(resolvedIdentifiedVehicle),
+    },
     candidates: rankedCandidates,
   };
 }
@@ -362,6 +947,8 @@ export default function ScanResultScreen() {
     isVehicleUnlocked,
     useFreeUnlockForVehicle,
     refreshStatus,
+    feedbackMessage,
+    errorMessage,
   } = useSubscription();
   const sectionStateRef = useRef<{
     lockedPreview: boolean;
@@ -414,12 +1001,19 @@ export default function ScanResultScreen() {
     make: "Unknown",
     model: "Vehicle",
     trim: null,
+    source: null,
     displayTrimLabel: null,
+    displayTitleLabel: null,
     confidence: null,
     thumbnailUrl: null,
     displayYearLabel: null,
     groundedYearRange: null,
     groundedMatchType: null,
+    groundedCandidateCount: null,
+    groundedExactYear: null,
+    wranglerGeneration: null,
+    wranglerGenerationLabel: null,
+    wranglerGenerationCompatible: null,
   };
   let bestMatch: RenderCandidate = {
     ...(normalized?.identifiedVehicle ?? fallbackVehicle),
@@ -438,10 +1032,10 @@ export default function ScanResultScreen() {
   const isHighConfidence = displayConfidenceScore >= 0.82;
   const confidencePalette =
     displayConfidenceScore >= 0.9
-      ? { pill: "#ECFDF5", text: "#22C55E", label: "#16A34A", dot: "#22C55E" }
+      ? { pill: "rgba(34,197,94,0.12)", text: "#7AF0A8", label: "#7AF0A8", dot: "#34D399" }
       : displayConfidenceScore >= 0.75
-        ? { pill: "#EFF6FF", text: "#3B82F6", label: "#1D4ED8", dot: "#3B82F6" }
-        : { pill: "#F1F5F9", text: "#475569", label: "#64748B", dot: "#94A3B8" };
+        ? { pill: "rgba(44,127,255,0.14)", text: Colors.premium, label: Colors.premium, dot: Colors.accent }
+        : { pill: "rgba(100,116,139,0.18)", text: Colors.textSoft, label: Colors.textMuted, dot: Colors.textMuted };
   const parseCurrencyValue = (value: string | null | undefined) => {
     if (!value) return null;
     const digits = value.replace(/[^\d.]/g, "");
@@ -579,12 +1173,14 @@ export default function ScanResultScreen() {
   };
 
   const bestMatchYearLabel = bestMatch.displayYearLabel;
-  const bestMatchTitle = [bestMatchYearLabel, bestMatch.make, bestMatch.model].filter(Boolean).join(" ");
+  const bestMatchTitle = bestMatch.displayTitleLabel ?? [bestMatchYearLabel, bestMatch.make, bestMatch.model].filter(Boolean).join(" ");
+  const bestMatchSubtitle = resolveResultSubtitle(bestMatch);
   const buildEstimateDetailParams = (vehicle: NormalizedVehicle) => ({
-    id: vehicle.id ?? `estimate-${normalized?.id ?? `${vehicle.make}-${vehicle.model}`}`.replace(/\s+/g, "-").toLowerCase(),
+    id: buildEstimateDetailId(normalized?.id, vehicle),
     estimate: "1",
     imageUri: normalized?.imageUri ?? "",
     scanId: normalized?.id ?? "",
+    titleLabel: vehicle.displayTitleLabel ?? "",
     yearLabel: vehicle.displayYearLabel ?? "",
     make: vehicle.make,
     model: vehicle.model,
@@ -698,13 +1294,21 @@ export default function ScanResultScreen() {
 
   if (loading) {
     return (
-      <AppContainer scroll={false} contentContainerStyle={styles.loadingWrap}>
-        <View style={styles.debugBanner}>
-          <Text style={styles.debugBannerTitle}>RESULT SCREEN LOADED</Text>
-          <Text style={styles.debugBannerBody}>Loading result for scanId: {scanId ?? "missing"}</Text>
+      <AppContainer scroll={false} contentContainerStyle={styles.loadingScreen}>
+        <View style={styles.loadingHeroCard}>
+          <PremiumSkeleton height={250} radius={Radius.xl} />
+          <View style={styles.loadingHeroCopy}>
+            <Text style={styles.loadingEyebrow}>Vehicle report</Text>
+            <Text style={styles.loadingText}>Building your premium match dossier</Text>
+            <Text style={styles.loadingBody}>Preparing the image, confidence profile, and closest performance report modules.</Text>
+          </View>
         </View>
-        <ActivityIndicator size="large" color={Colors.accent} />
-        <Text style={styles.loadingText}>Loading scan result</Text>
+        <View style={styles.loadingStack}>
+          <PremiumSkeleton height={136} radius={Radius.xl} />
+          <PremiumSkeleton height={124} radius={Radius.xl} />
+          <PremiumSkeleton height={184} radius={Radius.xl} />
+        </View>
+        <ActivityIndicator size="small" color={Colors.accent} />
       </AppContainer>
     );
   }
@@ -712,10 +1316,6 @@ export default function ScanResultScreen() {
   if (!scan || !normalized) {
     return (
       <AppContainer>
-        <View style={styles.debugBanner}>
-          <Text style={styles.debugBannerTitle}>RESULT SCREEN LOADED</Text>
-          <Text style={styles.debugBannerBody}>Result error for scanId: {scanId ?? "missing"}</Text>
-        </View>
         <EmptyState title="Scan unavailable" description={error ?? "We couldn’t load that scan result."} />
       </AppContainer>
     );
@@ -730,10 +1330,6 @@ export default function ScanResultScreen() {
             { opacity: screenOpacity, transform: [{ translateY: screenTranslate }] },
           ]}
         >
-          <View style={styles.debugBanner}>
-            <Text style={styles.debugBannerTitle}>RESULT SCREEN LOADED</Text>
-            <Text style={styles.debugBannerBody}>scanId: {normalized.id ?? "missing"} | mode: full result</Text>
-          </View>
           <BackButton fallbackHref="/(tabs)/scan" label="Scan" />
           {normalized.imageUri ? (
             <View style={styles.imageFrame}>
@@ -749,6 +1345,8 @@ export default function ScanResultScreen() {
               unlocksLimit={freeUnlocksLimit}
             />
           ) : null}
+          {feedbackMessage ? <Text style={styles.feedbackNotice}>{feedbackMessage}</Text> : null}
+          {errorMessage ? <Text style={styles.errorNotice}>{errorMessage}</Text> : null}
           
           <>
             <SectionHeader title="Best Match" subtitle="Our strongest identification from this photo." />
@@ -772,7 +1370,7 @@ export default function ScanResultScreen() {
                   </View>
                 ) : null}
                 <Text style={styles.primaryTitle}>{bestMatchTitle || `${bestMatch.make} ${bestMatch.model}`}</Text>
-                <Text style={styles.subtitle}>{bestMatch.displayTrimLabel ?? (bestMatch.trim && (bestMatch.confidence ?? 0) >= 0.9 ? bestMatch.trim : "Likely model family")}</Text>
+                <Text style={styles.subtitle}>{bestMatchSubtitle}</Text>
                 <Text style={styles.confidenceLine}>{confidenceLine}</Text>
                 <Text style={styles.insightLine}>{insightCopy}</Text>
                 <Animated.View style={[styles.confidenceRow, { opacity: confidenceOpacity }]}>
@@ -814,6 +1412,12 @@ export default function ScanResultScreen() {
                 <Text style={styles.unlockTitle}>Estimated match</Text>
                 <Text style={styles.unlockBody}>We identified this vehicle from the photo with high confidence, but full catalog specs are still being linked.</Text>
                 <Text style={styles.unlockNote}>This is not a purchase issue. Try another scan angle, or check again after the catalog refreshes.</Text>
+                {alternatives.length > 0 ? (
+                  <PrimaryButton label="Explore Similar Matches" onPress={() => openVehicleDetail(alternatives[0], "estimated-alternative")} />
+                ) : (
+                  <PrimaryButton label="Refine With Another Photo" onPress={() => router.push("/(tabs)/scan")} />
+                )}
+                <PrimaryButton label="Scan Another Vehicle" secondary onPress={() => router.push("/(tabs)/scan")} />
               </View>
             </>
           ) : !hasFullAccess ? (
@@ -833,7 +1437,7 @@ export default function ScanResultScreen() {
                 <Text style={styles.unlockTitle}>Use 1 of your free unlocks</Text>
                 <Text style={styles.unlockBody}>This unlock gives full premium access for this vehicle.</Text>
                 <Text style={styles.unlockNote}>
-                  {Math.max(0, freeUnlocksRemaining)} of {freeUnlocksLimit} free unlocks remaining
+                  {Math.max(0, freeUnlocksUsed)} of {freeUnlocksLimit} free unlocks used • {Math.max(0, freeUnlocksRemaining)} remaining
                 </Text>
                 {freeUnlocksRemaining > 0 ? (
                   <PrimaryButton
@@ -844,10 +1448,13 @@ export default function ScanResultScreen() {
                         console.log("[scan-result] FALLBACK_CARD_TAPPED", { source: "free-unlock-button", scanId: normalized?.id ?? null });
                         return;
                       }
-                      const success = await useFreeUnlockForVehicle(bestMatch.id);
-                      if (success) {
+                      const result = await useFreeUnlockForVehicle(bestMatch.id);
+                      if (result.ok) {
                         await refreshStatus();
+                        Alert.alert("Free unlock applied", result.message);
                         openVehicleDetail(bestMatch, "free-unlock-continue");
+                      } else {
+                        Alert.alert("Unlock unavailable", result.message || errorMessage || "We couldn’t apply your free unlock right now.");
                       }
                     }}
                     disabled={isUnlocking}
@@ -875,9 +1482,10 @@ export default function ScanResultScreen() {
                   candidate={{
                     id: candidate.id ?? "",
                     year: candidate.year ?? 0,
+                    displayTitleLabel: candidate.displayTitleLabel ?? undefined,
                     make: candidate.make,
                     model: candidate.model,
-                    trim: candidate.trim && candidate.trim.length > 0 ? candidate.trim : undefined,
+                    trim: candidate.displayTrimLabel ? candidate.displayTrimLabel : undefined,
                     displayTrimLabel: candidate.displayTrimLabel ?? undefined,
                     confidence: candidate.confidence ?? 0,
                     thumbnailUrl: candidate.thumbnailUrl ?? "",
@@ -932,8 +1540,8 @@ const styles = StyleSheet.create({
   },
   estimatedBadge: {
     alignSelf: "flex-start",
-    backgroundColor: "#E8F4FF",
-    borderColor: "#B8D8FF",
+    backgroundColor: "rgba(44, 127, 255, 0.14)",
+    borderColor: Colors.accentGlow,
     borderWidth: 1,
     borderRadius: Radius.pill,
     paddingHorizontal: 10,
@@ -942,15 +1550,15 @@ const styles = StyleSheet.create({
   },
   quickResultBadge: {
     alignSelf: "flex-start",
-    backgroundColor: "#ECFDF5",
-    borderColor: "#A7F3D0",
+    backgroundColor: "rgba(0, 194, 255, 0.12)",
+    borderColor: Colors.cyanGlow,
     borderWidth: 1,
     borderRadius: Radius.pill,
     paddingHorizontal: 10,
     paddingVertical: 6,
     marginBottom: 2,
   },
-  quickResultBadgeText: { ...Typography.caption, color: "#047857", fontWeight: "700" },
+  quickResultBadgeText: { ...Typography.caption, color: Colors.premium, fontWeight: "700" },
   estimatedBadgeText: { ...Typography.caption, color: Colors.accent, fontWeight: "700" },
   primaryTitle: { ...Typography.title, color: Colors.textStrong, fontWeight: "700", fontSize: 22, lineHeight: 28 },
   subtitle: { ...Typography.body, color: Colors.textMuted },
@@ -988,6 +1596,8 @@ const styles = StyleSheet.create({
     ...cardStyles.secondary,
     gap: 10,
   },
+  feedbackNotice: { ...Typography.caption, color: Colors.textMuted },
+  errorNotice: { ...Typography.caption, color: Colors.dangerSoft },
   unlockTitle: { ...Typography.heading, color: Colors.textStrong },
   unlockBody: { ...Typography.body, color: Colors.textMuted },
   unlockNote: { ...Typography.caption, color: Colors.textMuted },
@@ -1000,17 +1610,11 @@ const styles = StyleSheet.create({
   previewHeading: { ...Typography.heading, color: Colors.textStrong },
   previewBody: { ...Typography.body, color: Colors.textMuted },
   notRight: { ...Typography.caption, color: Colors.textMuted, textAlign: "center" },
-  debugBanner: {
-    backgroundColor: "#DCFCE7",
-    borderColor: "#86EFAC",
-    borderWidth: 1,
-    borderRadius: Radius.lg,
-    padding: 12,
-    gap: 4,
-    marginBottom: 12,
-  },
-  debugBannerTitle: { ...Typography.bodyStrong, color: Colors.textStrong },
-  debugBannerBody: { ...Typography.caption, color: Colors.text },
-  loadingWrap: { flex: 1, justifyContent: "center", alignItems: "center", gap: 12 },
-  loadingText: { ...Typography.body, color: Colors.textMuted },
+  loadingScreen: { flex: 1, gap: 18, justifyContent: "center" },
+  loadingHeroCard: { ...cardStyles.primaryTint, gap: 16, padding: 18 },
+  loadingHeroCopy: { gap: 8 },
+  loadingEyebrow: { ...Typography.caption, color: Colors.premium, textTransform: "uppercase", letterSpacing: 1.2 },
+  loadingText: { ...Typography.title, color: Colors.textStrong },
+  loadingBody: { ...Typography.body, color: Colors.textSoft },
+  loadingStack: { gap: 14 },
 });

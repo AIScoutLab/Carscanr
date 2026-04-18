@@ -2,17 +2,19 @@ export type VehicleCandidate = {
   id: string;
   year: number;
   displayYearLabel?: string;
+  displayTitleLabel?: string;
   make: string;
   model: string;
   trim?: string;
   displayTrimLabel?: string;
+  source?: "visual_candidate" | "ocr_override";
   confidence: number;
   thumbnailUrl: string;
 };
 
 export type VehicleSpecs = {
   engine: string;
-  horsepower: number;
+  horsepower: number | null;
   torque: string;
   transmission: string;
   drivetrain: string;
@@ -71,7 +73,7 @@ export type OfflineCanonicalVehicle = {
   normalizedTrim: string;
   basicSpecs: {
     engine: string;
-    horsepower: number;
+    horsepower: number | null;
     torque: string;
     transmission: string;
     drivetrain: string;
@@ -100,6 +102,7 @@ export type ScanResult = {
   imageUri: string;
   identifiedVehicle: VehicleCandidate;
   candidates: VehicleCandidate[];
+  source?: "visual_candidate" | "ocr_override";
   confidenceScore: number;
   detectedVehicleType?: "car" | "motorcycle";
   limitedPreview?: boolean;

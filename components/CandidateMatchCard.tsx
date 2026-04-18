@@ -10,8 +10,8 @@ type Props = {
 };
 
 export function CandidateMatchCard({ candidate, onPress }: Props) {
-  const title = [candidate.displayYearLabel ?? null, candidate.make, candidate.model].filter(Boolean).join(" ");
-  const isTappable = Boolean(onPress && candidate.id);
+  const title = candidate.displayTitleLabel ?? [candidate.displayYearLabel ?? null, candidate.make, candidate.model].filter(Boolean).join(" ");
+  const isTappable = Boolean(onPress);
 
   return (
     <TouchableOpacity
@@ -39,15 +39,24 @@ export function CandidateMatchCard({ candidate, onPress }: Props) {
 }
 
 const styles = StyleSheet.create({
-  card: { ...cardStyles.secondary, padding: 14 },
+  card: { ...cardStyles.secondary, padding: 16 },
   cardDisabled: { opacity: 0.78 },
   body: { gap: 10 },
   row: { flexDirection: "row", gap: 12, alignItems: "center" },
   copy: { flex: 1, gap: 4 },
   title: { ...Typography.bodyStrong, color: Colors.textStrong },
-  subtitle: { ...Typography.caption, color: Colors.textMuted },
-  confidenceBlock: { alignItems: "flex-end", gap: 2 },
+  subtitle: { ...Typography.caption, color: Colors.textSoft },
+  confidenceBlock: {
+    alignItems: "flex-end",
+    gap: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 14,
+    backgroundColor: Colors.cardAlt,
+    borderWidth: 1,
+    borderColor: Colors.borderSoft,
+  },
   confidenceValue: { ...Typography.bodyStrong, color: Colors.textStrong },
-  confidenceLabel: { ...Typography.caption, color: Colors.accent },
+  confidenceLabel: { ...Typography.caption, color: Colors.premium },
   tapHint: { ...Typography.caption, color: Colors.textMuted },
 });

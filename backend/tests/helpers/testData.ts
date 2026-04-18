@@ -136,6 +136,8 @@ export function createTestRepositories(seed?: {
     imageCache: [] as ImageCacheRecord[],
     unlockBalances: [] as UnlockBalanceRecord[],
     vehicleUnlocks: [] as UserVehicleUnlockRecord[],
+    vehicleScanPopularity: [],
+    vehicleGlobalTrending: [],
   };
 
   const repositories: RepositoryRegistry = {
@@ -168,6 +170,9 @@ export function createTestRepositories(seed?: {
       },
     },
     canonicalVehicles: {
+      async findById(id) {
+        return state.canonicalVehicles.find((vehicle) => vehicle.id === id) ?? null;
+      },
       async findByCanonicalKey(canonicalKey) {
         return state.canonicalVehicles.find((vehicle) => vehicle.canonicalKey === canonicalKey) ?? null;
       },
@@ -182,6 +187,16 @@ export function createTestRepositories(seed?: {
             return vehicle.normalizedTrim == null;
           }) ?? null
         );
+      },
+      async searchPromoted(input) {
+        return state.canonicalVehicles.filter((vehicle) => {
+          if (vehicle.promotionStatus !== "promoted") return false;
+          if (input.year != null && vehicle.year !== input.year) return false;
+          if (input.normalizedMake && vehicle.normalizedMake !== input.normalizedMake) return false;
+          if (input.normalizedModel && vehicle.normalizedModel !== input.normalizedModel) return false;
+          if (input.normalizedTrim != null && vehicle.normalizedTrim !== input.normalizedTrim) return false;
+          return true;
+        });
       },
       async upsertCandidate(record) {
         const existing = state.canonicalVehicles.find((vehicle) => vehicle.canonicalKey === record.canonicalKey);
@@ -482,6 +497,83 @@ export function createTestRepositories(seed?: {
         const before = state.providerApiUsageLogs.length;
         state.providerApiUsageLogs = state.providerApiUsageLogs.filter((entry) => entry.createdAt >= cutoffIso);
         return before - state.providerApiUsageLogs.length;
+      },
+    },
+    vehicleScanPopularity: {
+      async increment(input) {
+        const existing = state.vehicleScanPopularity.find((entry) => entry.normalizedKey === input.normalizedKey);
+        if (existing) {
+          const updated = {
+            ...existing,
+            scanCount: existing.scanCount + 1,
+            lastSeenAt: input.lastSeenAt,
+          };
+          state.vehicleScanPopularity = [
+            updated,
+            ...state.vehicleScanPopularity.filter((entry) => entry.normalizedKey !== input.normalizedKey),
+          ];
+          return updated;
+        }
+        const created = {
+          normalizedKey: input.normalizedKey,
+          year: input.year,
+          normalizedMake: input.normalizedMake,
+          normalizedModel: input.normalizedModel,
+          normalizedTrim: input.normalizedTrim,
+          scanCount: 1,
+          lastSeenAt: input.lastSeenAt,
+          createdAt: input.lastSeenAt,
+          updatedAt: input.lastSeenAt,
+        };
+        state.vehicleScanPopularity.unshift(created);
+        return created;
+      },
+      async findByNormalizedKey(normalizedKey) {
+        return state.vehicleScanPopularity.find((entry) => entry.normalizedKey === normalizedKey) ?? null;
+      },
+      async searchLikelyMatches(input) {
+        return state.vehicleScanPopularity.filter(
+          (entry) =>
+            entry.year === input.year &&
+            entry.normalizedMake === input.normalizedMake &&
+            entry.normalizedModel === input.normalizedModel,
+        );
+      },
+      async findConflicts(input) {
+        return state.vehicleScanPopularity.filter(
+          (entry) =>
+            entry.year === input.year &&
+            entry.normalizedMake === input.normalizedMake &&
+            entry.normalizedModel === input.normalizedModel &&
+            entry.normalizedTrim !== input.normalizedTrim &&
+            entry.scanCount >= input.minScanCount,
+        );
+      },
+      async listTop(limit) {
+        return [...state.vehicleScanPopularity].sort((left, right) => right.scanCount - left.scanCount).slice(0, limit);
+      },
+    },
+    vehicleGlobalTrending: {
+      async upsert(record) {
+        state.vehicleGlobalTrending = [
+          record,
+          ...state.vehicleGlobalTrending.filter((entry) => entry.normalizedKey !== record.normalizedKey),
+        ];
+        return record;
+      },
+      async findByNormalizedKey(normalizedKey) {
+        return state.vehicleGlobalTrending.find((entry) => entry.normalizedKey === normalizedKey) ?? null;
+      },
+      async searchLikelyMatches(input) {
+        return state.vehicleGlobalTrending.filter(
+          (entry) =>
+            entry.year === input.year &&
+            entry.normalizedMake === input.normalizedMake &&
+            entry.normalizedModel === input.normalizedModel,
+        );
+      },
+      async listTop(limit) {
+        return [...state.vehicleGlobalTrending].sort((left, right) => right.trendScore - left.trendScore).slice(0, limit);
       },
     },
   };
