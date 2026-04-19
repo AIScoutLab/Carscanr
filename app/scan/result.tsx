@@ -1059,6 +1059,7 @@ export default function ScanResultScreen() {
     vehicleId: bestMatch.id,
     scanId: normalized?.id ?? null,
     year: bestMatch.year ?? normalized?.identifiedVehicle.year ?? null,
+    groundedYear: bestMatch.groundedExactYear,
     make: bestMatch.make,
     model: bestMatch.model,
     trim: bestMatch.trim ?? null,
@@ -1132,6 +1133,7 @@ export default function ScanResultScreen() {
       id: approximateUnlockId ?? buildVehicleUnlockId({
         vehicleId: vehicle.id,
         year: vehicle.year,
+        groundedYear: vehicle.groundedExactYear,
         make: vehicle.make,
         model: vehicle.model,
       }) ?? "estimate:vehicle",
@@ -1315,6 +1317,7 @@ export default function ScanResultScreen() {
             vehicleId: vehicle.id,
             scanId: normalized?.id ?? null,
             year: vehicle.year,
+            groundedYear: vehicle.groundedExactYear,
             make: vehicle.make,
             model: vehicle.model,
             trim: vehicle.trim ?? null,
@@ -1393,18 +1396,16 @@ export default function ScanResultScreen() {
     console.log("[tap] result-open-full-detail", { vehicleId: bestMatch.id, targetKind: bestMatchDetailTarget.kind });
     openVehicleDetail(bestMatch, "open-full-detail");
   };
-  const primaryVisualOverrideActionLabel = hasFullAccess
-    ? isHighConfidenceTrustedVisualOverride
-      ? "Open Vehicle Details"
-      : "Open Trusted Family Detail"
-    : freeUnlocksRemaining > 0
-      ? (isUnlocking ? "Opening vehicle details..." : "Use 1 Free Unlock")
-      : "Unlock with Pro";
+  const primaryVisualOverrideActionLabel = isUnlocking
+    ? "Opening vehicle details..."
+    : hasFullAccess
+      ? "View Vehicle Details"
+      : "Open Vehicle Details";
   const fallbackConfidenceLabel =
     isHighConfidenceTrustedVisualOverride
       ? "High confidence"
       : isHighConfidenceVisualOverride
-      ? "High-confidence family match"
+      ? "High confidence"
       : displayConfidenceScore >= 0.9
         ? "High confidence"
         : displayConfidenceScore >= 0.8
@@ -1423,17 +1424,8 @@ export default function ScanResultScreen() {
     : [];
   const highConfidenceOverrideBody =
     bestMatch.displayYearLabel || bestMatch.make || bestMatch.model
-      ? isHighConfidenceTrustedVisualOverride
-        ? `We identified this ${[bestMatch.displayYearLabel, bestMatch.make, bestMatch.model].filter(Boolean).join(" ")} with high confidence.`
-        : `We identified this vehicle with high confidence. Exact ${[bestMatch.displayYearLabel, bestMatch.make, bestMatch.model].filter(Boolean).join(" ")} catalog data is not linked yet, so we’re showing the closest trusted ${bestMatch.model || "vehicle"} family details where supported.`
-      : isHighConfidenceTrustedVisualOverride
-        ? "We identified this vehicle with high confidence."
-        : "We identified this vehicle with high confidence. Exact catalog data is not linked yet, so we’re showing the closest trusted family details where supported.";
-  const visualOverrideTrustNote = isHighConfidenceVisualOverride
-    ? isHighConfidenceTrustedVisualOverride
-      ? null
-      : "Family-safe specs can still open here, while trim-specific details stay conservative until exact catalog grounding is available."
-    : null;
+      ? `We identified this ${[bestMatch.displayYearLabel, bestMatch.make, bestMatch.model].filter(Boolean).join(" ")} with high confidence.`
+      : "We identified this vehicle with high confidence.";
   const confidenceSupportNote = isHighConfidenceTrustedVisualOverride
     ? "This identification is based on strong visible design cues from your photo."
     : "This is the most likely match based on visible design cues from your photo.";
@@ -1575,20 +1567,16 @@ export default function ScanResultScreen() {
                   <Text style={styles.bestEffortNote}>
                     {isHighConfidenceVisualOverride
                       ? highConfidenceOverrideBody
-                      : "Exact catalog data is not linked yet. Showing closest trusted vehicle-family details where supported."}
+                      : "We identified this vehicle from your photo and will open the best available vehicle details for it."}
                   </Text>
                 ) : null}
                 {bestMatchDetailTarget.kind === "estimated" ? (
                   <Text style={styles.preview}>
                     {isHighConfidenceVisualOverride
                       ? hasFullAccess
-                        ? isHighConfidenceTrustedVisualOverride
-                          ? "Vehicle details are unlocked and ready to open."
-                          : "Vehicle details are unlocked and ready to open."
-                        : isHighConfidenceTrustedVisualOverride
-                          ? "Use your unlock to open vehicle details for this vehicle."
-                          : "Vehicle details are available for this high-confidence result."
-                      : "Estimated detail view is available. We’ll show closest trusted family details where supported."}
+                        ? "Vehicle details are unlocked and ready to open."
+                        : "Open vehicle details for this vehicle."
+                      : "Vehicle details are available for this result."}
                   </Text>
                 ) : null}
                 {!canOpenBestMatch ? (
@@ -1619,7 +1607,7 @@ export default function ScanResultScreen() {
             <>
               {fallbackQuickFacts.length > 0 ? (
                 <View style={styles.quickFactsCard}>
-                  <Text style={styles.quickFactsTitle}>Estimated from photo analysis</Text>
+                  <Text style={styles.quickFactsTitle}>{isHighConfidenceVisualOverride ? "Detected vehicle details" : "Photo-based vehicle details"}</Text>
                   {fallbackQuickFacts.map((fact) => (
                     <Text key={fact} style={styles.quickFactLine}>{fact}</Text>
                   ))}
@@ -1640,10 +1628,9 @@ export default function ScanResultScreen() {
                 </Text>
                 <Text style={styles.unlockBody}>
                   {isHighConfidenceVisualOverride
-                    ? "Unlock this vehicle once to open the full detail view with the best available specs, pricing, listings, and photos."
-                    : "Exact catalog data is not linked yet. Showing closest trusted vehicle-family details where supported."}
+                    ? "Unlock this vehicle once to open the full detail view with the best available specs, value, listings, and photos."
+                    : "Open the best available vehicle details for this result."}
                 </Text>
-                {isHighConfidenceVisualOverride && visualOverrideTrustNote && !hasFullAccess ? <Text style={styles.unlockNote}>{visualOverrideTrustNote}</Text> : null}
                 {!isHighConfidenceVisualOverride ? (
                   <Text style={styles.unlockNote}>This is not a purchase issue. Try another scan angle, or check again after the catalog refreshes.</Text>
                 ) : null}
@@ -1659,7 +1646,7 @@ export default function ScanResultScreen() {
                     </View>
                     {freeUnlocksRemaining > 0 && approximateUnlockId ? (
                       <PrimaryButton
-                        label={isUnlocking ? "Opening vehicle details..." : "Use 1 Free Unlock"}
+                        label={isUnlocking ? "Opening vehicle details..." : "Open Vehicle Details"}
                         onPress={async () => {
                           const result = await useFreeUnlockForVehicle(approximateUnlockId);
                           if (result.ok) {
@@ -1673,14 +1660,14 @@ export default function ScanResultScreen() {
                         disabled={isUnlocking}
                       />
                     ) : null}
-                    <PrimaryButton label="Upgrade to Pro" secondary onPress={() => router.push("/paywall")} />
+                    {freeUnlocksRemaining <= 0 ? <PrimaryButton label="Unlock with Pro" secondary onPress={() => router.push("/paywall")} /> : null}
                   </View>
                 ) : isHighConfidenceVisualOverride ? (
-                  <PrimaryButton label="Open Vehicle Details" onPress={handleOpenBestMatch} />
+                  <PrimaryButton label="View Vehicle Details" onPress={handleOpenBestMatch} />
                 ) : alternatives.length > 0 ? (
                   <PrimaryButton label="Explore Similar Matches" onPress={() => openVehicleDetail(alternatives[0], "estimated-alternative")} />
                 ) : (
-                  <PrimaryButton label="Refine With Another Photo" onPress={() => router.push("/(tabs)/scan")} />
+                  <PrimaryButton label="Scan Another Vehicle" onPress={() => router.push("/(tabs)/scan")} />
                 )}
                 <PrimaryButton
                   label={isHighConfidenceVisualOverride ? "Scan Another Vehicle" : "Scan Another Vehicle"}
@@ -1777,7 +1764,7 @@ export default function ScanResultScreen() {
           {isCatalogMatched || (isHighConfidenceVisualOverride && hasFullAccess) ? <PrimaryButton label="Save to Garage" onPress={saveToGarage} /> : null}
           {canOpenBestMatch ? (
             <PrimaryButton
-              label={bestMatchDetailTarget.kind === "estimated" ? "Open Estimated Detail" : "Open Full Vehicle Detail"}
+              label={hasFullAccess ? "View Vehicle Details" : "Open Vehicle Details"}
               secondary
               onPress={handleOpenFullDetail}
             />

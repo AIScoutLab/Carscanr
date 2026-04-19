@@ -70,13 +70,37 @@ function normalizeUnlockPart(value: string | number | null | undefined, fallback
   return fallback;
 }
 
+function normalizeYear(year: string | number | null | undefined, groundedYear?: string | number | null) {
+  const parsedYear = typeof year === "number" ? year : typeof year === "string" ? Number.parseInt(year, 10) : null;
+  const parsedGroundedYear =
+    typeof groundedYear === "number"
+      ? groundedYear
+      : typeof groundedYear === "string"
+        ? Number.parseInt(groundedYear, 10)
+        : null;
+
+  if (
+    typeof parsedYear === "number" &&
+    Number.isFinite(parsedYear) &&
+    typeof parsedGroundedYear === "number" &&
+    Number.isFinite(parsedGroundedYear) &&
+    Math.abs(parsedYear - parsedGroundedYear) <= 1
+  ) {
+    return parsedGroundedYear;
+  }
+
+  return typeof parsedYear === "number" && Number.isFinite(parsedYear) ? parsedYear : null;
+}
+
 export function buildVehicleUnlockId(input: {
   vehicleId?: string | null;
   scanId?: string | null;
   year?: string | number | null;
+  groundedYear?: string | number | null;
   make?: string | null;
   model?: string | null;
   trim?: string | null;
+  includeTrim?: boolean;
 }) {
   if (typeof input.vehicleId === "string" && input.vehicleId.trim().length > 0 && !input.vehicleId.startsWith(ESTIMATED_UNLOCK_PREFIX)) {
     return input.vehicleId;
@@ -89,12 +113,41 @@ export function buildVehicleUnlockId(input: {
   }
 
   return `${ESTIMATED_UNLOCK_PREFIX}${[
-    normalizeUnlockPart(input.scanId, "vehicle"),
-    normalizeUnlockPart(input.year, "na"),
+    normalizeUnlockPart(normalizeYear(input.year, input.groundedYear), "na"),
     make,
     model,
-    normalizeUnlockPart(input.trim, "family"),
+    input.includeTrim ? normalizeUnlockPart(input.trim, "family") : "family",
   ].join(":")}`;
+}
+
+function normalizeEstimatedUnlockId(vehicleId: string) {
+  if (!isEstimatedUnlockId(vehicleId)) {
+    return vehicleId;
+  }
+
+  const raw = vehicleId.slice(ESTIMATED_UNLOCK_PREFIX.length);
+  const parts = raw.split(":").filter((part) => part.length > 0);
+  if (parts.length >= 5) {
+    const [, year, make, model] = parts;
+    return `${ESTIMATED_UNLOCK_PREFIX}${[
+      normalizeUnlockPart(year, "na"),
+      normalizeUnlockPart(make, "unknown"),
+      normalizeUnlockPart(model, "vehicle"),
+      "family",
+    ].join(":")}`;
+  }
+
+  if (parts.length === 4) {
+    const [year, make, model] = parts;
+    return `${ESTIMATED_UNLOCK_PREFIX}${[
+      normalizeUnlockPart(year, "na"),
+      normalizeUnlockPart(make, "unknown"),
+      normalizeUnlockPart(model, "vehicle"),
+      "family",
+    ].join(":")}`;
+  }
+
+  return vehicleId;
 }
 
 type FreeUnlockState = {
@@ -122,7 +175,13 @@ function normalizeUnlockState(input: unknown): FreeUnlockState {
   const raw = input as Partial<FreeUnlockState>;
   const used = typeof raw.used === "number" && Number.isFinite(raw.used) ? Math.max(0, raw.used) : 0;
   const unlockedVehicleIds = Array.isArray(raw.unlockedVehicleIds)
-    ? raw.unlockedVehicleIds.filter((id) => typeof id === "string" && id.length > 0)
+    ? Array.from(
+        new Set(
+          raw.unlockedVehicleIds
+            .filter((id) => typeof id === "string" && id.length > 0)
+            .map((id) => normalizeEstimatedUnlockId(id)),
+        ),
+      )
     : [];
   return { used, unlockedVehicleIds };
 }

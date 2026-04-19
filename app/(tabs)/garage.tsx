@@ -23,19 +23,19 @@ export default function GarageScreen() {
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [requiresAuth, setRequiresAuth] = useState(false);
+  const [hasAccessToken, setHasAccessToken] = useState(false);
   const { status: usage, freeUnlocksRemaining, freeUnlocksLimit } = useSubscription();
 
   useEffect(() => {
     Promise.all([authService.getAccessToken(), garageService.list()])
       .then(([token, result]) => {
+        setHasAccessToken(Boolean(token));
         setItems(result);
-        setRequiresAuth(!token && result.length === 0);
-        setError(!token && result.length === 0 ? "Sign in to view your synced Garage history." : null);
+        setError(null);
       })
       .catch((err) => {
         setItems([]);
-        setRequiresAuth(false);
+        setHasAccessToken(false);
         setError(err instanceof Error ? err.message : "Garage unavailable.");
       })
       .finally(() => {
@@ -81,12 +81,6 @@ export default function GarageScreen() {
           <PremiumSkeleton height={148} radius={Radius.xl} />
           <ActivityIndicator size="small" color={Colors.accent} />
         </View>
-      ) : requiresAuth ? (
-        <View style={styles.authCard}>
-          <Text style={styles.authTitle}>Sign in to use Garage</Text>
-          <Text style={styles.authBody}>Sign in to sync your saved vehicles, restore your collection on new devices, and keep your garage archive with you.</Text>
-          <PrimaryButton label="Sign In" onPress={() => router.push("/auth?mode=sign-in")} />
-        </View>
       ) : filtered.length === 0 ? (
         <View style={styles.emptyWrap}>
           <View style={styles.emptyBadge}>
@@ -95,9 +89,15 @@ export default function GarageScreen() {
           </View>
           <EmptyState
             title="No saved vehicles yet"
-            description={error ?? "Save a scan to your Garage to start building a curated vehicle archive with notes, favorites, and photos."}
+            description={
+              error ??
+              (hasAccessToken
+                ? "Save a scan to your Garage to start building a curated vehicle archive with notes, favorites, and photos."
+                : "Save vehicles here as you scan. Sign in anytime to sync your Garage across devices.")
+            }
           />
           <PrimaryButton label="Scan Another Vehicle" onPress={() => router.push("/(tabs)/scan")} />
+          {!hasAccessToken ? <PrimaryButton label="Sign In to Sync Garage" secondary onPress={() => router.push("/auth?mode=sign-in")} /> : null}
         </View>
       ) : (
         filtered.map((item) => (
@@ -193,9 +193,6 @@ const styles = StyleSheet.create({
   loadingEyebrow: { ...Typography.caption, color: Colors.premium, textTransform: "uppercase", letterSpacing: 1.1 },
   loadingTitle: { ...Typography.heading, color: Colors.textStrong },
   loadingText: { ...Typography.body, color: Colors.textSoft, textAlign: "center" },
-  authCard: { backgroundColor: Colors.cardSoft, borderRadius: Radius.xl, padding: 24, gap: 12, borderWidth: 1, borderColor: Colors.border },
-  authTitle: { ...Typography.heading, color: Colors.textStrong },
-  authBody: { ...Typography.body, color: Colors.textSoft },
   emptyWrap: { gap: 14 },
   emptyBadge: {
     alignSelf: "center",
