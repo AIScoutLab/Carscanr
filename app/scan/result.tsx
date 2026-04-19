@@ -23,6 +23,7 @@ import { authService } from "@/services/authService";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { garageService } from "@/services/garageService";
 import { scanService } from "@/services/scanService";
+import { buildVehicleUnlockId } from "@/services/subscriptionService";
 import { vehicleService } from "@/services/vehicleService";
 import { ListingResult, ScanResult, ValuationResult } from "@/types";
 import { confidenceTone, formatConfidence } from "@/lib/utils";
@@ -46,7 +47,7 @@ type NormalizedVehicle = {
   make: string;
   model: string;
   trim: string | null;
-  source: "visual_candidate" | "ocr_override" | null;
+  source: "visual_candidate" | "ocr_override" | "visual_override" | null;
   displayTrimLabel: string | null;
   displayTitleLabel: string | null;
   confidence: number | null;
@@ -66,7 +67,7 @@ type RenderCandidate = NormalizedVehicle & { renderKey: string };
 type NormalizedScan = {
   id: string | null;
   imageUri: string | null;
-  source: "visual_candidate" | "ocr_override" | null;
+  source: "visual_candidate" | "ocr_override" | "visual_override" | null;
   confidenceScore: number | null;
   detectedVehicleType: "car" | "motorcycle" | null;
   candidates: NormalizedVehicle[];
@@ -107,7 +108,14 @@ function normalizeVehicleForResult(raw: unknown): NormalizedVehicle {
     make: safeString((input as any).make, "Unknown"),
     model: safeString((input as any).model, "Vehicle"),
     trim: typeof (input as any).trim === "string" ? (input as any).trim : null,
-    source: (input as any).source === "ocr_override" ? "ocr_override" : (input as any).source === "visual_candidate" ? "visual_candidate" : null,
+    source:
+      (input as any).source === "ocr_override"
+        ? "ocr_override"
+        : (input as any).source === "visual_override"
+          ? "visual_override"
+          : (input as any).source === "visual_candidate"
+            ? "visual_candidate"
+            : null,
     displayTrimLabel: typeof (input as any).trim === "string" ? (input as any).trim : null,
     displayTitleLabel: null,
     confidence: safeNumber((input as any).confidence),
@@ -131,7 +139,14 @@ function normalizeScanForResult(raw: ScanResult): NormalizedScan {
   return {
     id: typeof raw.id === "string" ? raw.id : null,
     imageUri: typeof raw.imageUri === "string" ? raw.imageUri : null,
-    source: raw.source === "ocr_override" ? "ocr_override" : raw.source === "visual_candidate" ? "visual_candidate" : null,
+    source:
+      raw.source === "ocr_override"
+        ? "ocr_override"
+        : raw.source === "visual_override"
+          ? "visual_override"
+          : raw.source === "visual_candidate"
+            ? "visual_candidate"
+            : null,
     confidenceScore: safeNumber(raw.confidenceScore),
     detectedVehicleType: raw.detectedVehicleType === "motorcycle" ? "motorcycle" : raw.detectedVehicleType === "car" ? "car" : null,
     candidates,
@@ -317,6 +332,16 @@ function isModernMainstreamFamily(vehicle: Pick<NormalizedVehicle, "make" | "mod
     "volkswagen",
   ]);
   return mainstreamMakes.has(make);
+}
+
+function isExtremeRiskFamily(vehicle: Pick<NormalizedVehicle, "make" | "model" | "year">) {
+  const make = vehicle.make.toLowerCase();
+  const model = vehicle.model.toLowerCase();
+  const combined = `${make} ${model}`;
+  const isClassic = typeof vehicle.year === "number" && vehicle.year > 0 && vehicle.year < 1996;
+  const isRareExoticBrand = /ferrari|lamborghini|mclaren|aston martin|lotus|koenigsegg|pagani|rimac|bugatti|rolls royce|bentley/.test(make);
+  const isRareExoticModel = /huracan|aventador|sf90|296 gtb|artura|senna|chiron|nevera|ghost|phantom|continental gt/.test(combined);
+  return isClassic || isRareExoticBrand || isRareExoticModel;
 }
 
 function buildVehicleFamilyKey(vehicle: Pick<NormalizedVehicle, "make" | "model">) {
@@ -1026,9 +1051,26 @@ export default function ScanResultScreen() {
   const isCatalogMatched = Boolean(bestMatch.id);
   const isQuickResult = normalized?.quickResult === true;
   const isPro = usage?.plan === "pro";
-  const unlockedForVehicle = isCatalogMatched && bestMatch.id ? isVehicleUnlocked(bestMatch.id) : false;
-  const hasFullAccess = isCatalogMatched && (isPro || unlockedForVehicle);
   const displayConfidenceScore = safeNumber(normalized?.confidenceScore, 0) ?? 0;
+  const isVisualOverride = normalized?.source === "visual_override" || bestMatch.source === "visual_override";
+  const isHighConfidenceVisualOverride = !isCatalogMatched && isVisualOverride && displayConfidenceScore >= 0.9;
+  const isHighConfidenceTrustedVisualOverride = isHighConfidenceVisualOverride && !isExtremeRiskFamily(bestMatch);
+  const bestMatchUnlockId = buildVehicleUnlockId({
+    vehicleId: bestMatch.id,
+    scanId: normalized?.id ?? null,
+    year: bestMatch.year ?? normalized?.identifiedVehicle.year ?? null,
+    make: bestMatch.make,
+    model: bestMatch.model,
+    trim: bestMatch.trim ?? null,
+  });
+  const approximateUnlockId = isHighConfidenceVisualOverride ? bestMatchUnlockId : null;
+  const unlockedForVehicle = bestMatchUnlockId ? isVehicleUnlocked(bestMatchUnlockId) : false;
+  const unlockedForApproximateDetail = approximateUnlockId ? isVehicleUnlocked(approximateUnlockId) : false;
+  const hasFullAccess = isCatalogMatched
+    ? isPro || unlockedForVehicle
+    : isHighConfidenceVisualOverride
+      ? isPro || unlockedForApproximateDetail
+      : false;
   const isHighConfidence = displayConfidenceScore >= 0.82;
   const confidencePalette =
     displayConfidenceScore >= 0.9
@@ -1194,6 +1236,7 @@ export default function ScanResultScreen() {
         kind: "grounded" as const,
         params: {
           id: vehicle.id,
+          unlockId: buildVehicleUnlockId({ vehicleId: vehicle.id }),
           imageUri: normalized?.imageUri ?? "",
           scanId: normalized?.id ?? "",
         },
@@ -1202,7 +1245,18 @@ export default function ScanResultScreen() {
     if (canRenderEstimatedDetail(vehicle)) {
       return {
         kind: "estimated" as const,
-        params: buildEstimateDetailParams(vehicle),
+        params: {
+          ...buildEstimateDetailParams(vehicle),
+          unlockId: buildVehicleUnlockId({
+            vehicleId: vehicle.id,
+            scanId: normalized?.id ?? null,
+            year: vehicle.year,
+            make: vehicle.make,
+            model: vehicle.model,
+            trim: vehicle.trim ?? null,
+          }) ?? "",
+          reopenedSource: "1",
+        },
       };
     }
     return {
@@ -1210,6 +1264,7 @@ export default function ScanResultScreen() {
       params: null,
     };
   };
+  const requiresApproximateUnlock = !isCatalogMatched && isHighConfidenceVisualOverride;
   const openVehicleDetail = (vehicle: NormalizedVehicle, source: string) => {
     const target = getDetailTarget(vehicle);
     console.log("[tap] result-open-request", {
@@ -1217,6 +1272,14 @@ export default function ScanResultScreen() {
       vehicleId: vehicle.id,
       targetKind: target.kind,
     });
+    if (requiresApproximateUnlock && !hasFullAccess) {
+      console.log("[scan-result] APPROXIMATE_DETAIL_LOCKED", {
+        source,
+        scanId: normalized?.id ?? null,
+        unlockId: approximateUnlockId,
+      });
+      return;
+    }
     if (target.kind === "none" || !target.params) {
       console.log("[scan-result] FALLBACK_CARD_TAPPED", { source, scanId: normalized?.id ?? null });
       return;
@@ -1232,14 +1295,57 @@ export default function ScanResultScreen() {
   };
 
   const bestMatchDetailTarget = getDetailTarget(bestMatch);
-  const canOpenBestMatch = bestMatchDetailTarget.kind !== "none";
-  const handleOpenBestMatch = () => openVehicleDetail(bestMatch, "best-match-card");
+  const canOpenBestMatch = bestMatchDetailTarget.kind !== "none" && (!requiresApproximateUnlock || hasFullAccess);
+  const handleHighConfidenceVisualOverrideAction = async (source: string) => {
+    if (!isHighConfidenceVisualOverride) {
+      handleOpenBestMatch();
+      return;
+    }
+    if (hasFullAccess) {
+      openVehicleDetail(bestMatch, source);
+      return;
+    }
+    if (freeUnlocksRemaining > 0 && approximateUnlockId) {
+      const result = await useFreeUnlockForVehicle(approximateUnlockId);
+      if (result.ok) {
+        await refreshStatus();
+        Alert.alert("Free unlock applied", result.message);
+        openVehicleDetail(bestMatch, `${source}-unlocked`);
+      } else {
+        Alert.alert("Unlock unavailable", result.message || errorMessage || "We couldn’t apply your free unlock right now.");
+      }
+      return;
+    }
+    router.push("/paywall");
+  };
+  const handleOpenBestMatch = () => {
+    if (isHighConfidenceVisualOverride) {
+      void handleHighConfidenceVisualOverrideAction("best-match-card");
+      return;
+    }
+    openVehicleDetail(bestMatch, "best-match-card");
+  };
   const handleOpenFullDetail = () => {
     console.log("[tap] result-open-full-detail", { vehicleId: bestMatch.id, targetKind: bestMatchDetailTarget.kind });
     openVehicleDetail(bestMatch, "open-full-detail");
   };
+  const primaryVisualOverrideActionLabel = hasFullAccess
+    ? isHighConfidenceTrustedVisualOverride
+      ? "Open Vehicle Details"
+      : "Open Trusted Family Detail"
+    : freeUnlocksRemaining > 0
+      ? (isUnlocking ? "Opening vehicle details..." : "Use 1 Free Unlock")
+      : "Unlock with Pro";
   const fallbackConfidenceLabel =
-    displayConfidenceScore >= 0.9 ? "High confidence" : displayConfidenceScore >= 0.8 ? "Likely match" : "Estimated match";
+    isHighConfidenceTrustedVisualOverride
+      ? "High confidence"
+      : isHighConfidenceVisualOverride
+      ? "High-confidence family match"
+      : displayConfidenceScore >= 0.9
+        ? "High confidence"
+        : displayConfidenceScore >= 0.8
+          ? "Likely match"
+          : "Estimated match";
   const resultImageSource = normalized?.imageUri ? "scanned-photo" : "none";
   const resultImageFitMode = normalized?.imageUri ? "contain" : "cover";
   const fallbackQuickFacts = !isCatalogMatched && displayConfidenceScore >= 0.85
@@ -1251,6 +1357,22 @@ export default function ScanResultScreen() {
         normalized?.detectedVehicleType ? `Vehicle type: ${normalized.detectedVehicleType === "motorcycle" ? "Motorcycle" : "Car"}` : null,
       ].filter((entry): entry is string => Boolean(entry))
     : [];
+  const highConfidenceOverrideBody =
+    bestMatch.displayYearLabel || bestMatch.make || bestMatch.model
+      ? isHighConfidenceTrustedVisualOverride
+        ? `We identified this ${[bestMatch.displayYearLabel, bestMatch.make, bestMatch.model].filter(Boolean).join(" ")} with high confidence.`
+        : `We identified this vehicle with high confidence. Exact ${[bestMatch.displayYearLabel, bestMatch.make, bestMatch.model].filter(Boolean).join(" ")} catalog data is not linked yet, so we’re showing the closest trusted ${bestMatch.model || "vehicle"} family details where supported.`
+      : isHighConfidenceTrustedVisualOverride
+        ? "We identified this vehicle with high confidence."
+        : "We identified this vehicle with high confidence. Exact catalog data is not linked yet, so we’re showing the closest trusted family details where supported.";
+  const visualOverrideTrustNote = isHighConfidenceVisualOverride
+    ? isHighConfidenceTrustedVisualOverride
+      ? null
+      : "Family-safe specs can still open here, while trim-specific details stay conservative until exact catalog grounding is available."
+    : null;
+  const confidenceSupportNote = isHighConfidenceTrustedVisualOverride
+    ? "This identification is based on strong visible design cues from your photo."
+    : "This is the most likely match based on visible design cues from your photo.";
 
   useEffect(() => {
     if (!isCatalogMatched && normalized) {
@@ -1353,10 +1475,10 @@ export default function ScanResultScreen() {
             <Animated.View style={{ opacity: bestMatchOpacity, transform: [{ scale: bestMatchScale }] }}>
               <TouchableOpacity
                 style={[styles.primaryCard, !canOpenBestMatch && styles.primaryCardDisabled]}
-                activeOpacity={canOpenBestMatch ? 0.88 : 1}
-                accessibilityRole={canOpenBestMatch ? "button" : undefined}
+                activeOpacity={canOpenBestMatch || isHighConfidenceVisualOverride ? 0.88 : 1}
+                accessibilityRole={canOpenBestMatch || isHighConfidenceVisualOverride ? "button" : undefined}
                 onPress={handleOpenBestMatch}
-                disabled={!canOpenBestMatch}
+                disabled={!canOpenBestMatch && !isHighConfidenceVisualOverride}
               >
                 <View style={styles.primaryAccent} pointerEvents="none" />
                 {isQuickResult ? (
@@ -1366,7 +1488,7 @@ export default function ScanResultScreen() {
                 ) : null}
                 {!isCatalogMatched ? (
                   <View style={styles.estimatedBadge}>
-                    <Text style={styles.estimatedBadgeText}>Estimated match</Text>
+                    <Text style={styles.estimatedBadgeText}>{isHighConfidenceVisualOverride ? "High-confidence identification" : "Estimated match"}</Text>
                   </View>
                 ) : null}
                 <Text style={styles.primaryTitle}>{bestMatchTitle || `${bestMatch.make} ${bestMatch.model}`}</Text>
@@ -1384,17 +1506,48 @@ export default function ScanResultScreen() {
                     {!isCatalogMatched ? fallbackConfidenceLabel : confidenceTone(displayConfidenceScore)}
                   </Text>
                 </Animated.View>
-                <Text style={styles.confidenceNote}>This is the most likely match based on visible design cues from your photo.</Text>
+                <Text style={styles.confidenceNote}>{confidenceSupportNote}</Text>
                 {!isCatalogMatched ? (
-                  <Text style={styles.bestEffortNote}>We identified this vehicle from the photo with high confidence, but full catalog specs are still being linked.</Text>
+                  <Text style={styles.bestEffortNote}>
+                    {isHighConfidenceVisualOverride
+                      ? highConfidenceOverrideBody
+                      : "Exact catalog data is not linked yet. Showing closest trusted vehicle-family details where supported."}
+                  </Text>
                 ) : null}
                 {bestMatchDetailTarget.kind === "estimated" ? (
-                  <Text style={styles.preview}>Estimated detail view is available. Full catalog specs may still be limited.</Text>
+                  <Text style={styles.preview}>
+                    {isHighConfidenceVisualOverride
+                      ? hasFullAccess
+                        ? isHighConfidenceTrustedVisualOverride
+                          ? "Vehicle details are unlocked and ready to open."
+                          : "Vehicle details are unlocked and ready to open."
+                        : isHighConfidenceTrustedVisualOverride
+                          ? "Use your unlock to open vehicle details for this vehicle."
+                          : "Vehicle details are available for this high-confidence result."
+                      : "Estimated detail view is available. We’ll show closest trusted family details where supported."}
+                  </Text>
                 ) : null}
                 {!canOpenBestMatch ? (
-                  <Text style={styles.preview}>Detailed specs are not available for this match yet.</Text>
+                  <Text style={styles.preview}>
+                    {isHighConfidenceVisualOverride
+                      ? isHighConfidenceTrustedVisualOverride
+                        ? "Use a free unlock or Pro to open vehicle details for this vehicle."
+                        : "Use a free unlock or Pro to open vehicle details for this vehicle."
+                      : "Detailed specs are not available for this match yet."}
+                  </Text>
                 ) : null}
                 {isCatalogMatched && !hasFullAccess ? <Text style={styles.preview}>Premium details are locked until you use a free unlock or upgrade to Pro.</Text> : null}
+                {isHighConfidenceVisualOverride ? (
+                  <View style={styles.inlineActionWrap}>
+                    <PrimaryButton
+                      label={primaryVisualOverrideActionLabel}
+                      onPress={() => {
+                        void handleHighConfidenceVisualOverrideAction("best-match-primary-cta");
+                      }}
+                      disabled={isUnlocking}
+                    />
+                  </View>
+                ) : null}
               </TouchableOpacity>
             </Animated.View>
           </>
@@ -1409,15 +1562,67 @@ export default function ScanResultScreen() {
                 </View>
               ) : null}
               <View style={styles.unlockCard}>
-                <Text style={styles.unlockTitle}>Estimated match</Text>
-                <Text style={styles.unlockBody}>We identified this vehicle from the photo with high confidence, but full catalog specs are still being linked.</Text>
-                <Text style={styles.unlockNote}>This is not a purchase issue. Try another scan angle, or check again after the catalog refreshes.</Text>
-                {alternatives.length > 0 ? (
+                {isHighConfidenceVisualOverride ? (
+                  <View style={styles.trustedDetailBadge}>
+                    <Text style={styles.trustedDetailBadgeLabel}>Vehicle details</Text>
+                  </View>
+                ) : null}
+                <Text style={styles.unlockTitle}>
+                  {isHighConfidenceVisualOverride
+                    ? isHighConfidenceTrustedVisualOverride
+                      ? "Open Vehicle Details"
+                      : "Open Vehicle Details"
+                    : "Estimated match"}
+                </Text>
+                <Text style={styles.unlockBody}>
+                  {isHighConfidenceVisualOverride
+                    ? "Unlock this vehicle once to open the full detail view with the best available specs, pricing, listings, and photos."
+                    : "Exact catalog data is not linked yet. Showing closest trusted vehicle-family details where supported."}
+                </Text>
+                {isHighConfidenceVisualOverride && visualOverrideTrustNote && !hasFullAccess ? <Text style={styles.unlockNote}>{visualOverrideTrustNote}</Text> : null}
+                {!isHighConfidenceVisualOverride ? (
+                  <Text style={styles.unlockNote}>This is not a purchase issue. Try another scan angle, or check again after the catalog refreshes.</Text>
+                ) : null}
+                {isHighConfidenceVisualOverride && !hasFullAccess ? (
+                  <View style={styles.trustedActionStack}>
+                    <View style={styles.trustedUnlockMeta}>
+                      <Text style={styles.trustedUnlockMetaLabel}>Best next step</Text>
+                      <Text style={styles.trustedUnlockMetaValue}>
+                        {freeUnlocksRemaining > 0
+                          ? `${Math.max(0, freeUnlocksRemaining)} free unlock${freeUnlocksRemaining === 1 ? "" : "s"} remaining`
+                          : "No free unlocks remaining"}
+                      </Text>
+                    </View>
+                    {freeUnlocksRemaining > 0 && approximateUnlockId ? (
+                      <PrimaryButton
+                        label={isUnlocking ? "Opening vehicle details..." : "Use 1 Free Unlock"}
+                        onPress={async () => {
+                          const result = await useFreeUnlockForVehicle(approximateUnlockId);
+                          if (result.ok) {
+                            await refreshStatus();
+                            Alert.alert("Free unlock applied", result.message);
+                            openVehicleDetail(bestMatch, "visual-override-free-unlock");
+                          } else {
+                            Alert.alert("Unlock unavailable", result.message || errorMessage || "We couldn’t apply your free unlock right now.");
+                          }
+                        }}
+                        disabled={isUnlocking}
+                      />
+                    ) : null}
+                    <PrimaryButton label="Upgrade to Pro" secondary onPress={() => router.push("/paywall")} />
+                  </View>
+                ) : isHighConfidenceVisualOverride ? (
+                  <PrimaryButton label="Open Vehicle Details" onPress={handleOpenBestMatch} />
+                ) : alternatives.length > 0 ? (
                   <PrimaryButton label="Explore Similar Matches" onPress={() => openVehicleDetail(alternatives[0], "estimated-alternative")} />
                 ) : (
                   <PrimaryButton label="Refine With Another Photo" onPress={() => router.push("/(tabs)/scan")} />
                 )}
-                <PrimaryButton label="Scan Another Vehicle" secondary onPress={() => router.push("/(tabs)/scan")} />
+                <PrimaryButton
+                  label={isHighConfidenceVisualOverride ? "Scan Another Vehicle" : "Scan Another Vehicle"}
+                  secondary
+                  onPress={() => router.push("/(tabs)/scan")}
+                />
               </View>
             </>
           ) : !hasFullAccess ? (
@@ -1475,7 +1680,14 @@ export default function ScanResultScreen() {
           )}
           {alternatives.length > 0 ? (
             <>
-              <SectionHeader title="Other Possibilities" subtitle="Helpful alternatives if the best match doesn’t look quite right." />
+              <SectionHeader
+                title={isHighConfidenceTrustedVisualOverride ? "Closest Verified Models" : "Other Possibilities"}
+                subtitle={
+                  isHighConfidenceTrustedVisualOverride
+                    ? "Nearby grounded catalog matches for comparison."
+                    : "Helpful alternatives if the best match doesn’t look quite right."
+                }
+              />
               {alternatives.map((candidate) => (
                 <CandidateMatchCard
                   key={candidate.renderKey}
@@ -1491,6 +1703,8 @@ export default function ScanResultScreen() {
                     thumbnailUrl: candidate.thumbnailUrl ?? "",
                     displayYearLabel: candidate.displayYearLabel ?? undefined,
                   }}
+                  hideConfidence={isHighConfidenceTrustedVisualOverride}
+                  tapHintOverride={isHighConfidenceTrustedVisualOverride ? "Tap to compare this verified model" : null}
                   onPress={getDetailTarget(candidate).kind !== "none" ? () => useCandidate(candidate) : undefined}
                 />
               ))}
@@ -1540,13 +1754,13 @@ const styles = StyleSheet.create({
   },
   estimatedBadge: {
     alignSelf: "flex-start",
-    backgroundColor: "rgba(44, 127, 255, 0.14)",
-    borderColor: Colors.accentGlow,
+    backgroundColor: "rgba(14, 165, 233, 0.12)",
+    borderColor: "rgba(94, 231, 255, 0.34)",
     borderWidth: 1,
     borderRadius: Radius.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginBottom: 2,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    marginBottom: 6,
   },
   quickResultBadge: {
     alignSelf: "flex-start",
@@ -1559,8 +1773,8 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   quickResultBadgeText: { ...Typography.caption, color: Colors.premium, fontWeight: "700" },
-  estimatedBadgeText: { ...Typography.caption, color: Colors.accent, fontWeight: "700" },
-  primaryTitle: { ...Typography.title, color: Colors.textStrong, fontWeight: "700", fontSize: 22, lineHeight: 28 },
+  estimatedBadgeText: { ...Typography.caption, color: Colors.cyanGlow, fontWeight: "700", letterSpacing: 0.4 },
+  primaryTitle: { ...Typography.title, color: Colors.textStrong, fontWeight: "700", fontSize: 24, lineHeight: 30 },
   subtitle: { ...Typography.body, color: Colors.textMuted },
   confidenceRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   confidencePill: {
@@ -1594,13 +1808,56 @@ const styles = StyleSheet.create({
   quickFactLine: { ...Typography.body, color: Colors.textMuted },
   unlockCard: {
     ...cardStyles.secondary,
-    gap: 10,
+    gap: 12,
+    padding: 18,
+  },
+  inlineActionWrap: {
+    marginTop: 6,
+    paddingTop: 6,
   },
   feedbackNotice: { ...Typography.caption, color: Colors.textMuted },
   errorNotice: { ...Typography.caption, color: Colors.dangerSoft },
   unlockTitle: { ...Typography.heading, color: Colors.textStrong },
-  unlockBody: { ...Typography.body, color: Colors.textMuted },
-  unlockNote: { ...Typography.caption, color: Colors.textMuted },
+  unlockBody: { ...Typography.body, color: Colors.textSoft },
+  unlockNote: { ...Typography.caption, color: Colors.textMuted, lineHeight: 18 },
+  trustedDetailBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(14, 165, 233, 0.12)",
+    borderRadius: Radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: "rgba(94, 231, 255, 0.34)",
+  },
+  trustedDetailBadgeLabel: {
+    ...Typography.caption,
+    color: Colors.premium,
+    textTransform: "uppercase",
+    letterSpacing: 0.9,
+    fontWeight: "700",
+  },
+  trustedActionStack: {
+    gap: 10,
+    marginTop: 4,
+  },
+  trustedUnlockMeta: {
+    backgroundColor: "rgba(8, 15, 30, 0.88)",
+    borderRadius: Radius.lg,
+    padding: 12,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: Colors.borderSoft,
+  },
+  trustedUnlockMetaLabel: {
+    ...Typography.caption,
+    color: Colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  trustedUnlockMetaValue: {
+    ...Typography.bodyStrong,
+    color: Colors.textStrong,
+  },
   previewCard: {
     ...cardStyles.tertiary,
     minHeight: 132,

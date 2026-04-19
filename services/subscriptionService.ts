@@ -55,6 +55,47 @@ type FreeUnlockActionResult = {
 
 const FREE_UNLOCKS_LIMIT = 5;
 const FREE_UNLOCK_STORAGE_KEY = "carscanr.freeUnlocks.v1";
+const ESTIMATED_UNLOCK_PREFIX = "estimate:";
+
+function normalizeUnlockPart(value: string | number | null | undefined, fallback: string) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim().toLowerCase();
+    if (trimmed.length > 0) {
+      return trimmed.replace(/\s+/g, "-");
+    }
+  }
+  return fallback;
+}
+
+export function buildVehicleUnlockId(input: {
+  vehicleId?: string | null;
+  scanId?: string | null;
+  year?: string | number | null;
+  make?: string | null;
+  model?: string | null;
+  trim?: string | null;
+}) {
+  if (typeof input.vehicleId === "string" && input.vehicleId.trim().length > 0 && !input.vehicleId.startsWith(ESTIMATED_UNLOCK_PREFIX)) {
+    return input.vehicleId;
+  }
+
+  const make = normalizeUnlockPart(input.make, "unknown");
+  const model = normalizeUnlockPart(input.model, "vehicle");
+  if (make === "unknown" && model === "vehicle") {
+    return null;
+  }
+
+  return `${ESTIMATED_UNLOCK_PREFIX}${[
+    normalizeUnlockPart(input.scanId, "vehicle"),
+    normalizeUnlockPart(input.year, "na"),
+    make,
+    model,
+    normalizeUnlockPart(input.trim, "family"),
+  ].join(":")}`;
+}
 
 type FreeUnlockState = {
   used: number;
@@ -103,6 +144,22 @@ async function loadFreeUnlockState(userId: string): Promise<FreeUnlockState> {
 async function saveFreeUnlockState(userId: string, state: FreeUnlockState) {
   const key = `${FREE_UNLOCK_STORAGE_KEY}:${userId}`;
   await AsyncStorage.setItem(key, JSON.stringify(state));
+}
+
+function isEstimatedUnlockId(vehicleId: string) {
+  return vehicleId.startsWith(ESTIMATED_UNLOCK_PREFIX);
+}
+
+function mergeUnlockStates(limit: number, backendIds: string[], localState: FreeUnlockState) {
+  const estimatedIds = localState.unlockedVehicleIds.filter((id) => isEstimatedUnlockId(id));
+  const unlockedVehicleIds = Array.from(new Set([...backendIds, ...estimatedIds]));
+  const used = Math.min(limit, Math.max(0, backendIds.length) + estimatedIds.length);
+  return {
+    used,
+    remaining: Math.max(0, limit - used),
+    unlockedVehicleIds,
+    limit,
+  };
 }
 
 let status: SubscriptionStatus = applyPlanOverride({
@@ -164,33 +221,30 @@ export const subscriptionService = {
   async getFreeUnlockState() {
     const user = await authService.getCurrentUser();
     const token = await authService.getAccessToken();
+    const localState = await loadFreeUnlockState(user?.id ?? "guest");
     if (!token) {
       if (__DEV__) {
         console.log("[subscription] unlock status skipped (no auth token)");
       }
-      const unlockState = await loadFreeUnlockState(user?.id ?? "guest");
-      const remaining = Math.max(0, FREE_UNLOCKS_LIMIT - unlockState.used);
+      const remaining = Math.max(0, FREE_UNLOCKS_LIMIT - localState.used);
       return {
-        used: unlockState.used,
+        used: localState.used,
         remaining,
-        unlockedVehicleIds: unlockState.unlockedVehicleIds,
+        unlockedVehicleIds: localState.unlockedVehicleIds,
         limit: FREE_UNLOCKS_LIMIT,
       };
     }
     const cached = scanService.getCachedUnlockStatus?.();
     if (cached && typeof cached.freeUnlocksTotal === "number") {
-      const unlockState = {
-        used: cached.freeUnlocksUsed,
-        unlockedVehicleIds: cached.unlockedVehicleIds ?? [],
-      };
+      const merged = mergeUnlockStates(cached.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT, cached.unlockedVehicleIds ?? [], localState);
       if (user?.id) {
-        await saveFreeUnlockState(user.id, unlockState);
+        await saveFreeUnlockState(user.id, { used: merged.used, unlockedVehicleIds: merged.unlockedVehicleIds });
       }
       return {
-        used: cached.freeUnlocksUsed,
-        remaining: cached.freeUnlocksRemaining,
-        unlockedVehicleIds: unlockState.unlockedVehicleIds,
-        limit: cached.freeUnlocksTotal,
+        used: merged.used,
+        remaining: merged.remaining,
+        unlockedVehicleIds: merged.unlockedVehicleIds,
+        limit: merged.limit,
       };
     }
     try {
@@ -200,25 +254,20 @@ export const subscriptionService = {
       const status = await apiRequest<BackendUnlockStatus>({
         path: "/api/unlocks/status",
       });
-      const remaining = Math.max(0, status.freeUnlocksRemaining ?? status.freeUnlocksTotal - status.freeUnlocksUsed);
-      const unlockState = {
-        used: status.freeUnlocksUsed,
-        unlockedVehicleIds: status.unlockedVehicleIds ?? [],
-      };
-      await saveFreeUnlockState(user.id, unlockState);
+      const merged = mergeUnlockStates(status.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT, status.unlockedVehicleIds ?? [], localState);
+      await saveFreeUnlockState(user.id, { used: merged.used, unlockedVehicleIds: merged.unlockedVehicleIds });
       return {
-        used: status.freeUnlocksUsed,
-        remaining,
-        unlockedVehicleIds: status.unlockedVehicleIds ?? [],
-        limit: status.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT,
+        used: merged.used,
+        remaining: merged.remaining,
+        unlockedVehicleIds: merged.unlockedVehicleIds,
+        limit: merged.limit,
       };
     } catch {
-      const unlockState = await loadFreeUnlockState(user?.id ?? "guest");
-      const remaining = Math.max(0, FREE_UNLOCKS_LIMIT - unlockState.used);
+      const remaining = Math.max(0, FREE_UNLOCKS_LIMIT - localState.used);
       return {
-        used: unlockState.used,
+        used: localState.used,
         remaining,
-        unlockedVehicleIds: unlockState.unlockedVehicleIds,
+        unlockedVehicleIds: localState.unlockedVehicleIds,
         limit: FREE_UNLOCKS_LIMIT,
       };
     }
@@ -227,8 +276,9 @@ export const subscriptionService = {
   async useFreeUnlockForVehicle(vehicleId: string): Promise<FreeUnlockActionResult> {
     const user = await authService.getCurrentUser();
     const token = await authService.getAccessToken();
-    if (!token) {
-      const unlockState = await loadFreeUnlockState(user?.id ?? "guest");
+    const localUserId = user?.id ?? "guest";
+    if (!token || isEstimatedUnlockId(vehicleId)) {
+      const unlockState = await loadFreeUnlockState(localUserId);
       const alreadyUnlocked = unlockState.unlockedVehicleIds.includes(vehicleId);
       if (alreadyUnlocked) {
         return {
@@ -258,7 +308,7 @@ export const subscriptionService = {
         used: unlockState.used + 1,
         unlockedVehicleIds: [...unlockState.unlockedVehicleIds, vehicleId],
       };
-      await saveFreeUnlockState(user?.id ?? "guest", nextState);
+      await saveFreeUnlockState(localUserId, nextState);
       return {
         ok: true,
         state: nextState,

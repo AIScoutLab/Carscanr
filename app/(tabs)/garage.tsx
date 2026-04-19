@@ -116,7 +116,16 @@ export default function GarageScreen() {
             key={item.id}
             vehicle={item.vehicle}
             subtitle={`${item.favorite ? "Favorite" : "Saved"} • ${item.notes}`}
-            onPress={() => router.push(`/vehicle/${item.vehicleId}`)}
+            onPress={() =>
+              router.push({
+                pathname: "/vehicle/[id]",
+                params: {
+                  id: item.vehicleId,
+                  unlockId: item.vehicleId,
+                  garageSource: "1",
+                  reopenedSource: "1",
+                },
+              })}
           />
         ))
       )}
