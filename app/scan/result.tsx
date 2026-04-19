@@ -23,7 +23,7 @@ import { authService } from "@/services/authService";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { garageService } from "@/services/garageService";
 import { scanService } from "@/services/scanService";
-import { buildVehicleUnlockId } from "@/services/subscriptionService";
+import { buildVehicleSoftUnlockId, buildVehicleUnlockId } from "@/services/subscriptionService";
 import { vehicleService } from "@/services/vehicleService";
 import { ListingResult, ScanResult, ValuationResult, VehicleRecord } from "@/types";
 import { confidenceTone, formatConfidence } from "@/lib/utils";
@@ -1066,9 +1066,18 @@ export default function ScanResultScreen() {
     vehicleType: normalized?.detectedVehicleType ?? null,
     groundedMatchType: bestMatch.groundedMatchType,
   });
+  const bestMatchSoftUnlockId = buildVehicleSoftUnlockId({
+    make: bestMatch.make,
+    model: bestMatch.model,
+    vehicleType: normalized?.detectedVehicleType ?? null,
+    year: bestMatch.year ?? normalized?.identifiedVehicle.year ?? null,
+    trusted: isHighConfidenceTrustedVisualOverride,
+  });
   const approximateUnlockId = isHighConfidenceVisualOverride ? bestMatchUnlockId : null;
   const unlockedForVehicle = bestMatchUnlockId ? isVehicleUnlocked(bestMatchUnlockId) : false;
-  const unlockedForApproximateDetail = approximateUnlockId ? isVehicleUnlocked(approximateUnlockId) : false;
+  const unlockedForApproximateDetail = approximateUnlockId
+    ? isVehicleUnlocked(approximateUnlockId) || (bestMatchSoftUnlockId ? isVehicleUnlocked(bestMatchSoftUnlockId) : false)
+    : false;
   const hasFullAccess = isCatalogMatched
     ? isPro || unlockedForVehicle
     : isHighConfidenceVisualOverride
@@ -1261,6 +1270,8 @@ export default function ScanResultScreen() {
             trim: bestMatch.displayTrimLabel ?? bestMatch.trim ?? "",
             vehicleType: normalized?.detectedVehicleType ?? "",
             titleLabel: bestMatch.displayTitleLabel ?? bestMatchTitle,
+            trustedCase: isHighConfidenceTrustedVisualOverride,
+            resultSource: bestMatch.source ?? normalized?.source ?? "",
           },
           vehicle: buildEstimateGarageVehicle(bestMatch),
         });
@@ -1287,18 +1298,23 @@ export default function ScanResultScreen() {
   const bestMatchYearLabel = bestMatch.displayYearLabel;
   const bestMatchTitle = bestMatch.displayTitleLabel ?? [bestMatchYearLabel, bestMatch.make, bestMatch.model].filter(Boolean).join(" ");
   const bestMatchSubtitle = resolveResultSubtitle(bestMatch);
-  const buildEstimateDetailParams = (vehicle: NormalizedVehicle) => ({
-    id: buildEstimateDetailId(normalized?.id, vehicle),
-    estimate: "1",
-    imageUri: normalized?.imageUri ?? "",
-    scanId: normalized?.id ?? "",
-    titleLabel: vehicle.displayTitleLabel ?? "",
-    yearLabel: vehicle.displayYearLabel ?? "",
+  const buildDisplayIdentityParams = (vehicle: NormalizedVehicle) => ({
+    titleLabel: vehicle.displayTitleLabel ?? [vehicle.displayYearLabel, vehicle.make, vehicle.model].filter(Boolean).join(" "),
+    yearLabel: vehicle.displayYearLabel ?? (vehicle.year ? `${vehicle.year}` : ""),
     make: vehicle.make,
     model: vehicle.model,
     trimLabel: vehicle.displayTrimLabel ?? vehicle.trim ?? "",
     vehicleType: normalized?.detectedVehicleType ?? "",
     confidence: `${vehicle.confidence ?? displayConfidenceScore}`,
+    trustedCase: isHighConfidenceTrustedVisualOverride ? "1" : "0",
+    resultSource: vehicle.source ?? normalized?.source ?? "",
+  });
+  const buildEstimateDetailParams = (vehicle: NormalizedVehicle) => ({
+    id: buildEstimateDetailId(normalized?.id, vehicle),
+    estimate: "1",
+    imageUri: normalized?.imageUri ?? "",
+    scanId: normalized?.id ?? "",
+    ...buildDisplayIdentityParams(vehicle),
   });
   const getDetailTarget = (vehicle: NormalizedVehicle) => {
     if (vehicle.id) {
@@ -1309,6 +1325,7 @@ export default function ScanResultScreen() {
           unlockId: buildVehicleUnlockId({ vehicleId: vehicle.id }),
           imageUri: normalized?.imageUri ?? "",
           scanId: normalized?.id ?? "",
+          ...buildDisplayIdentityParams(vehicle),
         },
       };
     }
@@ -1379,7 +1396,10 @@ export default function ScanResultScreen() {
       return;
     }
     if (freeUnlocksRemaining > 0 && approximateUnlockId) {
-      const result = await useFreeUnlockForVehicle(approximateUnlockId);
+      const result = await useFreeUnlockForVehicle(
+        approximateUnlockId,
+        bestMatchSoftUnlockId ? [bestMatchSoftUnlockId] : [],
+      );
       if (result.ok) {
         await refreshStatus();
         Alert.alert("Free unlock applied", result.message);
@@ -1654,7 +1674,10 @@ export default function ScanResultScreen() {
                       <PrimaryButton
                         label={isUnlocking ? "Opening vehicle details..." : "Open Vehicle Details"}
                         onPress={async () => {
-                          const result = await useFreeUnlockForVehicle(approximateUnlockId);
+                          const result = await useFreeUnlockForVehicle(
+                            approximateUnlockId,
+                            bestMatchSoftUnlockId ? [bestMatchSoftUnlockId] : [],
+                          );
                           if (result.ok) {
                             await refreshStatus();
                             Alert.alert("Free unlock applied", result.message);

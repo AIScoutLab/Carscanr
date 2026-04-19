@@ -8,6 +8,8 @@ type ExpoExtraPublicEnv = {
   supabaseUrl?: string;
   supabaseAnonKey?: string;
   planOverride?: string;
+  revenueCatIosApiKey?: string;
+  revenueCatEntitlementId?: string;
 };
 
 type ExpoExtraShape = {
@@ -30,6 +32,8 @@ function mergePublicEnv(target: ExpoExtraPublicEnv, source?: ExpoExtraPublicEnv 
     supabaseUrl: target.supabaseUrl || source.supabaseUrl,
     supabaseAnonKey: target.supabaseAnonKey || source.supabaseAnonKey,
     planOverride: target.planOverride || source.planOverride,
+    revenueCatIosApiKey: target.revenueCatIosApiKey || source.revenueCatIosApiKey,
+    revenueCatEntitlementId: target.revenueCatEntitlementId || source.revenueCatEntitlementId,
   };
 }
 
@@ -134,6 +138,8 @@ export const mobileEnv = {
   supabaseUrl: normalizeString(expoExtraPublicEnv.values.supabaseUrl || process.env.EXPO_PUBLIC_SUPABASE_URL),
   supabaseAnonKey: normalizeString(expoExtraPublicEnv.values.supabaseAnonKey || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY),
   planOverride: normalizeString(expoExtraPublicEnv.values.planOverride || process.env.EXPO_PUBLIC_PLAN_OVERRIDE),
+  revenueCatIosApiKey: normalizeString(expoExtraPublicEnv.values.revenueCatIosApiKey || process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY),
+  revenueCatEntitlementId: normalizeString(expoExtraPublicEnv.values.revenueCatEntitlementId || process.env.EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID),
 };
 
 export const requiredExpoPublicEnvKeys = [

@@ -45,6 +45,8 @@ const config: ExpoConfig = {
       supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL || "",
       supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "",
       planOverride: process.env.EXPO_PUBLIC_PLAN_OVERRIDE || "",
+      revenueCatIosApiKey: process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY || "",
+      revenueCatEntitlementId: process.env.EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID || "",
     },
     eas: {
       projectId: easProjectId,

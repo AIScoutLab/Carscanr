@@ -132,6 +132,8 @@ export default function GarageScreen() {
                         trimLabel: item.estimateMeta?.trim ?? "",
                         vehicleType: item.estimateMeta?.vehicleType ?? "",
                         confidence: item.confidence != null ? `${item.confidence}` : "",
+                        trustedCase: item.estimateMeta?.trustedCase ? "1" : "0",
+                        resultSource: item.estimateMeta?.resultSource ?? item.sourceType ?? "",
                       },
                     }
                   : {
@@ -141,6 +143,11 @@ export default function GarageScreen() {
                         unlockId: item.vehicleId,
                         garageSource: "1",
                         reopenedSource: "1",
+                        titleLabel: `${item.vehicle.year} ${item.vehicle.make} ${item.vehicle.model}`.trim(),
+                        yearLabel: item.vehicle.year ? `${item.vehicle.year}` : "",
+                        make: item.vehicle.make,
+                        model: item.vehicle.model,
+                        trimLabel: item.vehicle.trim,
                       },
                     },
               )}

@@ -19,7 +19,7 @@ import { useSubscription } from "@/hooks/useSubscription";
 import { formatHorsepowerLabel } from "@/lib/vehicleData";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { scanService } from "@/services/scanService";
-import { buildVehicleUnlockId } from "@/services/subscriptionService";
+import { buildVehicleSoftUnlockId, buildVehicleUnlockId } from "@/services/subscriptionService";
 import { vehicleService } from "@/services/vehicleService";
 import { ValuationResult, VehicleRecord } from "@/types";
 import { formatCurrency } from "@/lib/utils";
@@ -53,8 +53,8 @@ type HorsepowerSupport = {
   exact: boolean;
 };
 
-type ValueTabFinalState = "value_available" | "value_unavailable" | null;
-type ForSaleTabFinalState = "listings_available" | "listings_unavailable" | null;
+type ValueTabFinalState = "value_available_strong" | "value_available_light" | "value_unavailable" | null;
+type ForSaleTabFinalState = "listings_available_strong" | "listings_available_light" | "listings_unavailable" | null;
 
 const mainstreamCoverageAggregate = new Map<string, {
   total: number;
@@ -137,6 +137,30 @@ function formatYearRangeLabel(start?: number | null, end?: number | null) {
 
 function isUnavailableValue(value: string | undefined | null) {
   return !value || value === "Unavailable";
+}
+
+function resolveValueUsefulness(result: ValuationResult) {
+  const populatedPrimaryValues = [result.tradeIn, result.privateParty, result.dealerRetail].filter((value) => !isUnavailableValue(value)).length;
+  const populatedRanges = [result.tradeInRange, result.privatePartyRange, result.dealerRetailRange].filter((value) => !isUnavailableValue(value)).length;
+  const richModel = result.modelType === "provider_range" || result.modelType === "listing_derived";
+
+  if (populatedPrimaryValues >= 2 && (populatedRanges >= 2 || richModel)) {
+    return "value_available_strong" as const;
+  }
+  if (populatedPrimaryValues >= 1 && (populatedRanges >= 1 || richModel)) {
+    return "value_available_light" as const;
+  }
+  return "value_unavailable" as const;
+}
+
+function resolveListingsUsefulness(listings: VehicleRecord["listings"]) {
+  if (listings.length >= 2) {
+    return "listings_available_strong" as const;
+  }
+  if (listings.length >= 1) {
+    return "listings_available_light" as const;
+  }
+  return "listings_unavailable" as const;
 }
 
 function buildApproximateValuation(base: ValuationResult, familyLabel: string, yearRangeLabel?: string | null): ValuationResult {
@@ -481,7 +505,7 @@ function shouldShowEstimatedTrim(input: {
 }
 
 export default function VehicleDetailScreen() {
-  const { id, imageUri, scanId, estimate, titleLabel, yearLabel, make, model, trimLabel, vehicleType, confidence, unlockId, garageSource, reopenedSource } = useLocalSearchParams<{
+  const { id, imageUri, scanId, estimate, titleLabel, yearLabel, make, model, trimLabel, vehicleType, confidence, unlockId, garageSource, reopenedSource, trustedCase, resultSource } = useLocalSearchParams<{
     id: string;
     imageUri?: string;
     scanId?: string;
@@ -496,6 +520,8 @@ export default function VehicleDetailScreen() {
     unlockId?: string;
     garageSource?: string;
     reopenedSource?: string;
+    trustedCase?: string;
+    resultSource?: string;
   }>();
   const [vehicle, setVehicle] = useState<VehicleRecord | null>(null);
   const [valuation, setValuation] = useState<ValuationResult>(createEmptyValuation());
@@ -546,50 +572,102 @@ export default function VehicleDetailScreen() {
           vehicleType: typeof vehicleType === "string" ? vehicleType : null,
           groundedMatchType: estimateSupport?.groundedMatchType ?? null,
         })) ?? null;
-  const unlockedForVehicle = resolvedUnlockId ? isVehicleUnlocked(resolvedUnlockId) : false;
+  const resolvedSoftUnlockId = buildVehicleSoftUnlockId({
+    make: vehicle?.make || (typeof make === "string" ? make : null),
+    model: vehicle?.model || (typeof model === "string" ? model : null),
+    vehicleType: typeof vehicleType === "string" ? vehicleType : null,
+    year: vehicle?.year || (typeof yearLabel === "string" ? yearLabel : null),
+    trusted:
+      trustedCase === "1" ||
+      Boolean(
+        isEstimateMode &&
+          isTrustedResult({
+            confidence: Number.isFinite(Number.parseFloat(typeof confidence === "string" ? confidence : "")) ? Number.parseFloat(typeof confidence === "string" ? confidence : "") : null,
+            make: vehicle?.make || (typeof make === "string" ? make : ""),
+            model: vehicle?.model || (typeof model === "string" ? model : ""),
+            vehicleType: typeof vehicleType === "string" ? vehicleType : null,
+            year: vehicle?.year || Number.parseInt(typeof yearLabel === "string" ? yearLabel : "", 10) || null,
+          }),
+      ),
+  });
+  const unlockedForVehicle = resolvedUnlockId
+    ? isVehicleUnlocked(resolvedUnlockId) || (resolvedSoftUnlockId ? isVehicleUnlocked(resolvedSoftUnlockId) : false)
+    : resolvedSoftUnlockId
+      ? isVehicleUnlocked(resolvedSoftUnlockId)
+      : false;
   const accessState: "locked" | "unlocked" = isPro || unlockedForVehicle ? "unlocked" : "locked";
   const hasFullAccess = accessState === "unlocked";
   const isLocked = accessState === "locked";
   const trustedResult = Boolean(
-    isEstimateMode &&
+    (trustedCase === "1") ||
+      (isEstimateMode &&
       isTrustedResult({
         confidence: Number.isFinite(Number.parseFloat(typeof confidence === "string" ? confidence : "")) ? Number.parseFloat(typeof confidence === "string" ? confidence : "") : null,
         make: vehicle?.make || (typeof make === "string" ? make : ""),
         model: vehicle?.model || (typeof model === "string" ? model : ""),
         vehicleType: typeof vehicleType === "string" ? vehicleType : null,
         year: vehicle?.year || Number.parseInt(typeof yearLabel === "string" ? yearLabel : "", 10) || null,
-      }),
+      })),
   );
+  const finalDisplayIdentity = {
+    titleLabel:
+      typeof titleLabel === "string" && titleLabel.trim().length > 0
+        ? titleLabel
+        : [vehicle?.year ? `${vehicle.year}` : null, vehicle?.make ?? null, vehicle?.model ?? null].filter(Boolean).join(" "),
+    yearLabel:
+      typeof yearLabel === "string" && yearLabel.trim().length > 0
+        ? yearLabel.replace(/\s*\(est\.\)\s*/i, "").trim()
+        : vehicle?.year
+          ? `${vehicle.year}`
+          : "",
+    make: typeof make === "string" && make.trim().length > 0 ? make : vehicle?.make ?? "",
+    model: typeof model === "string" && model.trim().length > 0 ? model : vehicle?.model ?? "",
+    trimLabel: typeof trimLabel === "string" && trimLabel.trim().length > 0 ? trimLabel : vehicle?.trim ?? "",
+    confidence: typeof confidence === "string" ? confidence : "",
+    trustedCase: trustedResult,
+    source: typeof resultSource === "string" ? resultSource : "",
+  };
+  const resolvedDisplayTitle =
+    finalDisplayIdentity.titleLabel ||
+    [finalDisplayIdentity.yearLabel || null, finalDisplayIdentity.make || null, finalDisplayIdentity.model || null]
+      .filter(Boolean)
+      .join(" ") ||
+    `${vehicle?.year ?? ""} ${vehicle?.make ?? ""} ${vehicle?.model ?? ""}`.trim();
+  const resolvedDisplayBodyStyle = vehicle?.bodyStyle || (typeof vehicleType === "string" ? vehicleType : "") || "Vehicle";
+  const resolvedDisplayTrim = trustedResult ? "" : finalDisplayIdentity.trimLabel || vehicle?.trim || "";
   const estimateSubtitle = isEstimateMode
     ? [
         trustedResult ? "High-confidence identification" : "Photo-based identification",
-        vehicle?.bodyStyle || null,
+        resolvedDisplayBodyStyle || null,
       ]
         .filter((entry): entry is string => Boolean(entry))
         .join(" • ")
     : null;
-
-  const estimateHeaderTitle =
-    typeof titleLabel === "string" && titleLabel.trim().length > 0
-      ? titleLabel
-      : [typeof yearLabel === "string" && yearLabel.trim().length > 0 ? yearLabel : null, make, model]
-          .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
-          .join(" ");
+  const lockedEyebrow = isEstimateMode
+    ? trustedResult
+      ? "High-confidence identification"
+      : "Vehicle identification"
+    : "Vehicle dossier";
+  const unlockedDetailSubtitle = isEstimateMode
+    ? trustedResult
+      ? "High-confidence identification"
+      : "Vehicle identification"
+    : [resolvedDisplayTrim || null, resolvedDisplayBodyStyle || null].filter(Boolean).join(" • ");
 
   const summaryChips = useMemo(() => {
     const chips = [
       isEstimateMode
         ? trustedResult
-          ? (vehicle?.year ? `${vehicle.year}` : typeof yearLabel === "string" && yearLabel.trim().length > 0 ? yearLabel.replace(/\s*\(est\.\)\s*/i, "").trim() : null)
+          ? finalDisplayIdentity.yearLabel || null
           : estimateSupport?.yearRangeLabel || (typeof yearLabel === "string" && yearLabel.trim().length > 0 ? yearLabel : null)
-        : vehicle ? `${vehicle.year}` : null,
+        : finalDisplayIdentity.yearLabel || (vehicle ? `${vehicle.year}` : null),
       vehicle?.bodyStyle || null,
       horsepowerSupport?.value || (vehicle?.specs.horsepower ? formatHorsepowerLabel(vehicle.specs.horsepower) : null),
       vehicle?.specs.drivetrain && vehicle.specs.drivetrain !== "Unavailable" ? vehicle.specs.drivetrain : null,
       vehicle?.specs.msrp && vehicle.specs.msrp > 0 ? formatCurrency(vehicle.specs.msrp) : null,
     ].filter((entry): entry is string => Boolean(entry));
     return chips.slice(0, 4);
-  }, [estimateSupport?.yearRangeLabel, horsepowerSupport?.value, isEstimateMode, trustedResult, vehicle, yearLabel]);
+  }, [estimateSupport?.yearRangeLabel, finalDisplayIdentity.yearLabel, horsepowerSupport?.value, isEstimateMode, trustedResult, vehicle, yearLabel]);
   const hasApproximateValue =
     !isUnavailableValue(valuation.tradeIn) || !isUnavailableValue(valuation.privateParty) || !isUnavailableValue(valuation.dealerRetail);
   const trustedUnlockedConfidence = Number.parseFloat(typeof confidence === "string" ? confidence : "");
@@ -602,12 +680,12 @@ export default function VehicleDetailScreen() {
   const trustedListingsAvailable = Boolean(unlockedEstimateCase && estimateSupport?.hasListingsData && vehicle?.listings.length);
   const valueTabFinalState: ValueTabFinalState = unlockedEstimateCase
     ? trustedValueAvailable
-      ? "value_available"
+      ? resolveValueUsefulness(valuation)
       : "value_unavailable"
     : null;
   const forSaleTabFinalState: ForSaleTabFinalState = unlockedEstimateCase
     ? trustedListingsAvailable
-      ? "listings_available"
+      ? resolveListingsUsefulness(vehicle?.listings ?? [])
       : "listings_unavailable"
     : null;
   const isTrustedUnlockedEstimate = trustedUnlockedCase;
@@ -1407,13 +1485,7 @@ export default function VehicleDetailScreen() {
             <LinearGradient colors={["rgba(4,8,18,0.04)", "rgba(4,8,18,0.18)", "rgba(4,8,18,0.9)"]} style={styles.heroGradient} />
             <View style={styles.heroTopRow}>
               <View style={styles.heroBadge}>
-                <Text style={styles.heroBadgeLabel}>
-                  {isEstimateMode
-                    ? trustedResult
-                      ? "High-confidence identification"
-                      : "Vehicle identification"
-                    : "Vehicle dossier"}
-                </Text>
+                <Text style={styles.heroBadgeLabel}>{lockedEyebrow}</Text>
               </View>
               <View style={styles.heroTopActions}>
                 <View style={styles.heroTapBadge}>
@@ -1427,12 +1499,8 @@ export default function VehicleDetailScreen() {
               </View>
             </View>
             <View style={styles.heroIdentity}>
-              <Text style={styles.heroTitle}>{isEstimateMode ? estimateHeaderTitle || `${vehicle.make} ${vehicle.model}` : `${vehicle.year} ${vehicle.make} ${vehicle.model}`}</Text>
-              <Text style={styles.heroSubtitle}>
-                {isEstimateMode
-                  ? estimateSubtitle || (trustedResult ? "High-confidence identification" : "Vehicle identification")
-                  : `${vehicle.trim} • ${vehicle.bodyStyle}`}
-              </Text>
+              <Text style={styles.heroTitle}>{resolvedDisplayTitle}</Text>
+              <Text style={styles.heroSubtitle}>{estimateSubtitle || unlockedDetailSubtitle}</Text>
               {summaryChips.length > 0 ? (
                 <View style={styles.heroChipRow}>
                   {summaryChips.map((chip) => (
@@ -1461,20 +1529,12 @@ export default function VehicleDetailScreen() {
         {isEstimateMode ? <Text style={styles.estimateEyebrow}>Vehicle details</Text> : null}
         {feedbackMessage ? <Text style={styles.feedbackNotice}>{feedbackMessage}</Text> : null}
         {errorMessage ? <Text style={styles.errorNotice}>{errorMessage}</Text> : null}
-        <Text style={styles.headerKicker}>
-          {isEstimateMode
-            ? "Vehicle details"
-            : "Performance intelligence summary"}
-        </Text>
-        <Text style={styles.subtitle}>
-          {isEstimateMode
-            ? estimateSubtitle || (trustedResult ? "High-confidence identification" : "Vehicle identification")
-            : `${vehicle.trim} • ${vehicle.bodyStyle}`}
-        </Text>
+        <Text style={styles.headerKicker}>{isEstimateMode ? lockedEyebrow : "Performance intelligence summary"}</Text>
+        <Text style={styles.subtitle}>{estimateSubtitle || unlockedDetailSubtitle}</Text>
         {isEstimateMode ? (
           <>
             <View style={styles.estimateBadge}>
-              <Text style={styles.estimateBadgeLabel}>{trustedResult ? "High-confidence identification" : "Vehicle identification"}</Text>
+              <Text style={styles.estimateBadgeLabel}>{lockedEyebrow}</Text>
             </View>
             {__DEV__ ? (
               <TouchableOpacity
@@ -1507,16 +1567,16 @@ export default function VehicleDetailScreen() {
             label="Year"
             value={
               isEstimateMode
-                ? (vehicle.year ? `${vehicle.year}` : typeof yearLabel === "string" && yearLabel.trim().length > 0 ? yearLabel.replace(/\s*\(est\.\)\s*/i, "").trim() : "Vehicle identified")
-                : `${vehicle.year}`
+                ? (finalDisplayIdentity.yearLabel || (vehicle.year ? `${vehicle.year}` : "Vehicle identified"))
+                : finalDisplayIdentity.yearLabel || `${vehicle.year}`
             }
           />
-          <DetailRow label="Make" value={vehicle.make} />
-          <DetailRow label="Model" value={vehicle.model} />
+          <DetailRow label="Make" value={finalDisplayIdentity.make || vehicle.make} />
+          <DetailRow label="Model" value={finalDisplayIdentity.model || vehicle.model} />
           {!trustedResult ? (
-            <DetailRow label={isEstimateMode ? "Possible trim" : "Trim"} value={vehicle.trim || "Not confidently supported"} />
+            <DetailRow label={isEstimateMode ? "Trim" : "Trim"} value={resolvedDisplayTrim || "Unavailable"} />
           ) : null}
-          <DetailRow label="Body style" value={vehicle.bodyStyle || "Estimated vehicle"} />
+          <DetailRow label="Body style" value={resolvedDisplayBodyStyle || "Vehicle"} />
         </View>
       ) : null}
 
@@ -1609,10 +1669,17 @@ export default function VehicleDetailScreen() {
 
       {tab === "Value" ? (
         isEstimateMode ? (
-          valueTabFinalState === "value_available" ? (
+          valueTabFinalState === "value_available_strong" || valueTabFinalState === "value_available_light" ? (
             <>
               <View style={styles.sectionCard}>
-                <SectionHeader title="Pricing" subtitle="Nearby pricing for this vehicle when available." />
+                <SectionHeader
+                  title={valueTabFinalState === "value_available_light" ? "Nearby market view" : "Pricing"}
+                  subtitle={
+                    valueTabFinalState === "value_available_light"
+                      ? "Closest comparable market context for this vehicle."
+                      : "Nearby pricing for this vehicle when available."
+                  }
+                />
                 <Text style={styles.body}>
                   {estimateSupport?.marketSourceLabel ?? "Nearby pricing support is shown here when available for this vehicle."}
                 </Text>
@@ -1659,7 +1726,7 @@ export default function VehicleDetailScreen() {
                 </View>
                 {valuationLoading ? <Text style={styles.valueLoading}>Updating pricing…</Text> : null}
               </View>
-              <ValueEstimateCard result={valuation} />
+              <ValueEstimateCard result={valuation} tone={valueTabFinalState === "value_available_light" ? "light" : "strong"} />
             </>
           ) : (
             <ApproximateDataState
@@ -1752,16 +1819,25 @@ export default function VehicleDetailScreen() {
 
       {tab === "For Sale" ? (
         isEstimateMode ? (
-          forSaleTabFinalState === "listings_available" ? (
+          forSaleTabFinalState === "listings_available_strong" || forSaleTabFinalState === "listings_available_light" ? (
             <>
               <View style={styles.sectionCard}>
-                <SectionHeader title="Comparable Listings" subtitle="Nearby listings for this vehicle when available." />
+                <SectionHeader
+                  title={forSaleTabFinalState === "listings_available_light" ? "Nearby comparable listing" : "Comparable Listings"}
+                  subtitle={
+                    forSaleTabFinalState === "listings_available_light"
+                      ? "Closest nearby listing for this vehicle."
+                      : "Nearby listings for this vehicle when available."
+                  }
+                />
                 <Text style={styles.body}>
                   {estimateSupport?.marketSourceLabel ?? "Nearby comparison listings are shown here when available."}
                 </Text>
               </View>
               <View style={styles.listingsWrap}>
-                {vehicle.listings.map((listing, index) => (
+                {vehicle.listings
+                  .slice(0, forSaleTabFinalState === "listings_available_light" ? 1 : vehicle.listings.length)
+                  .map((listing, index) => (
                   <ListingCard key={listing.id} listing={listing} isBest={index === 0} />
                 ))}
               </View>
@@ -1856,14 +1932,8 @@ export default function VehicleDetailScreen() {
           <Pressable style={styles.heroModalCard} onPress={(event) => event.stopPropagation()}>
             <Image source={{ uri: heroImageUri }} style={styles.heroModalImage} resizeMode={heroImageFitMode} />
             <View style={styles.heroModalBody}>
-              <Text style={styles.heroModalTitle}>
-                {isEstimateMode ? estimateHeaderTitle || `${vehicle.make} ${vehicle.model}` : `${vehicle.year} ${vehicle.make} ${vehicle.model}`}
-              </Text>
-              <Text style={styles.heroModalSubtitle}>
-                {isEstimateMode
-                  ? estimateSubtitle || (trustedResult ? "High-confidence identification" : "Vehicle identification")
-                  : `${vehicle.trim} • ${vehicle.bodyStyle}`}
-              </Text>
+              <Text style={styles.heroModalTitle}>{resolvedDisplayTitle}</Text>
+              <Text style={styles.heroModalSubtitle}>{estimateSubtitle || unlockedDetailSubtitle}</Text>
               {summaryChips.length > 0 ? (
                 <View style={styles.heroModalChipRow}>
                   {summaryChips.map((chip) => (

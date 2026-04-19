@@ -55,6 +55,8 @@ type LocalEstimateGarageItem = {
     trim?: string;
     vehicleType?: "car" | "motorcycle" | "";
     titleLabel?: string;
+    trustedCase?: boolean;
+    resultSource?: string;
   };
   vehicle: VehicleRecord;
 };
@@ -254,6 +256,8 @@ export const garageService = {
       trim?: string;
       vehicleType?: "car" | "motorcycle" | "";
       titleLabel?: string;
+      trustedCase?: boolean;
+      resultSource?: string;
     };
     vehicle: VehicleRecord;
   }): Promise<GarageItem> {

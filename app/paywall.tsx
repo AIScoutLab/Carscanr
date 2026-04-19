@@ -13,10 +13,29 @@ import { Colors, Radius, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
 
 export default function PaywallScreen() {
-  const { status, isLoading, isPurchasing, freeUnlocksRemaining, freeUnlocksLimit, feedbackMessage, errorMessage, purchasePro } = useSubscription();
+  const {
+    status,
+    isLoading,
+    isPurchasing,
+    isRestoring,
+    freeUnlocksRemaining,
+    freeUnlocksLimit,
+    feedbackMessage,
+    errorMessage,
+    purchasePro,
+    restorePurchases,
+  } = useSubscription();
   const hasPro = status?.plan === "pro";
   const backendProActive = status?.plan === "pro" && status?.provider === "backend";
-  const purchaseAvailable = Boolean(status?.purchaseAvailable);
+  const availableProduct = status?.availableProducts?.[0] ?? null;
+  const purchaseAvailabilityState = status?.purchaseAvailabilityState ?? "not_configured";
+  const purchaseAvailable = status?.purchaseAvailabilityState === "ready" && Boolean(status?.purchaseAvailable && availableProduct);
+  const purchaseNotice =
+    purchaseAvailabilityState === "preview_only"
+      ? "Purchases can be previewed here, but they require a development or production build to complete."
+      : purchaseAvailabilityState === "not_configured"
+        ? "Purchases are not configured for this build yet. Free unlocks and free scans still work normally."
+        : null;
   const primaryLabel = hasPro
     ? backendProActive
       ? "Continue With Pro"
@@ -25,8 +44,10 @@ export default function PaywallScreen() {
         : "Activate Pro Access"
     : purchaseAvailable
       ? isPurchasing
-        ? "Preparing purchase flow..."
-        : "Start Free Trial"
+        ? "Starting purchase..."
+        : availableProduct
+          ? `Start Pro • ${availableProduct.priceLabel}/${availableProduct.billingPeriodLabel}`
+          : "Start Pro"
       : "Purchases Unavailable In This Build";
 
   return (
@@ -38,7 +59,7 @@ export default function PaywallScreen() {
           <Text style={styles.heroBadgeLabel}>Premium depth</Text>
         </View>
         <Text style={styles.heroTitle}>A cleaner performance tier</Text>
-        <Text style={styles.heroBody}>Unlimited free scans stay in front. Pro simply opens deeper specs, richer value context, and more shopping intelligence.</Text>
+        <Text style={styles.heroBody}>Unlimited free scans stay in front. Pro opens deeper specs, richer value context, shopping intelligence, and synced premium access.</Text>
       </LinearGradient>
       <View style={styles.heroSection}>
         {!backendProActive ? <PaywallCard status={status} unlocksRemaining={freeUnlocksRemaining} unlocksLimit={freeUnlocksLimit} /> : null}
@@ -62,9 +83,16 @@ export default function PaywallScreen() {
       ) : (
         <View style={styles.detailCard}>
           <Text style={styles.title}>Everything behind Pro</Text>
-          <Text style={styles.subtitle}>Unlimited scans stay free. Use your 5 free Pro unlocks first, then upgrade later only if you want unlimited full details.</Text>
+          <Text style={styles.subtitle}>Unlimited scans stay free. Use your 5 free unlocks first, then upgrade only if you want always-on full access.</Text>
           <PlanColumn title="Included" items={planBenefits.pro} highlight />
-          {!purchaseAvailable ? <Text style={styles.notice}>Purchases are disabled in this build. You can still keep scanning for free and use any remaining free Pro unlocks.</Text> : null}
+          {availableProduct ? (
+            <View style={styles.productCard}>
+              <Text style={styles.productEyebrow}>Current offer</Text>
+              <Text style={styles.productTitle}>{availableProduct.priceLabel}/{availableProduct.billingPeriodLabel}</Text>
+              <Text style={styles.productBody}>Live App Store purchase via RevenueCat.</Text>
+            </View>
+          ) : null}
+          {purchaseNotice ? <Text style={styles.notice}>{purchaseNotice}</Text> : null}
         </View>
       )}
       <PrimaryButton
@@ -97,6 +125,28 @@ export default function PaywallScreen() {
         }}
         disabled={isLoading || isPurchasing || !purchaseAvailable}
       />
+      {!backendProActive ? (
+        <PrimaryButton
+          label={isRestoring ? "Restoring purchases..." : "Restore Purchases"}
+          secondary
+          onPress={async () => {
+            try {
+              const result = await restorePurchases();
+              console.log("[paywall] restore result", {
+                outcome: result.outcome,
+                provider: result.status.provider,
+                plan: result.status.plan,
+              });
+              if (result.outcome === "restored" && result.status.plan === "pro") {
+                router.replace("/pro-activated");
+              }
+            } catch {
+              // Provider surfaces the inline error state.
+            }
+          }}
+          disabled={isLoading || isRestoring || purchaseAvailabilityState !== "ready"}
+        />
+      ) : null}
       <PrimaryButton
         label="Keep Free Access"
         secondary
@@ -156,6 +206,17 @@ const styles = StyleSheet.create({
   planTitleHighlight: { color: "#FFFFFF" },
   item: { ...Typography.body, color: Colors.textSoft },
   itemHighlight: { color: "rgba(255,255,255,0.86)" },
+  productCard: {
+    backgroundColor: Colors.cardAlt,
+    borderRadius: Radius.lg,
+    padding: 16,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: Colors.borderSoft,
+  },
+  productEyebrow: { ...Typography.caption, color: Colors.premium, textTransform: "uppercase", letterSpacing: 0.8 },
+  productTitle: { ...Typography.heading, color: Colors.textStrong },
+  productBody: { ...Typography.body, color: Colors.textSoft },
   notice: { ...Typography.caption, color: Colors.textMuted, textAlign: "center" },
   feedback: { ...Typography.caption, color: Colors.textSoft, textAlign: "center" },
   error: { ...Typography.caption, color: Colors.danger, textAlign: "center" },

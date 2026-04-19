@@ -3,18 +3,24 @@ import { Colors, Typography } from "@/constants/theme";
 import { ValuationResult } from "@/types";
 import { cardStyles } from "@/design/patterns";
 
-export function ValueEstimateCard({ result }: { result: ValuationResult }) {
+export function ValueEstimateCard({
+  result,
+  tone = "strong",
+}: {
+  result: ValuationResult;
+  tone?: "strong" | "light";
+}) {
   return (
     <View style={styles.card}>
-      <Text style={styles.kicker}>Performance market</Text>
-      <Text style={styles.heading}>Estimated market value</Text>
+      <Text style={styles.kicker}>{tone === "light" ? "Nearby market view" : "Performance market"}</Text>
+      <Text style={styles.heading}>{tone === "light" ? "Comparable value snapshot" : "Estimated market value"}</Text>
       <View style={styles.row}>
         <Metric label="Trade-in" value={result.tradeIn} range={result.tradeInRange} />
         <Metric label="Private" value={result.privateParty} range={result.privatePartyRange} />
         <Metric label="Retail" value={result.dealerRetail} range={result.dealerRetailRange} />
       </View>
       <Text style={styles.source}>{result.sourceLabel}</Text>
-      <Text style={styles.caption}>{result.confidenceLabel}</Text>
+      <Text style={[styles.caption, tone === "light" && styles.captionLight]}>{result.confidenceLabel}</Text>
     </View>
   );
 }
@@ -48,4 +54,5 @@ const styles = StyleSheet.create({
   metricRange: { ...Typography.caption, color: Colors.textMuted },
   source: { ...Typography.caption, color: Colors.textStrong },
   caption: { ...Typography.caption, color: Colors.success },
+  captionLight: { color: Colors.textSoft },
 });

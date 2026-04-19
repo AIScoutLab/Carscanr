@@ -20,7 +20,7 @@ type SubscriptionContextValue = {
   purchasePro: () => Promise<SubscriptionActionResult>;
   restorePurchases: () => Promise<SubscriptionActionResult>;
   cancelPro: () => Promise<SubscriptionActionResult>;
-  useFreeUnlockForVehicle: (vehicleId: string) => Promise<{ ok: boolean; message: string; reason: string; alreadyUnlocked: boolean }>;
+  useFreeUnlockForVehicle: (vehicleId: string, linkedVehicleIds?: string[]) => Promise<{ ok: boolean; message: string; reason: string; alreadyUnlocked: boolean }>;
   isVehicleUnlocked: (vehicleId: string) => boolean;
   clearFeedback: () => void;
 };
@@ -116,7 +116,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const useFreeUnlockForVehicle = useCallback(async (vehicleId: string) => {
+  const useFreeUnlockForVehicle = useCallback(async (vehicleId: string, linkedVehicleIds: string[] = []) => {
     if (isUnlocking) {
       return {
         ok: false,
@@ -136,7 +136,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     try {
       setIsUnlocking(true);
       setErrorMessage(null);
-      const result = await subscriptionService.useFreeUnlockForVehicle(vehicleId);
+      const result = await subscriptionService.useFreeUnlockForVehicle(vehicleId, linkedVehicleIds);
       setFreeUnlocksUsed(result.state.used);
       setFreeUnlocksRemaining(result.remaining);
       setFreeUnlocksLimit(result.limit);

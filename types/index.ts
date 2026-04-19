@@ -125,6 +125,8 @@ export type GarageItem = {
     trim?: string;
     vehicleType?: "car" | "motorcycle" | "";
     titleLabel?: string;
+    trustedCase?: boolean;
+    resultSource?: string;
   } | null;
   favorite: boolean;
   notes: string;
@@ -145,6 +147,8 @@ export type SubscriptionProduct = {
   billingPeriodLabel: string;
 };
 
+export type PurchaseAvailabilityState = "ready" | "preview_only" | "not_configured";
+
 export type SubscriptionStatus = {
   plan: UserPlan;
   renewalLabel: string;
@@ -160,6 +164,8 @@ export type SubscriptionStatus = {
   willAutoRenew?: boolean;
   lastVerifiedAt?: string | null;
   purchaseAvailable?: boolean;
+  purchaseAvailabilityState?: PurchaseAvailabilityState;
+  availableProducts?: SubscriptionProduct[];
 };
 
 export type SubscriptionVerifyPayload = {
