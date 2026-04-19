@@ -25,7 +25,7 @@ import { garageService } from "@/services/garageService";
 import { scanService } from "@/services/scanService";
 import { buildVehicleUnlockId } from "@/services/subscriptionService";
 import { vehicleService } from "@/services/vehicleService";
-import { ListingResult, ScanResult, ValuationResult } from "@/types";
+import { ListingResult, ScanResult, ValuationResult, VehicleRecord } from "@/types";
 import { confidenceTone, formatConfidence } from "@/lib/utils";
 
 type GroundedYearRange = {
@@ -1126,6 +1126,47 @@ export default function ScanResultScreen() {
     return { avgPrice, priceRange, dealRating };
   };
 
+  const buildEstimateGarageVehicle = (vehicle: NormalizedVehicle): VehicleRecord => {
+    const title = [vehicle.displayYearLabel, vehicle.make, vehicle.model].filter(Boolean).join(" ");
+    return {
+      id: approximateUnlockId ?? buildVehicleUnlockId({
+        vehicleId: vehicle.id,
+        year: vehicle.year,
+        make: vehicle.make,
+        model: vehicle.model,
+      }) ?? "estimate:vehicle",
+      year: vehicle.year ?? 0,
+      make: vehicle.make,
+      model: vehicle.model,
+      trim: vehicle.displayTrimLabel ?? vehicle.trim ?? "",
+      bodyStyle: normalized?.detectedVehicleType === "motorcycle" ? "Motorcycle" : "Saved vehicle",
+      heroImage: normalized?.imageUri ?? vehicle.thumbnailUrl ?? "",
+      overview: `${title || "Vehicle"} saved from scan results.`,
+      specs: {
+        engine: "",
+        horsepower: null,
+        torque: "",
+        transmission: "",
+        drivetrain: "",
+        mpgOrRange: "",
+        exteriorColors: [],
+        msrp: 0,
+      },
+      valuation: {
+        tradeIn: "Unavailable",
+        tradeInRange: "Unavailable",
+        privateParty: "Unavailable",
+        privatePartyRange: "Unavailable",
+        dealerRetail: "Unavailable",
+        dealerRetailRange: "Unavailable",
+        confidenceLabel: "Open vehicle detail for latest pricing",
+        sourceLabel: "Saved estimate",
+        modelType: "modeled",
+      },
+      listings: [],
+    };
+  };
+
   try {
     if (normalized) {
       const candidates = Array.isArray(normalized.candidates) ? normalized.candidates : [];
@@ -1196,7 +1237,30 @@ export default function ScanResultScreen() {
 
   const saveToGarage = async () => {
     try {
-      console.log("[tap] result-save-to-garage", { vehicleId: normalized?.identifiedVehicle.id ?? null });
+      console.log("[tap] result-save-to-garage", {
+        vehicleId: normalized?.identifiedVehicle.id ?? null,
+        unlockId: bestMatchUnlockId,
+        source: bestMatch.source ?? null,
+      });
+      if (isHighConfidenceVisualOverride && hasFullAccess && approximateUnlockId && normalized?.imageUri) {
+        await garageService.saveEstimate({
+          unlockId: approximateUnlockId,
+          sourceType: bestMatch.source === "visual_override" ? "visual_override" : "estimate",
+          imageUri: normalized.imageUri,
+          confidence: bestMatch.confidence ?? displayConfidenceScore,
+          estimateMeta: {
+            year: bestMatch.year ?? 0,
+            make: bestMatch.make,
+            model: bestMatch.model,
+            trim: bestMatch.displayTrimLabel ?? bestMatch.trim ?? "",
+            vehicleType: normalized?.detectedVehicleType ?? "",
+            titleLabel: bestMatch.displayTitleLabel ?? bestMatchTitle,
+          },
+          vehicle: buildEstimateGarageVehicle(bestMatch),
+        });
+        router.push("/(tabs)/garage");
+        return;
+      }
       if (!(await authService.getAccessToken())) {
         Alert.alert("Sign in required", "Sign in to save vehicles to your Garage and keep them across devices.", [
           { text: "Not now", style: "cancel" },
@@ -1710,7 +1774,7 @@ export default function ScanResultScreen() {
               ))}
             </>
           ) : null}
-          {isCatalogMatched ? <PrimaryButton label="Save to Garage" onPress={saveToGarage} /> : null}
+          {isCatalogMatched || (isHighConfidenceVisualOverride && hasFullAccess) ? <PrimaryButton label="Save to Garage" onPress={saveToGarage} /> : null}
           {canOpenBestMatch ? (
             <PrimaryButton
               label={bestMatchDetailTarget.kind === "estimated" ? "Open Estimated Detail" : "Open Full Vehicle Detail"}

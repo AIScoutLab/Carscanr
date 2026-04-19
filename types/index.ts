@@ -115,6 +115,17 @@ export type ScanResult = {
 export type GarageItem = {
   id: string;
   vehicleId: string;
+  unlockId?: string;
+  sourceType?: "catalog" | "estimate" | "visual_override";
+  confidence?: number | null;
+  estimateMeta?: {
+    year: number;
+    make: string;
+    model: string;
+    trim?: string;
+    vehicleType?: "car" | "motorcycle" | "";
+    titleLabel?: string;
+  } | null;
   favorite: boolean;
   notes: string;
   savedAt: string;

@@ -27,27 +27,16 @@ export default function GarageScreen() {
   const { status: usage, freeUnlocksRemaining, freeUnlocksLimit } = useSubscription();
 
   useEffect(() => {
-    authService
-      .getAccessToken()
-      .then((token) => {
-        if (!token) {
-          setRequiresAuth(true);
-          setItems([]);
-          setError("Sign in to view your Garage and saved vehicle history.");
-          return;
-        }
-
-        return garageService
-          .list()
-          .then((result) => {
-            setRequiresAuth(false);
-            setItems(result);
-            setError(null);
-          })
-          .catch((err) => {
-            setItems([]);
-            setError(err instanceof Error ? err.message : "Garage unavailable.");
-          });
+    Promise.all([authService.getAccessToken(), garageService.list()])
+      .then(([token, result]) => {
+        setItems(result);
+        setRequiresAuth(!token && result.length === 0);
+        setError(!token && result.length === 0 ? "Sign in to view your synced Garage history." : null);
+      })
+      .catch((err) => {
+        setItems([]);
+        setRequiresAuth(false);
+        setError(err instanceof Error ? err.message : "Garage unavailable.");
       })
       .finally(() => {
         setLoading(false);
@@ -116,16 +105,46 @@ export default function GarageScreen() {
             key={item.id}
             vehicle={item.vehicle}
             subtitle={`${item.favorite ? "Favorite" : "Saved"} • ${item.notes}`}
-            onPress={() =>
-              router.push({
-                pathname: "/vehicle/[id]",
-                params: {
-                  id: item.vehicleId,
-                  unlockId: item.vehicleId,
-                  garageSource: "1",
-                  reopenedSource: "1",
-                },
-              })}
+            onPress={() => {
+              if (item.sourceType === "estimate" || item.sourceType === "visual_override") {
+                console.log("[garage] GARAGE_OPEN_ESTIMATE", {
+                  unlockId: item.unlockId ?? item.vehicleId,
+                  sourceType: item.sourceType,
+                  opened: true,
+                  garageItemId: item.id,
+                });
+              }
+              router.push(
+                item.sourceType === "estimate" || item.sourceType === "visual_override"
+                  ? {
+                      pathname: "/vehicle/[id]",
+                      params: {
+                        id: item.vehicleId,
+                        unlockId: item.unlockId ?? item.vehicleId,
+                        garageSource: "1",
+                        reopenedSource: "1",
+                        estimate: "1",
+                        imageUri: item.imageUri,
+                        yearLabel: item.estimateMeta?.year ? `${item.estimateMeta.year}` : "",
+                        titleLabel: item.estimateMeta?.titleLabel ?? "",
+                        make: item.estimateMeta?.make ?? item.vehicle.make,
+                        model: item.estimateMeta?.model ?? item.vehicle.model,
+                        trimLabel: item.estimateMeta?.trim ?? "",
+                        vehicleType: item.estimateMeta?.vehicleType ?? "",
+                        confidence: item.confidence != null ? `${item.confidence}` : "",
+                      },
+                    }
+                  : {
+                      pathname: "/vehicle/[id]",
+                      params: {
+                        id: item.vehicleId,
+                        unlockId: item.vehicleId,
+                        garageSource: "1",
+                        reopenedSource: "1",
+                      },
+                    },
+              )}
+            }
           />
         ))
       )}

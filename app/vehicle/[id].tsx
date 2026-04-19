@@ -643,6 +643,21 @@ export default function VehicleDetailScreen() {
   }, [garageSource, hasFullAccess, id, reopenedSource, resolvedUnlockId, scanId, unlockedVehicleIds.length]);
 
   useEffect(() => {
+    if (garageSource !== "1") {
+      return;
+    }
+    console.log("[vehicle-detail] GARAGE_UNLOCK_RESOLUTION", {
+      routeId: id,
+      scanId: typeof scanId === "string" ? scanId : null,
+      unlockId: resolvedUnlockId,
+      sourceType: isEstimateMode ? "estimate" : "catalog",
+      opened: true,
+      unlocked: hasFullAccess,
+      garageSource: true,
+    });
+  }, [garageSource, hasFullAccess, id, isEstimateMode, resolvedUnlockId, scanId]);
+
+  useEffect(() => {
     if (tab !== "Value" || !valueTabFinalState) {
       return;
     }
