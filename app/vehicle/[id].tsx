@@ -32,6 +32,7 @@ const conditionOptions = ["Poor", "Fair", "Good", "Very Good", "Excellent"];
 
 type EstimateSupport = {
   groundedVehicleId: string | null;
+  groundedYear: number | null;
   familyLabel: string | null;
   yearRangeLabel: string | null;
   specsSourceLabel: string | null;
@@ -538,9 +539,12 @@ export default function VehicleDetailScreen() {
           vehicleId: !isEstimateMode ? (vehicle?.id ?? id) : null,
           scanId: typeof scanId === "string" ? scanId : null,
           year: vehicle?.year || (typeof yearLabel === "string" ? yearLabel : null),
+          groundedYear: estimateSupport?.groundedYear ?? null,
           make: vehicle?.make || (typeof make === "string" ? make : null),
           model: vehicle?.model || (typeof model === "string" ? model : null),
           trim: vehicle?.trim || (typeof trimLabel === "string" ? trimLabel : null),
+          vehicleType: typeof vehicleType === "string" ? vehicleType : null,
+          groundedMatchType: estimateSupport?.groundedMatchType ?? null,
         })) ?? null;
   const unlockedForVehicle = resolvedUnlockId ? isVehicleUnlocked(resolvedUnlockId) : false;
   const accessState: "locked" | "unlocked" = isPro || unlockedForVehicle ? "unlocked" : "locked";
@@ -916,6 +920,7 @@ export default function VehicleDetailScreen() {
         setCondition(defaultCondition);
         setEstimateSupport({
           groundedVehicleId: groundedVehicle?.id ?? null,
+          groundedYear: groundedVehicle?.year ?? null,
           familyLabel: groundedFamilyLabel,
           yearRangeLabel: groundedYearRangeLabel,
           specsSourceLabel,

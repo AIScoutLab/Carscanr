@@ -1063,6 +1063,8 @@ export default function ScanResultScreen() {
     make: bestMatch.make,
     model: bestMatch.model,
     trim: bestMatch.trim ?? null,
+    vehicleType: normalized?.detectedVehicleType ?? null,
+    groundedMatchType: bestMatch.groundedMatchType,
   });
   const approximateUnlockId = isHighConfidenceVisualOverride ? bestMatchUnlockId : null;
   const unlockedForVehicle = bestMatchUnlockId ? isVehicleUnlocked(bestMatchUnlockId) : false;
@@ -1136,6 +1138,8 @@ export default function ScanResultScreen() {
         groundedYear: vehicle.groundedExactYear,
         make: vehicle.make,
         model: vehicle.model,
+        vehicleType: normalized?.detectedVehicleType ?? null,
+        groundedMatchType: vehicle.groundedMatchType,
       }) ?? "estimate:vehicle",
       year: vehicle.year ?? 0,
       make: vehicle.make,
@@ -1321,6 +1325,8 @@ export default function ScanResultScreen() {
             make: vehicle.make,
             model: vehicle.model,
             trim: vehicle.trim ?? null,
+            vehicleType: normalized?.detectedVehicleType ?? null,
+            groundedMatchType: vehicle.groundedMatchType,
           }) ?? "",
           reopenedSource: "1",
         },

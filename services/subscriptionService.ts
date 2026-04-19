@@ -56,6 +56,7 @@ type FreeUnlockActionResult = {
 const FREE_UNLOCKS_LIMIT = 5;
 const FREE_UNLOCK_STORAGE_KEY = "carscanr.freeUnlocks.v1";
 const ESTIMATED_UNLOCK_PREFIX = "estimate:";
+const ESTIMATED_UNLOCK_YEAR_SNAP_MAX_DRIFT = 1;
 
 function normalizeUnlockPart(value: string | number | null | undefined, fallback: string) {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -70,26 +71,109 @@ function normalizeUnlockPart(value: string | number | null | undefined, fallback
   return fallback;
 }
 
-function normalizeYear(year: string | number | null | undefined, groundedYear?: string | number | null) {
+function parseUnlockYear(year: string | number | null | undefined) {
   const parsedYear = typeof year === "number" ? year : typeof year === "string" ? Number.parseInt(year, 10) : null;
-  const parsedGroundedYear =
-    typeof groundedYear === "number"
-      ? groundedYear
-      : typeof groundedYear === "string"
-        ? Number.parseInt(groundedYear, 10)
-        : null;
+  return typeof parsedYear === "number" && Number.isFinite(parsedYear) ? parsedYear : null;
+}
 
-  if (
-    typeof parsedYear === "number" &&
-    Number.isFinite(parsedYear) &&
-    typeof parsedGroundedYear === "number" &&
-    Number.isFinite(parsedGroundedYear) &&
-    Math.abs(parsedYear - parsedGroundedYear) <= 1
-  ) {
-    return parsedGroundedYear;
+function normalizeFamilyBucket(make: string | null | undefined, model: string | null | undefined) {
+  const normalized = `${normalizeUnlockPart(make, "unknown")}:${normalizeUnlockPart(model, "vehicle")}`;
+  return normalized
+    .replace(/\b(series|class|edition|sport|touring|limited|premium|platinum|lariat|xl|xlt|se|sel|le|xle|lx|ex|gt)\b/g, "")
+    .replace(/:+/g, ":")
+    .trim();
+}
+
+function isGenerationSensitiveEstimateFamily(input: {
+  make?: string | null;
+  model?: string | null;
+  vehicleType?: string | null;
+}) {
+  const make = normalizeUnlockPart(input.make, "unknown");
+  const model = normalizeUnlockPart(input.model, "vehicle");
+  const combined = `${make}:${model}`;
+  const vehicleType = normalizeUnlockPart(input.vehicleType, "");
+
+  if (vehicleType === "motorcycle" || vehicleType === "truck") {
+    return true;
   }
 
-  return typeof parsedYear === "number" && Number.isFinite(parsedYear) ? parsedYear : null;
+  return /jeep:wrangler|ford:f-150|ford:mustang|chevrolet:camaro|chevrolet:silverado|dodge:charger|dodge:challenger|ram:1500|gmc:sierra|porsche:911/.test(
+    combined,
+  );
+}
+
+function hasGenerationSensitiveTrimSignal(trim?: string | null) {
+  const normalizedTrim = normalizeUnlockPart(trim, "");
+  return /rubicon|shelby|raptor|z06|trx|hellcat|392|scat-pack|mach-1|gt500|zl1|ss|denali|platinum|king-ranch/.test(
+    normalizedTrim,
+  );
+}
+
+function resolveStableEstimateUnlockYear(input: {
+  year?: string | number | null;
+  groundedYear?: string | number | null;
+  make?: string | null;
+  model?: string | null;
+  vehicleType?: string | null;
+  trim?: string | null;
+  groundedMatchType?: string | null;
+}) {
+  const originalYear = parseUnlockYear(input.year);
+  const candidateGroundedYear = parseUnlockYear(input.groundedYear);
+  const make = normalizeUnlockPart(input.make, "unknown");
+  const model = normalizeUnlockPart(input.model, "vehicle");
+  const familyBucket = normalizeFamilyBucket(input.make, input.model);
+  const generationSensitiveFamily = isGenerationSensitiveEstimateFamily(input);
+  const generationSensitiveTrim = hasGenerationSensitiveTrimSignal(input.trim);
+  const groundedMatchType = normalizeUnlockPart(input.groundedMatchType, "");
+  const snapDrift =
+    typeof originalYear === "number" && typeof candidateGroundedYear === "number"
+      ? Math.abs(originalYear - candidateGroundedYear)
+      : null;
+
+  let resolvedYear = originalYear;
+  let allowed = false;
+  let reason = "keep_original_year";
+
+  if (typeof originalYear !== "number" || !Number.isFinite(originalYear)) {
+    resolvedYear = candidateGroundedYear;
+    reason = typeof candidateGroundedYear === "number" ? "original_year_missing" : "no_valid_year";
+  } else if (typeof candidateGroundedYear !== "number" || !Number.isFinite(candidateGroundedYear)) {
+    reason = "no_grounded_year";
+  } else if (!make || !model || familyBucket === "unknown:vehicle") {
+    reason = "missing_family_identity";
+  } else if (groundedMatchType !== "id" && groundedMatchType !== "exact") {
+    reason = "grounding_not_strong_enough";
+  } else if (snapDrift == null || snapDrift > ESTIMATED_UNLOCK_YEAR_SNAP_MAX_DRIFT) {
+    reason = "year_drift_too_large";
+  } else if (generationSensitiveFamily) {
+    reason = "generation_sensitive_family";
+  } else if (generationSensitiveTrim) {
+    reason = "generation_sensitive_trim_signal";
+  } else {
+    resolvedYear = candidateGroundedYear;
+    allowed = true;
+    reason = "safe_nearby_grounded_year";
+  }
+
+  if (__DEV__) {
+    console.log("[subscription] ESTIMATE_UNLOCK_YEAR_SNAP_DECISION", {
+      originalYear,
+      candidateGroundedYear,
+      resolvedYear,
+      make,
+      model,
+      familyBucket,
+      groundedMatchType: groundedMatchType || null,
+      generationSensitiveFamily,
+      generationSensitiveTrim,
+      allowed,
+      reason,
+    });
+  }
+
+  return resolvedYear;
 }
 
 export function buildVehicleUnlockId(input: {
@@ -100,6 +184,8 @@ export function buildVehicleUnlockId(input: {
   make?: string | null;
   model?: string | null;
   trim?: string | null;
+  vehicleType?: string | null;
+  groundedMatchType?: string | null;
   includeTrim?: boolean;
 }) {
   if (typeof input.vehicleId === "string" && input.vehicleId.trim().length > 0 && !input.vehicleId.startsWith(ESTIMATED_UNLOCK_PREFIX)) {
@@ -113,7 +199,18 @@ export function buildVehicleUnlockId(input: {
   }
 
   return `${ESTIMATED_UNLOCK_PREFIX}${[
-    normalizeUnlockPart(normalizeYear(input.year, input.groundedYear), "na"),
+    normalizeUnlockPart(
+      resolveStableEstimateUnlockYear({
+        year: input.year,
+        groundedYear: input.groundedYear,
+        make: input.make,
+        model: input.model,
+        vehicleType: input.vehicleType,
+        trim: input.trim,
+        groundedMatchType: input.groundedMatchType,
+      }),
+      "na",
+    ),
     make,
     model,
     input.includeTrim ? normalizeUnlockPart(input.trim, "family") : "family",

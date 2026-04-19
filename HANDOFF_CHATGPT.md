@@ -1042,168 +1042,395 @@ Vehicle detail for canonical matches now has three important product fixes in pr
     3. provider/generic fallback image
   - detail screen temporarily shows visible image-source debug text
 
-### Phase 1 hardening status: OCR verification, deterministic manual search, and spec usefulness
+### Current product truth: trusted high-confidence results, unified unlocks, and Garage reopen
 
-This is the current Phase 1 truth before the next TestFlight build:
+This is the current source of truth for the scan/result/detail/Garage flow.
 
-- the premium dark redesign is considered done enough for Phase 1
-- the remaining focus is scan/detail trustworthiness, not broad UI redesign
-- the biggest remaining pre-build question is whether Google OCR is firing and winning on a real labeled image in local smoke testing
+- the premium redesign is already in place
+- the current work is about trust, consistency, and unlock behavior
+- high-confidence trusted results are now treated much more directly in the product
 
-#### Google Vision OCR is now a real backend layer
+#### OCR and visible-result enforcement
 
-CarScanr now has a real backend OCR path in addition to OpenAI visible-text extraction.
+Current backend truth:
+
+- Google Vision OCR exists as a real backend layer
+- OCR still runs backend-only through `@google-cloud/vision`
+- credentials still use `GOOGLE_APPLICATION_CREDENTIALS`
+- no Google credentials are exposed to the app
 
 Key files:
 
 - [backend/src/services/googleVisionOcrService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/googleVisionOcrService.ts)
 - [backend/src/services/scanService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/scanService.ts)
-- [backend/scripts/smokeGoogleVisionOcr.ts](/Users/mattbrillman/Car_Identifier/backend/scripts/smokeGoogleVisionOcr.ts)
-- [backend/tests/googleVisionOcrOverride.test.ts](/Users/mattbrillman/Car_Identifier/backend/tests/googleVisionOcrOverride.test.ts)
+- [backend/src/controllers/scanController.ts](/Users/mattbrillman/Car_Identifier/backend/src/controllers/scanController.ts)
 
-Current implementation:
+Current live override behavior:
 
-- OCR runs backend-only through `@google-cloud/vision`
-- auth uses `GOOGLE_APPLICATION_CREDENTIALS` when present
-- local dev can fall back to a JSON file in `backend/credentials/`
-- no Google credentials are exposed to the Expo/mobile client
-- OCR uses candidate hints from the current visual result plus alternates
-- OCR is intended to confirm or correct:
-  - 4-digit year
-  - make
-  - model
-  - trim when readable
+- runtime version marker:
+  - `ocr-visual-fallback-enforce-v3`
+- if OCR confirms structured year/make/model:
+  - `normalizedResult.source = "ocr_override"`
+- if OCR is unavailable but the visual result is still strong enough:
+  - `normalizedResult.source = "visual_override"`
+- final response now pins the visible top candidate to the same year/make/model as `normalizedResult` for those override cases
+- the original bad production case:
+  - `normalizedResult = 2026 Honda CR-V`
+  - `candidates[0] = 2024 Honda CR-V`
+  is now fixed in production
 
-Current OCR logs:
+Important product takeaway:
 
-- `GOOGLE_VISION_OCR_SUMMARY`
-- `GOOGLE_VISION_OCR_APPLIED`
-- `GOOGLE_VISION_OCR_DECISION`
-- `GOOGLE_VISION_OCR_UNAVAILABLE`
-- `GOOGLE_VISION_OCR_LOCAL_FALLBACK`
-- `GOOGLE_VISION_OCR_CLIENT_INIT_FAILED`
-- `GOOGLE_VISION_OCR_FAILED`
+- the visible app result is no longer allowed to be overwritten by a weaker canonical fallback after the final override step
 
-#### Hard OCR override semantics
+#### Trusted high-confidence rule
+
+Current product rule:
+
+- if confidence is `>= 0.90`
+- and the vehicle is not an extreme-risk case
+- then the app treats the result as trusted for the purposes of opening useful detail after unlock
+
+Extreme-risk cases still stay conservative:
+
+- classics
+- motorcycles
+- rare exotics
+
+This confidence-first rule now applies instead of the older “mainstream-safe families only” whitelist.
+
+Key files:
+
+- [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx)
+- [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx)
+
+#### Unified unlock identity
+
+This was the key architectural cleanup.
+
+There is now one canonical unlock identity helper:
+
+- [services/subscriptionService.ts](/Users/mattbrillman/Car_Identifier/services/subscriptionService.ts)
+- `buildVehicleUnlockId(...)`
+
+Current unlock identity rules:
+
+- grounded/catalog vehicle:
+  - unlock id = real `vehicleId`
+- estimate-backed / visual-override vehicle:
+  - unlock id = stable synthetic id
+  - current format:
+    - `estimate:<year>:<make>:<model>:family`
+
+Important stability changes:
+
+- `scanId` was removed from synthetic unlock ids
+- trim is no longer used by default in synthetic unlock ids
+- old stored scan-based estimate unlock ids are normalized on load into the newer stable format
+- nearby-year normalization is now guarded by an explicit helper:
+  - `resolveStableEstimateUnlockYear(...)`
+  - it only snaps the synthetic unlock year to a nearby grounded year when:
+    - make/model normalize to the same family bucket
+    - grounded match type is `id` or `exact`
+    - year drift is at most `1`
+    - the family is not generation-sensitive
+    - there is no strong generation-sensitive trim signal
+- if those guardrails do not pass, the unlock id keeps the originally identified year
+
+Current families/cases excluded from year snapping:
+
+- motorcycles
+- truck families
+- Wrangler-like / explicit-generation families
+- muscle/exotic generation-sensitive families
+- examples currently blocked by rule:
+  - Wrangler
+  - F-150
+  - Silverado
+  - Mustang
+  - Camaro
+  - Charger / Challenger
+  - Sierra / Ram truck families
+  - 911
+
+Current trim/generation-sensitive signals that also block snapping:
+
+- `rubicon`
+- `shelby`
+- `raptor`
+- `z06`
+- `trx`
+- `hellcat`
+- `392`
+- `scat pack`
+- `mach 1`
+- `gt500`
+- `zl1`
+- `ss`
+- `denali`
+- `platinum`
+- `king ranch`
+
+Why this matters:
+
+- rescanning the same high-confidence estimate-backed vehicle should no longer create a fresh unlock identity just because it came from a different scan
+- but nearby-year vehicles are much less likely to collapse into the same synthetic unlock id by accident
+
+#### Unified access model
+
+Current detail access model:
+
+- one final derived access state:
+  - `locked`
+  - `unlocked`
+
+This is now resolved in [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx) from:
+
+- `isPro`
+- or `isVehicleUnlocked(resolvedUnlockId)`
+
+Important cleanup:
+
+- estimate-backed detail is no longer implicitly treated as unlocked just because it is estimate mode
+- result, detail, and Garage reopen now all use the same unlock identity strategy
+
+Temporary verification logs currently present:
+
+- `VEHICLE_UNLOCK_RESOLUTION`
+- `VEHICLE_UNLOCK_PERSISTENCE`
+- `VEHICLE_TAB_DATA_RESOLUTION`
+
+These are temporary QA/debug logs for verifying the unified unlock behavior.
+
+#### Result-screen promise and detail behavior
+
+Current trusted high-confidence result behavior:
+
+- CTA now says:
+  - `Open Vehicle Details`
+- it no longer promises pricing specifically
+- this was changed because pricing/value hydration and identification confidence are not the same thing
+
+Current trusted detail behavior:
+
+- high-confidence trusted detail avoids old mixed-state copy like:
+  - `Trusted family detail`
+  - `Photo-based confidence layer`
+  - pricing promises in the unlock CTA
+- title/chips/header were cleaned up so the same final identified year/make/model drives the visible detail state
+
+Important bug that was fixed:
+
+- hero chips were previously able to show nearby grounded year/range data while the title used the final identified year
+- example: title could say `2026 Honda CR-V` while a chip still showed `2020`
+- trusted high-confidence chips now prefer the final identified year instead of the fallback grounded year range
+
+#### Post-unlock data policy
+
+Current product rule:
+
+- once a vehicle is unlocked, the experience should feel like full access for that vehicle
+
+What that means in code:
+
+- no secondary lock decision per tab
+- no second unlock ask for that same unlock id
+- no premium overlay for that same unlock id
+- no conservative “hold back useful data” rule after unlock when best-available fallback exists
+
+Current best-available post-unlock behavior in [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx):
+
+- if unlocked and a nearby grounded vehicle exists:
+  - `strongFamilyFallback = true`
+  - `strongMarketFallback = true`
+  - `strongListingsFallback = true`
+
+So after unlock:
+
+- Specs tab:
+  - exact data if available
+  - otherwise best available nearby/family-safe fallback
+- Value tab:
+  - exact pricing if available
+  - otherwise best nearby pricing/range when any fallback exists
+- For Sale tab:
+  - exact listings if available
+  - otherwise best nearby comparables when any fallback exists
+- Photos tab:
+  - scan photo / route image / whatever image support exists
+
+Only if there is truly no usable fallback at all should a concise unavailable state appear.
+
+Guardrails that still remain:
+
+- the vehicle still has to resolve to a nearby grounded make/model family
+- family support still comes from `resolveApproximateFamilySupport(...)`
+- shared spec fields still come from trusted family aggregation, not random single-record copy
+- horsepower still preserves the existing exact/typical/range safeguards
+- extreme-risk families still stay conservative
+
+#### Value / For Sale final-state cleanup
+
+Trusted unlocked Value and For Sale tabs now resolve through one final state per tab instead of multiple overlapping fallback branches.
+
+Current derived tab states:
+
+- Value:
+  - `value_available`
+  - `value_unavailable_trusted`
+- For Sale:
+  - `listings_available`
+  - `listings_unavailable_trusted`
+
+Current trusted unavailable copy:
+
+- Value:
+  - `Pricing data isn't available yet`
+  - `We'll show nearby pricing here as soon as comparable market data is available.`
+- For Sale:
+  - `Comparable listings aren't available yet`
+  - `We'll show nearby listings here as soon as comparable inventory is available.`
 
 Current product intent:
 
-- if OCR can resolve a valid year + make + model from readable text, that evidence should override weaker visual-only year guesses
-- OCR is now intended to be primary, not secondary, when structured readable vehicle text exists
+- no duplicate unavailable cards
+- no duplicate `Scan Another Vehicle` CTAs
+- no `GROUNDING LIMIT`
+- no old pre-card fallback explanation stack
 
-Current decision fields:
+#### Startup / guest flow
 
-- `overrideTriggered`
-  - `true` only when OCR replaces a weaker/different winner
-- `confirmationApplied`
-  - currently retained for smoke/log shape compatibility, but no longer the primary expected path for structured OCR
-- `finalWinningSource`
-  - one of:
-    - `text_override`
-    - `visual_candidate`
+Current startup behavior:
 
-Current acceptance rule:
+- onboarding is shown only once
+- returning users are not forced through auth on launch
+- guest usage continues silently
 
-- accept OCR as authoritative when all of the following are true:
-  - valid 4-digit year
-  - year is between `1980` and `currentYear + 1`
-  - make is non-empty
-  - model is non-empty
-- do not require family agreement or visual confirmation before applying OCR override
+Key files:
 
-Important current behavior in [backend/src/services/scanService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/scanService.ts):
+- [app/index.tsx](/Users/mattbrillman/Car_Identifier/app/index.tsx)
+- [services/startupPreferences.ts](/Users/mattbrillman/Car_Identifier/services/startupPreferences.ts)
+- [services/guestSessionService.ts](/Users/mattbrillman/Car_Identifier/services/guestSessionService.ts)
 
-- OCR evidence is now applied on:
-  - fresh live vision results
-  - image-cache hits
-  - cached-analysis hits
-  - similar-image cache hits
-- OCR-confirmed results can bypass stability-cache reuse if the cached winner conflicts with hard readable-text confirmation:
-  - `SCAN_STABILITY_CACHE_BYPASSED_FOR_OCR`
-- smoke output now distinguishes:
-  - OCR replaced the winner
-  - OCR was unavailable / ignored
-- OCR override now stamps the normalized result with:
-  - `source: "ocr_override"`
-- log added:
-  - `OCR_OVERRIDE_APPLIED`
+Current storage:
 
-#### Local OCR smoke test
+- onboarding flag:
+  - `hasSeenOnboarding`
+- guest id:
+  - `carscanr.guest-id.v1`
 
-Current local smoke test command:
+#### Garage support for estimate-backed / visual-override vehicles
 
-```bash
-cd /Users/mattbrillman/Car_Identifier/backend
-GOOGLE_APPLICATION_CREDENTIALS=/Users/mattbrillman/Car_Identifier/backend/credentials/google-vision.json \
-npm run smoke:ocr -- /absolute/path/to/your-image.jpg Honda "CR-V" 2026
-```
+This is now supported on the same device.
 
-Current smoke-test script:
+Current storage model:
 
-- [backend/scripts/smokeGoogleVisionOcr.ts](/Users/mattbrillman/Car_Identifier/backend/scripts/smokeGoogleVisionOcr.ts)
+- catalog-backed Garage items:
+  - existing backend Garage path remains unchanged
+- estimate-backed / visual-override Garage items:
+  - explicit local-first Garage storage in AsyncStorage
+  - key:
+    - `carscanr.localEstimateGarage.v1`
 
-Current output shape includes:
+Current local estimate Garage item shape in [services/garageService.ts](/Users/mattbrillman/Car_Identifier/services/garageService.ts):
 
-- `ocr.rawTextSummary`
-- `ocr.detectedYear`
-- `ocr.detectedMake`
-- `ocr.detectedModel`
-- `ocr.decisionReason`
-- `before`
-- `after`
-- `overrideTriggered`
-- `confirmationApplied`
+- `id`
+- `vehicleId`
+- `unlockId`
+- `sourceType`
+- `imageUrl`
+- `notes`
+- `favorite`
+- `createdAt`
+- `confidence`
+- `estimateMeta`
+- `vehicle`
 
-Important reality check:
+Important identity rule:
 
-- the script path itself now works
-- the last failed run was only because the example image path was still a placeholder
-- before shipping the next TestFlight build, run this on a real labeled image like `2026 Honda CR-V`
-- Phase 1 should not be called fully complete until one real local OCR smoke image confirms that the override is firing as expected
+- for estimate-backed Garage items:
+  - `vehicleId` is the same stable synthetic unlock id
+  - `unlockId` is also that same stable synthetic unlock id
 
-#### Manual search is now the intended deterministic / safe path
+Current save behavior:
 
-Current product intent:
+- [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx)
+  - grounded/catalog vehicle:
+    - still uses backend Garage save
+  - unlocked high-confidence estimate-backed / visual-override vehicle:
+    - now uses `garageService.saveEstimate(...)`
 
-- manual search should be the least guessy path in the app
-- if a user narrows to an exact trim, detail should preserve the strongest available image/spec/horsepower path
+Current reopen behavior:
+
+- [app/(tabs)/garage.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/garage.tsx)
+  - estimate-backed Garage items reopen into:
+    - detail route with `estimate=1`
+    - the same `unlockId`
+    - saved identity/meta
+    - `garageSource=1`
+    - `reopenedSource=1`
+
+Current detail behavior on reopen:
+
+- [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx)
+  - resolves the same unlock id
+  - resolves the same unlocked access state
+  - rehydrates estimate detail from saved meta + current fallback logic
+  - does not depend on a backend catalog `vehicleId` to open
+
+Current dedupe behavior:
+
+- estimate-backed Garage saves dedupe by the same stable synthetic unlock id
+- saving the same estimate-backed vehicle again replaces the prior local estimate item instead of creating duplicates
+
+Current important limitation:
+
+- estimate-backed Garage items are currently same-device only
+- they are not synced cross-device because they are not stored in the backend Garage model yet
+
+#### Cross-session and sign-in behavior
+
+Current guarantees:
+
+- guest unlocks persist on the same device
+- app relaunch restores them
+- estimate-backed Garage items persist on the same device
+- estimate-backed Garage reopen stays unlocked on the same device
+
+Current non-guarantees:
+
+- guest unlocks do not automatically sync to another device
+- estimate-backed Garage items do not currently sync to another device
+- signing in later does not automatically migrate local estimate-backed Garage items into backend Garage storage
+
+#### Manual search
+
+Manual search remains the intended deterministic path when the user wants exactness.
 
 Current behavior:
 
 - [app/(tabs)/search.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/search.tsx)
-  - trim narrowing is now explicit when multiple trims are present
+  - trim narrowing is explicit when multiple trims exist
   - “all trims” escape hatch was removed in that state
   - exact-detail open is blocked until a trim is selected when multiple trims exist
-  - supporting copy now tells the user trim selection is needed to keep image/spec detail exact
 - [services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/services/vehicleService.ts)
-  - exact manual-search detail now prefers:
-    1. exact live/provider image
-    2. exact canonical/offline hero image
-    3. exact matched provider image
-    4. generic fallback only as a true last resort
-  - horsepower/spec merge is intended to preserve exact live/provider/canonical detail before falling back
+  - exact manual-search detail prefers exact live/provider/canonical imagery before generic fallback
 
 Current limitation:
 
-- this is still not a full structured `Year -> Make -> Model -> Trim` selector flow
-- manual search is now more deterministic for exact hits, but not architecturally complete
+- still not a full structured `Year -> Make -> Model -> Trim` selector flow
 
-#### Horsepower/spec usefulness truth
+#### Horsepower and spec fallback truth
 
 Current horsepower priority:
 
 1. exact provider/backend horsepower
 2. parsed exact horsepower from real horsepower-like fields
 3. exact canonical/offline horsepower
-4. family-level fallback when family support is strong enough
+4. family-level fallback when support is strong enough
 5. `Unknown`
 
-Current family-level fallback rule:
-
-- only allowed when the family/generation grounding is strong enough to be useful and safe
-- not allowed for broad/weak matches
-
-Current UI labels in [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx):
+UI labels that should remain true:
 
 - `Horsepower`
 - `Typical horsepower`
@@ -1213,29 +1440,7 @@ Safeguards that should remain true:
 
 - never treat `0 hp` as real
 - never parse displacement like `4.0L` into `4 hp`
-- if fallback is too weak, stay honest and show unknown instead of fake precision
-
-#### Phase 1 readiness truth
-
-Current honest status:
-
-- OCR + hard text override:
-  - mostly complete
-- exact-year trust for clear labeled images:
-  - mostly complete
-- horsepower/spec usefulness:
-  - mostly complete
-- manual search trustworthiness:
-  - mostly complete
-- scan/detail trustworthiness for everyday users:
-  - mostly complete
-
-Biggest remaining pre-build hole:
-
-- run the local OCR smoke test on a real labeled image and confirm:
-  - `overrideTriggered: true`
-  - `after.year/make/model` match the readable text
-  - `source` is treated as OCR override in the app result flow
+- stay unknown rather than inventing fake precision when fallback is too weak
 
 ## Important Files
 
