@@ -1,4 +1,3 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Redirect, usePathname } from "expo-router";
 import { useEffect, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
@@ -8,6 +7,8 @@ import { PremiumSkeleton } from "@/components/PremiumSkeleton";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { authService } from "@/services/authService";
+import { guestSessionService } from "@/services/guestSessionService";
+import { startupPreferences } from "@/services/startupPreferences";
 
 export default function Index() {
   const pathname = usePathname();
@@ -27,10 +28,7 @@ export default function Index() {
     const hydrate = async () => {
       try {
         setStartupError(null);
-        const [hasSeenOnboarding, token] = await Promise.all([
-          AsyncStorage.getItem("hasSeenOnboarding"),
-          authService.getAccessToken(),
-        ]);
+        const [hasSeenOnboarding, token] = await Promise.all([startupPreferences.hasSeenOnboarding(), authService.getAccessToken()]);
         if (!active) return;
         if (token) {
           console.log("[startup] route decision", {
@@ -41,11 +39,14 @@ export default function Index() {
           setTarget("/(tabs)/scan");
           return;
         }
-        const nextTarget = hasSeenOnboarding ? "/auth" : "/onboarding";
+        await guestSessionService.getGuestId();
+        if (!active) return;
+        const nextTarget = hasSeenOnboarding ? "/(tabs)/scan" : "/onboarding";
         console.log("[startup] route decision", {
           pathname,
-          reason: hasSeenOnboarding ? "has-seen-onboarding" : "first-launch",
+          reason: hasSeenOnboarding ? "guest-resume" : "first-launch",
           hasSeenOnboarding,
+          guestMode: true,
           target: nextTarget,
         });
         setTarget(nextTarget as never);

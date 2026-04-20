@@ -87,6 +87,12 @@ type BackendScanMeta = {
   provider?: string;
   topCandidateVehicleId?: string | null;
   scanRuntimeVersion?: string;
+  identificationConfidence?: number | null;
+  dataConfidence?: number | null;
+  payloadStrength?: "strong" | "usable" | "thin" | "empty" | null;
+  enrichmentMode?: "exact" | "adjacent_year" | "generation_fallback" | "fallback_only" | null;
+  unlockEligible?: boolean | null;
+  unlockRecommendationReason?: string | null;
   premium?: {
     usedUnlock: boolean;
     alreadyUnlocked: boolean;
@@ -106,7 +112,7 @@ function safeString(value: unknown, fallback = "") {
   return fallback;
 }
 
-function safeNumber(value: unknown, fallback = 0) {
+function safeNumber(value: unknown, fallback: number | null = 0) {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
   }
@@ -174,12 +180,12 @@ function mapCandidate(candidate: Partial<BackendScanCandidate>): VehicleCandidat
   const candidateId = safeString(candidate.vehicleId, "");
   return {
     id: candidateId,
-    year: safeNumber(candidate.year, 0),
+    year: safeNumber(candidate.year, 0) ?? 0,
     make: safeString(candidate.make, "Unknown"),
     model: safeString(candidate.model, "Vehicle"),
     trim: safeString(candidate.trim, ""),
     source: undefined,
-    confidence: safeNumber(candidate.confidence, 0),
+    confidence: safeNumber(candidate.confidence, 0) ?? 0,
     thumbnailUrl: getVehicleImage(candidateId || "unknown-vehicle"),
   };
 }
@@ -190,7 +196,7 @@ function normalizeBackendScanResponse(raw: BackendScanResponse): BackendScanResp
     userId: safeString(raw?.userId, "unknown-user"),
     imageUrl: safeString(raw?.imageUrl, ""),
     detectedVehicleType: raw?.detectedVehicleType === "motorcycle" ? "motorcycle" : "car",
-    confidence: safeNumber(raw?.confidence, 0),
+    confidence: safeNumber(raw?.confidence, 0) ?? 0,
     createdAt: safeString(raw?.createdAt, new Date().toISOString()),
     normalizedResult: {
       source:
@@ -206,18 +212,18 @@ function normalizeBackendScanResponse(raw: BackendScanResponse): BackendScanResp
     candidates: Array.isArray(raw?.candidates)
       ? raw.candidates.map((candidate) => ({
           vehicleId: safeString(candidate?.vehicleId, ""),
-          year: safeNumber(candidate?.year, 0),
+          year: safeNumber(candidate?.year, 0) ?? 0,
           make: safeString(candidate?.make, "Unknown"),
           model: safeString(candidate?.model, "Vehicle"),
           trim: safeString(candidate?.trim, ""),
-          confidence: safeNumber(candidate?.confidence, 0),
+          confidence: safeNumber(candidate?.confidence, 0) ?? 0,
           matchReason: safeString(candidate?.matchReason, ""),
         }))
       : [],
   };
 }
 
-function mapScanResponse(scan: BackendScanResponse, imageUri: string, usage: SubscriptionStatus): ScanResult {
+function mapScanResponse(scan: BackendScanResponse, imageUri: string, usage: SubscriptionStatus, meta?: BackendScanMeta | null): ScanResult {
   const normalized = normalizeBackendScanResponse(scan);
   const candidates = normalized.candidates.map(mapCandidate);
   return {
@@ -248,6 +254,21 @@ function mapScanResponse(scan: BackendScanResponse, imageUri: string, usage: Sub
     quickResult: false,
     quickResultSource: undefined,
     offlineDatasetVersion: null,
+    identificationConfidence: safeNumber(meta?.identificationConfidence, null),
+    dataConfidence: safeNumber(meta?.dataConfidence, null),
+    payloadStrength:
+      meta?.payloadStrength === "strong" || meta?.payloadStrength === "usable" || meta?.payloadStrength === "thin" || meta?.payloadStrength === "empty"
+        ? meta.payloadStrength
+        : null,
+    enrichmentMode:
+      meta?.enrichmentMode === "exact" ||
+      meta?.enrichmentMode === "adjacent_year" ||
+      meta?.enrichmentMode === "generation_fallback" ||
+      meta?.enrichmentMode === "fallback_only"
+        ? meta.enrichmentMode
+        : null,
+    unlockEligible: typeof meta?.unlockEligible === "boolean" ? meta.unlockEligible : null,
+    unlockRecommendationReason: safeString(meta?.unlockRecommendationReason, "") || null,
   };
 }
 
@@ -489,7 +510,7 @@ export const scanService = {
       console.log("[scan-service] vision provider", response.meta.provider);
     }
 
-    const result = mapScanResponse(response.data, imageUri, usage);
+    const result = mapScanResponse(response.data, imageUri, usage, response.meta ?? null);
     const offlineMatch = await offlineCanonicalService.matchCandidate({
       id: result.identifiedVehicle.id,
       year: result.identifiedVehicle.year,
@@ -594,7 +615,7 @@ export const scanService = {
       console.log("[scan-service] premium vision provider", response.meta.provider);
     }
 
-    const result = mapScanResponse(response.data, imageUri, usage);
+    const result = mapScanResponse(response.data, imageUri, usage, response.meta ?? null);
     mutableRecentScans = [result, ...mutableRecentScans.filter((entry) => entry.id !== result.id)].slice(0, 6);
     mutableUsage = await scanService.getUsage();
     return { result, entitlement: response.meta?.premium ?? null };

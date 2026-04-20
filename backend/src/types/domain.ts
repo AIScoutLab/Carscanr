@@ -5,6 +5,7 @@ export type CanonicalVehiclePromotionStatus = "candidate" | "promoted";
 
 export type VehicleRecord = {
   id: string;
+  vin?: string | null;
   year: number;
   make: string;
   model: string;
@@ -14,11 +15,39 @@ export type VehicleRecord = {
   msrp: number;
   engine: string;
   horsepower: number | null;
+  engineDisplacementL?: number | null;
+  cylinders?: number | null;
+  fuelType?: string | null;
+  doors?: number | null;
   torque: string;
   transmission: string;
   drivetrain: string;
   mpgOrRange: string;
   colors: string[];
+};
+
+export type VehicleLookupDescriptor = {
+  year: number;
+  make: string;
+  model: string;
+  trim?: string | null;
+  vehicleType?: VehicleType | null;
+  bodyStyle?: string | null;
+  normalizedModel?: string | null;
+};
+
+export type PayloadStrength = "strong" | "usable" | "thin" | "empty";
+export type EnrichmentMode = "exact" | "adjacent_year" | "generation_fallback" | "fallback_only";
+
+export type PayloadEvaluation = {
+  payloadStrength: PayloadStrength;
+  dataConfidence: number;
+  unlockEligible: boolean;
+  unlockRecommendationReason: string;
+  meaningfulSpecFieldCount: number;
+  believableListingCount: number;
+  hasMarketValue: boolean;
+  reasons: string[];
 };
 
 export type VisionCandidate = {

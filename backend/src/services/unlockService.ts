@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { AppError } from "../errors/appError.js";
 import { buildUnlockKey, buildVehicleKey } from "../lib/cacheKeys.js";
 import { resolveStoredVehicleRecordById } from "../lib/canonicalVehicleCatalog.js";
+import { logger } from "../lib/logger.js";
 import { repositories } from "../lib/repositoryRegistry.js";
 import { VehicleRecord } from "../types/domain.js";
 import { SubscriptionService } from "./subscriptionService.js";
@@ -106,6 +107,29 @@ export class UnlockService {
       };
     }
 
+    const payloadEvaluation = await this.vehicleService.evaluateUnlockPayloadForVehicle(input.vehicle);
+    if (!payloadEvaluation.unlockEligible || payloadEvaluation.payloadStrength === "thin" || payloadEvaluation.payloadStrength === "empty") {
+      const balance = await repositories.unlockBalances.getOrCreate(input.userId);
+      logger.warn(
+        {
+          label: "UNLOCK_BLOCKED",
+          userId: input.userId,
+          vehicleId: input.vehicle.id,
+          payloadStrength: payloadEvaluation.payloadStrength,
+          reasons: payloadEvaluation.reasons,
+        },
+        "UNLOCK_BLOCKED",
+      );
+      return {
+        isPro: false,
+        alreadyUnlocked: false,
+        usedUnlock: false,
+        remainingUnlocks: Math.max(0, balance.freeUnlocksTotal - balance.freeUnlocksUsed),
+        allowed: false,
+        reason: "payload_too_thin",
+      };
+    }
+
     const result = await repositories.vehicleUnlocks.grantUnlock({
       userId: input.userId,
       unlockKey: unlockKeyResult.key,
@@ -114,6 +138,16 @@ export class UnlockService {
       sourceVehicleId: input.vehicle.id,
       scanId: input.scanId ?? null,
     });
+
+    logger.info(
+      {
+        label: "UNLOCK_ALLOWED",
+        userId: input.userId,
+        vehicleId: input.vehicle.id,
+        payloadStrength: payloadEvaluation.payloadStrength,
+      },
+      "UNLOCK_ALLOWED",
+    );
 
     return {
       isPro: false,

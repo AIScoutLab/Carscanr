@@ -5,6 +5,23 @@ import { apiRequest, apiRequestEnvelope } from "@/services/apiClient";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { ListingResult, ValuationResult, VehicleRecord, VehicleSearchQuery } from "@/types";
 
+export type VehicleLookupDescriptor = {
+  year: number;
+  make: string;
+  model: string;
+  trim?: string | null;
+  vehicleType?: "car" | "motorcycle" | null;
+  bodyStyle?: string | null;
+  normalizedModel?: string | null;
+};
+
+type VehicleLookupInput =
+  | string
+  | {
+      vehicleId?: string | null;
+      descriptor?: VehicleLookupDescriptor | null;
+    };
+
 type BackendVehicle = {
   id: string;
   year: number;
@@ -22,6 +39,24 @@ type BackendVehicle = {
   heroImage?: string | null;
   defaultImageUrl?: string | null;
   providerImageUrl?: string | null;
+  torque: string;
+  transmission: string;
+  drivetrain: string;
+  mpgOrRange: string;
+  colors: string[];
+};
+
+type BackendResolvedVehicle = {
+  id: string;
+  year: number;
+  make: string;
+  model: string;
+  trim: string;
+  bodyStyle: string;
+  vehicleType: "car" | "motorcycle";
+  msrp: number;
+  engine: string;
+  horsepower?: number | string | null;
   torque: string;
   transmission: string;
   drivetrain: string;
@@ -62,6 +97,19 @@ type BackendListing = {
   location: string;
   imageUrl: string;
   listedAt: string;
+};
+
+export type ListingsDebugMeta = {
+  sourceLabel?: string | null;
+  rawCount?: number;
+  believableCount?: number;
+  mode?: "exact_trim" | "same_model_mixed_trims" | "adjacent_year_mixed_trims" | "generation_fallback" | "similar_vehicle_fallback" | "none";
+  fallbackReason?: string | null;
+};
+
+export type ListingsResultEnvelope = {
+  listings: ListingResult[];
+  meta: ListingsDebugMeta | null;
 };
 
 function defaultOverview(vehicle: BackendVehicle) {
@@ -115,6 +163,63 @@ function createEmptyValuation(): ValuationResult {
     sourceLabel: "No live value source",
     modelType: "modeled",
   };
+}
+
+function mapResolvedSpecsVehicle(vehicle: BackendResolvedVehicle): VehicleRecord {
+  return {
+    id: vehicle.id,
+    year: vehicle.year,
+    make: vehicle.make,
+    model: vehicle.model,
+    trim: vehicle.trim,
+    bodyStyle: vehicle.bodyStyle,
+    heroImage: getVehicleImage(vehicle.id, vehicle.vehicleType),
+    overview: defaultOverview({
+      ...vehicle,
+      imageUrl: null,
+      heroImage: null,
+      defaultImageUrl: null,
+      providerImageUrl: null,
+      hp: null,
+      engine_hp: null,
+    } as BackendVehicle),
+    specs: {
+      engine: vehicle.engine || "Unknown",
+      horsepower: resolveHorsepower(vehicle.horsepower, null, null, vehicle.engine, null),
+      torque: vehicle.torque || "Unknown",
+      transmission: vehicle.transmission || "Unknown",
+      drivetrain: vehicle.drivetrain || "Unknown",
+      mpgOrRange: vehicle.mpgOrRange || "Unknown",
+      exteriorColors: vehicle.colors ?? [],
+      msrp: vehicle.msrp || 0,
+    },
+    valuation: createEmptyValuation(),
+    listings: [],
+  };
+}
+
+function buildVehicleLookupParams(input: VehicleLookupInput) {
+  const params = new URLSearchParams();
+  if (typeof input === "string") {
+    params.set("vehicleId", input);
+    return params;
+  }
+
+  if (typeof input.vehicleId === "string" && input.vehicleId.trim().length > 0) {
+    params.set("vehicleId", input.vehicleId.trim());
+  }
+
+  if (input.descriptor) {
+    params.set("year", String(input.descriptor.year));
+    params.set("make", input.descriptor.make);
+    params.set("model", input.descriptor.model);
+    if (input.descriptor.trim) params.set("trim", input.descriptor.trim);
+    if (input.descriptor.vehicleType) params.set("vehicleType", input.descriptor.vehicleType);
+    if (input.descriptor.bodyStyle) params.set("bodyStyle", input.descriptor.bodyStyle);
+    if (input.descriptor.normalizedModel) params.set("normalizedModel", input.descriptor.normalizedModel);
+  }
+
+  return params;
 }
 
 function pickFirstNonEmptyString(...values: Array<string | null | undefined>) {
@@ -290,10 +395,14 @@ export const vehicleService = {
     );
   },
 
-  async getValue(vehicleId: string, zip: string, mileage: string, condition: string): Promise<ValuationResult> {
-    const path = `/api/vehicle/value?vehicleId=${encodeURIComponent(vehicleId)}&zip=${encodeURIComponent(zip)}&mileage=${encodeURIComponent(mileage)}&condition=${encodeURIComponent(condition)}`;
+  async getValue(vehicleLookup: VehicleLookupInput, zip: string, mileage: string, condition: string): Promise<ValuationResult> {
+    const params = buildVehicleLookupParams(vehicleLookup);
+    params.set("zip", zip);
+    params.set("mileage", mileage);
+    params.set("condition", condition);
+    const path = `/api/vehicle/value?${params.toString()}`;
     console.log("[vehicle-service] VALUE_REQUEST_PARAMS", {
-      vehicleId,
+      vehicleLookup,
       zip,
       mileage,
       condition,
@@ -304,7 +413,7 @@ export const vehicleService = {
       authRequired: false,
     });
     console.log("[vehicle-service] VALUE_RESPONSE_RECEIVED", {
-      vehicleId,
+      vehicleLookup,
       condition,
       source: response.meta?.source,
       requestId: response.requestId,
@@ -313,11 +422,51 @@ export const vehicleService = {
     return mapValuation(response.data);
   },
 
-  async getListings(vehicleId: string, zip: string): Promise<ListingResult[]> {
-    const listings = await apiRequest<BackendListing[]>({
-      path: `/api/vehicle/listings?vehicleId=${encodeURIComponent(vehicleId)}&zip=${encodeURIComponent(zip)}&radiusMiles=50`,
+  async getSpecsByLookup(vehicleLookup: VehicleLookupInput): Promise<VehicleRecord | null> {
+    const params = buildVehicleLookupParams(vehicleLookup);
+    const path = `/api/vehicle/specs?${params.toString()}`;
+    console.log("[vehicle-service] SPECS_REQUEST_PARAMS", {
+      vehicleLookup,
+      path,
+    });
+    const response = await apiRequestEnvelope<BackendResolvedVehicle>({
+      path,
       authRequired: false,
     });
-    return mapListings(listings);
+    console.log("[vehicle-service] SPECS_RESPONSE_RECEIVED", {
+      vehicleLookup,
+      requestId: response.requestId,
+      source: response.meta?.source,
+      vehicleId: response.data?.id ?? null,
+    });
+    return response.data ? mapResolvedSpecsVehicle(response.data) : null;
+  },
+
+  async getListings(vehicleLookup: VehicleLookupInput, zip: string): Promise<ListingsResultEnvelope> {
+    const params = buildVehicleLookupParams(vehicleLookup);
+    params.set("zip", zip);
+    params.set("radiusMiles", "50");
+    const path = `/api/vehicle/listings?${params.toString()}`;
+    console.log("[vehicle-service] LISTINGS_REQUEST_PARAMS", {
+      vehicleLookup,
+      zip,
+      path,
+    });
+    const response = await apiRequestEnvelope<BackendListing[], ListingsDebugMeta>({
+      path,
+      authRequired: false,
+    });
+    const listings = response.data;
+    console.log("[vehicle-service] LISTINGS_RESPONSE_RECEIVED", {
+      vehicleLookup,
+      zip,
+      count: listings.length,
+      sample: listings[0] ?? null,
+      meta: response.meta ?? null,
+    });
+    return {
+      listings: mapListings(listings),
+      meta: response.meta ?? null,
+    };
   },
 };

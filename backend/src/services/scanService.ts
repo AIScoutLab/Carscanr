@@ -9,11 +9,13 @@ import { repositories } from "../lib/repositoryRegistry.js";
 import { buildAnalysisKey, buildImageKey, buildVehicleKey } from "../lib/cacheKeys.js";
 import { resizeForVision, computeDhashHex } from "../lib/imageProcessing.js";
 import { buildLiveVehicleId } from "../providers/marketcheck/vehicleId.js";
-import { AuthContext, MatchedVehicleCandidate, ScanRecord, VehicleRecord, VisionProviderResult, VisionResult } from "../types/domain.js";
+import { AuthContext, EnrichmentMode, ListingRecord, MatchedVehicleCandidate, PayloadEvaluation, ScanRecord, VehicleRecord, VisionProviderResult, VisionResult } from "../types/domain.js";
 import { AnalysisCacheService } from "./analysisCacheService.js";
+import { coverageInstrumentationService } from "./coverageInstrumentationService.js";
 import { GoogleVisionOcrResult, googleVisionOcrService } from "./googleVisionOcrService.js";
 import { UsageService } from "./usageService.js";
 import { UnlockService } from "./unlockService.js";
+import { VehicleService, evaluateVehiclePayloadStrength } from "./vehicleService.js";
 
 type ScanFailureStage =
   | "USAGE_CHECK"
@@ -60,6 +62,10 @@ const STABILITY_CACHE_TTL_MS = 20 * 60 * 1000;
 const STABILITY_CACHE_PREFIX_LENGTH = 12;
 const MAX_STABILITY_CACHE_ENTRIES = 200;
 const AUTO_PROMOTION_THRESHOLD = 5;
+const DEFAULT_PREVIEW_ZIP = "60610";
+const DEFAULT_PREVIEW_MILEAGE = 25000;
+const DEFAULT_PREVIEW_CONDITION = "good";
+const DEFAULT_PREVIEW_RADIUS_MILES = 50;
 
 type StabilityCacheEntry = {
   userId: string;
@@ -359,79 +365,12 @@ function hasStrongStructuredVisualResult(normalizedResult: VisionResult) {
   );
 }
 
-function buildOcrTracePayload(input: {
-  scanId: string;
-  normalizedResult: VisionResult;
-  candidates: MatchedVehicleCandidate[];
-  rawResponse?: unknown;
-  ocrConfirmed?: boolean;
-  enforcementApplied?: boolean;
-}) {
-  const top = input.candidates[0] ?? null;
-  const sourceIsOcrOverride = input.normalizedResult.source === "ocr_override";
-  const sourceIsVisualOverride = input.normalizedResult.source === "visual_override";
-  const hardTextConfirmed = hasHardTextConfirmation(input.normalizedResult);
-  const structuredOcr = input.rawResponse ? extractStructuredOcrFromRawResponse(input.rawResponse) : null;
-  const strongStructuredVisual = hasStrongStructuredVisualResult(input.normalizedResult);
-  const derivedOcrConfirmed =
-    input.ocrConfirmed ?? (sourceIsOcrOverride || hardTextConfirmed || Boolean(structuredOcr));
-  return {
-    scanId: input.scanId,
-    normalizedResult: {
-      source: input.normalizedResult.source ?? null,
-      likely_year: input.normalizedResult.likely_year,
-      likely_make: input.normalizedResult.likely_make,
-      likely_model: input.normalizedResult.likely_model,
-      visible_model_text: input.normalizedResult.visible_model_text ?? null,
-    },
-    topCandidate: top
-      ? {
-          year: top.year,
-          make: top.make,
-          model: top.model,
-          matchReason: top.matchReason,
-        }
-      : null,
-    gateInputs: {
-      sourceIsOcrOverride,
-      sourceIsVisualOverride,
-      hardTextConfirmed,
-      structuredOcrPresent: Boolean(structuredOcr),
-      strongStructuredVisual,
-      structuredOcr: structuredOcr
-        ? {
-            year: structuredOcr.year ?? null,
-            make: structuredOcr.make ?? null,
-            model: structuredOcr.model ?? null,
-            trim: structuredOcr.trim ?? null,
-          }
-        : null,
-    },
-    ocrConfirmed: derivedOcrConfirmed,
-    enforcementApplied: input.enforcementApplied ?? false,
-  };
-}
-
 function enforceFinalVisibleOcrCandidate(input: {
   scanId: string;
   normalizedResult: VisionResult;
   candidates: MatchedVehicleCandidate[];
   rawResponse: unknown;
 }) {
-  logger.error(
-    {
-      label: "OCR_TRACE_ENFORCE_ENTRY",
-      ...buildOcrTracePayload({
-        scanId: input.scanId,
-        normalizedResult: input.normalizedResult,
-        candidates: input.candidates,
-        rawResponse: input.rawResponse,
-        enforcementApplied: false,
-      }),
-    },
-    "OCR_TRACE_ENFORCE_ENTRY",
-  );
-
   const ocrConfirmed = hasStructuredOcrConfirmation({
     normalizedResult: input.normalizedResult,
     rawResponse: input.rawResponse,
@@ -439,58 +378,7 @@ function enforceFinalVisibleOcrCandidate(input: {
   const strongStructuredVisual = hasStrongStructuredVisualResult(input.normalizedResult);
   const shouldApplyEnforcement = ocrConfirmed || strongStructuredVisual;
 
-  logger.error(
-    {
-      label: "OCR_TRACE_ENFORCE_DECISION",
-      phase: "before-gate-check",
-      ...buildOcrTracePayload({
-        scanId: input.scanId,
-        normalizedResult: input.normalizedResult,
-        candidates: input.candidates,
-        rawResponse: input.rawResponse,
-        ocrConfirmed,
-        enforcementApplied: shouldApplyEnforcement,
-      }),
-      shouldApplyEnforcement,
-      strongStructuredVisual,
-    },
-    "OCR_TRACE_ENFORCE_DECISION",
-  );
-
   if (!shouldApplyEnforcement) {
-    logger.error(
-      {
-        label: "OCR_TRACE_ENFORCE_DECISION",
-        phase: "after-gate-check",
-        ...buildOcrTracePayload({
-          scanId: input.scanId,
-          normalizedResult: input.normalizedResult,
-          candidates: input.candidates,
-          rawResponse: input.rawResponse,
-          ocrConfirmed,
-          enforcementApplied: false,
-        }),
-        shouldApplyEnforcement,
-        strongStructuredVisual,
-      },
-      "OCR_TRACE_ENFORCE_DECISION",
-    );
-    logger.error(
-      {
-        label: "OCR_TRACE_ENFORCE_EXIT",
-        ...buildOcrTracePayload({
-          scanId: input.scanId,
-          normalizedResult: input.normalizedResult,
-          candidates: input.candidates,
-          rawResponse: input.rawResponse,
-          ocrConfirmed,
-          enforcementApplied: false,
-        }),
-        shouldApplyEnforcement,
-        strongStructuredVisual,
-      },
-      "OCR_TRACE_ENFORCE_EXIT",
-    );
     return {
       normalizedResult: input.normalizedResult,
       candidates: input.candidates,
@@ -534,41 +422,6 @@ function enforceFinalVisibleOcrCandidate(input: {
 
   const remaining = input.candidates.filter(
     (candidate) => buildMatchedVehicleSignature(candidate) !== buildMatchedVehicleSignature(normalizedPinnedCandidate),
-  );
-
-  logger.error(
-    {
-      label: "OCR_TRACE_ENFORCE_DECISION",
-      phase: "after-gate-check",
-      ...buildOcrTracePayload({
-        scanId: input.scanId,
-        normalizedResult: pinnedNormalizedResult,
-        candidates: [normalizedPinnedCandidate, ...remaining],
-        rawResponse: input.rawResponse,
-        ocrConfirmed,
-        enforcementApplied: true,
-      }),
-      shouldApplyEnforcement,
-      strongStructuredVisual,
-    },
-    "OCR_TRACE_ENFORCE_DECISION",
-  );
-
-  logger.error(
-    {
-      label: "OCR_TRACE_ENFORCE_EXIT",
-      ...buildOcrTracePayload({
-        scanId: input.scanId,
-        normalizedResult: pinnedNormalizedResult,
-        candidates: [normalizedPinnedCandidate, ...remaining],
-        rawResponse: input.rawResponse,
-        ocrConfirmed,
-        enforcementApplied: true,
-      }),
-      shouldApplyEnforcement,
-      strongStructuredVisual,
-    },
-    "OCR_TRACE_ENFORCE_EXIT",
   );
 
   return {
@@ -772,6 +625,46 @@ function isProviderRateLimitError(error: unknown) {
   return error instanceof AppError && error.statusCode === 429;
 }
 
+function hasGenerationSensitiveTrimEvidence(...values: Array<string | undefined | null>) {
+  const combined = values
+    .map((value) => normalizeMatchText(value))
+    .filter(Boolean)
+    .join(" ");
+  return /\brubicon|shelby|raptor|z06|trx|hellcat|392|scat pack|mach 1|gt500|zl1|denali|platinum|king ranch\b/.test(combined);
+}
+
+function hasBelievableListing(listing: ListingRecord) {
+  return Boolean(
+    listing.title?.trim() &&
+      typeof listing.price === "number" &&
+      Number.isFinite(listing.price) &&
+      listing.price > 0 &&
+      (listing.dealer?.trim() || listing.location?.trim()) &&
+      ((typeof listing.mileage === "number" && Number.isFinite(listing.mileage)) ||
+        (typeof listing.distanceMiles === "number" && Number.isFinite(listing.distanceMiles))),
+  );
+}
+
+type EnrichmentCandidateRequest = {
+  year?: number;
+  make: string;
+  model: string;
+  trim?: string | null;
+  mode: EnrichmentMode;
+  sourceLabel: string;
+  vehicleId?: string | null;
+};
+
+type EnrichmentPreview = {
+  vehicle: VehicleRecord | null;
+  payload: PayloadEvaluation;
+  enrichmentMode: EnrichmentMode;
+  rescuedByAdjacentYear: boolean;
+  unlockEligible: boolean;
+  valuation: Awaited<ReturnType<VehicleService["getValue"]>>["data"] | null;
+  listings: ListingRecord[];
+};
+
 function logIdentifyStage(stage: ScanFailureStage, event: "start" | "success", context: Record<string, unknown>) {
   logger.error(
     {
@@ -789,7 +682,369 @@ export class ScanService {
     private readonly usageService: UsageService,
     private readonly analysisCacheService = new AnalysisCacheService(),
     private readonly unlockService = new UnlockService(),
+    private readonly vehicleService = new VehicleService(),
   ) {}
+
+  private buildEnrichmentCandidateRequests(input: {
+    normalizedResult: VisionResult;
+    resolvedCandidates: MatchedVehicleCandidate[];
+  }): EnrichmentCandidateRequest[] {
+    const requests: EnrichmentCandidateRequest[] = [];
+    const primary = input.resolvedCandidates[0] ?? null;
+    const normalizedPrimary = {
+      year: input.normalizedResult.likely_year,
+      make: input.normalizedResult.likely_make,
+      model: input.normalizedResult.likely_model,
+      trim: input.normalizedResult.likely_trim ?? "",
+      vehicleId: primary?.vehicleId ?? "",
+    };
+    requests.push({
+      year: normalizedPrimary.year,
+      make: normalizedPrimary.make,
+      model: normalizedPrimary.model,
+      trim: normalizedPrimary.trim,
+      vehicleId: normalizedPrimary.vehicleId,
+      mode: "exact",
+      sourceLabel: "identified_candidate_exact",
+    });
+
+    if (!hasGenerationSensitiveTrimEvidence(input.normalizedResult.likely_trim, input.normalizedResult.visible_trim_text)) {
+      requests.push({
+        year: normalizedPrimary.year - 1,
+        make: normalizedPrimary.make,
+        model: normalizedPrimary.model,
+        trim: normalizedPrimary.trim,
+        mode: "adjacent_year",
+        sourceLabel: "identified_candidate_previous_year",
+      });
+      requests.push({
+        year: normalizedPrimary.year + 1,
+        make: normalizedPrimary.make,
+        model: normalizedPrimary.model,
+        trim: normalizedPrimary.trim,
+        mode: "adjacent_year",
+        sourceLabel: "identified_candidate_next_year",
+      });
+    }
+
+    for (const [index, alternate] of input.normalizedResult.alternate_candidates.entries()) {
+      requests.push({
+        year: alternate.likely_year,
+        make: alternate.likely_make,
+        model: alternate.likely_model,
+        trim: alternate.likely_trim ?? "",
+        mode: "exact",
+        sourceLabel: `alternate_candidate_${index + 1}`,
+      });
+    }
+
+    requests.push({
+      make: normalizedPrimary.make,
+      model: normalizedPrimary.model,
+      trim: null,
+      mode: "generation_fallback",
+      sourceLabel: "canonical_family_fallback",
+    });
+
+    return requests.filter(
+      (request, index, array) =>
+        array.findIndex(
+          (entry) =>
+            entry.mode === request.mode &&
+            (entry.year ?? null) === (request.year ?? null) &&
+            normalizeMatchText(entry.make) === normalizeMatchText(request.make) &&
+            normalizeModelFamily(entry.model) === normalizeModelFamily(request.model),
+        ) === index,
+    );
+  }
+
+  private async resolveVehiclesForEnrichmentCandidate(request: EnrichmentCandidateRequest): Promise<VehicleRecord[]> {
+    if (request.vehicleId) {
+      try {
+        const exact = await this.vehicleService.getSpecs(request.vehicleId);
+        return exact.data ? [exact.data] : [];
+      } catch {
+        return [];
+      }
+    }
+
+    const matches = await this.vehicleService.searchVehicles({
+      year: typeof request.year === "number" ? String(request.year) : undefined,
+      make: request.make,
+      model: request.model,
+    });
+
+    return matches.filter(
+      (vehicle) =>
+        normalizeMatchText(vehicle.make) === normalizeMatchText(request.make) &&
+        normalizeModelFamily(vehicle.model) === normalizeModelFamily(request.model),
+    );
+  }
+
+  private async evaluateEnrichmentCandidate(request: EnrichmentCandidateRequest): Promise<EnrichmentPreview | null> {
+    const vehicles = await this.resolveVehiclesForEnrichmentCandidate(request);
+    if (vehicles.length === 0) {
+      return null;
+    }
+
+    let bestPreview: EnrichmentPreview | null = null;
+    for (const vehicle of vehicles.slice(0, 3)) {
+      const valuation = await this.vehicleService.getValue({
+        vehicleId: vehicle.id,
+        zip: DEFAULT_PREVIEW_ZIP,
+        mileage: DEFAULT_PREVIEW_MILEAGE,
+        condition: DEFAULT_PREVIEW_CONDITION,
+      })
+        .then((result) => result.data)
+        .catch(() => null);
+      const listings = await this.vehicleService.getListings({
+        vehicleId: vehicle.id,
+        zip: DEFAULT_PREVIEW_ZIP,
+        radiusMiles: DEFAULT_PREVIEW_RADIUS_MILES,
+      })
+        .then((result) => result.data)
+        .catch(() => []);
+
+      const payload = evaluateVehiclePayloadStrength({
+        vehicle,
+        valuation,
+        listings,
+      });
+
+      const preview: EnrichmentPreview = {
+        vehicle,
+        payload,
+        enrichmentMode: request.mode,
+        rescuedByAdjacentYear: request.mode === "adjacent_year",
+        unlockEligible: payload.unlockEligible,
+        valuation,
+        listings,
+      };
+
+      if (!bestPreview || payload.dataConfidence > bestPreview.payload.dataConfidence) {
+        bestPreview = preview;
+      }
+      if (payload.payloadStrength === "strong" || payload.payloadStrength === "usable") {
+        return preview;
+      }
+    }
+
+    return bestPreview;
+  }
+
+  private async evaluateScanPayloadPreview(input: {
+    scanId: string;
+    normalizedResult: VisionResult;
+    resolvedCandidates: MatchedVehicleCandidate[];
+  }): Promise<EnrichmentPreview> {
+    logger.info(
+      {
+        label: "UNLOCK_PROTECTION_IDENTIFIED_CANDIDATE",
+        scanId: input.scanId,
+        identifiedCandidate: {
+          year: input.normalizedResult.likely_year ?? null,
+          make: input.normalizedResult.likely_make ?? null,
+          model: input.normalizedResult.likely_model ?? null,
+          trim: input.normalizedResult.likely_trim ?? null,
+          source: input.normalizedResult.source ?? null,
+          confidence: input.normalizedResult.confidence ?? null,
+        },
+      },
+      "UNLOCK_PROTECTION_IDENTIFIED_CANDIDATE",
+    );
+
+    const requests = this.buildEnrichmentCandidateRequests(input);
+    logger.info(
+      {
+        label: "ENRICHMENT_CANDIDATE_SET",
+        scanId: input.scanId,
+        candidates: requests.map((request) => ({
+          mode: request.mode,
+          year: request.year ?? null,
+          make: request.make,
+          model: request.model,
+          trim: request.trim ?? null,
+          sourceLabel: request.sourceLabel,
+        })),
+      },
+      "ENRICHMENT_CANDIDATE_SET",
+    );
+
+    let bestPreview: EnrichmentPreview | null = null;
+    for (const request of requests) {
+      const preview = await this.evaluateEnrichmentCandidate(request);
+      if (!preview) {
+        logger.warn(
+          {
+            label:
+              request.mode === "exact"
+                ? "ENRICHMENT_FAILED"
+                : request.mode === "adjacent_year"
+                  ? "ENRICHMENT_FAILED"
+                  : "ENRICHMENT_FAILED",
+            scanId: input.scanId,
+            mode: request.mode,
+            year: request.year ?? null,
+            make: request.make,
+            model: request.model,
+            sourceLabel: request.sourceLabel,
+            reason: "no_vehicle_candidates",
+          },
+          "ENRICHMENT_FAILED",
+        );
+        continue;
+      }
+
+      if (!bestPreview || preview.payload.dataConfidence > bestPreview.payload.dataConfidence) {
+        bestPreview = preview;
+      }
+
+      logger.info(
+        {
+          label:
+            request.mode === "exact"
+              ? "ENRICHMENT_EXACT_MATCH"
+              : request.mode === "adjacent_year"
+                ? "ENRICHMENT_ADJACENT_YEAR_MATCH"
+                : "ENRICHMENT_GENERATION_FALLBACK",
+          scanId: input.scanId,
+          vehicleId: preview.vehicle?.id ?? null,
+          year: preview.vehicle?.year ?? request.year ?? null,
+          make: preview.vehicle?.make ?? request.make,
+          model: preview.vehicle?.model ?? request.model,
+          sourceLabel: request.sourceLabel,
+          payloadStrength: preview.payload.payloadStrength,
+          unlockEligible: preview.payload.unlockEligible,
+          reasons: preview.payload.reasons,
+          rescuedByAdjacentYear: preview.rescuedByAdjacentYear,
+        },
+          request.mode === "exact"
+            ? "ENRICHMENT_EXACT_MATCH"
+            : request.mode === "adjacent_year"
+              ? "ENRICHMENT_ADJACENT_YEAR_MATCH"
+              : "ENRICHMENT_GENERATION_FALLBACK",
+      );
+
+      if (preview.payload.payloadStrength === "strong" || preview.payload.payloadStrength === "usable") {
+        break;
+      }
+    }
+
+    const fallbackPayload = bestPreview?.payload ?? {
+      payloadStrength: "empty" as const,
+      dataConfidence: 0.12,
+      unlockEligible: false,
+      unlockRecommendationReason: "We found the vehicle, but this result still needs more useful detail before an unlock would be worth it.",
+      meaningfulSpecFieldCount: 0,
+      believableListingCount: 0,
+      hasMarketValue: false,
+      reasons: ["no_usable_enrichment_found"],
+    };
+
+    logger.info(
+      {
+        label:
+          fallbackPayload.payloadStrength === "strong"
+            ? "PAYLOAD_STRONG"
+            : fallbackPayload.payloadStrength === "usable"
+              ? "PAYLOAD_USABLE"
+              : fallbackPayload.payloadStrength === "thin"
+                ? "PAYLOAD_THIN"
+                : "PAYLOAD_EMPTY",
+        scanId: input.scanId,
+        payloadStrength: fallbackPayload.payloadStrength,
+        unlockEligible: fallbackPayload.unlockEligible,
+        reasons: fallbackPayload.reasons,
+        rescuedByAdjacentYear: bestPreview?.rescuedByAdjacentYear ?? false,
+      },
+      fallbackPayload.payloadStrength === "strong"
+        ? "PAYLOAD_STRONG"
+        : fallbackPayload.payloadStrength === "usable"
+          ? "PAYLOAD_USABLE"
+          : fallbackPayload.payloadStrength === "thin"
+            ? "PAYLOAD_THIN"
+            : "PAYLOAD_EMPTY",
+    );
+
+    logger.info(
+      {
+        label: "UNLOCK_PROTECTION_RESULT",
+        scanId: input.scanId,
+        payloadStrength: fallbackPayload.payloadStrength,
+        unlockEligible: fallbackPayload.unlockEligible,
+        unlockRecommendationReason: fallbackPayload.unlockRecommendationReason,
+        enrichmentMode: bestPreview?.enrichmentMode ?? "fallback_only",
+        rescuedByAdjacentYear: bestPreview?.rescuedByAdjacentYear ?? false,
+      },
+      "UNLOCK_PROTECTION_RESULT",
+    );
+
+    return {
+      vehicle: bestPreview?.vehicle ?? null,
+      payload: fallbackPayload,
+      enrichmentMode: bestPreview?.enrichmentMode ?? "fallback_only",
+      rescuedByAdjacentYear: bestPreview?.rescuedByAdjacentYear ?? false,
+      unlockEligible: fallbackPayload.unlockEligible,
+      valuation: bestPreview?.valuation ?? null,
+      listings: bestPreview?.listings ?? [],
+    };
+  }
+
+  private recordCoverageMetrics(input: {
+    scanId: string;
+    normalizedResult: VisionResult;
+    payloadPreview: EnrichmentPreview;
+  }) {
+    const vehicle = input.payloadPreview.vehicle;
+    const valuation = input.payloadPreview.valuation;
+    const listings = input.payloadPreview.listings;
+    const providerVehicleSource = vehicle
+      ? vehicle.id.startsWith("live:")
+        ? "provider_vehicle"
+        : "catalog_vehicle"
+      : null;
+    const nhtsaHint = vehicle?.vin ? "nhtsa_or_vehicle_record" : null;
+    const hasMarketValue =
+      Boolean(valuation) &&
+      [valuation?.tradeIn, valuation?.privateParty, valuation?.dealerRetail].some(
+        (value) => typeof value === "number" && Number.isFinite(value) && value > 0,
+      );
+    const believableListings = listings.some((listing) => hasBelievableListing(listing));
+
+    coverageInstrumentationService.recordScan({
+      scanId: input.scanId,
+      identifiedYear: input.normalizedResult.likely_year ?? null,
+      identifiedMake: input.normalizedResult.likely_make ?? null,
+      identifiedModel: input.normalizedResult.likely_model ?? null,
+      vehicleType: input.normalizedResult.vehicle_type ?? null,
+      vinPresent: Boolean(vehicle?.vin),
+      enrichmentMode: input.payloadPreview.enrichmentMode,
+      payloadStrength: input.payloadPreview.payload.payloadStrength,
+      unlockEligible: input.payloadPreview.unlockEligible,
+      unlockRecommendationReason: input.payloadPreview.payload.unlockRecommendationReason,
+      fieldPopulation: {
+        horsepower: typeof vehicle?.horsepower === "number" && Number.isFinite(vehicle.horsepower) && vehicle.horsepower > 0,
+        drivetrain: Boolean(vehicle?.drivetrain?.trim()),
+        bodyStyle: Boolean(vehicle?.bodyStyle?.trim()),
+        fuelType: Boolean(vehicle?.fuelType?.trim()),
+        msrp: typeof vehicle?.msrp === "number" && Number.isFinite(vehicle.msrp) && vehicle.msrp > 0,
+        marketValue: hasMarketValue,
+        believableListings,
+        totalMeaningfulSpecFields: input.payloadPreview.payload.meaningfulSpecFieldCount,
+      },
+      fieldSources: {
+        horsepower:
+          typeof vehicle?.horsepower === "number" && vehicle.horsepower > 0 ? nhtsaHint ?? providerVehicleSource : null,
+        drivetrain: vehicle?.drivetrain?.trim() ? providerVehicleSource : null,
+        bodyStyle: vehicle?.bodyStyle?.trim() ? providerVehicleSource : null,
+        fuelType: vehicle?.fuelType?.trim() ? nhtsaHint ?? providerVehicleSource : null,
+        msrp: typeof vehicle?.msrp === "number" && vehicle.msrp > 0 ? providerVehicleSource : null,
+        marketValue: hasMarketValue ? valuation?.sourceLabel ?? valuation?.modelType ?? "valuation_provider" : null,
+        believableListings: believableListings ? "listings_provider" : null,
+      },
+      rescuedByAdjacentYear: input.payloadPreview.rescuedByAdjacentYear,
+    });
+  }
 
   private async applyGoogleOcrEvidence(input: {
     scanId: string;
@@ -881,7 +1136,19 @@ export class ScanService {
     mimeType: string;
     imageUrl: string;
     allowPremium?: boolean;
-  }): Promise<{ scan: ScanRecord; visionProvider: string; entitlement?: { usedUnlock: boolean; alreadyUnlocked: boolean; remainingUnlocks: number; isPro: boolean } }> {
+  }): Promise<{
+    scan: ScanRecord;
+    visionProvider: string;
+    entitlement?: { usedUnlock: boolean; alreadyUnlocked: boolean; remainingUnlocks: number; isPro: boolean };
+    payloadPreview: {
+      identificationConfidence: number;
+      dataConfidence: number;
+      payloadStrength: PayloadEvaluation["payloadStrength"];
+      enrichmentMode: EnrichmentMode;
+      unlockEligible: boolean;
+      unlockRecommendationReason: string;
+    };
+  }> {
     const scanId = crypto.randomUUID();
     let stage: ScanFailureStage = "USAGE_CHECK";
     try {
@@ -1177,37 +1444,12 @@ export class ScanService {
         },
         "VEHICLE_MATCH_FINAL_SUMMARY",
       );
-      logger.error(
-        {
-          label: "OCR_TRACE_CALLSITE_BEFORE_FINAL_ENFORCE",
-          ...buildOcrTracePayload({
-            scanId,
-            normalizedResult,
-            candidates: resolvedVehicles,
-            rawResponse: visionResult.rawResponse,
-          }),
-        },
-        "OCR_TRACE_CALLSITE_BEFORE_FINAL_ENFORCE",
-      );
       const finalVisible = enforceFinalVisibleOcrCandidate({
         scanId,
         normalizedResult,
         candidates: resolvedVehicles,
         rawResponse: visionResult.rawResponse,
       });
-      logger.error(
-        {
-          label: "OCR_TRACE_AFTER_FINAL_ENFORCE",
-          ...buildOcrTracePayload({
-            scanId,
-            normalizedResult: finalVisible.normalizedResult,
-            candidates: finalVisible.candidates,
-            rawResponse: visionResult.rawResponse,
-            enforcementApplied: finalVisible.applied,
-          }),
-        },
-        "OCR_TRACE_AFTER_FINAL_ENFORCE",
-      );
       logger.info(
         {
           label: "OCR_FINAL_RESULT",
@@ -1264,19 +1506,6 @@ export class ScanService {
         candidateCount: finalVisible.candidates.length,
       });
 
-      logger.error(
-        {
-          label: "OCR_TRACE_BEFORE_SCAN_RECORD",
-          ...buildOcrTracePayload({
-            scanId,
-            normalizedResult: finalVisible.normalizedResult,
-            candidates: finalVisible.candidates,
-            rawResponse: visionResult.rawResponse,
-            enforcementApplied: finalVisible.applied,
-          }),
-        },
-        "OCR_TRACE_BEFORE_SCAN_RECORD",
-      );
       const scanRecord: ScanRecord = {
         id: scanId,
         userId: input.auth.userId,
@@ -1287,24 +1516,32 @@ export class ScanService {
         normalizedResult: finalVisible.normalizedResult,
         candidates: finalVisible.candidates,
       };
-      logger.error(
-        {
-          label: "OCR_TRACE_BEFORE_PERSIST",
-          ...buildOcrTracePayload({
-            scanId,
-            normalizedResult: scanRecord.normalizedResult,
-            candidates: scanRecord.candidates,
-            rawResponse: visionResult.rawResponse,
-            enforcementApplied: finalVisible.applied,
-          }),
-        },
-        "OCR_TRACE_BEFORE_PERSIST",
-      );
-
+      const payloadPreview = await this.evaluateScanPayloadPreview({
+        scanId,
+        normalizedResult: finalVisible.normalizedResult,
+        resolvedCandidates: finalVisible.candidates,
+      });
+      this.recordCoverageMetrics({
+        scanId,
+        normalizedResult: finalVisible.normalizedResult,
+        payloadPreview,
+      });
       let entitlement: { usedUnlock: boolean; alreadyUnlocked: boolean; remainingUnlocks: number; isPro: boolean } | undefined;
       if (premiumRequested && !usage.isPro && resolvedVehicles[0]) {
-        const vehicle = await resolveStoredVehicleRecordById(resolvedVehicles[0].vehicleId);
-        if (vehicle) {
+        const vehicle = payloadPreview.vehicle ?? (await resolveStoredVehicleRecordById(resolvedVehicles[0].vehicleId));
+        if (!payloadPreview.unlockEligible) {
+          logger.warn(
+            {
+              label: "UNLOCK_BLOCKED",
+              scanId,
+              userId: input.auth.userId,
+              payloadStrength: payloadPreview.payload.payloadStrength,
+              enrichmentMode: payloadPreview.enrichmentMode,
+              reason: payloadPreview.payload.unlockRecommendationReason,
+            },
+            "UNLOCK_BLOCKED",
+          );
+        } else if (vehicle) {
           const unlockResult = await this.unlockService.grantUnlockForVehicle({
             userId: input.auth.userId,
             vehicle,
@@ -1314,6 +1551,16 @@ export class ScanService {
           if (!unlockResult.allowed) {
             throw new AppError(403, "UNLOCK_NOT_ALLOWED", "Premium access is not available for this vehicle.");
           }
+          logger.info(
+            {
+              label: "UNLOCK_ALLOWED",
+              scanId,
+              userId: input.auth.userId,
+              payloadStrength: payloadPreview.payload.payloadStrength,
+              enrichmentMode: payloadPreview.enrichmentMode,
+            },
+            "UNLOCK_ALLOWED",
+          );
           entitlement = {
             usedUnlock: unlockResult.usedUnlock,
             alreadyUnlocked: unlockResult.alreadyUnlocked,
@@ -1336,19 +1583,6 @@ export class ScanService {
         userId: input.auth.userId,
       });
       const persistedScan = await repositories.scans.create(scanRecord);
-      logger.error(
-        {
-          label: "OCR_TRACE_AFTER_PERSIST",
-          ...buildOcrTracePayload({
-            scanId,
-            normalizedResult: persistedScan.normalizedResult,
-            candidates: persistedScan.candidates,
-            rawResponse: visionResult.rawResponse,
-            enforcementApplied: finalVisible.applied,
-          }),
-        },
-        "OCR_TRACE_AFTER_PERSIST",
-      );
       logIdentifyStage("SCAN_PERSIST", "success", {
         scanId,
         userId: input.auth.userId,
@@ -1385,7 +1619,19 @@ export class ScanService {
         userId: input.auth.userId,
       });
 
-      return { scan: persistedScan, visionProvider: visionResult.provider, entitlement };
+      return {
+        scan: persistedScan,
+        visionProvider: visionResult.provider,
+        entitlement,
+        payloadPreview: {
+          identificationConfidence: finalVisible.normalizedResult.confidence,
+          dataConfidence: payloadPreview.payload.dataConfidence,
+          payloadStrength: payloadPreview.payload.payloadStrength,
+          enrichmentMode: payloadPreview.enrichmentMode,
+          unlockEligible: payloadPreview.unlockEligible,
+          unlockRecommendationReason: payloadPreview.payload.unlockRecommendationReason,
+        },
+      };
     } catch (error) {
       const serialized = serializeScanError(error);
       logger.error(

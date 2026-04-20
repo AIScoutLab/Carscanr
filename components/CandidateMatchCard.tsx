@@ -7,15 +7,26 @@ import { cardStyles } from "@/design/patterns";
 type Props = {
   candidate: VehicleCandidate;
   onPress?: () => void;
+  hideConfidence?: boolean;
+  confidenceLabelOverride?: string | null;
+  tapHintOverride?: string | null;
+  selected?: boolean;
 };
 
-export function CandidateMatchCard({ candidate, onPress }: Props) {
+export function CandidateMatchCard({
+  candidate,
+  onPress,
+  hideConfidence = false,
+  confidenceLabelOverride = null,
+  tapHintOverride = null,
+  selected = false,
+}: Props) {
   const title = candidate.displayTitleLabel ?? [candidate.displayYearLabel ?? null, candidate.make, candidate.model].filter(Boolean).join(" ");
   const isTappable = Boolean(onPress);
 
   return (
     <TouchableOpacity
-      style={[styles.card, !isTappable && styles.cardDisabled]}
+      style={[styles.card, selected && styles.cardSelected, !isTappable && styles.cardDisabled]}
       onPress={onPress}
       activeOpacity={isTappable ? 0.86 : 1}
       accessibilityRole={isTappable ? "button" : undefined}
@@ -27,12 +38,14 @@ export function CandidateMatchCard({ candidate, onPress }: Props) {
             <Text style={styles.title}>{title || `${candidate.make} ${candidate.model}`}</Text>
             <Text style={styles.subtitle}>{candidate.displayTrimLabel ?? candidate.trim ?? "Likely trim match"}</Text>
           </View>
-          <View style={styles.confidenceBlock}>
-            <Text style={styles.confidenceValue}>{formatConfidence(candidate.confidence)}</Text>
-            <Text style={styles.confidenceLabel}>{confidenceTone(candidate.confidence)}</Text>
-          </View>
+          {!hideConfidence ? (
+            <View style={styles.confidenceBlock}>
+              <Text style={styles.confidenceValue}>{formatConfidence(candidate.confidence)}</Text>
+              <Text style={styles.confidenceLabel}>{confidenceLabelOverride ?? confidenceTone(candidate.confidence)}</Text>
+            </View>
+          ) : null}
         </View>
-        <Text style={styles.tapHint}>{isTappable ? "Tap to use this match" : "Detailed specs are not available yet"}</Text>
+        <Text style={styles.tapHint}>{tapHintOverride ?? (isTappable ? "Tap to highlight this match" : "Detailed specs are not available yet")}</Text>
       </View>
     </TouchableOpacity>
   );
@@ -40,6 +53,10 @@ export function CandidateMatchCard({ candidate, onPress }: Props) {
 
 const styles = StyleSheet.create({
   card: { ...cardStyles.secondary, padding: 16 },
+  cardSelected: {
+    borderColor: Colors.accent,
+    backgroundColor: Colors.cardAlt,
+  },
   cardDisabled: { opacity: 0.78 },
   body: { gap: 10 },
   row: { flexDirection: "row", gap: 12, alignItems: "center" },

@@ -42,5 +42,5 @@ export function resolveHorsepower(...values: unknown[]) {
 }
 
 export function formatHorsepowerLabel(value: number | null | undefined) {
-  return typeof value === "number" ? `${value} hp` : "Unknown";
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? `${value} hp` : "Unknown";
 }

@@ -110,6 +110,12 @@ export type ScanResult = {
   quickResult?: boolean;
   quickResultSource?: "offline_canonical" | "local_scan_cache";
   offlineDatasetVersion?: string | null;
+  identificationConfidence?: number | null;
+  dataConfidence?: number | null;
+  payloadStrength?: "strong" | "usable" | "thin" | "empty" | null;
+  enrichmentMode?: "exact" | "adjacent_year" | "generation_fallback" | "fallback_only" | null;
+  unlockEligible?: boolean | null;
+  unlockRecommendationReason?: string | null;
 };
 
 export type GarageItem = {
@@ -148,6 +154,16 @@ export type SubscriptionProduct = {
 };
 
 export type PurchaseAvailabilityState = "ready" | "preview_only" | "not_configured";
+
+export type FreeUnlockReason =
+  | "already_unlocked"
+  | "consumed"
+  | "no_free_unlocks"
+  | "vehicle_not_found"
+  | "payload_too_thin"
+  | "auth_required"
+  | "network_error"
+  | "unknown";
 
 export type SubscriptionStatus = {
   plan: UserPlan;

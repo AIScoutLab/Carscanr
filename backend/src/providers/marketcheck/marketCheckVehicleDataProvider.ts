@@ -202,6 +202,7 @@ function mapListingToVehicle(listing: MarketCheckListing): VehicleRecord | null 
       model,
       trim,
     }),
+    vin: listing.vin ?? null,
     year,
     make: titleCase(make),
     model: titleCase(model),

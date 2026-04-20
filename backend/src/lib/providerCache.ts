@@ -75,11 +75,12 @@ export type ProviderApiUsageLogRecord = {
   createdAt: string;
 };
 
-export type CachedServiceResult<T> = {
+export type CachedServiceResult<T, TMeta = Record<string, unknown>> = {
   data: T;
   source: CacheSource;
   fetchedAt: string;
   expiresAt: string;
+  meta?: TMeta;
 };
 
 const CACHE_TTLS_MS = {
@@ -150,6 +151,11 @@ export function getMileageBucket(mileage: number) {
   return "125000+";
 }
 
+export function getMileageResolutionKey(mileage: number) {
+  const safeMileage = Math.max(0, Math.round(mileage));
+  return `${safeMileage}`;
+}
+
 function normalizeKeyPart(value: string | number | undefined | null) {
   return String(value ?? "")
     .trim()
@@ -182,6 +188,14 @@ export function buildCacheDescriptor(input: { vehicle?: VehicleRecord | null; pa
     normalizedMake: normalizeLookupText(base.make),
     normalizedModel: normalizeLookupText(base.model),
     normalizedTrim: normalizeLookupText(base.trim ?? "base"),
+  };
+}
+
+export function buildFamilyCacheDescriptor(descriptor: CacheDescriptor): CacheDescriptor {
+  return {
+    ...descriptor,
+    trim: "",
+    normalizedTrim: "family",
   };
 }
 
@@ -223,10 +237,17 @@ export function getValuesCacheKey(
     descriptor.normalizedMake,
     descriptor.normalizedModel,
     descriptor.normalizedTrim,
-    normalizeZipPrefix(input.zip),
-    getMileageBucket(input.mileage),
+    normalizeZip5(input.zip),
+    getMileageResolutionKey(input.mileage),
     normalizeCondition(input.condition),
   ]);
+}
+
+export function getFamilyValuesCacheKey(
+  descriptor: CacheDescriptor,
+  input: { zip: string; mileage: number; condition: string },
+) {
+  return getValuesCacheKey(buildFamilyCacheDescriptor(descriptor), input);
 }
 
 export function getListingsCacheKey(descriptor: CacheDescriptor, input: { zip: string; radiusMiles: number }) {
@@ -239,6 +260,10 @@ export function getListingsCacheKey(descriptor: CacheDescriptor, input: { zip: s
     normalizeZip5(input.zip),
     input.radiusMiles,
   ]);
+}
+
+export function getFamilyListingsCacheKey(descriptor: CacheDescriptor, input: { zip: string; radiusMiles: number }) {
+  return getListingsCacheKey(buildFamilyCacheDescriptor(descriptor), input);
 }
 
 function getTtlMs(endpointType: ProviderEndpointType, isEmpty: boolean) {
@@ -315,8 +340,8 @@ export function createValuesCacheRow(input: {
     normalizedMake: input.descriptor.normalizedMake,
     normalizedModel: input.descriptor.normalizedModel,
     normalizedTrim: input.descriptor.normalizedTrim,
-    zipPrefix: normalizeZipPrefix(input.zip),
-    mileageBucket: getMileageBucket(input.mileage),
+    zipPrefix: normalizeZip5(input.zip),
+    mileageBucket: getMileageResolutionKey(input.mileage),
     condition: normalizeCondition(input.condition),
   } satisfies VehicleValuesCacheRow;
 }

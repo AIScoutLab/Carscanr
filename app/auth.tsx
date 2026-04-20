@@ -8,6 +8,7 @@ import { Colors, Radius, Typography } from "@/constants/theme";
 import { useSubscription } from "@/hooks/useSubscription";
 import { mobileEnv } from "@/lib/env";
 import { authService } from "@/services/authService";
+import { startupPreferences } from "@/services/startupPreferences";
 
 export default function AuthScreen() {
   const pathname = usePathname();
@@ -302,7 +303,12 @@ export default function AuthScreen() {
           accessibilityRole="button"
           onPress={() => {
             console.log("[tap] auth-continue-as-guest");
-            router.replace("/(tabs)/scan");
+            startupPreferences
+              .setHasSeenOnboarding()
+              .catch(() => undefined)
+              .finally(() => {
+                router.replace("/(tabs)/scan");
+              });
           }}
         >
           <Text style={styles.quickActionLabel}>Continue as Guest</Text>

@@ -15,7 +15,7 @@
       "normalizedTrim": "535i",
       "basicSpecs": {
         "engine": "3.0L I6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -42,7 +42,7 @@
       "normalizedTrim": "limited",
       "basicSpecs": {
         "engine": "4.0L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "RWD",
@@ -66,7 +66,7 @@
       "normalizedTrim": "trail",
       "basicSpecs": {
         "engine": "4.0L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -93,7 +93,7 @@
       "normalizedTrim": "trail premium",
       "basicSpecs": {
         "engine": "4.0L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -120,7 +120,7 @@
       "normalizedTrim": "sr5",
       "basicSpecs": {
         "engine": "4.0L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "RWD",
@@ -147,7 +147,7 @@
       "normalizedTrim": "limited",
       "basicSpecs": {
         "engine": "4.0L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "RWD",
@@ -174,7 +174,7 @@
       "normalizedTrim": "night shade",
       "basicSpecs": {
         "engine": "4.0L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -201,7 +201,7 @@
       "normalizedTrim": "base",
       "basicSpecs": {
         "engine": "4.0L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "See live listing",
         "drivetrain": "See live listing",
@@ -225,7 +225,7 @@
       "normalizedTrim": "sr5",
       "basicSpecs": {
         "engine": "4.0L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "RWD",
@@ -252,7 +252,7 @@
       "normalizedTrim": "limited",
       "basicSpecs": {
         "engine": "4.0L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -279,7 +279,7 @@
       "normalizedTrim": "limited",
       "basicSpecs": {
         "engine": "4.0L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "RWD",
@@ -306,7 +306,7 @@
       "normalizedTrim": "530i",
       "basicSpecs": {
         "engine": "2.0L I4",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -333,7 +333,7 @@
       "normalizedTrim": "540i",
       "basicSpecs": {
         "engine": "3.0L I6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "RWD",
@@ -357,7 +357,7 @@
       "normalizedTrim": "sr5 premium",
       "basicSpecs": {
         "engine": "4.0L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -384,7 +384,7 @@
       "normalizedTrim": "ex",
       "basicSpecs": {
         "engine": "1.5L I4",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "CVT",
         "drivetrain": "FWD",
@@ -411,7 +411,7 @@
       "normalizedTrim": "sport",
       "basicSpecs": {
         "engine": "4.0L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -438,7 +438,7 @@
       "normalizedTrim": "sr5",
       "basicSpecs": {
         "engine": "4.0L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -465,7 +465,7 @@
       "normalizedTrim": "ex-l",
       "basicSpecs": {
         "engine": "1.5L I4",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "CVT",
         "drivetrain": "FWD",
@@ -492,7 +492,7 @@
       "normalizedTrim": "sr5",
       "basicSpecs": {
         "engine": "4.0L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "RWD",
@@ -518,7 +518,7 @@
       "normalizedTrim": "venture",
       "basicSpecs": {
         "engine": "4.0L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -545,7 +545,7 @@
       "normalizedTrim": "lx",
       "basicSpecs": {
         "engine": "1.5L I4",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Manual",
         "drivetrain": "FWD",
@@ -572,7 +572,7 @@
       "normalizedTrim": "le",
       "basicSpecs": {
         "engine": "2.5L I4",
-        "horsepower": 0,
+        "horsepower": 203,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -581,10 +581,16 @@
           "Black",
           "Midnight Black Metallic"
         ],
-        "msrp": 0,
+        "msrp": 26050,
         "bodyStyle": "SUV"
       },
-      "lightweightValue": null
+      "lightweightValue": {
+        "tradeIn": 23300,
+        "privateParty": 24900,
+        "dealerRetail": 26500,
+        "sourceLabel": "Bundled market snapshot",
+        "confidenceLabel": "Moderate confidence"
+      }
     },
     {
       "id": "95c64a97-ccee-4756-940d-9d68448f79f7",
@@ -599,7 +605,7 @@
       "normalizedTrim": "lx",
       "basicSpecs": {
         "engine": "1.5L I4",
-        "horsepower": 0,
+        "horsepower": 190,
         "torque": "See live listing",
         "transmission": "CVT",
         "drivetrain": "4WD",
@@ -611,7 +617,13 @@
         "msrp": 21927,
         "bodyStyle": "SUV"
       },
-      "lightweightValue": null
+      "lightweightValue": {
+        "tradeIn": 21100,
+        "privateParty": 22800,
+        "dealerRetail": 24500,
+        "sourceLabel": "Bundled market snapshot",
+        "confidenceLabel": "Moderate confidence"
+      }
     },
     {
       "id": "9ca04798-74dd-4256-aec4-0a9a33ed8eb9",
@@ -626,7 +638,7 @@
       "normalizedTrim": "touring",
       "basicSpecs": {
         "engine": "1.5L I4",
-        "horsepower": 0,
+        "horsepower": 190,
         "torque": "See live listing",
         "transmission": "CVT",
         "drivetrain": "4WD",
@@ -635,10 +647,16 @@
           "Gray",
           "Gray"
         ],
-        "msrp": 0,
+        "msrp": 35150,
         "bodyStyle": "SUV"
       },
-      "lightweightValue": null
+      "lightweightValue": {
+        "tradeIn": 25900,
+        "privateParty": 27900,
+        "dealerRetail": 29800,
+        "sourceLabel": "Bundled market snapshot",
+        "confidenceLabel": "Moderate confidence"
+      }
     },
     {
       "id": "a04a2f16-1dd6-4b34-a822-310624761a98",
@@ -653,7 +671,7 @@
       "normalizedTrim": "ex",
       "basicSpecs": {
         "engine": "1.5L I4",
-        "horsepower": 0,
+        "horsepower": 190,
         "torque": "See live listing",
         "transmission": "CVT",
         "drivetrain": "FWD",
@@ -665,7 +683,13 @@
         "msrp": 24000,
         "bodyStyle": "SUV"
       },
-      "lightweightValue": null
+      "lightweightValue": {
+        "tradeIn": 22400,
+        "privateParty": 24100,
+        "dealerRetail": 25900,
+        "sourceLabel": "Bundled market snapshot",
+        "confidenceLabel": "Moderate confidence"
+      }
     },
     {
       "id": "769709bb-8db0-46b9-9d1b-0e79e82d14a2",
@@ -680,7 +704,7 @@
       "normalizedTrim": "ex-l",
       "basicSpecs": {
         "engine": "1.5L I4",
-        "horsepower": 0,
+        "horsepower": 190,
         "torque": "See live listing",
         "transmission": "CVT",
         "drivetrain": "4WD",
@@ -692,7 +716,13 @@
         "msrp": 24351,
         "bodyStyle": "SUV"
       },
-      "lightweightValue": null
+      "lightweightValue": {
+        "tradeIn": 24100,
+        "privateParty": 25900,
+        "dealerRetail": 27800,
+        "sourceLabel": "Bundled market snapshot",
+        "confidenceLabel": "Moderate confidence"
+      }
     },
     {
       "id": "4939166f-d22d-4f5f-9fcf-9691a042179c",
@@ -707,7 +737,7 @@
       "normalizedTrim": "xle premium",
       "basicSpecs": {
         "engine": "2.5L I4",
-        "horsepower": 0,
+        "horsepower": 203,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -716,10 +746,16 @@
           "Blue",
           "Blue"
         ],
-        "msrp": 0,
+        "msrp": 30880,
         "bodyStyle": "SUV"
       },
-      "lightweightValue": null
+      "lightweightValue": {
+        "tradeIn": 27500,
+        "privateParty": 29200,
+        "dealerRetail": 30900,
+        "sourceLabel": "Bundled market snapshot",
+        "confidenceLabel": "Moderate confidence"
+      }
     },
     {
       "id": "99d42337-d898-418d-8edf-39b0b2771cc9",
@@ -734,7 +770,7 @@
       "normalizedTrim": "limited",
       "basicSpecs": {
         "engine": "2.5L I4",
-        "horsepower": 0,
+        "horsepower": 203,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "FWD",
@@ -746,7 +782,13 @@
         "msrp": 25794,
         "bodyStyle": "SUV"
       },
-      "lightweightValue": null
+      "lightweightValue": {
+        "tradeIn": 29500,
+        "privateParty": 31300,
+        "dealerRetail": 33100,
+        "sourceLabel": "Bundled market snapshot",
+        "confidenceLabel": "Moderate confidence"
+      }
     },
     {
       "id": "3c89a602-45ff-47bc-bd00-5efdd895b3d9",
@@ -761,7 +803,7 @@
       "normalizedTrim": "eddie bauer",
       "basicSpecs": {
         "engine": "5.4L V8",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -788,7 +830,7 @@
       "normalizedTrim": "limited",
       "basicSpecs": {
         "engine": "5.4L V8",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -812,7 +854,7 @@
       "normalizedTrim": "xle",
       "basicSpecs": {
         "engine": "2.5L I4",
-        "horsepower": 0,
+        "horsepower": 203,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "FWD",
@@ -824,7 +866,13 @@
         "msrp": 22878,
         "bodyStyle": "SUV"
       },
-      "lightweightValue": null
+      "lightweightValue": {
+        "tradeIn": 25100,
+        "privateParty": 26800,
+        "dealerRetail": 28500,
+        "sourceLabel": "Bundled market snapshot",
+        "confidenceLabel": "Moderate confidence"
+      }
     },
     {
       "id": "984fcfdf-9980-4162-a901-e0e38860edb2",
@@ -839,7 +887,7 @@
       "normalizedTrim": "xlt",
       "basicSpecs": {
         "engine": "5.4L V8",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "RWD",
@@ -866,7 +914,7 @@
       "normalizedTrim": "ex",
       "basicSpecs": {
         "engine": "1.8L I4",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "CVT",
         "drivetrain": "4WD",
@@ -893,7 +941,7 @@
       "normalizedTrim": "lx",
       "basicSpecs": {
         "engine": "1.8L I4",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "CVT",
         "drivetrain": "4WD",
@@ -920,7 +968,7 @@
       "normalizedTrim": "ex-l",
       "basicSpecs": {
         "engine": "1.8L I4",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "CVT",
         "drivetrain": "4WD",
@@ -947,7 +995,7 @@
       "normalizedTrim": "sport",
       "basicSpecs": {
         "engine": "1.8L I4",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "CVT",
         "drivetrain": "4WD",
@@ -974,7 +1022,7 @@
       "normalizedTrim": "x",
       "basicSpecs": {
         "engine": "3.8L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Manual",
         "drivetrain": "4WD",
@@ -1001,7 +1049,7 @@
       "normalizedTrim": "rubicon",
       "basicSpecs": {
         "engine": "3.8L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -1028,7 +1076,7 @@
       "normalizedTrim": "sahara",
       "basicSpecs": {
         "engine": "3.8L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -1055,7 +1103,7 @@
       "normalizedTrim": "sahara",
       "basicSpecs": {
         "engine": "3.6L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -1082,7 +1130,7 @@
       "normalizedTrim": "rubicon",
       "basicSpecs": {
         "engine": "3.6L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -1109,7 +1157,7 @@
       "normalizedTrim": "sport",
       "basicSpecs": {
         "engine": "3.6L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -1136,7 +1184,7 @@
       "normalizedTrim": "glx",
       "basicSpecs": {
         "engine": "1.8L I4",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "FWD",
@@ -1163,7 +1211,7 @@
       "normalizedTrim": "gl",
       "basicSpecs": {
         "engine": "2.0L I4",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "See live listing",
         "drivetrain": "FWD",
@@ -1190,7 +1238,7 @@
       "normalizedTrim": "ex",
       "basicSpecs": {
         "engine": "2.5L I4",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -1217,7 +1265,7 @@
       "normalizedTrim": "x-line",
       "basicSpecs": {
         "engine": "2.5L I4",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -1244,7 +1292,7 @@
       "normalizedTrim": "turbo s",
       "basicSpecs": {
         "engine": "1.8L I4",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Manual",
         "drivetrain": "FWD",
@@ -1271,7 +1319,7 @@
       "normalizedTrim": "lx",
       "basicSpecs": {
         "engine": "2.5L I4",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -1298,7 +1346,7 @@
       "normalizedTrim": "base",
       "basicSpecs": {
         "engine": "2.0L I4",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Manual",
         "drivetrain": "FWD",
@@ -1325,7 +1373,7 @@
       "normalizedTrim": "s hybrid",
       "basicSpecs": {
         "engine": "1.6L I4",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "FWD",
@@ -1352,7 +1400,7 @@
       "normalizedTrim": "gls",
       "basicSpecs": {
         "engine": "2L I4",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "FWD",
@@ -1379,7 +1427,7 @@
       "normalizedTrim": "ex hybrid",
       "basicSpecs": {
         "engine": "1.6L I4",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "FWD",
@@ -1406,7 +1454,7 @@
       "normalizedTrim": "overland",
       "basicSpecs": {
         "engine": "3.6L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -1433,7 +1481,7 @@
       "normalizedTrim": "laredo",
       "basicSpecs": {
         "engine": "3.6L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -1460,7 +1508,7 @@
       "normalizedTrim": "overland",
       "basicSpecs": {
         "engine": "5.7L V8",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -1487,7 +1535,7 @@
       "normalizedTrim": "limited",
       "basicSpecs": {
         "engine": "3.6L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -1514,7 +1562,7 @@
       "normalizedTrim": "summit",
       "basicSpecs": {
         "engine": "5.7L V8",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -1541,7 +1589,7 @@
       "normalizedTrim": "srt8",
       "basicSpecs": {
         "engine": "6.4L V8",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -1568,7 +1616,7 @@
       "normalizedTrim": "80th edition",
       "basicSpecs": {
         "engine": "3.6L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -1595,7 +1643,7 @@
       "normalizedTrim": "trailhawk",
       "basicSpecs": {
         "engine": "3.6L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",
@@ -1622,7 +1670,7 @@
       "normalizedTrim": "limited",
       "basicSpecs": {
         "engine": "3.6L V6",
-        "horsepower": 0,
+        "horsepower": null,
         "torque": "See live listing",
         "transmission": "Automatic",
         "drivetrain": "4WD",

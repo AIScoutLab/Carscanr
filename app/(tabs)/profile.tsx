@@ -159,7 +159,7 @@ export default function ProfileScreen() {
               authService
                 .signOut()
                 .then(() => {
-                  router.replace("/auth" as never);
+                  router.replace("/(tabs)/scan" as never);
                 })
                 .catch(() => undefined);
             }}

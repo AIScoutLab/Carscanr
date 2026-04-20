@@ -1,7 +1,7 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { subscriptionService } from "@/services/subscriptionService";
-import { SubscriptionActionResult, SubscriptionStatus } from "@/types";
+import { FreeUnlockReason, SubscriptionActionResult, SubscriptionStatus } from "@/types";
 
 type SubscriptionContextValue = {
   status: SubscriptionStatus | null;
@@ -20,7 +20,10 @@ type SubscriptionContextValue = {
   purchasePro: () => Promise<SubscriptionActionResult>;
   restorePurchases: () => Promise<SubscriptionActionResult>;
   cancelPro: () => Promise<SubscriptionActionResult>;
-  useFreeUnlockForVehicle: (vehicleId: string, linkedVehicleIds?: string[]) => Promise<{ ok: boolean; message: string; reason: string; alreadyUnlocked: boolean }>;
+  useFreeUnlockForVehicle: (
+    vehicleId: string,
+    linkedVehicleIds?: string[],
+  ) => Promise<{ ok: boolean; message: string; reason: FreeUnlockReason; alreadyUnlocked: boolean }>;
   isVehicleUnlocked: (vehicleId: string) => boolean;
   clearFeedback: () => void;
 };
@@ -116,7 +119,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const useFreeUnlockForVehicle = useCallback(async (vehicleId: string, linkedVehicleIds: string[] = []) => {
+  const useFreeUnlockForVehicle = useCallback<SubscriptionContextValue["useFreeUnlockForVehicle"]>(async (vehicleId, linkedVehicleIds = []) => {
     if (isUnlocking) {
       return {
         ok: false,

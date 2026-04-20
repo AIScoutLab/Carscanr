@@ -1,4 +1,5 @@
 import { AppError } from "../errors/appError.js";
+import { env } from "../config/env.js";
 import { upsertCanonicalVehicleFromAiLearned, upsertCanonicalVehicleFromProvider } from "../lib/canonicalVehicleCatalog.js";
 import { logger } from "../lib/logger.js";
 import { providers } from "../lib/providerRegistry.js";
@@ -43,6 +44,31 @@ function computePriorityBoost(input: { normalizedMake: string; normalizedModel: 
 
 function isRateLimitError(error: unknown) {
   return error instanceof AppError && error.statusCode === 429;
+}
+
+function describeTrendingFailure(error: unknown) {
+  if (!(error instanceof AppError)) {
+    return {
+      code: null,
+      message: error instanceof Error ? error.message : "Unknown trending refresh failure",
+      details: null,
+      probableCause: "unknown",
+    };
+  }
+
+  const details = (error.details && typeof error.details === "object") ? (error.details as Record<string, unknown>) : null;
+  const pgCode = typeof details?.code === "string" ? details.code : null;
+  let probableCause = "query_or_runtime_error";
+  if (pgCode === "42P01") probableCause = "missing_table";
+  else if (pgCode === "42703") probableCause = "missing_column";
+  else if (pgCode === "42501") probableCause = "insufficient_privilege";
+
+  return {
+    code: error.code,
+    message: error.message,
+    details,
+    probableCause,
+  };
 }
 
 export class TrendingVehicleService {
@@ -201,28 +227,73 @@ export class TrendingVehicleService {
 
   startScheduler() {
     const run = async () => {
-      await this.refreshGlobalTrending();
-      await this.preloadTrendingCanonicalBatch();
+      try {
+        await this.refreshGlobalTrending();
+      } catch (error) {
+        const failure = describeTrendingFailure(error);
+        logger.error(
+          {
+            label: "GLOBAL_TRENDING_REFRESH_FAILED",
+            message: failure.message,
+            code: failure.code,
+            probableCause: failure.probableCause,
+            details: failure.details,
+            stack: error instanceof Error ? error.stack : undefined,
+          },
+          "GLOBAL_TRENDING_REFRESH_FAILED",
+        );
+      }
+
+      const preloadDisabledInProduction = env.APP_ENV === "production";
+      if (preloadDisabledInProduction || !env.ALLOW_PRELOAD) {
+        logger.info(
+          {
+            label: "PRELOAD_SKIPPED_PRODUCTION",
+            appEnv: env.APP_ENV,
+            allowPreload: env.ALLOW_PRELOAD,
+            reason: preloadDisabledInProduction ? "production-app-env" : "allow-preload-disabled",
+          },
+          "PRELOAD_SKIPPED_PRODUCTION",
+        );
+        return;
+      }
+
+      try {
+        await this.preloadTrendingCanonicalBatch();
+      } catch (error) {
+        const failure = describeTrendingFailure(error);
+        logger.error(
+          {
+            label: "GLOBAL_TRENDING_PRELOAD_FAILED",
+            message: failure.message,
+            code: failure.code,
+            probableCause: failure.probableCause,
+            details: failure.details,
+            stack: error instanceof Error ? error.stack : undefined,
+          },
+          "GLOBAL_TRENDING_PRELOAD_FAILED",
+        );
+      }
     };
     run().catch((error) => {
       logger.error(
         {
-          label: "GLOBAL_TRENDING_UPDATED",
-          message: error instanceof Error ? error.message : "Unknown trending refresh failure",
+          label: "GLOBAL_TRENDING_SCHEDULER_FAILED",
+          message: error instanceof Error ? error.message : "Unknown scheduler failure",
           stack: error instanceof Error ? error.stack : undefined,
         },
-        "GLOBAL_TRENDING_UPDATED",
+        "GLOBAL_TRENDING_SCHEDULER_FAILED",
       );
     });
     return setInterval(() => {
       run().catch((error) => {
         logger.error(
           {
-            label: "GLOBAL_TRENDING_UPDATED",
-            message: error instanceof Error ? error.message : "Unknown trending refresh failure",
+            label: "GLOBAL_TRENDING_SCHEDULER_FAILED",
+            message: error instanceof Error ? error.message : "Unknown scheduler failure",
             stack: error instanceof Error ? error.stack : undefined,
           },
-          "GLOBAL_TRENDING_UPDATED",
+          "GLOBAL_TRENDING_SCHEDULER_FAILED",
         );
       });
     }, TRENDING_REFRESH_INTERVAL_MS);

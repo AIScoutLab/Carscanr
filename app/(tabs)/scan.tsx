@@ -31,6 +31,14 @@ import { authService } from "@/services/authService";
 import { scanService } from "@/services/scanService";
 import { ScanResult } from "@/types";
 
+const ROTATING_CAR_FACTS = [
+  "The average car has over 30,000 parts.",
+  "AWD improves traction, not braking.",
+  "Most modern engines are turbocharged.",
+  "Aerodynamics can matter as much as raw horsepower at highway speeds.",
+  "Many modern transmissions have 8 or more gears for efficiency.",
+];
+
 type DebugStatus =
   | "Idle"
   | "Requesting camera permission"
@@ -71,8 +79,11 @@ export default function ScanScreen() {
   const pendingIdentifyStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeFlowIdRef = useRef(0);
   const scanBarProgress = useRef(new Animated.Value(0)).current;
+  const scanBarSweep = useRef(new Animated.Value(0)).current;
+  const factOpacity = useRef(new Animated.Value(1)).current;
   const { status: usage, freeUnlocksUsed, freeUnlocksRemaining, freeUnlocksLimit, refreshStatus } = useSubscription();
   const samplePhotos = getSampleScanPhotos();
+  const [activeFactIndex, setActiveFactIndex] = useState(0);
 
   const resetTransientScanState = useCallback(() => {
     activeFlowIdRef.current += 1;
@@ -103,34 +114,92 @@ export default function ScanScreen() {
   useEffect(() => {
     if (!isBusy || !retryImageUri) {
       scanBarProgress.stopAnimation();
+      scanBarSweep.stopAnimation();
       scanBarProgress.setValue(0);
+      scanBarSweep.setValue(0);
       return;
     }
 
-    const animation = Animated.loop(
+    const widthAnimation = Animated.loop(
       Animated.sequence([
         Animated.timing(scanBarProgress, {
           toValue: 1,
-          duration: 1400,
+          duration: 1800,
           easing: Easing.inOut(Easing.cubic),
           useNativeDriver: true,
         }),
         Animated.timing(scanBarProgress, {
           toValue: 0,
-          duration: 1400,
+          duration: 1800,
           easing: Easing.inOut(Easing.cubic),
           useNativeDriver: true,
         }),
       ]),
     );
-    animation.start();
+    const sweepAnimation = Animated.loop(
+      Animated.timing(scanBarSweep, {
+        toValue: 1,
+        duration: 1550,
+        easing: Easing.inOut(Easing.quad),
+        useNativeDriver: true,
+      }),
+    );
+    widthAnimation.start();
+    sweepAnimation.start();
 
     return () => {
-      animation.stop();
+      widthAnimation.stop();
+      sweepAnimation.stop();
       scanBarProgress.stopAnimation();
+      scanBarSweep.stopAnimation();
       scanBarProgress.setValue(0);
+      scanBarSweep.setValue(0);
     };
-  }, [isBusy, retryImageUri, scanBarProgress]);
+  }, [isBusy, retryImageUri, scanBarProgress, scanBarSweep]);
+
+  useEffect(() => {
+    if (!isBusy || !retryImageUri) {
+      factOpacity.stopAnimation();
+      factOpacity.setValue(1);
+      setActiveFactIndex(0);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      Animated.sequence([
+        Animated.timing(factOpacity, {
+          toValue: 0,
+          duration: 300,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(factOpacity, {
+          toValue: 1,
+          duration: 340,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]).start();
+      setActiveFactIndex((current) => (current + 1) % ROTATING_CAR_FACTS.length);
+    }, 5600);
+
+    return () => {
+      clearInterval(interval);
+      factOpacity.stopAnimation();
+      factOpacity.setValue(1);
+    };
+  }, [factOpacity, isBusy, retryImageUri]);
+
+  useEffect(() => {
+    if (!__DEV__ || !isBusy || !retryImageUri || scanError) {
+      return;
+    }
+    console.log("[scan] SCAN_LOADING_UI_ACTIVE", {
+      componentName: "ScanScreenLoadingState",
+      factRotationIntervalMs: 5600,
+      shimmerEnabled: true,
+    });
+  }, [isBusy, retryImageUri, scanError]);
 
   useEffect(() => {
     const preloadPermissions = async () => {
@@ -569,6 +638,18 @@ export default function ScanScreen() {
       inputRange: [0, 1],
       outputRange: [0, 332],
     });
+    const loadingProgressWidth = scanBarProgress.interpolate({
+      inputRange: [0, 1],
+      outputRange: ["28%", "96%"],
+    });
+    const shimmerTranslate = scanBarProgress.interpolate({
+      inputRange: [0, 1],
+      outputRange: [-160, 290],
+    });
+    const electricSweepTranslate = scanBarSweep.interpolate({
+      inputRange: [0, 1],
+      outputRange: [-220, 320],
+    });
 
     return (
       <AppContainer scroll={false} contentContainerStyle={styles.loadingScreen}>
@@ -582,8 +663,24 @@ export default function ScanScreen() {
         <View style={styles.loadingCopyCard}>
           <Text style={styles.loadingTitle}>Analyzing vehicle...</Text>
           <Text style={styles.loadingBody}>{analysisStepLabel}</Text>
-          <ActivityIndicator size="small" color={Colors.accent} />
+          <View style={styles.loadingProgressTrack}>
+            <Animated.View style={[styles.loadingProgressGlow, { width: loadingProgressWidth }]} />
+            <Animated.View style={[styles.loadingProgressFillWrap, { width: loadingProgressWidth }]}>
+              <LinearGradient
+                colors={["#1B63F3", "#49D9FF", "#F7FDFF"]}
+                start={{ x: 0, y: 0.5 }}
+                end={{ x: 1, y: 0.5 }}
+                style={styles.loadingProgressFill}
+              >
+                <Animated.View style={[styles.loadingProgressSweep, { transform: [{ translateX: electricSweepTranslate }] }]} />
+                <Animated.View style={[styles.loadingProgressShimmer, { transform: [{ translateX: shimmerTranslate }] }]} />
+              </LinearGradient>
+            </Animated.View>
+          </View>
         </View>
+        <Animated.Text style={[styles.loadingFact, { opacity: factOpacity }]}>
+          {ROTATING_CAR_FACTS[activeFactIndex]}
+        </Animated.Text>
       </AppContainer>
     );
   }
@@ -859,11 +956,66 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.cardSoft,
     borderRadius: Radius.xl,
     padding: 18,
-    gap: 8,
+    gap: 14,
     alignItems: "flex-start",
     borderWidth: 1,
     borderColor: Colors.border,
   },
   loadingTitle: { ...Typography.heading, color: Colors.textStrong },
   loadingBody: { ...Typography.body, color: Colors.textSoft },
+  loadingProgressTrack: {
+    width: "100%",
+    height: 18,
+    borderRadius: Radius.pill,
+    backgroundColor: "rgba(255,255,255,0.07)",
+    overflow: "hidden",
+    position: "relative",
+    borderWidth: 1,
+    borderColor: "rgba(83, 222, 255, 0.16)",
+  },
+  loadingProgressGlow: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    borderRadius: Radius.pill,
+    backgroundColor: "rgba(83, 222, 255, 0.22)",
+    shadowColor: "#61E8FF",
+    shadowOpacity: 0.34,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  loadingProgressFillWrap: {
+    height: "100%",
+    borderRadius: Radius.pill,
+    overflow: "hidden",
+  },
+  loadingProgressFill: {
+    flex: 1,
+    borderRadius: Radius.pill,
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  loadingProgressSweep: {
+    position: "absolute",
+    top: -8,
+    bottom: -8,
+    width: 120,
+    borderRadius: Radius.pill,
+    backgroundColor: "rgba(255,255,255,0.26)",
+  },
+  loadingProgressShimmer: {
+    width: 72,
+    height: "200%",
+    backgroundColor: "rgba(255,255,255,0.38)",
+    borderRadius: Radius.pill,
+  },
+  loadingFact: {
+    ...Typography.body,
+    color: Colors.textSoft,
+    minHeight: 24,
+    textAlign: "center",
+    paddingHorizontal: 18,
+    opacity: 0.88,
+  },
 });

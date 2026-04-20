@@ -50,7 +50,10 @@ Product goal:
 - Cache/schema failures are no longer supposed to block standard multipart scans
 - Matching no longer hard-fails on `NO_VEHICLE_MATCH`; backend now returns a best-effort AI fallback candidate when catalog matching misses
 - Canonical vehicle records are now the intended source of truth for scan-derived matches, specs, value/listings fetches, Garage resolution, and unlock resolution
-- New active frontend issue: [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx) had a non-interactive result screen on device; result-screen touch handling has been hardened but still needs a fresh build/device validation
+- Historical note:
+  - [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx) previously had a non-interactive result-screen touch bug on device
+  - that touch issue is no longer the primary active product blocker
+  - keep it as a regression check during validation, not as current product truth
 
 ## Most Recent High-Signal Changes
 
@@ -61,11 +64,15 @@ Guest scan is now the intended product flow:
 - Standard scan should work without sign-in
 - Standard scan should not be blocked by scan-count limits at all
 - Sign-in is still required for:
-  - Garage save/list/delete
+  - backend/synced Garage items
   - synced history
   - restore across devices
   - subscription/account management
-  - premium unlock/account endpoints
+  - backend premium unlock/account endpoints
+- Sign-in is not required for:
+  - scanning
+  - guest unlock usage on the same device
+  - local estimate-backed Garage items on the same device
 
 Key files:
 
@@ -128,6 +135,8 @@ Current truth:
 
 - real in-app purchase is still not wired in this repo
 - paywall should not pretend a real free trial or StoreKit purchase can start
+- no production-ready StoreKit or RevenueCat purchase path is wired yet
+- purchase UI can explain Pro and route to paywall, but monetization infrastructure is still an open item
 
 Recent fixes:
 
@@ -432,77 +441,35 @@ Estimate detail and grounded detail now have explicit separation:
 
 This prevents estimate pages from being mistaken for real catalog records.
 
-#### Estimate-detail quality / approximation safeguards
+#### Legacy estimate-detail note
 
-Estimate-detail is intentionally useful, but conservative.
+This section is historical context only.
 
-Current top-of-screen behavior in [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx):
+Older estimate-detail behavior used explicit conservative labels and stricter `showApproximate*` gating such as:
 
-- estimate page gets a stronger visual distinction:
-  - `Estimated vehicle detail` eyebrow
-  - `Photo-based estimate` badge
-  - `Approximate detail, not a verified catalog record` notice
-- section titles in estimate mode are explicit:
-  - `Estimated Identification`
-  - `Approximate Specs`
-  - `Similar Market Range`
-  - `Similar Listings`
-
-Estimate-detail can now show:
-
-- likely year range
-- estimated make/model
-- possible trim only when very well supported
-- approximate specs from a nearby grounded family
-- similar-market value context
-- similar listings
-
-But those are now gated more aggressively.
-
-Current fallback gates:
-
+- `Estimated vehicle detail`
+- `Photo-based estimate`
 - `Approximate Specs`
-  - allowed when:
-    - match type is `id` or `exact`, or
-    - `model-family-range` is strong enough
-  - strong enough currently means:
-    - risky families (`Wrangler`, trucks, muscle cars, classics, motorcycles):
-      - exactly 1 family candidate
-      - year delta <= 1 when year exists
-    - non-risky families:
-      - up to 2 family candidates
-      - year delta <= 2 when year exists
 - `Similar Market Range`
-  - stricter than specs
-  - allowed only when:
-    - match type is `id` or `exact`, or
-    - exactly 1 family candidate
-    - non-risky families year delta <= 1
-    - risky families exact year match
 - `Similar Listings`
-  - now uses its own gate instead of piggybacking loosely on market fallback
-  - allowed only when:
-    - match type is `id` or `exact`, or
-    - exactly 1 family candidate
-    - non-risky families year delta <= 1
-    - risky families exact year match
-  - estimate listings are capped to 2 items
 
-Important runtime safety:
+That is not the current global product truth anymore.
 
-- estimate-mode live value refresh is now blocked unless `showApproximateMarket` is true
-- estimate-mode listings fetch is now blocked unless `showApproximateListings` is true
-- this keeps runtime behavior aligned with the UI promises
+Current truth is defined in the later section:
 
-Trim leakage safeguards:
+- [Current product truth: trusted high-confidence results, unified unlocks, and Garage reopen](/Users/mattbrillman/Car_Identifier/HANDOFF_CHATGPT.md#L1045)
 
-- estimate-mode trim is now much stricter
-- risky families:
-  - trim only appears if confidence >= `0.98`
-  - and grounding is `id` or `exact`
-- other families:
-  - trim only appears if confidence >= `0.93`
-  - and grounding is still strong
+Use the legacy note only to understand why older code paths or older commits may still mention:
+
+- `showApproximateSpecs`
+- `showApproximateMarket`
+- `showApproximateListings`
+- conservative estimate-only copy
+
+Current distinction to keep in mind:
+
+- locked or non-trusted estimate-backed results may still use a more conservative presentation
+- trusted high-confidence unlocked results should not be described by the old estimate-only wording or old conservative post-unlock holdbacks
 - otherwise the UI says:
   - `Not confidently supported`
 
@@ -884,9 +851,9 @@ Open reality check:
 
 - If common cars still land in AI-only mode after the canonical flow is deployed, the next likely blocker is provider enrichment/selection rather than catalog size alone
 
-### Result screen touch fix
+### Historical result-screen touch fix
 
-Most recent frontend fix was on the result page.
+This is a historical debugging note, not a current primary product issue.
 
 Symptoms:
 
@@ -1211,6 +1178,25 @@ Current trusted high-confidence result behavior:
 - it no longer promises pricing specifically
 - this was changed because pricing/value hydration and identification confidence are not the same thing
 
+Current trusted unlocked product truth:
+
+- trusted result means:
+  - confidence `>= 0.90`
+  - and not extreme-risk
+- once that vehicle is unlocked:
+  - it should behave as fully unlocked for that vehicle
+  - no second unlock ask
+  - no premium overlay
+  - no old estimate/family/grounding holdback language
+  - best available specs/value/listings/photos should be shown whenever any usable fallback exists
+
+Current conservative estimate behavior is now narrower:
+
+- it applies to:
+  - locked estimate-backed results
+  - or non-trusted estimate-backed results
+- it should not override trusted unlocked behavior
+
 Current trusted detail behavior:
 
 - high-confidence trusted detail avoids old mixed-state copy like:
@@ -1277,10 +1263,10 @@ Current derived tab states:
 
 - Value:
   - `value_available`
-  - `value_unavailable_trusted`
+  - `value_unavailable`
 - For Sale:
   - `listings_available`
-  - `listings_unavailable_trusted`
+  - `listings_unavailable`
 
 Current trusted unavailable copy:
 
@@ -1322,6 +1308,21 @@ Current storage:
 #### Garage support for estimate-backed / visual-override vehicles
 
 This is now supported on the same device.
+
+Garage/auth truth:
+
+- there are now two distinct Garage modes:
+  - backend/synced Garage
+    - auth required
+    - real backend `vehicleId` records
+    - cross-device restore/sync capable
+  - local estimate Garage
+    - same-device only
+    - guest-usable
+    - estimate-backed / visual-override saves stored locally in AsyncStorage
+
+Do not describe Garage as globally auth-required anymore.
+Only backend/synced Garage is auth-required.
 
 Current storage model:
 
@@ -1383,10 +1384,12 @@ Current dedupe behavior:
 - estimate-backed Garage saves dedupe by the same stable synthetic unlock id
 - saving the same estimate-backed vehicle again replaces the prior local estimate item instead of creating duplicates
 
-Current important limitation:
+Estimate Garage limitation:
 
 - estimate-backed Garage items are currently same-device only
-- they are not synced cross-device because they are not stored in the backend Garage model yet
+- storage is local AsyncStorage only
+- they are not synced cross-device
+- they are not automatically migrated into backend/synced Garage if the user signs in later
 
 #### Cross-session and sign-in behavior
 
@@ -1402,6 +1405,16 @@ Current non-guarantees:
 - guest unlocks do not automatically sync to another device
 - estimate-backed Garage items do not currently sync to another device
 - signing in later does not automatically migrate local estimate-backed Garage items into backend Garage storage
+
+Unlock identity limitation:
+
+- estimate unlock ids are much more stable than before
+- same inferred `year + make + model + family` now reliably stays unlocked on the same device
+- the same real-world vehicle can still split into different unlock identities if separate scans resolve to materially different identities
+  - example:
+    - one scan resolves as `2026 Honda CR-V`
+    - another resolves as `2025 Honda CR-V`
+- keep this limitation documented here once; do not restate it throughout the doc
 
 #### Manual search
 
@@ -1570,7 +1583,6 @@ Current backend intent is that cache schema drift should not block standard scan
 
 ## Current Open Items
 
-- Rebuild and validate the latest result-screen touch fix on device/TestFlight
 - Confirm the standard scan path on live backend now:
   - degrades through cache
   - reaches live vision
@@ -1578,6 +1590,10 @@ Current backend intent is that cache schema drift should not block standard scan
 - Verify fallback AI-only results behave acceptably in the result screen UX on device
 - RevenueCat / StoreKit purchase flow still is not launch-grade
 - Production crash reporting / monitoring is still missing
+
+Historical / regression checks:
+
+- result-screen touch behavior was a real bug earlier; keep it as a regression check during device/TestFlight validation, not as the main active product blocker
 
 ## Useful Commands
 

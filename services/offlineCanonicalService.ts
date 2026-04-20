@@ -70,6 +70,19 @@ function isWranglerVehicle(vehicle: Pick<OfflineCanonicalVehicle, "make" | "mode
   return normalizeText(vehicle.make) === "jeep" && normalizeText(vehicle.model).includes("wrangler");
 }
 
+function isMainstreamGroundingFriendlyFamily(vehicle: Pick<OfflineCanonicalVehicle, "make" | "model">) {
+  const make = normalizeText(vehicle.make);
+  const model = normalizeText(vehicle.model);
+  const combined = `${make} ${model}`;
+  return (
+    (make === "honda" && /(cr v|crv|civic|accord)/.test(model)) ||
+    (make === "toyota" && /(camry|rav4)/.test(model)) ||
+    (make === "tesla" && /model 3/.test(model)) ||
+    (make === "ford" && /(f 150|f150)/.test(combined)) ||
+    ((make === "chevrolet" || make === "chevy") && /silverado/.test(model))
+  );
+}
+
 function getWranglerGenerationFromYear(year: number) {
   if (year >= 1997 && year <= 2006) {
     return "TJ" as const;
@@ -102,6 +115,39 @@ function selectPresentationVehicles(
 
 function formatHorsepowerValue(value: number) {
   return `${value} hp`;
+}
+
+function getTrustedFamilySpecValue(values: Array<string | null | undefined>, allowDominant = false) {
+  const normalized = values.map((value) => String(value ?? "").trim()).filter(Boolean);
+  const unique = [...new Set(normalized)];
+  if (unique.length === 1) {
+    return unique[0];
+  }
+  if (!allowDominant || normalized.length < 2) {
+    return null;
+  }
+
+  const counts = new Map<string, number>();
+  normalized.forEach((value) => counts.set(value, (counts.get(value) ?? 0) + 1));
+  const ranked = [...counts.entries()].sort((left, right) => right[1] - left[1]);
+  const [candidate, count] = ranked[0] ?? [];
+  if (!candidate || !count) {
+    return null;
+  }
+
+  const ratio = count / normalized.length;
+  return ratio >= 0.6 ? candidate : null;
+}
+
+function buildMsrpRangeLabel(values: number[]) {
+  const unique = [...new Set(values.filter((value) => Number.isFinite(value) && value > 0))].sort((a, b) => a - b);
+  if (unique.length === 0) {
+    return null;
+  }
+  if (unique.length === 1) {
+    return formatCurrency(unique[0]);
+  }
+  return `${formatCurrency(unique[0])} - ${formatCurrency(unique[unique.length - 1])}`;
 }
 
 function createEmptyListings() {
@@ -190,6 +236,23 @@ function chooseBestGroundedVehicle(
 
     return left.year - right.year;
   })[0] ?? null;
+}
+
+function getGroundingWindowYears(input: {
+  year?: number | null;
+  mainstreamFriendly: boolean;
+  wrangler: boolean;
+}) {
+  if (typeof input.year !== "number") {
+    return null;
+  }
+  if (input.wrangler) {
+    return 1;
+  }
+  if (input.mainstreamFriendly) {
+    return 3;
+  }
+  return 2;
 }
 
 async function syncBundledDataset() {
@@ -417,9 +480,15 @@ export const offlineCanonicalService = {
 
     const bestVehicle = chooseBestGroundedVehicle(familyMatches, input);
     const presentationVehicles = selectPresentationVehicles(familyMatches, bestVehicle);
+    const mainstreamFriendly = bestVehicle ? isMainstreamGroundingFriendlyFamily(bestVehicle) : false;
+    const yearWindow = getGroundingWindowYears({
+      year: input.year,
+      mainstreamFriendly,
+      wrangler: Boolean(bestVehicle && isWranglerVehicle(bestVehicle)),
+    });
     const nearbyVehicles =
-      typeof input.year === "number"
-        ? presentationVehicles.filter((vehicle) => Math.abs(vehicle.year - input.year!) <= (isWranglerVehicle(vehicle) ? 1 : 2))
+      typeof input.year === "number" && typeof yearWindow === "number"
+        ? presentationVehicles.filter((vehicle) => Math.abs(vehicle.year - input.year!) <= yearWindow)
         : presentationVehicles;
     const horsepowerVehicles = (nearbyVehicles.length > 0 ? nearbyVehicles : presentationVehicles)
       .map((vehicle) => ({
@@ -466,6 +535,74 @@ export const offlineCanonicalService = {
       value: `${uniqueHorsepower[0]}-${uniqueHorsepower[uniqueHorsepower.length - 1]} hp`,
       numericValue: null,
       exact: false,
+    };
+  },
+
+  async resolveApproximateFamilySupport(input: {
+    year?: number | null;
+    make: string;
+    model: string;
+    trim?: string | null;
+    vehicleType?: string | null;
+  }) {
+    const index = await this.preload();
+    const familyMatches = index.byMakeModelFamily.get(
+      buildMakeModelFamilyKey({
+        make: input.make,
+        model: input.model,
+      }),
+    ) ?? [];
+
+    if (familyMatches.length === 0) {
+      return null;
+    }
+
+    const bestVehicle = chooseBestGroundedVehicle(familyMatches, input);
+    const presentationVehicles = selectPresentationVehicles(familyMatches, bestVehicle);
+    const mainstreamFriendly = bestVehicle ? isMainstreamGroundingFriendlyFamily(bestVehicle) : false;
+    const yearWindow = getGroundingWindowYears({
+      year: input.year,
+      mainstreamFriendly,
+      wrangler: Boolean(bestVehicle && isWranglerVehicle(bestVehicle)),
+    });
+    const nearbyVehicles =
+      typeof input.year === "number" && typeof yearWindow === "number"
+        ? presentationVehicles.filter((vehicle) => Math.abs(vehicle.year - input.year!) <= yearWindow)
+        : presentationVehicles;
+    const groundedVehicles = nearbyVehicles.length > 0 ? nearbyVehicles : presentationVehicles;
+    const years = groundedVehicles.map((vehicle) => vehicle.year).sort((a, b) => a - b);
+    const exact =
+      typeof input.year === "number"
+        ? index.byCanonicalKey.get(
+            buildCanonicalKey({
+              year: input.year,
+              make: input.make,
+              model: input.model,
+              trim: input.trim,
+              vehicleType: input.vehicleType,
+            }),
+          ) ?? null
+        : null;
+
+    return {
+      vehicle: bestVehicle,
+      yearRange: {
+        start: years[0],
+        end: years[years.length - 1],
+      },
+      matchType: exact ? ("exact" as const) : ("model-family-range" as const),
+      candidateCount: groundedVehicles.length,
+      nearestYearDelta:
+        typeof input.year === "number" && bestVehicle ? Math.abs(bestVehicle.year - input.year) : null,
+      mainstreamFriendly,
+      sharedSpecs: {
+        engine: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => vehicle.basicSpecs.engine), mainstreamFriendly),
+        transmission: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => vehicle.basicSpecs.transmission), mainstreamFriendly),
+        drivetrain: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => vehicle.basicSpecs.drivetrain), mainstreamFriendly),
+        mpgOrRange: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => vehicle.basicSpecs.mpgOrRange), mainstreamFriendly),
+        bodyStyle: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => vehicle.basicSpecs.bodyStyle), mainstreamFriendly),
+      },
+      msrpRangeLabel: buildMsrpRangeLabel(groundedVehicles.map((vehicle) => vehicle.basicSpecs.msrp)),
     };
   },
 

@@ -633,13 +633,47 @@ export function createTestProviders(result?: VisionProviderResult): ProviderRegi
       },
     },
     valueProvider: {
-      async getValuation() {
-        throw new Error("Not used in current tests.");
+      async getValuation(input) {
+        return {
+          id: `valuation-${input.vehicleId}`,
+          vehicleId: input.vehicleId,
+          zip: input.zip,
+          mileage: input.mileage,
+          condition: input.condition as any,
+          tradeIn: 26800,
+          tradeInLow: 25800,
+          tradeInHigh: 27800,
+          privateParty: 28900,
+          privatePartyLow: 27900,
+          privatePartyHigh: 29900,
+          dealerRetail: 31200,
+          dealerRetailLow: 30200,
+          dealerRetailHigh: 32200,
+          currency: "USD",
+          generatedAt: new Date("2026-04-19T12:00:00.000Z").toISOString(),
+          sourceLabel: "Test Market Data",
+          confidenceLabel: "high",
+          modelType: "provider_range",
+          listingCount: 3,
+        };
       },
     },
     listingsProvider: {
-      async getListings() {
-        throw new Error("Not used in current tests.");
+      async getListings(input) {
+        return [
+          {
+            id: `listing-${input.vehicleId}`,
+            vehicleId: input.vehicleId,
+            title: "2021 Cadillac CT4 Premium Luxury",
+            price: 31995,
+            mileage: 11820,
+            dealer: "Lakefront Auto",
+            distanceMiles: 12,
+            location: "Chicago, IL",
+            imageUrl: "https://example.com/cadillac-ct4.jpg",
+            listedAt: new Date("2026-04-18T12:00:00.000Z").toISOString(),
+          },
+        ];
       },
     },
     specsProviderName: "mock",

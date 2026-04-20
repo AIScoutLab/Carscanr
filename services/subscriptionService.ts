@@ -6,7 +6,7 @@ import { authService } from "@/services/authService";
 import { purchaseService } from "@/services/purchaseService";
 import { scanService } from "@/services/scanService";
 import { wait } from "@/lib/utils";
-import { SubscriptionActionResult, SubscriptionProduct, SubscriptionStatus, SubscriptionVerifyPayload } from "@/types";
+import { FreeUnlockReason, SubscriptionActionResult, SubscriptionProduct, SubscriptionStatus, SubscriptionVerifyPayload } from "@/types";
 
 type BackendSubscriptionRecord = {
   id: string;
@@ -43,14 +43,7 @@ type FreeUnlockActionResult = {
   remaining: number;
   limit: number;
   alreadyUnlocked: boolean;
-  reason:
-    | "already_unlocked"
-    | "consumed"
-    | "no_free_unlocks"
-    | "vehicle_not_found"
-    | "auth_required"
-    | "network_error"
-    | "unknown";
+  reason: FreeUnlockReason;
   message: string;
 };
 
@@ -610,11 +603,15 @@ export const subscriptionService = {
           ? "already_unlocked"
           : response.entitlement.allowed
             ? "consumed"
+            : response.entitlement.reason === "payload_too_thin"
+              ? "payload_too_thin"
             : "no_free_unlocks",
         message: response.entitlement.alreadyUnlocked
           ? "This vehicle is already unlocked."
           : response.entitlement.allowed
             ? "Free unlock applied. This vehicle is now fully unlocked."
+            : response.entitlement.reason === "payload_too_thin"
+              ? "We found the vehicle, but there is not enough useful detail yet to make an unlock worth it."
             : "No free unlocks remaining. Upgrade to Pro for full access.",
       };
     } catch (error) {

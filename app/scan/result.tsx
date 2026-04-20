@@ -3,29 +3,20 @@ import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { AppContainer } from "@/components/AppContainer";
 import { BackButton } from "@/components/BackButton";
-import { CandidateMatchCard } from "@/components/CandidateMatchCard";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { EmptyState } from "@/components/EmptyState";
-import { LockedContentPreview } from "@/components/LockedContentPreview";
-import { MarketSnapshotCard } from "@/components/MarketSnapshotCard";
-import { OwnershipInsightsCard } from "@/components/OwnershipInsightsCard";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { ProLockCard } from "@/components/ProLockCard";
 import { PremiumSkeleton } from "@/components/PremiumSkeleton";
 import { ScanUsageMeter } from "@/components/ScanUsageMeter";
 import { SectionHeader } from "@/components/SectionHeader";
-import { UpgradePromptCard } from "@/components/UpgradePromptCard";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
 import { useSubscription } from "@/hooks/useSubscription";
 import { generateVehicleInsight } from "@/lib/vehicleInsights";
-import { authService } from "@/services/authService";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
-import { garageService } from "@/services/garageService";
 import { scanService } from "@/services/scanService";
 import { buildVehicleSoftUnlockId, buildVehicleUnlockId } from "@/services/subscriptionService";
-import { vehicleService } from "@/services/vehicleService";
-import { ListingResult, ScanResult, ValuationResult, VehicleRecord } from "@/types";
+import { ScanResult } from "@/types";
 import { confidenceTone, formatConfidence } from "@/lib/utils";
 
 type GroundedYearRange = {
@@ -76,6 +67,13 @@ type NormalizedScan = {
   limitedPreview: boolean | null;
   quickResult: boolean;
   quickResultSource: "offline_canonical" | "local_scan_cache" | null;
+  identificationConfidence: number | null;
+  dataConfidence: number | null;
+  payloadStrength: "strong" | "usable" | "thin" | "empty" | null;
+  enrichmentMode: "exact" | "adjacent_year" | "generation_fallback" | "fallback_only" | null;
+  unlockEligible: boolean | null;
+  unlockRecommendationReason: string | null;
+  previewSpecFacts: string[];
 };
 
 function safeString(value: unknown, fallback = "") {
@@ -158,7 +156,56 @@ function normalizeScanForResult(raw: ScanResult): NormalizedScan {
       raw.quickResultSource === "offline_canonical" || raw.quickResultSource === "local_scan_cache"
         ? raw.quickResultSource
         : null,
+    identificationConfidence: safeNumber(raw.identificationConfidence),
+    dataConfidence: safeNumber(raw.dataConfidence),
+    payloadStrength:
+      raw.payloadStrength === "strong" || raw.payloadStrength === "usable" || raw.payloadStrength === "thin" || raw.payloadStrength === "empty"
+        ? raw.payloadStrength
+        : null,
+    enrichmentMode:
+      raw.enrichmentMode === "exact" ||
+      raw.enrichmentMode === "adjacent_year" ||
+      raw.enrichmentMode === "generation_fallback" ||
+      raw.enrichmentMode === "fallback_only"
+        ? raw.enrichmentMode
+        : null,
+    unlockEligible: typeof raw.unlockEligible === "boolean" ? raw.unlockEligible : null,
+    unlockRecommendationReason: typeof raw.unlockRecommendationReason === "string" ? raw.unlockRecommendationReason : null,
+    previewSpecFacts: [],
   };
+}
+
+async function buildPreviewSpecFacts(
+  vehicle: NormalizedVehicle,
+  detectedVehicleType: "car" | "motorcycle" | null,
+): Promise<string[]> {
+  const [horsepowerSupport, familySupport] = await Promise.all([
+    offlineCanonicalService.resolveHorsepowerSupport({
+      year: vehicle.year,
+      make: vehicle.make,
+      model: vehicle.model,
+      trim: vehicle.trim,
+      vehicleType: detectedVehicleType,
+    }),
+    offlineCanonicalService.resolveApproximateFamilySupport({
+      year: vehicle.year,
+      make: vehicle.make,
+      model: vehicle.model,
+      trim: vehicle.trim,
+      vehicleType: detectedVehicleType,
+    }),
+  ]);
+
+  const facts = [
+    horsepowerSupport?.value ? `${horsepowerSupport.label}: ${horsepowerSupport.value}` : null,
+    familySupport?.sharedSpecs.engine ? `Engine: ${familySupport.sharedSpecs.engine}` : null,
+    familySupport?.sharedSpecs.drivetrain ? `Drivetrain: ${familySupport.sharedSpecs.drivetrain}` : null,
+    familySupport?.sharedSpecs.bodyStyle ? `Body style: ${familySupport.sharedSpecs.bodyStyle}` : null,
+    familySupport?.sharedSpecs.mpgOrRange ? `MPG / Range: ${familySupport.sharedSpecs.mpgOrRange}` : null,
+    familySupport?.msrpRangeLabel ? `MSRP: ${familySupport.msrpRangeLabel}` : null,
+  ].filter((entry): entry is string => Boolean(entry));
+
+  return [...new Set(facts)].slice(0, 4);
 }
 
 function buildCandidateBaseKey(candidate: NormalizedVehicle) {
@@ -947,6 +994,13 @@ async function enrichScanForDisplay(raw: ScanResult) {
       displayTitleLabel: buildDisplayTitleLabel(resolvedIdentifiedVehicle),
     },
     candidates: rankedCandidates,
+    previewSpecFacts: await buildPreviewSpecFacts(
+      {
+        ...resolvedIdentifiedVehicle,
+        displayTitleLabel: buildDisplayTitleLabel(resolvedIdentifiedVehicle),
+      },
+      normalizedScan.detectedVehicleType,
+    ),
   };
 }
 
@@ -956,11 +1010,8 @@ export default function ScanResultScreen() {
   const scanId = typeof params.scanId === "string" ? params.scanId : undefined;
   const [scan, setScan] = useState<ScanResult | null>(null);
   const [normalized, setNormalized] = useState<NormalizedScan | null>(null);
-  const [marketSnapshot, setMarketSnapshot] = useState<{
-    avgPrice: string | null;
-    priceRange: string | null;
-    dealRating: string | null;
-  } | null>(null);
+  const [selectedResultCardKey, setSelectedResultCardKey] = useState<string>("best-match");
+  const [showBasicInfoDetails, setShowBasicInfoDetails] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const {
@@ -975,10 +1026,6 @@ export default function ScanResultScreen() {
     feedbackMessage,
     errorMessage,
   } = useSubscription();
-  const sectionStateRef = useRef<{
-    lockedPreview: boolean;
-    alternatives: number;
-  } | null>(null);
   const screenOpacity = useRef(new Animated.Value(0)).current;
   const screenTranslate = useRef(new Animated.Value(10)).current;
   const bestMatchScale = useRef(new Animated.Value(0.97)).current;
@@ -1005,6 +1052,7 @@ export default function ScanResultScreen() {
         } else {
           const normalizedScan = await enrichScanForDisplay(matched);
           setNormalized(normalizedScan);
+          setShowBasicInfoDetails(false);
           setError(null);
         }
       } catch (err) {
@@ -1019,6 +1067,33 @@ export default function ScanResultScreen() {
       console.log("[scan-result] unmounted", { scanId });
     };
   }, [scanId]);
+
+  useEffect(() => {
+    if (!__DEV__ || !normalized) {
+      return;
+    }
+    console.log("[scan-result] UNLOCK_PROTECTION_SCAN_RESULT", {
+      scanId: normalized.id,
+      identifiedCandidate: {
+        year: normalized.identifiedVehicle.year,
+        make: normalized.identifiedVehicle.make,
+        model: normalized.identifiedVehicle.model,
+        trim: normalized.identifiedVehicle.trim,
+        source: normalized.source,
+        confidence: normalized.identificationConfidence ?? normalized.confidenceScore,
+      },
+      candidateSet: normalized.candidates.map((candidate) => ({
+        year: candidate.year,
+        make: candidate.make,
+        model: candidate.model,
+        trim: candidate.trim,
+      })),
+      payloadStrength: normalized.payloadStrength,
+      unlockEligible: normalized.unlockEligible,
+      unlockRecommendationReason: normalized.unlockRecommendationReason,
+      finalDisplayedFallbackReason: normalized.unlockEligible === false ? normalized.unlockRecommendationReason : null,
+    });
+  }, [normalized]);
 
   const fallbackVehicle: NormalizedVehicle = {
     id: null,
@@ -1045,7 +1120,6 @@ export default function ScanResultScreen() {
     renderKey: buildCandidateBaseKey(normalized?.identifiedVehicle ?? fallbackVehicle),
   };
   let candidatesForRender: RenderCandidate[] = [];
-  let alternatives: RenderCandidate[] = [];
   let confidenceLine = "Confidence: 0% match";
   let insightLine = "Solid all-around vehicle.";
   const isCatalogMatched = Boolean(bestMatch.id);
@@ -1090,108 +1164,12 @@ export default function ScanResultScreen() {
       : displayConfidenceScore >= 0.75
         ? { pill: "rgba(44,127,255,0.14)", text: Colors.premium, label: Colors.premium, dot: Colors.accent }
         : { pill: "rgba(100,116,139,0.18)", text: Colors.textSoft, label: Colors.textMuted, dot: Colors.textMuted };
-  const parseCurrencyValue = (value: string | null | undefined) => {
-    if (!value) return null;
-    const digits = value.replace(/[^\d.]/g, "");
-    const parsed = Number(digits);
-    return Number.isFinite(parsed) ? parsed : null;
-  };
-
-  const buildMarketSnapshot = (valuation: ValuationResult | null, listings: ListingResult[]) => {
-    const listingPrices = listings
-      .map((listing) => parseCurrencyValue(listing.price))
-      .filter((price): price is number => typeof price === "number");
-    const valuationPrices = valuation
-      ? [valuation.tradeIn, valuation.privateParty, valuation.dealerRetail]
-          .map((value) => parseCurrencyValue(value))
-          .filter((price): price is number => typeof price === "number")
-      : [];
-
-    const averageFromListings =
-      listingPrices.length > 0
-        ? Math.round(listingPrices.reduce((sum, price) => sum + price, 0) / listingPrices.length)
-        : null;
-    const rangeFromListings =
-      listingPrices.length > 1
-        ? `$${Math.min(...listingPrices).toLocaleString("en-US")} - $${Math.max(...listingPrices).toLocaleString("en-US")}`
-        : null;
-
-    const avgPrice = averageFromListings
-      ? `$${averageFromListings.toLocaleString("en-US")}`
-      : valuationPrices.length > 0
-        ? `$${Math.round(valuationPrices.reduce((sum, price) => sum + price, 0) / valuationPrices.length).toLocaleString("en-US")}`
-        : null;
-
-    const priceRange =
-      rangeFromListings ??
-      (valuationPrices.length > 1
-        ? `$${Math.min(...valuationPrices).toLocaleString("en-US")} - $${Math.max(...valuationPrices).toLocaleString("en-US")}`
-        : null);
-
-    const dealRating =
-      avgPrice || priceRange
-        ? listingPrices.length >= 3
-          ? "Strong market signal"
-          : "Limited market signal"
-        : null;
-
-    return { avgPrice, priceRange, dealRating };
-  };
-
-  const buildEstimateGarageVehicle = (vehicle: NormalizedVehicle): VehicleRecord => {
-    const title = [vehicle.displayYearLabel, vehicle.make, vehicle.model].filter(Boolean).join(" ");
-    return {
-      id: approximateUnlockId ?? buildVehicleUnlockId({
-        vehicleId: vehicle.id,
-        year: vehicle.year,
-        groundedYear: vehicle.groundedExactYear,
-        make: vehicle.make,
-        model: vehicle.model,
-        vehicleType: normalized?.detectedVehicleType ?? null,
-        groundedMatchType: vehicle.groundedMatchType,
-      }) ?? "estimate:vehicle",
-      year: vehicle.year ?? 0,
-      make: vehicle.make,
-      model: vehicle.model,
-      trim: vehicle.displayTrimLabel ?? vehicle.trim ?? "",
-      bodyStyle: normalized?.detectedVehicleType === "motorcycle" ? "Motorcycle" : "Saved vehicle",
-      heroImage: normalized?.imageUri ?? vehicle.thumbnailUrl ?? "",
-      overview: `${title || "Vehicle"} saved from scan results.`,
-      specs: {
-        engine: "",
-        horsepower: null,
-        torque: "",
-        transmission: "",
-        drivetrain: "",
-        mpgOrRange: "",
-        exteriorColors: [],
-        msrp: 0,
-      },
-      valuation: {
-        tradeIn: "Unavailable",
-        tradeInRange: "Unavailable",
-        privateParty: "Unavailable",
-        privatePartyRange: "Unavailable",
-        dealerRetail: "Unavailable",
-        dealerRetailRange: "Unavailable",
-        confidenceLabel: "Open vehicle detail for latest pricing",
-        sourceLabel: "Saved estimate",
-        modelType: "modeled",
-      },
-      listings: [],
-    };
-  };
-
   try {
     if (normalized) {
       const candidates = Array.isArray(normalized.candidates) ? normalized.candidates : [];
       candidatesForRender = buildRenderCandidates(candidates);
       const bestKey = candidatesForRender[0]?.renderKey;
-      const duplicateBest = bestKey
-        ? candidatesForRender.slice(1).some((candidate) => candidate.renderKey === bestKey)
-        : false;
       bestMatch = candidatesForRender[0] ?? bestMatch;
-      alternatives = candidatesForRender.filter((candidate) => candidate.renderKey !== bestKey).slice(0, 3);
       const confidenceScore = displayConfidenceScore;
       confidenceLine = `Confidence: ${formatConfidence(confidenceScore)} match`;
       insightLine = generateVehicleInsight({
@@ -1214,86 +1192,6 @@ export default function ScanResultScreen() {
       : insightLine.toLowerCase().includes("resale") || insightLine.toLowerCase().includes("strong")
         ? `🔥 ${insightLine}`
         : insightLine;
-
-  useEffect(() => {
-    const vehicleId = bestMatch.id;
-    if (!vehicleId) {
-      setMarketSnapshot(null);
-      return;
-    }
-    const zip = "60610";
-    const mileage = "18400";
-    const condition = "excellent";
-    Promise.all([
-      vehicleService.getValue(vehicleId, zip, mileage, condition).catch((err) => {
-        console.log("[scan-result] value fetch failed", err);
-        return null;
-      }),
-      vehicleService.getListings(vehicleId, zip).catch((err) => {
-        console.log("[scan-result] listings fetch failed", err);
-        return [] as ListingResult[];
-      }),
-    ])
-      .then(([valuation, listings]) => {
-        const snapshot = buildMarketSnapshot(valuation, listings);
-        setMarketSnapshot(snapshot);
-      })
-      .catch((err) => {
-        console.log("[scan-result] market snapshot failed", err);
-        setMarketSnapshot(null);
-      });
-  }, [bestMatch.id]);
-
-  useEffect(() => {
-    if (!normalized) return;
-    const nextState = { lockedPreview: !hasFullAccess, alternatives: alternatives.length };
-    sectionStateRef.current = nextState;
-  }, [normalized, hasFullAccess, alternatives.length]);
-
-  const saveToGarage = async () => {
-    try {
-      console.log("[tap] result-save-to-garage", {
-        vehicleId: normalized?.identifiedVehicle.id ?? null,
-        unlockId: bestMatchUnlockId,
-        source: bestMatch.source ?? null,
-      });
-      if (isHighConfidenceVisualOverride && hasFullAccess && approximateUnlockId && normalized?.imageUri) {
-        await garageService.saveEstimate({
-          unlockId: approximateUnlockId,
-          sourceType: bestMatch.source === "visual_override" ? "visual_override" : "estimate",
-          imageUri: normalized.imageUri,
-          confidence: bestMatch.confidence ?? displayConfidenceScore,
-          estimateMeta: {
-            year: bestMatch.year ?? 0,
-            make: bestMatch.make,
-            model: bestMatch.model,
-            trim: bestMatch.displayTrimLabel ?? bestMatch.trim ?? "",
-            vehicleType: normalized?.detectedVehicleType ?? "",
-            titleLabel: bestMatch.displayTitleLabel ?? bestMatchTitle,
-            trustedCase: isHighConfidenceTrustedVisualOverride,
-            resultSource: bestMatch.source ?? normalized?.source ?? "",
-          },
-          vehicle: buildEstimateGarageVehicle(bestMatch),
-        });
-        router.push("/(tabs)/garage");
-        return;
-      }
-      if (!(await authService.getAccessToken())) {
-        Alert.alert("Sign in required", "Sign in to save vehicles to your Garage and keep them across devices.", [
-          { text: "Not now", style: "cancel" },
-          { text: "Sign In", onPress: () => router.push("/auth?mode=sign-in") },
-        ]);
-        return;
-      }
-      if (!normalized?.identifiedVehicle.id || !normalized.imageUri) {
-        throw new Error("Missing vehicle details.");
-      }
-      await garageService.save(normalized.identifiedVehicle.id, normalized.imageUri);
-    } catch (err) {
-      console.log("[scan-result] save failed", err);
-    }
-    router.push("/(tabs)/garage");
-  };
 
   const bestMatchYearLabel = bestMatch.displayYearLabel;
   const bestMatchTitle = bestMatch.displayTitleLabel ?? [bestMatchYearLabel, bestMatch.make, bestMatch.model].filter(Boolean).join(" ");
@@ -1381,11 +1279,30 @@ export default function ScanResultScreen() {
   };
   const useCandidate = (candidate: NormalizedVehicle) => {
     console.log("[tap] result-use-candidate", { candidateId: candidate.id, model: candidate.model });
-    openVehicleDetail(candidate, "candidate-card");
+    setSelectedResultCardKey(candidate.id || `${candidate.year ?? "unknown"}:${candidate.make}:${candidate.model}`);
   };
 
   const bestMatchDetailTarget = getDetailTarget(bestMatch);
   const canOpenBestMatch = bestMatchDetailTarget.kind !== "none" && (!requiresApproximateUnlock || hasFullAccess);
+  const unlockWorthinessBlocked = normalized?.unlockEligible === false;
+  const unlockFailureTitle = (reason?: string) => (reason === "payload_too_thin" ? "Unlock protected" : "Unlock unavailable");
+  const unlockWorthinessMessage =
+    normalized?.unlockRecommendationReason ?? "We found the vehicle, but there is not enough useful detail yet to make an unlock worth it.";
+  const requiresUnlockConfirmation = !isCatalogMatched || displayConfidenceScore < 0.85;
+  const confirmUnlockIfNeeded = async () => {
+    if (!requiresUnlockConfirmation) {
+      return true;
+    }
+    const confirmationMessage = !isCatalogMatched
+      ? "This vehicle is an estimate. Unlock anyway?"
+      : "This result is lower confidence. Unlock anyway?";
+    return await new Promise<boolean>((resolve) => {
+      Alert.alert("Confirm unlock", confirmationMessage, [
+        { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+        { text: "Unlock", onPress: () => resolve(true) },
+      ]);
+    });
+  };
   const handleHighConfidenceVisualOverrideAction = async (source: string) => {
     if (!isHighConfidenceVisualOverride) {
       handleOpenBestMatch();
@@ -1395,7 +1312,25 @@ export default function ScanResultScreen() {
       openVehicleDetail(bestMatch, source);
       return;
     }
+    if (unlockWorthinessBlocked) {
+      if (__DEV__) {
+        console.log("[scan-result] UNLOCK_PROTECTION_BLOCKED", {
+          source,
+          scanId: normalized?.id ?? null,
+          payloadStrength: normalized?.payloadStrength ?? null,
+          unlockEligible: normalized?.unlockEligible ?? null,
+          unlockRecommendationReason: unlockWorthinessMessage,
+          finalDisplayedFallbackReason: unlockWorthinessMessage,
+        });
+      }
+      Alert.alert("Unlock protected", unlockWorthinessMessage);
+      return;
+    }
     if (freeUnlocksRemaining > 0 && approximateUnlockId) {
+      const confirmed = await confirmUnlockIfNeeded();
+      if (!confirmed) {
+        return;
+      }
       const result = await useFreeUnlockForVehicle(
         approximateUnlockId,
         bestMatchSoftUnlockId ? [bestMatchSoftUnlockId] : [],
@@ -1405,28 +1340,53 @@ export default function ScanResultScreen() {
         Alert.alert("Free unlock applied", result.message);
         openVehicleDetail(bestMatch, `${source}-unlocked`);
       } else {
-        Alert.alert("Unlock unavailable", result.message || errorMessage || "We couldn’t apply your free unlock right now.");
+        Alert.alert(unlockFailureTitle(result.reason), result.message || errorMessage || "We couldn’t apply your free unlock right now.");
       }
       return;
     }
     router.push("/paywall");
   };
   const handleOpenBestMatch = () => {
-    if (isHighConfidenceVisualOverride) {
-      void handleHighConfidenceVisualOverrideAction("best-match-card");
-      return;
-    }
-    openVehicleDetail(bestMatch, "best-match-card");
+    setSelectedResultCardKey("best-match");
+  };
+  const handleViewBasicInfo = () => {
+    setSelectedResultCardKey("best-match");
+    setShowBasicInfoDetails(true);
   };
   const handleOpenFullDetail = () => {
     console.log("[tap] result-open-full-detail", { vehicleId: bestMatch.id, targetKind: bestMatchDetailTarget.kind });
     openVehicleDetail(bestMatch, "open-full-detail");
   };
-  const primaryVisualOverrideActionLabel = isUnlocking
-    ? "Opening vehicle details..."
-    : hasFullAccess
-      ? "View Vehicle Details"
-      : "Open Vehicle Details";
+  const handlePrimaryResultAction = async () => {
+    if (hasFullAccess) {
+      handleOpenFullDetail();
+      return;
+    }
+    if (isHighConfidenceVisualOverride) {
+      await handleHighConfidenceVisualOverrideAction("primary-result-cta");
+      return;
+    }
+    console.log("[tap] result-use-free-unlock", { vehicleId: bestMatch.id });
+    if (!bestMatch.id) {
+      console.log("[scan-result] FALLBACK_CARD_TAPPED", { source: "primary-result-cta", scanId: normalized?.id ?? null });
+      return;
+    }
+    const confirmed = await confirmUnlockIfNeeded();
+    if (!confirmed) {
+      return;
+    }
+    const result = await useFreeUnlockForVehicle(bestMatch.id);
+    if (result.ok) {
+      await refreshStatus();
+      Alert.alert("Free unlock applied", result.message);
+      openVehicleDetail(bestMatch, "free-unlock-continue");
+    } else {
+      Alert.alert(
+        unlockFailureTitle(result.reason),
+        result.message || errorMessage || "We couldn’t apply your free unlock right now.",
+      );
+    }
+  };
   const fallbackConfidenceLabel =
     isHighConfidenceTrustedVisualOverride
       ? "High confidence"
@@ -1439,15 +1399,14 @@ export default function ScanResultScreen() {
           : "Estimated match";
   const resultImageSource = normalized?.imageUri ? "scanned-photo" : "none";
   const resultImageFitMode = normalized?.imageUri ? "contain" : "cover";
-  const fallbackQuickFacts = !isCatalogMatched && displayConfidenceScore >= 0.85
-    ? [
-        bestMatch.displayYearLabel ? `Year: ${bestMatch.displayYearLabel}` : null,
-        bestMatch.make ? `Make: ${bestMatch.make}` : null,
-        bestMatch.model ? `Model: ${bestMatch.model}` : null,
-        bestMatch.displayTrimLabel ? `Trim: ${bestMatch.displayTrimLabel}` : null,
-        normalized?.detectedVehicleType ? `Vehicle type: ${normalized.detectedVehicleType === "motorcycle" ? "Motorcycle" : "Car"}` : null,
-      ].filter((entry): entry is string => Boolean(entry))
-    : [];
+  const basicPreviewFacts = [
+    bestMatch.displayYearLabel ? `Year: ${bestMatch.displayYearLabel}` : null,
+    bestMatch.make ? `Make: ${bestMatch.make}` : null,
+    bestMatch.model ? `Model: ${bestMatch.model}` : null,
+    bestMatch.displayTrimLabel ? `Trim: ${bestMatch.displayTrimLabel}` : null,
+    normalized?.detectedVehicleType ? `Vehicle type: ${normalized.detectedVehicleType === "motorcycle" ? "Motorcycle" : "Car"}` : null,
+  ].filter((entry): entry is string => Boolean(entry));
+  const previewSpecFacts = normalized?.previewSpecFacts ?? [];
   const highConfidenceOverrideBody =
     bestMatch.displayYearLabel || bestMatch.make || bestMatch.model
       ? `We identified this ${[bestMatch.displayYearLabel, bestMatch.make, bestMatch.model].filter(Boolean).join(" ")} with high confidence.`
@@ -1467,14 +1426,14 @@ export default function ScanResultScreen() {
         scanId: normalized.id,
         title: "Estimated match",
       });
-      if (fallbackQuickFacts.length > 0) {
+      if (basicPreviewFacts.length > 0 || previewSpecFacts.length > 0) {
         console.log("[scan-result] FALLBACK_QUICK_FACTS_RENDERED", {
           scanId: normalized.id,
-          facts: fallbackQuickFacts,
+          facts: [...basicPreviewFacts, ...previewSpecFacts],
         });
       }
     }
-  }, [displayConfidenceScore, fallbackQuickFacts, isCatalogMatched, normalized]);
+  }, [basicPreviewFacts, displayConfidenceScore, isCatalogMatched, normalized, previewSpecFacts]);
 
   useEffect(() => {
     if (!normalized?.imageUri) {
@@ -1556,11 +1515,15 @@ export default function ScanResultScreen() {
             <SectionHeader title="Best Match" subtitle="Our strongest identification from this photo." />
             <Animated.View style={{ opacity: bestMatchOpacity, transform: [{ scale: bestMatchScale }] }}>
               <TouchableOpacity
-                style={[styles.primaryCard, !canOpenBestMatch && styles.primaryCardDisabled]}
-                activeOpacity={canOpenBestMatch || isHighConfidenceVisualOverride ? 0.88 : 1}
-                accessibilityRole={canOpenBestMatch || isHighConfidenceVisualOverride ? "button" : undefined}
+                style={[
+                  styles.primaryCard,
+                  selectedResultCardKey === "best-match" && styles.primaryCardSelected,
+                  !canOpenBestMatch && styles.primaryCardDisabled,
+                ]}
+                activeOpacity={0.92}
+                accessibilityRole="button"
                 onPress={handleOpenBestMatch}
-                disabled={!canOpenBestMatch && !isHighConfidenceVisualOverride}
+                disabled={false}
               >
                 <View style={styles.primaryAccent} pointerEvents="none" />
                 {isQuickResult ? (
@@ -1596,209 +1559,46 @@ export default function ScanResultScreen() {
                       : "We identified this vehicle from your photo and will open the best available vehicle details for it."}
                   </Text>
                 ) : null}
-                {bestMatchDetailTarget.kind === "estimated" ? (
-                  <Text style={styles.preview}>
-                    {isHighConfidenceVisualOverride
-                      ? hasFullAccess
-                        ? "Vehicle details are unlocked and ready to open."
-                        : "Open vehicle details for this vehicle."
-                      : "Vehicle details are available for this result."}
-                  </Text>
-                ) : null}
-                {!canOpenBestMatch ? (
-                  <Text style={styles.preview}>
-                    {isHighConfidenceVisualOverride
-                      ? isHighConfidenceTrustedVisualOverride
-                        ? "Use a free unlock or Pro to open vehicle details for this vehicle."
-                        : "Use a free unlock or Pro to open vehicle details for this vehicle."
-                      : "Detailed specs are not available for this match yet."}
-                  </Text>
-                ) : null}
-                {isCatalogMatched && !hasFullAccess ? <Text style={styles.preview}>Premium details are locked until you use a free unlock or upgrade to Pro.</Text> : null}
-                {isHighConfidenceVisualOverride ? (
-                  <View style={styles.inlineActionWrap}>
-                    <PrimaryButton
-                      label={primaryVisualOverrideActionLabel}
-                      onPress={() => {
-                        void handleHighConfidenceVisualOverrideAction("best-match-primary-cta");
-                      }}
-                      disabled={isUnlocking}
-                    />
-                  </View>
-                ) : null}
               </TouchableOpacity>
             </Animated.View>
           </>
-          {!isCatalogMatched ? (
-            <>
-              {fallbackQuickFacts.length > 0 ? (
-                <View style={styles.quickFactsCard}>
-                  <Text style={styles.quickFactsTitle}>{isHighConfidenceVisualOverride ? "Detected vehicle details" : "Photo-based vehicle details"}</Text>
-                  {fallbackQuickFacts.map((fact) => (
-                    <Text key={fact} style={styles.quickFactLine}>{fact}</Text>
-                  ))}
-                </View>
-              ) : null}
-              <View style={styles.unlockCard}>
-                {isHighConfidenceVisualOverride ? (
-                  <View style={styles.trustedDetailBadge}>
-                    <Text style={styles.trustedDetailBadgeLabel}>Vehicle details</Text>
-                  </View>
-                ) : null}
-                <Text style={styles.unlockTitle}>
-                  {isHighConfidenceVisualOverride
-                    ? isHighConfidenceTrustedVisualOverride
-                      ? "Open Vehicle Details"
-                      : "Open Vehicle Details"
-                    : "Estimated match"}
-                </Text>
-                <Text style={styles.unlockBody}>
-                  {isHighConfidenceVisualOverride
-                    ? "Unlock this vehicle once to open the full detail view with the best available specs, value, listings, and photos."
-                    : "Open the best available vehicle details for this result."}
-                </Text>
-                {!isHighConfidenceVisualOverride ? (
-                  <Text style={styles.unlockNote}>This is not a purchase issue. Try another scan angle, or check again after the catalog refreshes.</Text>
-                ) : null}
-                {isHighConfidenceVisualOverride && !hasFullAccess ? (
-                  <View style={styles.trustedActionStack}>
-                    <View style={styles.trustedUnlockMeta}>
-                      <Text style={styles.trustedUnlockMetaLabel}>Best next step</Text>
-                      <Text style={styles.trustedUnlockMetaValue}>
-                        {freeUnlocksRemaining > 0
-                          ? `${Math.max(0, freeUnlocksRemaining)} free unlock${freeUnlocksRemaining === 1 ? "" : "s"} remaining`
-                          : "No free unlocks remaining"}
-                      </Text>
-                    </View>
-                    {freeUnlocksRemaining > 0 && approximateUnlockId ? (
-                      <PrimaryButton
-                        label={isUnlocking ? "Opening vehicle details..." : "Open Vehicle Details"}
-                        onPress={async () => {
-                          const result = await useFreeUnlockForVehicle(
-                            approximateUnlockId,
-                            bestMatchSoftUnlockId ? [bestMatchSoftUnlockId] : [],
-                          );
-                          if (result.ok) {
-                            await refreshStatus();
-                            Alert.alert("Free unlock applied", result.message);
-                            openVehicleDetail(bestMatch, "visual-override-free-unlock");
-                          } else {
-                            Alert.alert("Unlock unavailable", result.message || errorMessage || "We couldn’t apply your free unlock right now.");
-                          }
-                        }}
-                        disabled={isUnlocking}
-                      />
-                    ) : null}
-                    {freeUnlocksRemaining <= 0 ? <PrimaryButton label="Unlock with Pro" secondary onPress={() => router.push("/paywall")} /> : null}
-                  </View>
-                ) : isHighConfidenceVisualOverride ? (
-                  <PrimaryButton label="View Vehicle Details" onPress={handleOpenBestMatch} />
-                ) : alternatives.length > 0 ? (
-                  <PrimaryButton label="Explore Similar Matches" onPress={() => openVehicleDetail(alternatives[0], "estimated-alternative")} />
-                ) : (
-                  <PrimaryButton label="Scan Another Vehicle" onPress={() => router.push("/(tabs)/scan")} />
-                )}
-                <PrimaryButton
-                  label={isHighConfidenceVisualOverride ? "Scan Another Vehicle" : "Scan Another Vehicle"}
-                  secondary
-                  onPress={() => router.push("/(tabs)/scan")}
-                />
-              </View>
-            </>
-          ) : !hasFullAccess ? (
-            <>
-              <ProLockCard onPress={() => { console.log("[tap] result-pro-lock-card"); router.push("/paywall"); }} />
-              <LockedContentPreview
-                locked
-                title="Full detail preview"
-                description="You can still see the shape of the result. Pro reveals the full vehicle profile, value, and listings."
-              >
-                <View style={styles.previewCard}>
-                  <Text style={styles.previewHeading}>What opens next</Text>
-                  <Text style={styles.previewBody}>Original MSRP, engine, drivetrain, colors, market value, dealer listings, and your saved photo history for this vehicle.</Text>
-                </View>
-              </LockedContentPreview>
-              <View style={styles.unlockCard}>
-                <Text style={styles.unlockTitle}>Use 1 of your free unlocks</Text>
-                <Text style={styles.unlockBody}>This unlock gives full premium access for this vehicle.</Text>
-                <Text style={styles.unlockNote}>
-                  {Math.max(0, freeUnlocksUsed)} of {freeUnlocksLimit} free unlocks used • {Math.max(0, freeUnlocksRemaining)} remaining
-                </Text>
-                {freeUnlocksRemaining > 0 ? (
-                  <PrimaryButton
-                    label={isUnlocking ? "Applying unlock..." : "Use 1 Free Unlock"}
-                    onPress={async () => {
-                      console.log("[tap] result-use-free-unlock", { vehicleId: bestMatch.id });
-                      if (!bestMatch.id) {
-                        console.log("[scan-result] FALLBACK_CARD_TAPPED", { source: "free-unlock-button", scanId: normalized?.id ?? null });
-                        return;
-                      }
-                      const result = await useFreeUnlockForVehicle(bestMatch.id);
-                      if (result.ok) {
-                        await refreshStatus();
-                        Alert.alert("Free unlock applied", result.message);
-                        openVehicleDetail(bestMatch, "free-unlock-continue");
-                      } else {
-                        Alert.alert("Unlock unavailable", result.message || errorMessage || "We couldn’t apply your free unlock right now.");
-                      }
-                    }}
-                    disabled={isUnlocking}
-                  />
-                ) : null}
-                <PrimaryButton label="Unlock Pro" secondary onPress={() => { console.log("[tap] result-unlock-pro"); router.push("/paywall"); }} />
-              </View>
-            </>
-          ) : (
-            <>
-              <MarketSnapshotCard
-                avgPrice={marketSnapshot?.avgPrice ?? null}
-                priceRange={marketSnapshot?.priceRange ?? null}
-                dealRating={marketSnapshot?.dealRating ?? null}
-              />
-              <OwnershipInsightsCard />
-            </>
-          )}
-          {alternatives.length > 0 ? (
-            <>
-              <SectionHeader
-                title={isHighConfidenceTrustedVisualOverride ? "Closest Verified Models" : "Other Possibilities"}
-                subtitle={
-                  isHighConfidenceTrustedVisualOverride
-                    ? "Nearby grounded catalog matches for comparison."
-                    : "Helpful alternatives if the best match doesn’t look quite right."
-                }
-              />
-              {alternatives.map((candidate) => (
-                <CandidateMatchCard
-                  key={candidate.renderKey}
-                  candidate={{
-                    id: candidate.id ?? "",
-                    year: candidate.year ?? 0,
-                    displayTitleLabel: candidate.displayTitleLabel ?? undefined,
-                    make: candidate.make,
-                    model: candidate.model,
-                    trim: candidate.displayTrimLabel ? candidate.displayTrimLabel : undefined,
-                    displayTrimLabel: candidate.displayTrimLabel ?? undefined,
-                    confidence: candidate.confidence ?? 0,
-                    thumbnailUrl: candidate.thumbnailUrl ?? "",
-                    displayYearLabel: candidate.displayYearLabel ?? undefined,
-                  }}
-                  hideConfidence={isHighConfidenceTrustedVisualOverride}
-                  tapHintOverride={isHighConfidenceTrustedVisualOverride ? "Tap to compare this verified model" : null}
-                  onPress={getDetailTarget(candidate).kind !== "none" ? () => useCandidate(candidate) : undefined}
-                />
+          <View style={styles.quickFactsCard}>
+            <Text style={styles.quickFactsTitle}>Free Preview</Text>
+            <Text style={styles.quickFactsSubtitle}>Free view includes identification and partial specs. Unlock adds value, listings, and full specs.</Text>
+            <View style={styles.previewGroup}>
+              <Text style={styles.previewGroupLabel}>Identification</Text>
+              {basicPreviewFacts.map((fact) => (
+                <Text key={fact} style={styles.quickFactLine}>{fact}</Text>
               ))}
-            </>
-          ) : null}
-          {isCatalogMatched || (isHighConfidenceVisualOverride && hasFullAccess) ? <PrimaryButton label="Save to Garage" onPress={saveToGarage} /> : null}
-          {canOpenBestMatch ? (
+              {basicPreviewFacts.length === 0 ? <Text style={styles.quickFactLine}>Basic vehicle details are still loading.</Text> : null}
+            </View>
+            {showBasicInfoDetails ? (
+              <View style={styles.previewGroup}>
+                <Text style={styles.previewGroupLabel}>Partial Specs</Text>
+                {previewSpecFacts.length > 0 ? (
+                  previewSpecFacts.map((fact) => (
+                    <Text key={fact} style={styles.quickFactLine}>{fact}</Text>
+                  ))
+                ) : (
+                  <Text style={styles.quickFactLine}>Partial specs are still loading for this result.</Text>
+                )}
+              </View>
+            ) : null}
+          </View>
+          <View style={styles.singleActionCard}>
             <PrimaryButton
-              label={hasFullAccess ? "View Vehicle Details" : "Open Vehicle Details"}
-              secondary
-              onPress={handleOpenFullDetail}
+              label={hasFullAccess ? "View Vehicle Details" : "Unlock Full Details"}
+              onPress={() => {
+                void handlePrimaryResultAction();
+              }}
+              disabled={isUnlocking}
             />
-          ) : null}
-          <Text style={styles.notRight}>Not right? Try one of the other possibilities above, or rescan from a cleaner front or rear angle.</Text>
+            <PrimaryButton
+              label="View Basic Info"
+              secondary
+              onPress={handleViewBasicInfo}
+            />
+          </View>
         </Animated.View>
       </ErrorBoundary>
     </AppContainer>
@@ -1819,6 +1619,10 @@ const styles = StyleSheet.create({
     ...cardStyles.primaryTint,
     gap: 10,
     overflow: "hidden",
+  },
+  primaryCardSelected: {
+    borderColor: Colors.accent,
+    backgroundColor: Colors.cardAlt,
   },
   primaryCardDisabled: {
     opacity: 0.97,
@@ -1882,10 +1686,25 @@ const styles = StyleSheet.create({
   bestEffortNote: { ...Typography.caption, color: Colors.accent },
   quickFactsCard: {
     ...cardStyles.secondary,
-    gap: 8,
+    gap: 10,
   },
   quickFactsTitle: { ...Typography.heading, color: Colors.textStrong },
+  quickFactsSubtitle: { ...Typography.caption, color: Colors.textMuted },
   quickFactLine: { ...Typography.body, color: Colors.textMuted },
+  previewGroup: {
+    gap: 6,
+    paddingTop: 2,
+  },
+  previewGroupLabel: {
+    ...Typography.caption,
+    color: Colors.textStrong,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    fontWeight: "700",
+  },
+  singleActionCard: {
+    gap: 12,
+  },
   unlockCard: {
     ...cardStyles.secondary,
     gap: 12,

@@ -1,14 +1,16 @@
 import { beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { AppError } from "../src/errors/appError.js";
-import { buildCanonicalKey, createSpecsCacheRow } from "../src/lib/providerCache.js";
+import { buildCanonicalKey, createSpecsCacheRow, getValuesCacheKey } from "../src/lib/providerCache.js";
 import { resetProviders, setProviders } from "../src/lib/providerRegistry.js";
 import { resetRepositories, setRepositories } from "../src/lib/repositoryRegistry.js";
 import { GarageService } from "../src/services/garageService.js";
 import { normalizeVisionResult, ScanService } from "../src/services/scanService.js";
 import { UsageService } from "../src/services/usageService.js";
 import { SubscriptionService } from "../src/services/subscriptionService.js";
-import { VehicleService } from "../src/services/vehicleService.js";
+import { VehicleService, evaluateVehiclePayloadStrength } from "../src/services/vehicleService.js";
 import { buildLiveVehicleId } from "../src/providers/marketcheck/vehicleId.js";
 import { createTestProviders, createTestRepositories, createVehicleFixtures, createVisionProviderResult } from "./helpers/testData.js";
 
@@ -437,6 +439,415 @@ describe("VehicleService specs canonical layer", () => {
     assert.equal(result.source, "cache");
     assert.equal(testRepositories.state.providerApiUsageLogs.length, 1);
     assert.equal(testRepositories.state.providerApiUsageLogs[0].eventType, "cache_hit");
+  });
+
+  test("evaluates adjacent-year Ranger payload as unlock-eligible when useful fallback exists", async () => {
+    const ranger = {
+      id: "2023-ford-ranger-xlt",
+      year: 2023,
+      make: "Ford",
+      model: "Ranger",
+      trim: "XLT",
+      bodyStyle: "Truck",
+      vehicleType: "car" as const,
+      msrp: 34160,
+      engine: "2.3L turbo I4",
+      horsepower: 270,
+      drivetrain: "4WD",
+      transmission: "10-speed automatic",
+      mpgOrRange: "20 city / 24 highway",
+      torque: "310 lb-ft",
+      colors: [],
+    };
+
+    const payload = evaluateVehiclePayloadStrength({
+      vehicle: ranger,
+      valuation: {
+        id: "ranger-value",
+        vehicleId: ranger.id,
+        zip: "60610",
+        mileage: 25000,
+        condition: "good",
+        tradeIn: 28750,
+        privateParty: 30500,
+        dealerRetail: 32900,
+        currency: "USD",
+        generatedAt: new Date().toISOString(),
+      },
+      listings: [],
+    });
+
+    assert.equal(payload.unlockEligible, true);
+    assert.equal(payload.payloadStrength === "strong" || payload.payloadStrength === "usable", true);
+  });
+
+  test("falls back to previous-year valuation when exact year lookup misses", async () => {
+    const ranger = {
+      id: "2023-ford-ranger-xlt",
+      year: 2023,
+      make: "Ford",
+      model: "Ranger",
+      trim: "XLT",
+      bodyStyle: "Truck",
+      vehicleType: "car" as const,
+      msrp: 34160,
+      engine: "2.3L turbo I4",
+      horsepower: 270,
+      torque: "310 lb-ft",
+      transmission: "10-speed automatic",
+      drivetrain: "4WD",
+      mpgOrRange: "20 city / 24 highway",
+      colors: [],
+    };
+    const testRepositories = createTestRepositories({
+      vehicles: [ranger],
+    });
+    setRepositories(testRepositories.repositories);
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation(input) {
+          if (input.vehicle?.year === 2022 && input.vehicle.make === "Ford" && input.vehicle.model === "Ranger") {
+            return {
+              id: "val-ranger",
+              vehicleId: ranger.id,
+              zip: input.zip,
+              mileage: input.mileage,
+              condition: input.condition as any,
+              tradeIn: 27000,
+              privateParty: 28900,
+              dealerRetail: 31200,
+              currency: "USD" as const,
+              generatedAt: "2026-04-19T00:00:00.000Z",
+            };
+          }
+          return null;
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: ranger.id,
+      zip: "60610",
+      mileage: 25000,
+      condition: "good",
+    });
+
+    assert.equal(result.data.tradeIn, 27000);
+    assert.equal(result.source, "provider");
+  });
+
+  test("value cache key changes when zip or mileage changes", () => {
+    const descriptor = {
+      year: 2023,
+      make: "Honda",
+      model: "CR-V",
+      trim: "EX-L",
+      vehicleType: "car" as const,
+      normalizedMake: "honda",
+      normalizedModel: "cr-v",
+      normalizedTrim: "ex-l",
+    };
+
+    const firstKey = getValuesCacheKey(descriptor, {
+      zip: "60610",
+      mileage: 18400,
+      condition: "good",
+    });
+    const zipChangedKey = getValuesCacheKey(descriptor, {
+      zip: "60611",
+      mileage: 18400,
+      condition: "good",
+    });
+    const mileageChangedKey = getValuesCacheKey(descriptor, {
+      zip: "60610",
+      mileage: 19600,
+      condition: "good",
+    });
+
+    assert.notEqual(firstKey, zipChangedKey);
+    assert.notEqual(firstKey, mileageChangedKey);
+  });
+
+  test("descriptor-only CR-V lookups resolve specs, value, and listings without a backend vehicle id", async () => {
+    const testRepositories = createTestRepositories();
+    setRepositories(testRepositories.repositories);
+    setProviders({
+      ...createTestProviders(),
+      specsProvider: {
+        async getVehicleSpecs(input) {
+          if (!input.vehicle) {
+            return null;
+          }
+          return {
+            ...input.vehicle,
+            id: input.vehicleId,
+            bodyStyle: input.vehicle.bodyStyle || "SUV",
+            engine: "1.5L turbo I4",
+            horsepower: 190,
+            transmission: "CVT",
+            drivetrain: "AWD",
+            mpgOrRange: "27 city / 32 highway",
+            msrp: 34500,
+            colors: ["Urban Gray Pearl"],
+          };
+        },
+        async searchVehicles() {
+          return [];
+        },
+        async searchCandidates() {
+          return [];
+        },
+      },
+    });
+
+    const descriptor = {
+      year: 2020,
+      make: "Honda",
+      model: "CR-V",
+      trim: "LX",
+      vehicleType: "car" as const,
+      bodyStyle: "SUV",
+      normalizedModel: "cr-v",
+    };
+
+    const service = new VehicleService();
+    const specs = await service.getSpecs({
+      vehicleId: "95c64a97-ccee-4756-940d-9d68448f79f7",
+      descriptor,
+    });
+    const value = await service.getValue({
+      vehicleId: "95c64a97-ccee-4756-940d-9d68448f79f7",
+      descriptor,
+      zip: "60610",
+      mileage: 12000,
+      condition: "good",
+    });
+    const listings = await service.getListings({
+      vehicleId: "95c64a97-ccee-4756-940d-9d68448f79f7",
+      descriptor,
+      zip: "60610",
+      radiusMiles: 50,
+    });
+
+    assert.equal(specs.data.horsepower, 190);
+    assert.ok(value.data.privateParty > 0);
+    assert.ok(listings.data.length >= 1);
+  });
+
+  test("descriptor-backed CR-V value falls back to same-year model pricing when trim-specific lookup misses", async () => {
+    const testRepositories = createTestRepositories();
+    setRepositories(testRepositories.repositories);
+    setProviders({
+      ...createTestProviders(),
+      valueProvider: {
+        async getValuation(input) {
+          if (input.vehicle?.make === "Honda" && input.vehicle.model === "CR-V" && !input.vehicle.trim) {
+            return {
+              id: "crv-same-year-family-value",
+              vehicleId: input.vehicleId,
+              zip: input.zip,
+              mileage: input.mileage,
+              condition: input.condition as any,
+              tradeIn: 24600,
+              privateParty: 26200,
+              dealerRetail: 28100,
+              currency: "USD" as const,
+              generatedAt: "2026-04-19T00:00:00.000Z",
+              sourceLabel: "Based on market data",
+              modelType: "provider_range" as const,
+            };
+          }
+          return null;
+        },
+      },
+    });
+
+    const descriptor = {
+      year: 2023,
+      make: "Honda",
+      model: "CR-V",
+      trim: "EX-L",
+      vehicleType: "car" as const,
+      bodyStyle: "SUV",
+      normalizedModel: "cr-v",
+    };
+
+    const service = new VehicleService();
+    const value = await service.getValue({
+      vehicleId: "client-only-crv-id",
+      descriptor,
+      zip: "60610",
+      mileage: 18000,
+      condition: "good",
+    });
+
+    assert.equal(value.data.privateParty, 26200);
+    assert.equal(value.data.sourceLabel, "Based on market data");
+  });
+
+  test("descriptor-backed CR-V listings fall back to same-model mixed trims when exact trim misses", async () => {
+    const testRepositories = createTestRepositories();
+    setRepositories(testRepositories.repositories);
+    setProviders({
+      ...createTestProviders(),
+      listingsProvider: {
+        async getListings(input) {
+          if (input.vehicle?.make === "Honda" && input.vehicle.model === "CR-V" && !input.vehicle.trim) {
+            return [
+              {
+                id: "crv-sport-listing",
+                vehicleId: input.vehicleId,
+                title: "2023 Honda CR-V Sport",
+                price: 31850,
+                mileage: 14200,
+                dealer: "Northside Honda",
+                distanceMiles: 24,
+                location: "Chicago, IL",
+                imageUrl: "https://example.com/crv-sport.jpg",
+                listedAt: "2026-04-19T00:00:00.000Z",
+              },
+            ];
+          }
+          return [];
+        },
+      },
+    });
+
+    const descriptor = {
+      year: 2023,
+      make: "Honda",
+      model: "CR-V",
+      trim: "EX-L",
+      vehicleType: "car" as const,
+      bodyStyle: "SUV",
+      normalizedModel: "cr-v",
+    };
+
+    const service = new VehicleService();
+    const listings = await service.getListings({
+      vehicleId: "client-only-crv-id",
+      descriptor,
+      zip: "60610",
+      radiusMiles: 50,
+    });
+
+    assert.equal(listings.data.length, 1);
+    assert.equal(listings.data[0]?.dealer, "Northside Honda");
+  });
+
+  test("descriptor-backed Corolla detail resolves partial specs when provider specs are unavailable", async () => {
+    const corollaCanonical = {
+      id: "canonical-corolla-se-2022",
+      year: 2022,
+      make: "Toyota",
+      model: "Corolla",
+      trim: "SE",
+      bodyType: "Sedan",
+      vehicleType: "car" as const,
+      normalizedMake: "toyota",
+      normalizedModel: "corolla",
+      normalizedTrim: "se",
+      normalizedVehicleType: "car",
+      canonicalKey: "canonical:2022:toyota:corolla:se:car",
+      specsJson: {
+        id: "canonical-corolla-se-2022",
+        year: 2022,
+        make: "Toyota",
+        model: "Corolla",
+        trim: "SE",
+        bodyStyle: "Sedan",
+        vehicleType: "car" as const,
+        msrp: 23800,
+        engine: "2.0L I4",
+        horsepower: 169,
+        torque: "151 lb-ft",
+        transmission: "CVT",
+        drivetrain: "FWD",
+        mpgOrRange: "31 city / 40 highway",
+        colors: [],
+      },
+      overviewJson: null,
+      defaultImageUrl: null,
+      sourceProvider: "marketcheck",
+      sourceVehicleId: "canonical-corolla-se-2022",
+      popularityScore: 10,
+      promotionStatus: "promoted" as const,
+      firstSeenAt: "2026-04-01T00:00:00.000Z",
+      lastSeenAt: "2026-04-01T00:00:00.000Z",
+      lastPromotedAt: "2026-04-01T00:00:00.000Z",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    };
+
+    const testRepositories = createTestRepositories({
+      canonicalVehicles: [corollaCanonical],
+    });
+    setRepositories(testRepositories.repositories);
+    setProviders({
+      ...createTestProviders(),
+      specsProvider: {
+        async getVehicleSpecs() {
+          return null;
+        },
+        async searchVehicles() {
+          return [];
+        },
+        async searchCandidates() {
+          return [];
+        },
+      },
+    });
+
+    const descriptor = {
+      year: 2023,
+      make: "Toyota",
+      model: "Corolla",
+      trim: "LE",
+      vehicleType: "car" as const,
+      bodyStyle: "Sedan",
+      normalizedModel: "corolla",
+    };
+
+    const service = new VehicleService();
+    const specs = await service.getSpecs({
+      vehicleId: "client-only-corolla-id",
+      descriptor,
+    });
+
+    assert.equal(specs.data.make, "Toyota");
+    assert.equal(specs.data.model, "Corolla");
+    assert.equal(specs.data.horsepower, 169);
+    assert.equal(specs.data.drivetrain, "FWD");
+  });
+
+  test("offline canonical seed data never uses horsepower 0 placeholders and keeps lightweight values for CR-V/RAV4", () => {
+    const file = path.resolve(process.cwd(), "..", "assets/data/offline_canonical.json");
+    const payload = JSON.parse(fs.readFileSync(file, "utf8")) as {
+      vehicles: Array<{
+        make: string;
+        model: string;
+        basicSpecs?: { horsepower?: number | null };
+        lightweightValue?: unknown;
+      }>;
+    };
+
+    payload.vehicles.forEach((vehicle) => {
+      assert.notEqual(vehicle.basicSpecs?.horsepower ?? null, 0);
+    });
+
+    const targets = payload.vehicles.filter((vehicle) => {
+      const make = vehicle.make.toLowerCase();
+      const model = vehicle.model.toLowerCase();
+      return (make === "honda" && model === "cr-v") || (make === "toyota" && model === "rav4");
+    });
+
+    assert.ok(targets.length >= 1);
+    targets.forEach((vehicle) => {
+      assert.ok(vehicle.lightweightValue);
+    });
   });
 });
 

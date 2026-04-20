@@ -42,7 +42,7 @@ export class ScanController {
         });
       }
 
-      const { scan, visionProvider, entitlement } = await this.scanService.identifyVehicle({
+      const { scan, visionProvider, entitlement, payloadPreview } = await this.scanService.identifyVehicle({
         auth,
         imageBuffer: file.buffer,
         mimeType: file.mimetype,
@@ -50,40 +50,16 @@ export class ScanController {
         allowPremium: false,
       });
 
-      logger.error(
-        {
-          label: "OCR_TRACE_BEFORE_RESPONSE",
-          requestId: res.locals.requestId,
-          normalizedResult: {
-            source: scan.normalizedResult?.source ?? null,
-            likely_year: scan.normalizedResult?.likely_year ?? null,
-            likely_make: scan.normalizedResult?.likely_make ?? null,
-            likely_model: scan.normalizedResult?.likely_model ?? null,
-            visible_model_text: scan.normalizedResult?.visible_model_text ?? null,
-          },
-          topCandidate: scan.candidates?.[0]
-            ? {
-                year: scan.candidates[0].year,
-                make: scan.candidates[0].make,
-                model: scan.candidates[0].model,
-                matchReason: scan.candidates[0].matchReason,
-              }
-            : null,
-          ocrConfirmed: scan.normalizedResult?.source === "ocr_override",
-          enforcementApplied:
-            (scan.normalizedResult?.source === "ocr_override" ||
-              scan.normalizedResult?.source === "visual_override") &&
-            scan.candidates?.[0]?.year === scan.normalizedResult?.likely_year &&
-            scan.candidates?.[0]?.make === scan.normalizedResult?.likely_make &&
-            scan.candidates?.[0]?.model === scan.normalizedResult?.likely_model,
-        },
-        "OCR_TRACE_BEFORE_RESPONSE",
-      );
-
       return sendSuccess(res, scan, {
         provider: visionProvider,
         topCandidateVehicleId: scan.candidates[0]?.vehicleId ?? null,
         premium: entitlement ?? null,
+        identificationConfidence: payloadPreview.identificationConfidence,
+        dataConfidence: payloadPreview.dataConfidence,
+        payloadStrength: payloadPreview.payloadStrength,
+        enrichmentMode: payloadPreview.enrichmentMode,
+        unlockEligible: payloadPreview.unlockEligible,
+        unlockRecommendationReason: payloadPreview.unlockRecommendationReason,
         scanRuntimeVersion: "ocr-visual-fallback-enforce-v3",
       });
     } catch (err) {
@@ -121,7 +97,7 @@ export class ScanController {
       });
     }
 
-    const { scan, visionProvider, entitlement } = await this.scanService.identifyVehicle({
+    const { scan, visionProvider, entitlement, payloadPreview } = await this.scanService.identifyVehicle({
       auth: req.auth!,
       imageBuffer: file.buffer,
       mimeType: file.mimetype,
@@ -129,40 +105,16 @@ export class ScanController {
       allowPremium: true,
     });
 
-    logger.error(
-      {
-        label: "OCR_TRACE_BEFORE_RESPONSE",
-        requestId: res.locals.requestId,
-        normalizedResult: {
-          source: scan.normalizedResult?.source ?? null,
-          likely_year: scan.normalizedResult?.likely_year ?? null,
-          likely_make: scan.normalizedResult?.likely_make ?? null,
-          likely_model: scan.normalizedResult?.likely_model ?? null,
-          visible_model_text: scan.normalizedResult?.visible_model_text ?? null,
-        },
-        topCandidate: scan.candidates?.[0]
-          ? {
-              year: scan.candidates[0].year,
-              make: scan.candidates[0].make,
-              model: scan.candidates[0].model,
-              matchReason: scan.candidates[0].matchReason,
-            }
-          : null,
-        ocrConfirmed: scan.normalizedResult?.source === "ocr_override",
-        enforcementApplied:
-          (scan.normalizedResult?.source === "ocr_override" ||
-            scan.normalizedResult?.source === "visual_override") &&
-          scan.candidates?.[0]?.year === scan.normalizedResult?.likely_year &&
-          scan.candidates?.[0]?.make === scan.normalizedResult?.likely_make &&
-          scan.candidates?.[0]?.model === scan.normalizedResult?.likely_model,
-      },
-      "OCR_TRACE_BEFORE_RESPONSE",
-    );
-
     return sendSuccess(res, scan, {
       provider: visionProvider,
       topCandidateVehicleId: scan.candidates[0]?.vehicleId ?? null,
       premium: entitlement ?? null,
+      identificationConfidence: payloadPreview.identificationConfidence,
+      dataConfidence: payloadPreview.dataConfidence,
+      payloadStrength: payloadPreview.payloadStrength,
+      enrichmentMode: payloadPreview.enrichmentMode,
+      unlockEligible: payloadPreview.unlockEligible,
+      unlockRecommendationReason: payloadPreview.unlockRecommendationReason,
       scanRuntimeVersion: "ocr-visual-fallback-enforce-v3",
     });
   };

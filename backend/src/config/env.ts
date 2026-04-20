@@ -49,6 +49,7 @@ const envSchema = z.object({
   LOG_LEVEL: z.string().default("info"),
   CORS_ORIGIN: z.string().default("*"),
   ALLOW_MOCK_FALLBACKS: booleanEnv(process.env.NODE_ENV === "production" ? false : true),
+  ALLOW_PRELOAD: booleanEnv(process.env.NODE_ENV === "production" ? false : true),
   SUPABASE_URL: z.string().url().or(z.literal("")).default(""),
   SUPABASE_SERVICE_ROLE_KEY: z.string().default(""),
   SUPABASE_JWT_SECRET: z.string().default(""),
@@ -86,6 +87,7 @@ function logStartupEnvDiagnostics(env: typeof parsedEnv) {
       nodeEnv: env.NODE_ENV,
       authDevBypassEnabled: env.AUTH_DEV_BYPASS_ENABLED,
       allowMockFallbacks: env.ALLOW_MOCK_FALLBACKS,
+      allowPreload: env.ALLOW_PRELOAD,
     }),
   );
 }
@@ -185,6 +187,7 @@ export function getStartupDiagnostics() {
     port: env.PORT,
     host: env.HOST,
     allowMockFallbacks: env.ALLOW_MOCK_FALLBACKS,
+    allowPreload: env.ALLOW_PRELOAD,
     authDevBypassEnabled: env.AUTH_DEV_BYPASS_ENABLED,
     supabaseConfigured: Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY && env.SUPABASE_JWT_SECRET),
     supabaseHost,

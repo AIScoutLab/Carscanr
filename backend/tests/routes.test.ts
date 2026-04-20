@@ -83,8 +83,8 @@ describe("API routes", () => {
     assert.equal(response.statusCode, 200);
     assert.equal(body.success, true);
     assert.equal(body.data.detectedVehicleType, "car");
-    assert.equal(body.data.candidates[0].vehicleId, "2021-cadillac-ct4-premium-luxury");
-    assert.equal(body.meta.topCandidateVehicleId, "2021-cadillac-ct4-premium-luxury");
+    assert.equal(body.data.candidates[0].vehicleId, "");
+    assert.equal(body.meta.topCandidateVehicleId, "");
   });
 
   test("POST /api/scan/identify keeps OCR override as the final visible winner", async () => {
@@ -176,19 +176,20 @@ describe("API routes", () => {
     assert.equal(body.data.candidates[0].year, 2026);
     assert.equal(body.data.candidates[0].make, "Honda");
     assert.equal(body.data.candidates[0].model, "CR-V");
-    assert.equal(body.meta.scanRuntimeVersion, "ocr-hard-override-route-v1");
+    assert.equal(body.meta.scanRuntimeVersion, "ocr-visual-fallback-enforce-v3");
   });
 
-  test("GET /api/usage/today requires an explicit auth token in development", async () => {
+  test("GET /api/usage/today falls back to guest usage in development", async () => {
     const response = await requestApp({
       method: "GET",
       url: "/api/usage/today",
     });
     const body = parseJson<any>(response);
 
-    assert.equal(response.statusCode, 401);
-    assert.equal(body.success, false);
-    assert.equal(body.error.code, "AUTH_REQUIRED");
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.success, true);
+    assert.equal(body.data.plan, "free");
+    assert.equal(body.data.limitType, "lifetime");
   });
 
   test("GET /api/vehicle/specs returns vehicle details", async () => {
@@ -233,6 +234,217 @@ describe("API routes", () => {
     assert.equal(body.success, true);
     assert.equal(body.data.length, 1);
     assert.equal(body.meta.count, 1);
+  });
+
+  test("GET /api/vehicle/specs resolves descriptor-backed estimates even with a client-only id", async () => {
+    setProviders({
+      ...createTestProviders(),
+      specsProvider: {
+        async getVehicleSpecs(input) {
+          if (!input.vehicle) {
+            return null;
+          }
+          return {
+            ...input.vehicle,
+            id: input.vehicleId,
+            bodyStyle: input.vehicle.bodyStyle || "SUV",
+            engine: "1.5L turbo I4",
+            horsepower: 190,
+            transmission: "CVT",
+            drivetrain: "AWD",
+            mpgOrRange: "27 city / 32 highway",
+            msrp: 34500,
+            colors: ["Urban Gray Pearl"],
+          };
+        },
+        async searchVehicles() {
+          return [];
+        },
+        async searchCandidates() {
+          return [];
+        },
+      },
+    });
+
+    const response = await requestApp({
+      method: "GET",
+      url: "/api/vehicle/specs?vehicleId=95c64a97-ccee-4756-940d-9d68448f79f7&year=2020&make=Honda&model=CR-V&trim=LX&vehicleType=car&bodyStyle=SUV&normalizedModel=cr-v",
+      headers: authHeaders(),
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.success, true);
+    assert.equal(body.data.make, "Honda");
+    assert.equal(body.data.model, "CR-V");
+    assert.equal(body.data.horsepower, 190);
+  });
+
+  test("GET /api/vehicle/specs accepts the live CR-V descriptor request shape without returning 400", async () => {
+    let specsProviderCalled = false;
+    setProviders({
+      ...createTestProviders(),
+      specsProvider: {
+        async getVehicleSpecs(input) {
+          specsProviderCalled = true;
+          assert.equal(input.vehicle?.year, 2026);
+          assert.equal(input.vehicle?.make, "Honda");
+          assert.equal(input.vehicle?.model, "Cr-v");
+          return {
+            ...input.vehicle!,
+            id: input.vehicleId,
+            bodyStyle: input.vehicle?.bodyStyle || "SUV",
+            engine: "1.5L turbo I4",
+            horsepower: 190,
+            transmission: "CVT",
+            drivetrain: "AWD",
+            mpgOrRange: "28 city / 34 highway",
+            msrp: 35850,
+            colors: ["Meteorite Gray"],
+          };
+        },
+        async searchVehicles() {
+          return [];
+        },
+        async searchCandidates() {
+          return [];
+        },
+      },
+    });
+
+    const response = await requestApp({
+      method: "GET",
+      url: "/api/vehicle/specs?year=2026&make=Honda&model=Cr-v&trim=LX&vehicleType=car&bodyStyle=SUV&normalizedModel=cr+v",
+      headers: authHeaders(),
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.success, true);
+    assert.equal(body.data.make, "Honda");
+    assert.equal(body.data.model, "Cr-v");
+    assert.equal(specsProviderCalled, true);
+  });
+
+  test("GET /api/vehicle/value resolves descriptor-backed estimates even with a client-only id", async () => {
+    const response = await requestApp({
+      method: "GET",
+      url: "/api/vehicle/value?vehicleId=95c64a97-ccee-4756-940d-9d68448f79f7&year=2020&make=Honda&model=CR-V&trim=LX&vehicleType=car&bodyStyle=SUV&normalizedModel=cr-v&zip=60610&mileage=12000&condition=good",
+      headers: authHeaders(),
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.success, true);
+    assert.ok(body.data.privateParty > 0);
+    assert.equal(body.data.condition, "good");
+  });
+
+  test("GET /api/vehicle/value accepts the live CR-V descriptor request shape without returning 400", async () => {
+    let valueProviderCalled = false;
+    setProviders({
+      ...createTestProviders(),
+      valueProvider: {
+        async getValuation(input) {
+          valueProviderCalled = true;
+          assert.equal(input.vehicle?.year, 2026);
+          assert.equal(input.vehicle?.make, "Honda");
+          assert.equal(input.vehicle?.model, "Cr-v");
+          assert.equal(input.zip, "60563");
+          assert.equal(input.mileage, 18400);
+          assert.equal(input.condition, "fair");
+          return {
+            id: "valuation-live-crv-shape",
+            vehicleId: input.vehicleId,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition as any,
+            tradeIn: 28600,
+            tradeInLow: 27400,
+            tradeInHigh: 29800,
+            privateParty: 30100,
+            privatePartyLow: 28900,
+            privatePartyHigh: 31300,
+            dealerRetail: 32400,
+            dealerRetailLow: 31200,
+            dealerRetailHigh: 33600,
+            currency: "USD",
+            generatedAt: new Date().toISOString(),
+            sourceLabel: "Based on market data",
+            modelType: "provider_range",
+          };
+        },
+      },
+    });
+
+    const response = await requestApp({
+      method: "GET",
+      url: "/api/vehicle/value?year=2026&make=Honda&model=Cr-v&trim=LX&vehicleType=car&bodyStyle=SUV&normalizedModel=cr+v&zip=60563&mileage=18400&condition=fair",
+      headers: authHeaders(),
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.success, true);
+    assert.equal(body.data.condition, "fair");
+    assert.ok(body.data.privateParty > 0);
+    assert.equal(valueProviderCalled, true);
+  });
+
+  test("GET /api/vehicle/listings resolves descriptor-backed estimates even with a client-only id", async () => {
+    const response = await requestApp({
+      method: "GET",
+      url: "/api/vehicle/listings?vehicleId=95c64a97-ccee-4756-940d-9d68448f79f7&year=2020&make=Honda&model=CR-V&trim=LX&vehicleType=car&bodyStyle=SUV&normalizedModel=cr-v&zip=60610&radiusMiles=50",
+      headers: authHeaders(),
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.success, true);
+    assert.ok(body.data.length >= 1);
+    assert.equal(body.meta.count, body.data.length);
+  });
+
+  test("GET /api/vehicle/listings accepts the live CR-V descriptor request shape without returning 400", async () => {
+    let listingsProviderCalled = false;
+    setProviders({
+      ...createTestProviders(),
+      listingsProvider: {
+        async getListings(input) {
+          listingsProviderCalled = true;
+          assert.equal(input.vehicle?.year, 2026);
+          assert.equal(input.vehicle?.make, "Honda");
+          assert.equal(input.vehicle?.model, "Cr-v");
+          assert.equal(input.zip, "60610");
+          assert.equal(input.radiusMiles, 50);
+          return [
+            {
+              id: "live-crv-listing",
+              vehicleId: input.vehicleId,
+              price: 32995,
+              mileage: 4200,
+              title: "2026 Honda CR-V LX",
+              dealer: "Northside Honda",
+              location: "Chicago, IL",
+              imageUrl: "https://example.com/crv.jpg",
+              distanceMiles: 14,
+            },
+          ];
+        },
+      },
+    });
+
+    const response = await requestApp({
+      method: "GET",
+      url: "/api/vehicle/listings?year=2026&make=Honda&model=Cr-v&trim=LX&vehicleType=car&bodyStyle=SUV&normalizedModel=cr+v&zip=60610&radiusMiles=50",
+      headers: authHeaders(),
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.success, true);
+    assert.ok(body.data.length >= 1);
+    assert.equal(listingsProviderCalled, true);
   });
 
   test("garage save, list, and delete preserve persistence", async () => {

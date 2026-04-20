@@ -52,6 +52,17 @@ type DbClient = SupabaseClient<any, "public", any>;
 const USAGE_COUNTERS_TABLE = "usage_counters";
 const LIFETIME_USAGE_DATE = "1970-01-01";
 
+function supabaseErrorDetails(table: string, operation: string, error: any) {
+  return {
+    table,
+    operation,
+    code: error?.code ?? null,
+    message: error?.message ?? null,
+    details: error?.details ?? null,
+    hint: error?.hint ?? null,
+  };
+}
+
 function requireData<T>(value: T | null, message: string): T {
   if (value == null) {
     throw new AppError(500, "SUPABASE_EMPTY_RESPONSE", message);
@@ -1078,7 +1089,14 @@ export class SupabaseVehicleGlobalTrendingRepository implements VehicleGlobalTre
       .upsert(vehicleGlobalTrendingToRow(record), { onConflict: "normalized_key" })
       .select("*")
       .single();
-    if (error) throw new AppError(500, "SUPABASE_UPSERT_FAILED", "Failed to persist global trending vehicle.", error);
+    if (error) {
+      throw new AppError(
+        500,
+        "SUPABASE_UPSERT_FAILED",
+        "Failed to persist global trending vehicle.",
+        supabaseErrorDetails("vehicle_global_trending", "upsert", error),
+      );
+    }
     return mapVehicleGlobalTrendingRow(requireData(data, "Vehicle global trending upsert returned no row."));
   }
 
@@ -1088,7 +1106,14 @@ export class SupabaseVehicleGlobalTrendingRepository implements VehicleGlobalTre
       .select("*")
       .eq("normalized_key", normalizedKey)
       .maybeSingle();
-    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load global trending row.", error);
+    if (error) {
+      throw new AppError(
+        500,
+        "SUPABASE_QUERY_FAILED",
+        "Failed to load global trending row.",
+        supabaseErrorDetails("vehicle_global_trending", "findByNormalizedKey", error),
+      );
+    }
     return data ? mapVehicleGlobalTrendingRow(data) : null;
   }
 
@@ -1105,7 +1130,14 @@ export class SupabaseVehicleGlobalTrendingRepository implements VehicleGlobalTre
       .ilike("normalized_model", `%${input.normalizedModel}%`)
       .order("trend_score", { ascending: false })
       .limit(25);
-    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to search global trending rows.", error);
+    if (error) {
+      throw new AppError(
+        500,
+        "SUPABASE_QUERY_FAILED",
+        "Failed to search global trending rows.",
+        supabaseErrorDetails("vehicle_global_trending", "searchLikelyMatches", error),
+      );
+    }
     return (data ?? []).map(mapVehicleGlobalTrendingRow);
   }
 
@@ -1115,7 +1147,14 @@ export class SupabaseVehicleGlobalTrendingRepository implements VehicleGlobalTre
       .select("*")
       .order("trend_score", { ascending: false })
       .limit(limit);
-    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to list top trending vehicles.", error);
+    if (error) {
+      throw new AppError(
+        500,
+        "SUPABASE_QUERY_FAILED",
+        "Failed to list top trending vehicles.",
+        supabaseErrorDetails("vehicle_global_trending", "listTop", error),
+      );
+    }
     return (data ?? []).map(mapVehicleGlobalTrendingRow);
   }
 }
