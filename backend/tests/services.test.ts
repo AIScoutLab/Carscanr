@@ -7,17 +7,25 @@ import { buildCanonicalKey, createSpecsCacheRow, getValuesCacheKey } from "../sr
 import { resetProviders, setProviders } from "../src/lib/providerRegistry.js";
 import { resetRepositories, setRepositories } from "../src/lib/repositoryRegistry.js";
 import { GarageService } from "../src/services/garageService.js";
+import { env } from "../src/config/env.js";
 import { normalizeVisionResult, ScanService } from "../src/services/scanService.js";
 import { UsageService } from "../src/services/usageService.js";
 import { SubscriptionService } from "../src/services/subscriptionService.js";
+import { providerBudgetService } from "../src/services/providerBudgetService.js";
+import { trendingVehicleService } from "../src/services/trendingVehicleService.js";
 import { VehicleService, evaluateVehiclePayloadStrength } from "../src/services/vehicleService.js";
 import { buildLiveVehicleId } from "../src/providers/marketcheck/vehicleId.js";
 import { createTestProviders, createTestRepositories, createVehicleFixtures, createVisionProviderResult } from "./helpers/testData.js";
+import { buildMarketValueCacheKeys, createMarketListingsCacheRecord, createMarketValueCacheRecord } from "../src/lib/marketMemory.js";
 
 const TEST_IMAGE_BUFFER = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2uoAAAAASUVORK5CYII=",
   "base64",
 );
+
+beforeEach(() => {
+  providerBudgetService.resetForTests();
+});
 
 describe("UsageService", () => {
   beforeEach(() => {
@@ -848,6 +856,377 @@ describe("VehicleService specs canonical layer", () => {
     targets.forEach((vehicle) => {
       assert.ok(vehicle.lightweightValue);
     });
+  });
+});
+
+describe("VehicleService cache-first provider gating", () => {
+  test("provider budget gate blocks unnecessary live calls", () => {
+    const decision = providerBudgetService.evaluate({
+      provider: "marketcheck",
+      operation: "value",
+      year: 2023,
+      make: "Honda",
+      model: "CR-V",
+      trim: "EX-L",
+      entitlement: "free",
+      identificationConfidence: 0.82,
+      freshCacheExists: false,
+      fallbackStrength: "usable",
+    });
+
+    assert.equal(decision.allowed, false);
+    assert.equal(decision.fallbackPreferred, true);
+  });
+
+  test("exact market value cache hit prevents provider call", async () => {
+    const descriptor = {
+      year: 2023,
+      make: "Honda",
+      model: "CR-V",
+      trim: "EX-L",
+      vehicleType: "car" as const,
+      bodyStyle: "SUV",
+      normalizedModel: "crv",
+    };
+    const cacheKeys = buildMarketValueCacheKeys({
+      year: 2023,
+      make: "Honda",
+      model: "CR-V",
+      trim: "EX-L",
+      bodyStyle: "SUV",
+      zip: "60610",
+      mileage: 18400,
+      condition: "good",
+    });
+    const testRepositories = createTestRepositories();
+    testRepositories.state.marketValueCache.push(
+      createMarketValueCacheRecord({
+        cacheKey: cacheKeys.exact,
+        year: 2023,
+        make: "Honda",
+        model: "CR-V",
+        trim: "EX-L",
+        bodyStyle: "SUV",
+        zip: "60610",
+        mileage: 18400,
+        condition: "good",
+        valuation: {
+          id: "cached-crv-value",
+          vehicleId: "cached-crv",
+          zip: "60610",
+          mileage: 18400,
+          condition: "good",
+          tradeIn: 24600,
+          tradeInLow: 23800,
+          tradeInHigh: 25200,
+          privateParty: 26200,
+          privatePartyLow: 25400,
+          privatePartyHigh: 27000,
+          dealerRetail: 28100,
+          dealerRetailLow: 27400,
+          dealerRetailHigh: 28900,
+          currency: "USD",
+          generatedAt: "2026-04-20T00:00:00.000Z",
+          sourceLabel: "Based on market data",
+          confidenceLabel: "High confidence",
+          modelType: "provider_range",
+        },
+      }),
+    );
+    setRepositories(testRepositories.repositories);
+    let providerCalls = 0;
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          providerCalls += 1;
+          return null;
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "client-only-crv-id",
+      descriptor,
+      zip: "60610",
+      mileage: 18400,
+      condition: "good",
+    });
+
+    assert.equal(providerCalls, 0);
+    assert.equal(result.source, "cache");
+    assert.equal(result.data.privateParty, 26200);
+    assert.equal(result.data.isCached, true);
+  });
+
+  test("family listings cache hit prevents provider call", async () => {
+    const descriptor = {
+      year: 2023,
+      make: "Honda",
+      model: "CR-V",
+      trim: "EX-L",
+      vehicleType: "car" as const,
+      bodyStyle: "SUV",
+      normalizedModel: "crv",
+    };
+    const testRepositories = createTestRepositories();
+    testRepositories.state.marketListingsCache.push(
+      createMarketListingsCacheRecord({
+        cacheKey: "market-listings:2023:honda:crv:any:606:family",
+        year: 2023,
+        make: "Honda",
+        model: "CR-V",
+        trim: "",
+        bodyStyle: "SUV",
+        zip: "60610",
+        listings: [
+          {
+            id: "cached-crv-listing",
+            vehicleId: "cached-crv",
+            title: "2023 Honda CR-V Sport",
+            price: 31995,
+            mileage: 12000,
+            dealer: "Northside Honda",
+            distanceMiles: 14,
+            location: "Chicago, IL",
+            imageUrl: "https://example.com/crv.jpg",
+            listedAt: "2026-04-20T00:00:00.000Z",
+          },
+        ],
+        listingMode: "same_model_mixed_trims",
+        sourceLabel: "Nearby listings for this model",
+      }),
+    );
+    setRepositories(testRepositories.repositories);
+    let providerCalls = 0;
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings() {
+          providerCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getListings({
+      vehicleId: "client-only-crv-id",
+      descriptor,
+      zip: "60610",
+      radiusMiles: 50,
+    });
+
+    assert.equal(providerCalls, 0);
+    assert.equal(result.source, "cache");
+    assert.equal(result.data.length, 1);
+    assert.equal(result.meta?.mode, "same_model_mixed_trims");
+  });
+
+  test("value falls back after provider 429", async () => {
+    const descriptor = {
+      year: 2023,
+      make: "Honda",
+      model: "CR-V",
+      trim: "EX-L",
+      vehicleType: "car" as const,
+      bodyStyle: "SUV",
+      normalizedModel: "crv",
+    };
+    const testRepositories = createTestRepositories();
+    setRepositories(testRepositories.repositories);
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          throw new AppError(429, "MARKETCHECK_RATE_LIMITED", "quota");
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "client-only-crv-id",
+      descriptor,
+      zip: "60610",
+      mileage: 18400,
+      condition: "good",
+    });
+
+    assert.ok(result.data.privateParty > 0);
+    assert.equal(result.data.providerSkippedReason, "quota");
+  });
+
+  test("listings fall back after provider 429", async () => {
+    const descriptor = {
+      year: 2023,
+      make: "Honda",
+      model: "CR-V",
+      trim: "EX-L",
+      vehicleType: "car" as const,
+      bodyStyle: "SUV",
+      normalizedModel: "crv",
+    };
+    const testRepositories = createTestRepositories({
+      listings: [
+        {
+          id: "stored-crv-listing",
+          vehicleId: "client-only-crv-id",
+          title: "2023 Honda CR-V Sport Touring",
+          price: 33200,
+          mileage: 9800,
+          dealer: "Lake Honda",
+          distanceMiles: 19,
+          location: "Chicago, IL",
+          imageUrl: "https://example.com/stored-crv.jpg",
+          listedAt: "2026-04-20T00:00:00.000Z",
+        },
+      ],
+    });
+    setRepositories(testRepositories.repositories);
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings() {
+          throw new AppError(429, "MARKETCHECK_RATE_LIMITED", "quota");
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getListings({
+      vehicleId: "client-only-crv-id",
+      descriptor,
+      zip: "60610",
+      radiusMiles: 50,
+    });
+
+    assert.equal(result.data.length, 1);
+    assert.equal(result.meta?.believableCount, 1);
+  });
+
+  test("common vehicles return canonical specs without provider", async () => {
+    const corollaCanonical = {
+      id: "canonical-corolla-le-2023",
+      year: 2023,
+      make: "Toyota",
+      model: "Corolla",
+      trim: "LE",
+      bodyType: "Sedan",
+      vehicleType: "car" as const,
+      normalizedMake: "toyota",
+      normalizedModel: "corolla",
+      normalizedTrim: "le",
+      normalizedVehicleType: "car",
+      canonicalKey: "canonical:2023:toyota:corolla:le:car",
+      specsJson: {
+        id: "canonical-corolla-le-2023",
+        year: 2023,
+        make: "Toyota",
+        model: "Corolla",
+        trim: "LE",
+        bodyStyle: "Sedan",
+        vehicleType: "car" as const,
+        msrp: 22500,
+        engine: "2.0L I4",
+        horsepower: 169,
+        torque: "151 lb-ft",
+        transmission: "CVT",
+        drivetrain: "FWD",
+        mpgOrRange: "32 city / 41 highway",
+        colors: [],
+      },
+      overviewJson: null,
+      defaultImageUrl: null,
+      sourceProvider: "seed",
+      sourceVehicleId: "seed-corolla",
+      popularityScore: 20,
+      promotionStatus: "promoted" as const,
+      firstSeenAt: "2026-04-01T00:00:00.000Z",
+      lastSeenAt: "2026-04-01T00:00:00.000Z",
+      lastPromotedAt: "2026-04-01T00:00:00.000Z",
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    };
+    const testRepositories = createTestRepositories({
+      canonicalVehicles: [corollaCanonical],
+    });
+    setRepositories(testRepositories.repositories);
+    let providerCalls = 0;
+    setProviders({
+      ...createTestProviders(),
+      specsProviderName: "marketcheck",
+      specsProvider: {
+        async getVehicleSpecs() {
+          providerCalls += 1;
+          return null;
+        },
+        async searchVehicles() {
+          return [];
+        },
+        async searchCandidates() {
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getSpecs({
+      vehicleId: "client-only-corolla-id",
+      descriptor: {
+        year: 2023,
+        make: "Toyota",
+        model: "Corolla",
+        trim: "LE",
+        vehicleType: "car",
+        bodyStyle: "Sedan",
+        normalizedModel: "corolla",
+      },
+    });
+
+    assert.equal(providerCalls, 0);
+    assert.equal(result.data.horsepower, 169);
+    assert.equal(result.meta?.isCanonical, true);
+  });
+
+  test("production startup does not trigger provider preload", async () => {
+    const previousAppEnv = env.APP_ENV;
+    const previousAllowPreload = env.ALLOW_PRELOAD;
+    const testRepositories = createTestRepositories();
+    setRepositories(testRepositories.repositories);
+    let providerCalls = 0;
+    setProviders({
+      ...createTestProviders(),
+      specsProvider: {
+        async getVehicleSpecs() {
+          return null;
+        },
+        async searchVehicles() {
+          return [];
+        },
+        async searchCandidates() {
+          providerCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    env.APP_ENV = "production";
+    env.ALLOW_PRELOAD = false;
+    const interval = trendingVehicleService.startScheduler();
+    if (interval) {
+      clearInterval(interval);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    env.APP_ENV = previousAppEnv;
+    env.ALLOW_PRELOAD = previousAllowPreload;
+
+    assert.equal(providerCalls, 0);
   });
 });
 
