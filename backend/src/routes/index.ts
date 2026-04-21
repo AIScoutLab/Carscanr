@@ -2,6 +2,7 @@ import express from "express";
 import multer from "multer";
 import { env } from "../config/env.js";
 import { GarageController } from "../controllers/garageController.js";
+import { HeartbeatController } from "../controllers/heartbeatController.js";
 import { ScanController } from "../controllers/scanController.js";
 import { SubscriptionController } from "../controllers/subscriptionController.js";
 import { UnlockController } from "../controllers/unlockController.js";
@@ -36,6 +37,7 @@ const upload = multer({
 const usageService = new UsageService();
 const subscriptionService = new SubscriptionService();
 const unlockService = new UnlockService();
+const heartbeatController = new HeartbeatController();
 const scanController = new ScanController(new ScanService(usageService));
 const vehicleController = new VehicleController(new VehicleService());
 const garageController = new GarageController(new GarageService());
@@ -53,6 +55,7 @@ export function buildApiRouter() {
     upload.single("image"),
     asyncHandler(scanController.identify),
   );
+  router.get("/heartbeat", asyncHandler(heartbeatController.run));
   router.get("/usage/today", asyncHandler(usageController.getToday));
   router.get("/vehicle/search", validate(vehicleSearchQuerySchema, "query"), asyncHandler(vehicleController.search));
   router.get("/vehicle/specs", validate(vehicleSpecsQuerySchema, "query"), asyncHandler(vehicleController.getSpecs));

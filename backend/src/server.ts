@@ -3,6 +3,7 @@ import { env, getStartupDiagnostics } from "./config/env.js";
 import { logger } from "./lib/logger.js";
 import { providers } from "./lib/providerRegistry.js";
 import { isUsingMockRepositories } from "./lib/repositoryRegistry.js";
+import { supabaseHeartbeatService } from "./services/supabaseHeartbeatService.js";
 import { trendingVehicleService, TRENDING_JOB_INTERVAL_MS, TRENDING_PRESEED_SCORE_THRESHOLD } from "./services/trendingVehicleService.js";
 
 const app = createApp();
@@ -26,6 +27,7 @@ app.listen(env.PORT, host, () => {
   );
   logger.info({ port: env.PORT, host }, "Car Identifier backend listening");
   if (env.NODE_ENV !== "test") {
+    supabaseHeartbeatService.triggerStartupHeartbeat();
     trendingVehicleService.startScheduler();
     logger.info(
       {

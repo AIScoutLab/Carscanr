@@ -4,6 +4,8 @@ import {
   GarageItemRecord,
   ImageCacheRecord,
   ListingRecord,
+  MarketListingsCacheRecord,
+  MarketValueCacheRecord,
   ScanRecord,
   SubscriptionRecord,
   UnlockBalanceRecord,
@@ -130,6 +132,8 @@ export function createTestRepositories(seed?: {
     specsCache: [],
     valuesCache: [],
     listingsCache: [],
+    marketValueCache: [] as MarketValueCacheRecord[],
+    marketListingsCache: [] as MarketListingsCacheRecord[],
     providerApiUsageLogs: [],
     canonicalVehicles: [...(seed?.canonicalVehicles ?? [])],
     cachedAnalysis: [] as CachedAnalysisRecord[],
@@ -486,6 +490,34 @@ export function createTestRepositories(seed?: {
         const before = state.listingsCache.length;
         state.listingsCache = state.listingsCache.filter((entry) => entry.fetchedAt >= cutoffIso);
         return before - state.listingsCache.length;
+      },
+    },
+    marketValueCache: {
+      async findByCacheKey(cacheKey) {
+        return state.marketValueCache.find((entry) => entry.cacheKey === cacheKey) ?? null;
+      },
+      async upsert(entry) {
+        state.marketValueCache = [entry, ...state.marketValueCache.filter((current) => current.cacheKey !== entry.cacheKey)];
+        return entry;
+      },
+      async deleteOlderThan(cutoffIso) {
+        const before = state.marketValueCache.length;
+        state.marketValueCache = state.marketValueCache.filter((entry) => entry.updatedAt >= cutoffIso);
+        return before - state.marketValueCache.length;
+      },
+    },
+    marketListingsCache: {
+      async findByCacheKey(cacheKey) {
+        return state.marketListingsCache.find((entry) => entry.cacheKey === cacheKey) ?? null;
+      },
+      async upsert(entry) {
+        state.marketListingsCache = [entry, ...state.marketListingsCache.filter((current) => current.cacheKey !== entry.cacheKey)];
+        return entry;
+      },
+      async deleteOlderThan(cutoffIso) {
+        const before = state.marketListingsCache.length;
+        state.marketListingsCache = state.marketListingsCache.filter((entry) => entry.updatedAt >= cutoffIso);
+        return before - state.marketListingsCache.length;
       },
     },
     providerApiUsageLogs: {

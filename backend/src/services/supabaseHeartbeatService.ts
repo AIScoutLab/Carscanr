@@ -1,52 +1,17 @@
-import cron, { ScheduledTask } from "node-cron";
 import { env } from "../config/env.js";
 import { logger } from "../lib/logger.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 
-type HeartbeatAttempt = {
-  table: string;
-  column: string;
-};
-
 export type SupabaseHeartbeatResult = {
-  success: boolean;
+  ok: boolean;
   message: string;
   table: string | null;
 };
 
-const HEARTBEAT_ATTEMPTS: HeartbeatAttempt[] = [
-  { table: "canonical_vehicles", column: "id" },
-  { table: "vehicle_global_trending", column: "id" },
-  { table: "valuations", column: "id" },
-  { table: "listing_results", column: "id" },
-  { table: "usage_counters", column: "id" },
-];
-
-const HEARTBEAT_CRON_SCHEDULE = "0 3 * * *";
-const HEARTBEAT_TIMEOUT_MS = 8000;
-
-function timeoutMessage(timeoutMs: number) {
-  return `Supabase heartbeat timed out after ${timeoutMs}ms.`;
-}
-
-async function withTimeout<T>(promise: PromiseLike<T>, timeoutMs: number): Promise<T> {
-  let timeoutId: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error(timeoutMessage(timeoutMs))), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-  }
-}
+const HEARTBEAT_TABLE = "canonical_vehicles";
+const HEARTBEAT_COLUMN = "id";
 
 class SupabaseHeartbeatService {
-  private scheduler: ScheduledTask | null = null;
   private startupTriggered = false;
 
   async run(trigger: "endpoint" | "startup" | "scheduler" = "endpoint"): Promise<SupabaseHeartbeatResult> {
@@ -54,93 +19,64 @@ class SupabaseHeartbeatService {
       const message = "Supabase heartbeat skipped because Supabase is not configured.";
       logger.warn({ trigger, configured: false }, `[heartbeat] ${message}`);
       return {
-        success: false,
+        ok: false,
         message,
         table: null,
       };
     }
 
-    for (const attempt of HEARTBEAT_ATTEMPTS) {
-      try {
-        const query = supabaseAdmin.from(attempt.table).select(attempt.column).limit(1);
-        const result = await withTimeout(query as PromiseLike<{ error?: { code?: string | null; message?: string | null } | null }>, HEARTBEAT_TIMEOUT_MS);
-        const error = result?.error ?? null;
-
-        if (error) {
-          logger.warn(
-            {
-              trigger,
-              table: attempt.table,
-              column: attempt.column,
-              code: error.code ?? null,
-              message: error.message,
-            },
-            `[heartbeat] read failed for ${attempt.table}`,
-          );
-          continue;
-        }
-
-        const message = `Supabase heartbeat succeeded via ${attempt.table}.`;
-        logger.info(
+    try {
+      const { error } = await supabaseAdmin.from(HEARTBEAT_TABLE).select(HEARTBEAT_COLUMN).limit(1);
+      if (error) {
+        const message = `Supabase heartbeat failed via ${HEARTBEAT_TABLE}.`;
+        logger.warn(
           {
             trigger,
-            table: attempt.table,
-            column: attempt.column,
+            table: HEARTBEAT_TABLE,
+            column: HEARTBEAT_COLUMN,
+            code: error.code ?? null,
+            message: error.message,
           },
           `[heartbeat] ${message}`,
         );
         return {
-          success: true,
+          ok: false,
           message,
-          table: attempt.table,
+          table: HEARTBEAT_TABLE,
         };
-      } catch (error) {
-        logger.warn(
-          {
-            trigger,
-            table: attempt.table,
-            column: attempt.column,
-            message: error instanceof Error ? error.message : "Unknown heartbeat failure",
-          },
-          `[heartbeat] read failed for ${attempt.table}`,
-        );
       }
-    }
 
-    const message = "Supabase heartbeat failed for all fallback tables.";
-    logger.error(
-      {
-        trigger,
-        attempts: HEARTBEAT_ATTEMPTS.map((attempt) => attempt.table),
-      },
-      `[heartbeat] ${message}`,
-    );
-    return {
-      success: false,
-      message,
-      table: null,
-    };
-  }
-
-  startScheduler() {
-    if (this.scheduler || env.NODE_ENV === "test") {
-      return;
-    }
-
-    this.scheduler = cron.schedule(HEARTBEAT_CRON_SCHEDULE, async () => {
-      logger.info({ schedule: HEARTBEAT_CRON_SCHEDULE }, "[heartbeat] scheduled heartbeat started");
-      const result = await this.run("scheduler");
+      const message = `Supabase heartbeat succeeded via ${HEARTBEAT_TABLE}.`;
       logger.info(
         {
-          schedule: HEARTBEAT_CRON_SCHEDULE,
-          success: result.success,
-          table: result.table,
-          message: result.message,
+          trigger,
+          table: HEARTBEAT_TABLE,
+          column: HEARTBEAT_COLUMN,
         },
-        "[heartbeat] scheduled heartbeat finished",
+        `[heartbeat] ${message}`,
       );
-    });
-    logger.info({ schedule: HEARTBEAT_CRON_SCHEDULE }, "[heartbeat] scheduler registered");
+      return {
+        ok: true,
+        message,
+        table: HEARTBEAT_TABLE,
+      };
+    } catch (error) {
+      const message = `Supabase heartbeat failed via ${HEARTBEAT_TABLE}.`;
+      logger.warn(
+        {
+          trigger,
+          table: HEARTBEAT_TABLE,
+          column: HEARTBEAT_COLUMN,
+          message: error instanceof Error ? error.message : "Unknown heartbeat failure",
+        },
+        `[heartbeat] ${message}`,
+      );
+      return {
+        ok: false,
+        message,
+        table: HEARTBEAT_TABLE,
+      };
+    }
   }
 
   triggerStartupHeartbeat() {
@@ -153,7 +89,7 @@ class SupabaseHeartbeatService {
       .then((result) => {
         logger.info(
           {
-            success: result.success,
+            ok: result.ok,
             table: result.table,
             message: result.message,
           },
@@ -169,6 +105,8 @@ class SupabaseHeartbeatService {
         );
       });
   }
+
+  // TODO: Add a daily scheduled heartbeat after the deploy environment has a stable cron setup.
 }
 
 export const supabaseHeartbeatService = new SupabaseHeartbeatService();

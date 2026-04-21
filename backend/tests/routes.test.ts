@@ -236,6 +236,19 @@ describe("API routes", () => {
     assert.equal(body.meta.count, 1);
   });
 
+  test("GET /api/heartbeat returns a lightweight heartbeat result", async () => {
+    const response = await requestApp({
+      method: "GET",
+      url: "/api/heartbeat",
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.success, true);
+    assert.equal(typeof body.data.success, "boolean");
+    assert.equal(typeof body.data.message, "string");
+  });
+
   test("GET /api/vehicle/specs resolves descriptor-backed estimates even with a client-only id", async () => {
     setProviders({
       ...createTestProviders(),

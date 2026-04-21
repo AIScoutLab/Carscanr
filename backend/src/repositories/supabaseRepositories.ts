@@ -17,8 +17,6 @@ import {
   UserVehicleUnlockRecord,
   ImageCacheRecord,
   ListingRecord,
-  MarketListingsCacheRecord,
-  MarketValueCacheRecord,
   ScanRecord,
   SubscriptionRecord,
   UsageCounterRecord,
@@ -36,8 +34,6 @@ import {
   GarageItemsRepository,
   ImageCacheRepository,
   ListingResultsRepository,
-  MarketListingsCacheRepository,
-  MarketValueCacheRepository,
   ProviderApiUsageLogsRepository,
   ScansRepository,
   VehicleGlobalTrendingRepository,
@@ -446,21 +442,6 @@ function mapListingRow(row: any): ListingRecord {
   };
 }
 
-function listingToRow(entry: ListingRecord) {
-  return {
-    id: entry.id,
-    vehicle_id: entry.vehicleId,
-    title: entry.title,
-    price: entry.price,
-    mileage: entry.mileage,
-    dealer: entry.dealer,
-    distance_miles: entry.distanceMiles,
-    location: entry.location,
-    image_url: entry.imageUrl,
-    listed_at: entry.listedAt,
-  };
-}
-
 function mapSubscriptionRow(row: any): SubscriptionRecord {
   return {
     id: row.id,
@@ -756,100 +737,6 @@ function listingsCacheToRow(entry: VehicleListingsCacheRow) {
     expires_at: entry.expiresAt,
     hit_count: entry.hitCount,
     last_accessed_at: entry.lastAccessedAt,
-    created_at: entry.createdAt,
-    updated_at: entry.updatedAt,
-  };
-}
-
-function mapMarketValueCacheRow(row: any): MarketValueCacheRecord {
-  return {
-    cacheKey: row.cache_key,
-    year: row.year,
-    make: row.make,
-    modelFamily: row.model_family,
-    trimFamily: row.trim_family,
-    zipRegion: row.zip_region,
-    mileageBand: row.mileage_band,
-    conditionBand: row.condition_band,
-    tradeInLow: row.trade_in_low ?? null,
-    tradeInMid: row.trade_in_mid ?? null,
-    tradeInHigh: row.trade_in_high ?? null,
-    privateLow: row.private_low ?? null,
-    privateMid: row.private_mid ?? null,
-    privateHigh: row.private_high ?? null,
-    retailLow: row.retail_low ?? null,
-    retailMid: row.retail_mid ?? null,
-    retailHigh: row.retail_high ?? null,
-    sourceLabel: row.source_label,
-    confidenceLabel: row.confidence_label ?? null,
-    freshnessExpiresAt: row.freshness_expires_at,
-    rawProviderPayload: row.raw_provider_payload ?? null,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-function marketValueCacheToRow(entry: MarketValueCacheRecord) {
-  return {
-    cache_key: entry.cacheKey,
-    year: entry.year,
-    make: entry.make,
-    model_family: entry.modelFamily,
-    trim_family: entry.trimFamily,
-    zip_region: entry.zipRegion,
-    mileage_band: entry.mileageBand,
-    condition_band: entry.conditionBand,
-    trade_in_low: entry.tradeInLow,
-    trade_in_mid: entry.tradeInMid,
-    trade_in_high: entry.tradeInHigh,
-    private_low: entry.privateLow,
-    private_mid: entry.privateMid,
-    private_high: entry.privateHigh,
-    retail_low: entry.retailLow,
-    retail_mid: entry.retailMid,
-    retail_high: entry.retailHigh,
-    source_label: entry.sourceLabel,
-    confidence_label: entry.confidenceLabel,
-    freshness_expires_at: entry.freshnessExpiresAt,
-    raw_provider_payload: entry.rawProviderPayload,
-    created_at: entry.createdAt,
-    updated_at: entry.updatedAt,
-  };
-}
-
-function mapMarketListingsCacheRow(row: any): MarketListingsCacheRecord {
-  return {
-    cacheKey: row.cache_key,
-    year: row.year,
-    make: row.make,
-    modelFamily: row.model_family,
-    trimFamily: row.trim_family,
-    zipRegion: row.zip_region,
-    listingMode: row.listing_mode,
-    listingsJson: Array.isArray(row.listings_json) ? row.listings_json.map(mapListingRow) : [],
-    believableCount: row.believable_count ?? 0,
-    sourceLabel: row.source_label,
-    freshnessExpiresAt: row.freshness_expires_at,
-    rawProviderPayload: row.raw_provider_payload ?? null,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-function marketListingsCacheToRow(entry: MarketListingsCacheRecord) {
-  return {
-    cache_key: entry.cacheKey,
-    year: entry.year,
-    make: entry.make,
-    model_family: entry.modelFamily,
-    trim_family: entry.trimFamily,
-    zip_region: entry.zipRegion,
-    listing_mode: entry.listingMode,
-    listings_json: entry.listingsJson.map(listingToRow),
-    believable_count: entry.believableCount,
-    source_label: entry.sourceLabel,
-    freshness_expires_at: entry.freshnessExpiresAt,
-    raw_provider_payload: entry.rawProviderPayload,
     created_at: entry.createdAt,
     updated_at: entry.updatedAt,
   };
@@ -1530,58 +1417,6 @@ export class SupabaseListingsCacheRepository implements ListingsCacheRepository 
       .lt("fetched_at", cutoffIso)
       .select("id");
     if (error) throw new AppError(500, "SUPABASE_DELETE_FAILED", "Failed to clean listings cache.", error);
-    return data?.length ?? 0;
-  }
-}
-
-export class SupabaseMarketValueCacheRepository implements MarketValueCacheRepository {
-  constructor(private readonly client: DbClient) {}
-
-  async findByCacheKey(cacheKey: string): Promise<MarketValueCacheRecord | null> {
-    const { data, error } = await this.client.from("market_value_cache").select("*").eq("cache_key", cacheKey).maybeSingle();
-    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load market value cache entry.", error);
-    return data ? mapMarketValueCacheRow(data) : null;
-  }
-
-  async upsert(entry: MarketValueCacheRecord): Promise<MarketValueCacheRecord> {
-    const { data, error } = await this.client
-      .from("market_value_cache")
-      .upsert(marketValueCacheToRow(entry), { onConflict: "cache_key" })
-      .select()
-      .single();
-    if (error) throw new AppError(500, "SUPABASE_UPSERT_FAILED", "Failed to persist market value cache entry.", error);
-    return mapMarketValueCacheRow(requireData(data, "Market value cache upsert returned no row."));
-  }
-
-  async deleteOlderThan(cutoffIso: string): Promise<number> {
-    const { data, error } = await this.client.from("market_value_cache").delete().lt("updated_at", cutoffIso).select("cache_key");
-    if (error) throw new AppError(500, "SUPABASE_DELETE_FAILED", "Failed to clean market value cache.", error);
-    return data?.length ?? 0;
-  }
-}
-
-export class SupabaseMarketListingsCacheRepository implements MarketListingsCacheRepository {
-  constructor(private readonly client: DbClient) {}
-
-  async findByCacheKey(cacheKey: string): Promise<MarketListingsCacheRecord | null> {
-    const { data, error } = await this.client.from("market_listings_cache").select("*").eq("cache_key", cacheKey).maybeSingle();
-    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load market listings cache entry.", error);
-    return data ? mapMarketListingsCacheRow(data) : null;
-  }
-
-  async upsert(entry: MarketListingsCacheRecord): Promise<MarketListingsCacheRecord> {
-    const { data, error } = await this.client
-      .from("market_listings_cache")
-      .upsert(marketListingsCacheToRow(entry), { onConflict: "cache_key" })
-      .select()
-      .single();
-    if (error) throw new AppError(500, "SUPABASE_UPSERT_FAILED", "Failed to persist market listings cache entry.", error);
-    return mapMarketListingsCacheRow(requireData(data, "Market listings cache upsert returned no row."));
-  }
-
-  async deleteOlderThan(cutoffIso: string): Promise<number> {
-    const { data, error } = await this.client.from("market_listings_cache").delete().lt("updated_at", cutoffIso).select("cache_key");
-    if (error) throw new AppError(500, "SUPABASE_DELETE_FAILED", "Failed to clean market listings cache.", error);
     return data?.length ?? 0;
   }
 }
