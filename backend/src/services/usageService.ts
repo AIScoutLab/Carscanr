@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 import { env } from "../config/env.js";
 import { AppError } from "../errors/appError.js";
 import { enableMockRepositories, isSupabaseNetworkError, isUsingMockRepositories, repositories } from "../lib/repositoryRegistry.js";
-import { AuthContext, UsageCounterRecord } from "../types/domain.js";
+import { isProPlan } from "../lib/subscription.js";
+import { AuthContext, UsageCounterRecord, UserPlan } from "../types/domain.js";
 import { SubscriptionService } from "./subscriptionService.js";
 import { UnlockService } from "./unlockService.js";
 
@@ -22,7 +23,7 @@ export class UsageService {
 
   async getUsageSummary(userId: string): Promise<{
     userId: string;
-    plan: "free" | "pro";
+    plan: UserPlan;
     isPro: boolean;
     scansUsed: number;
     scansRemaining: number | null;
@@ -65,11 +66,11 @@ export class UsageService {
       const plan = await this.subscriptionService.getActivePlan(userId);
       const record = await this.ensureLifetimeRecord(userId);
       const unlockStatus = await this.unlockService.getStatus(userId);
-      const scansUsed = plan === "pro" ? record.totalScans : record.totalScans;
+      const scansUsed = record.totalScans;
       return {
         userId,
         plan,
-        isPro: plan === "pro",
+        isPro: isProPlan(plan),
         scansUsed,
         scansRemaining: null,
         limitType: "lifetime" as const,

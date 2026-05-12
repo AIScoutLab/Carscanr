@@ -4,11 +4,15 @@ import { logger } from "./logger.js";
 import { supabaseAdmin } from "./supabase.js";
 import {
   CanonicalVehiclesRepository,
+  CanonicalGapQueueRepository,
   CachedAnalysisRepository,
+  CanonicalVehicleImagesRepository,
   UnlockBalanceRepository,
   GarageItemsRepository,
   ImageCacheRepository,
   ListingsCacheRepository,
+  ListingClicksRepository,
+  VehiclePhotoClustersRepository,
   ListingResultsRepository,
   ProviderApiUsageLogsRepository,
   ScansRepository,
@@ -25,11 +29,15 @@ import {
 } from "../repositories/interfaces.js";
 import {
   SupabaseCanonicalVehiclesRepository,
+  SupabaseCanonicalGapQueueRepository,
   SupabaseCachedAnalysisRepository,
+  SupabaseCanonicalVehicleImagesRepository,
   SupabaseUnlockBalanceRepository,
   SupabaseGarageItemsRepository,
   SupabaseImageCacheRepository,
   SupabaseListingsCacheRepository,
+  SupabaseListingClicksRepository,
+  SupabaseVehiclePhotoClustersRepository,
   SupabaseListingResultsRepository,
   SupabaseProviderApiUsageLogsRepository,
   SupabaseScansRepository,
@@ -46,11 +54,15 @@ import {
 } from "../repositories/supabaseRepositories.js";
 import {
   MockCanonicalVehiclesRepository,
+  MockCanonicalGapQueueRepository,
   MockCachedAnalysisRepository,
+  MockCanonicalVehicleImagesRepository,
   MockUnlockBalanceRepository,
   MockGarageItemsRepository,
   MockImageCacheRepository,
   MockListingsCacheRepository,
+  MockListingClicksRepository,
+  MockVehiclePhotoClustersRepository,
   MockListingResultsRepository,
   MockProviderApiUsageLogsRepository,
   MockScansRepository,
@@ -70,13 +82,17 @@ export type RepositoryRegistry = {
   scans: ScansRepository;
   vehicles: VehiclesRepository;
   canonicalVehicles: CanonicalVehiclesRepository;
+  canonicalGapQueue: CanonicalGapQueueRepository;
   cachedAnalysis: CachedAnalysisRepository;
+  canonicalVehicleImages: CanonicalVehicleImagesRepository;
   imageCache: ImageCacheRepository;
   unlockBalances: UnlockBalanceRepository;
   vehicleUnlocks: VehicleUnlockRepository;
   garageItems: GarageItemsRepository;
   valuations: ValuationsRepository;
   listingResults: ListingResultsRepository;
+  listingClicks: ListingClicksRepository;
+  vehiclePhotoClusters: VehiclePhotoClustersRepository;
   subscriptions: SubscriptionsRepository;
   usageCounters: UsageCountersRepository;
   visionDebug: VisionDebugRepository;
@@ -102,13 +118,17 @@ function createMissingRepositories(): RepositoryRegistry {
       scans: new MockScansRepository(),
       vehicles: new MockVehiclesRepository(),
       canonicalVehicles: new MockCanonicalVehiclesRepository(),
+      canonicalGapQueue: new MockCanonicalGapQueueRepository(),
       cachedAnalysis: new MockCachedAnalysisRepository(),
+      canonicalVehicleImages: new MockCanonicalVehicleImagesRepository(),
       imageCache: new MockImageCacheRepository(),
       unlockBalances: new MockUnlockBalanceRepository(),
       vehicleUnlocks: new MockVehicleUnlockRepository(),
       garageItems: new MockGarageItemsRepository(),
       valuations: new MockValuationsRepository(),
       listingResults: new MockListingResultsRepository(),
+      listingClicks: new MockListingClicksRepository(),
+      vehiclePhotoClusters: new MockVehiclePhotoClustersRepository(),
       subscriptions: new MockSubscriptionsRepository(),
       usageCounters: new MockUsageCountersRepository(),
       visionDebug: new MockVisionDebugRepository(),
@@ -131,17 +151,34 @@ function createMissingRepositories(): RepositoryRegistry {
     canonicalVehicles: {
       findById: async () => notConfigured(),
       findByCanonicalKey: async () => notConfigured(),
+      listSearchYears: async () => notConfigured(),
+      listSearchMakes: async () => notConfigured(),
+      listSearchModels: async () => notConfigured(),
+      listSearchTrims: async () => notConfigured(),
       findPromotedMatch: async () => notConfigured(),
       searchPromoted: async () => notConfigured(),
       upsertCandidate: async () => notConfigured(),
       promote: async () => notConfigured(),
       incrementPopularity: async () => notConfigured(),
     },
+    canonicalGapQueue: {
+      findByGapKey: async () => notConfigured(),
+      recordGap: async () => notConfigured(),
+      listTop: async () => notConfigured(),
+    },
     cachedAnalysis: {
       findByAnalysisKey: async () => notConfigured(),
       insert: async () => notConfigured(),
       update: async () => notConfigured(),
       markAccessed: async () => notConfigured(),
+    },
+    canonicalVehicleImages: {
+      findApprovedPrimaryByCanonicalKey: async () => notConfigured(),
+      findApprovedByCanonicalKey: async () => notConfigured(),
+      upsertCandidateImage: async () => notConfigured(),
+      markApprovedPrimary: async () => notConfigured(),
+      incrementImageStats: async () => notConfigured(),
+      rejectOrQuarantine: async () => notConfigured(),
     },
     imageCache: {
       findByImageKey: async () => notConfigured(),
@@ -167,6 +204,16 @@ function createMissingRepositories(): RepositoryRegistry {
     },
     valuations: { findLatest: async () => notConfigured() },
     listingResults: { listByVehicle: async () => notConfigured() },
+    listingClicks: { create: async () => notConfigured() },
+    vehiclePhotoClusters: {
+      findRecentCandidates: async () => notConfigured(),
+      findMemberByClusterAndScan: async () => notConfigured(),
+      createCluster: async () => notConfigured(),
+      addMember: async () => notConfigured(),
+      findUserContribution: async () => notConfigured(),
+      incrementClusterStats: async () => notConfigured(),
+      updateCanonicalIdentity: async () => notConfigured(),
+    },
     subscriptions: {
       findActiveByUser: async () => notConfigured(),
       replaceActiveForUser: async () => notConfigured(),
@@ -198,6 +245,8 @@ function createMissingRepositories(): RepositoryRegistry {
     },
     providerApiUsageLogs: {
       create: async () => notConfigured(),
+      summarizeSince: async () => notConfigured(),
+      listSince: async () => notConfigured(),
       deleteOlderThan: async () => notConfigured(),
     },
     vehicleScanPopularity: {
@@ -235,13 +284,17 @@ function createDefaultRepositories(): RepositoryRegistry {
     scans: new SupabaseScansRepository(supabaseAdmin),
     vehicles: new SupabaseVehiclesRepository(supabaseAdmin),
     canonicalVehicles: new SupabaseCanonicalVehiclesRepository(supabaseAdmin),
+    canonicalGapQueue: new SupabaseCanonicalGapQueueRepository(supabaseAdmin),
     cachedAnalysis: new SupabaseCachedAnalysisRepository(supabaseAdmin),
+    canonicalVehicleImages: new SupabaseCanonicalVehicleImagesRepository(supabaseAdmin),
     imageCache: new SupabaseImageCacheRepository(supabaseAdmin),
     unlockBalances: new SupabaseUnlockBalanceRepository(supabaseAdmin),
     vehicleUnlocks: new SupabaseVehicleUnlockRepository(supabaseAdmin),
     garageItems: new SupabaseGarageItemsRepository(supabaseAdmin),
     valuations: new SupabaseValuationsRepository(supabaseAdmin),
     listingResults: new SupabaseListingResultsRepository(supabaseAdmin),
+    listingClicks: new SupabaseListingClicksRepository(supabaseAdmin),
+    vehiclePhotoClusters: new SupabaseVehiclePhotoClustersRepository(supabaseAdmin),
     subscriptions: new SupabaseSubscriptionsRepository(supabaseAdmin),
     usageCounters: new SupabaseUsageCountersRepository(supabaseAdmin),
     visionDebug: new SupabaseVisionDebugRepository(supabaseAdmin),

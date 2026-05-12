@@ -1,7 +1,8 @@
 export type VehicleType = "car" | "motorcycle";
-export type UserPlan = "free" | "pro";
+export type UserPlan = "free" | "pro" | "pro_monthly" | "pro_yearly";
 export type VehicleCondition = "excellent" | "very_good" | "good" | "fair" | "poor";
 export type CanonicalVehiclePromotionStatus = "candidate" | "promoted";
+export type CanonicalGapFinalResultType = "canonical" | "ai_only";
 
 export type VehicleRecord = {
   id: string;
@@ -31,6 +32,10 @@ export type VehicleLookupDescriptor = {
   make: string;
   model: string;
   trim?: string | null;
+  yearRange?: {
+    start: number;
+    end: number;
+  } | null;
   vehicleType?: VehicleType | null;
   bodyStyle?: string | null;
   normalizedModel?: string | null;
@@ -58,14 +63,40 @@ export type VisionCandidate = {
   confidence: number;
 };
 
+export type VisibleTextEvidence = {
+  raw_text: string[];
+  make_text: string | null;
+  model_text: string | null;
+  trim_text: string | null;
+  badge_text: string[];
+  text_confidence: number;
+  evidence_regions?: string[];
+};
+
+export type MatchEvidence = {
+  source: "badge_text" | "visual_shape" | "canonical" | "cluster" | "provider";
+  readableText?: string[];
+};
+
 export type VisionResult = {
   vehicle_type: VehicleType;
   likely_year: number;
+  bestYear?: number | null;
+  yearConfidence?: "exact" | "estimated" | "range";
+  yearEvidence?: string | null;
+  exactYearConfirmed?: boolean | null;
+  displayYearLabel?: string | null;
+  yearRange?: {
+    start: number;
+    end: number;
+  } | null;
+  yearReasoning?: string[] | null;
   likely_make: string;
   likely_model: string;
   likely_trim?: string;
   source?: "visual_candidate" | "ocr_override" | "visual_override";
   confidence: number;
+  visible_text_evidence?: VisibleTextEvidence | null;
   alternate_candidates: VisionCandidate[];
   visible_clues: string[];
   visible_badge_text?: string;
@@ -73,6 +104,9 @@ export type VisionResult = {
   visible_model_text?: string;
   visible_trim_text?: string;
   emblem_logo_clues?: string[];
+  textDominanceApplied?: boolean;
+  focusCropUsed?: boolean;
+  matchEvidence?: MatchEvidence | null;
 };
 
 export type VisionProviderResult = {
@@ -121,13 +155,17 @@ export type ValuationRecord = {
   generatedAt: string;
   sourceLabel?: string;
   confidenceLabel?: string;
-  modelType?: "provider_range" | "listing_derived" | "modeled";
+  modelType?: "provider_range" | "listing_derived" | "modeled" | "estimated_depreciation" | "estimated_family_model";
   listingCount?: number | null;
 };
 
 export type ListingRecord = {
   id: string;
   vehicleId: string;
+  year?: number | null;
+  make?: string | null;
+  model?: string | null;
+  trim?: string | null;
   title: string;
   price: number;
   mileage: number;
@@ -135,7 +173,18 @@ export type ListingRecord = {
   distanceMiles: number;
   location: string;
   imageUrl: string;
+  listingUrl?: string | null;
   listedAt: string;
+};
+
+export type ListingClickRecord = {
+  id: string;
+  createdAt: string;
+  listingId?: string | null;
+  vehicle?: string | null;
+  url: string;
+  userId?: string | null;
+  sessionId?: string | null;
 };
 
 export type GarageItemRecord = {
@@ -172,6 +221,7 @@ export type UnlockBalanceRecord = {
   userId: string;
   freeUnlocksTotal: number;
   freeUnlocksUsed: number;
+  unlockCredits: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -284,6 +334,35 @@ export type CanonicalVehicleRecord = {
   updatedAt: string;
 };
 
+export type CanonicalGapQueueRecord = {
+  id: string;
+  gapKey: string;
+  canonicalKey: string;
+  year: number;
+  make: string;
+  model: string;
+  trim?: string | null;
+  normalizedMake: string;
+  normalizedModel: string;
+  normalizedTrim: string;
+  bodyType?: string | null;
+  vehicleType?: VehicleType | null;
+  finalResultType: CanonicalGapFinalResultType;
+  payloadStrength: PayloadStrength;
+  exampleConfidence?: number | null;
+  exampleScanId?: string | null;
+  visibleBadgeText?: string | null;
+  visibleMakeText?: string | null;
+  visibleModelText?: string | null;
+  visibleTrimText?: string | null;
+  notes?: string | null;
+  hitCount: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type VehicleScanPopularityRecord = {
   id: string;
   normalizedKey: string;
@@ -307,6 +386,86 @@ export type VehicleGlobalTrendingRecord = {
   globalScanCount: number;
   recentScanCount: number;
   trendScore: number;
+  lastSeenAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type VehiclePhotoClusterRecord = {
+  id: string;
+  clusterKey: string;
+  representativeVisualHash: string;
+  canonicalScanId?: string | null;
+  canonicalPhotoHash?: string | null;
+  canonicalVehicleId?: string | null;
+  canonicalKey?: string | null;
+  canonicalMake?: string | null;
+  canonicalModel?: string | null;
+  canonicalBadge?: string | null;
+  canonicalYear?: number | null;
+  canonicalMatchStrength?: "exact" | "strong" | "possible" | null;
+  canonicalHammingDistance?: number | null;
+  year?: number | null;
+  make?: string | null;
+  model?: string | null;
+  trim?: string | null;
+  normalizedMake?: string | null;
+  normalizedModel?: string | null;
+  normalizedTrim?: string | null;
+  memberCount: number;
+  scanCount: number;
+  uniqueUserCount: number;
+  confidence: number;
+  lastSeenAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type VehiclePhotoClusterMemberRecord = {
+  id: string;
+  clusterId: string;
+  scanId: string;
+  userId?: string | null;
+  visualHash: string;
+  imageKey?: string | null;
+  imageWidth?: number | null;
+  imageHeight?: number | null;
+  year?: number | null;
+  make?: string | null;
+  model?: string | null;
+  badge?: string | null;
+  trim?: string | null;
+  hammingDistance?: number | null;
+  matchStrength: "exact" | "strong" | "possible";
+  confidence?: number | null;
+  createdAt: string;
+};
+
+export type CanonicalVehicleImageSource = "user_scan" | "curated" | "admin" | "generated_placeholder";
+export type CanonicalVehicleImageStatus = "pending" | "approved" | "rejected" | "quarantined";
+export type CanonicalVehicleImageSafetyStatus = "unreviewed" | "passed" | "failed" | "manual_review";
+
+export type CanonicalVehicleImageRecord = {
+  id: string;
+  canonicalKey: string;
+  canonicalVehicleId?: string | null;
+  year?: number | null;
+  make?: string | null;
+  model?: string | null;
+  trim?: string | null;
+  normalizedMake?: string | null;
+  normalizedModel?: string | null;
+  normalizedTrim?: string | null;
+  imageUrl: string;
+  imageKey?: string | null;
+  source: CanonicalVehicleImageSource;
+  status: CanonicalVehicleImageStatus;
+  safetyStatus: CanonicalVehicleImageSafetyStatus;
+  qualityScore: number;
+  isPrimary: boolean;
+  scanCount: number;
+  uniqueUserCount: number;
+  firstSeenAt: string;
   lastSeenAt: string;
   createdAt: string;
   updatedAt: string;

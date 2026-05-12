@@ -1,7 +1,12 @@
 import {
   CanonicalVehicleRecord,
+  CanonicalGapQueueRecord,
+  CanonicalVehicleImageRecord,
   GarageItemRecord,
   ListingRecord,
+  ListingClickRecord,
+  VehiclePhotoClusterMemberRecord,
+  VehiclePhotoClusterRecord,
   ScanRecord,
   SubscriptionRecord,
   UsageCounterRecord,
@@ -40,6 +45,17 @@ export interface VehiclesRepository {
 export interface CanonicalVehiclesRepository {
   findById(id: string): Promise<CanonicalVehicleRecord | null>;
   findByCanonicalKey(canonicalKey: string): Promise<CanonicalVehicleRecord | null>;
+  listSearchYears(): Promise<number[]>;
+  listSearchMakes(year: number): Promise<string[]>;
+  listSearchModels(input: {
+    year: number;
+    make: string;
+  }): Promise<string[]>;
+  listSearchTrims(input: {
+    year: number;
+    make: string;
+    model: string;
+  }): Promise<CanonicalVehicleRecord[]>;
   findPromotedMatch(input: {
     year: number;
     normalizedMake: string;
@@ -55,6 +71,15 @@ export interface CanonicalVehiclesRepository {
   upsertCandidate(record: CanonicalVehicleRecord): Promise<CanonicalVehicleRecord>;
   promote(canonicalKey: string): Promise<void>;
   incrementPopularity(canonicalKey: string): Promise<void>;
+}
+
+export interface CanonicalGapQueueRepository {
+  findByGapKey(gapKey: string): Promise<CanonicalGapQueueRecord | null>;
+  recordGap(record: CanonicalGapQueueRecord): Promise<{
+    record: CanonicalGapQueueRecord;
+    action: "insert" | "increment";
+  }>;
+  listTop(limit: number): Promise<CanonicalGapQueueRecord[]>;
 }
 
 export interface VehicleScanPopularityRepository {
@@ -116,6 +141,78 @@ export interface ListingResultsRepository {
   }): Promise<ListingRecord[]>;
 }
 
+export interface ListingClicksRepository {
+  create(record: ListingClickRecord): Promise<ListingClickRecord>;
+}
+
+export interface CanonicalVehicleImagesRepository {
+  findApprovedPrimaryByCanonicalKey(canonicalKey: string): Promise<CanonicalVehicleImageRecord | null>;
+  findApprovedByCanonicalKey(canonicalKey: string, limit: number): Promise<CanonicalVehicleImageRecord[]>;
+  upsertCandidateImage(record: CanonicalVehicleImageRecord): Promise<CanonicalVehicleImageRecord>;
+  markApprovedPrimary(input: { canonicalKey: string; imageId: string }): Promise<CanonicalVehicleImageRecord | null>;
+  incrementImageStats(input: {
+    imageId: string;
+    scanCountDelta: number;
+    uniqueUserCountDelta: number;
+    lastSeenAt: string;
+  }): Promise<CanonicalVehicleImageRecord | null>;
+  rejectOrQuarantine(input: {
+    imageId: string;
+    status: "rejected" | "quarantined";
+    safetyStatus: "failed" | "manual_review";
+  }): Promise<CanonicalVehicleImageRecord | null>;
+}
+
+export interface VehiclePhotoClustersRepository {
+  findRecentCandidates(input: {
+    normalizedMake?: string | null;
+    normalizedModel?: string | null;
+    normalizedTrim?: string | null;
+    canonicalKey?: string | null;
+    limit?: number;
+  }): Promise<VehiclePhotoClusterRecord[]>;
+  findMemberByClusterAndScan(input: {
+    clusterId: string;
+    scanId: string;
+  }): Promise<VehiclePhotoClusterMemberRecord | null>;
+  createCluster(record: VehiclePhotoClusterRecord): Promise<VehiclePhotoClusterRecord>;
+  addMember(record: VehiclePhotoClusterMemberRecord): Promise<VehiclePhotoClusterMemberRecord>;
+  findUserContribution(input: {
+    clusterId: string;
+    userId: string;
+  }): Promise<VehiclePhotoClusterMemberRecord | null>;
+  incrementClusterStats(input: {
+    clusterId: string;
+    memberCountDelta?: number;
+    scanCountDelta: number;
+    uniqueUserCountDelta: number;
+    lastSeenAt: string;
+  }): Promise<VehiclePhotoClusterRecord | null>;
+  updateCanonicalIdentity(input: {
+    clusterId: string;
+    canonicalVehicleId?: string | null;
+    canonicalKey?: string | null;
+    year?: number | null;
+    make?: string | null;
+    model?: string | null;
+    trim?: string | null;
+    normalizedMake?: string | null;
+    normalizedModel?: string | null;
+    normalizedTrim?: string | null;
+    confidence?: number | null;
+    representativeVisualHash?: string | null;
+    canonicalScanId?: string | null;
+    canonicalPhotoHash?: string | null;
+    canonicalMake?: string | null;
+    canonicalModel?: string | null;
+    canonicalBadge?: string | null;
+    canonicalYear?: number | null;
+    matchStrength?: "exact" | "strong" | "possible" | null;
+    hammingDistance?: number | null;
+    lastSeenAt?: string | null;
+  }): Promise<VehiclePhotoClusterRecord | null>;
+}
+
 export interface SubscriptionsRepository {
   findActiveByUser(userId: string): Promise<SubscriptionRecord | null>;
   replaceActiveForUser(record: SubscriptionRecord): Promise<SubscriptionRecord>;
@@ -153,8 +250,20 @@ export interface ListingsCacheRepository {
   deleteOlderThan(cutoffIso: string): Promise<number>;
 }
 
+import { ProviderEndpointType } from "../lib/providerCache.js";
+
 export interface ProviderApiUsageLogsRepository {
   create(record: ProviderApiUsageLogRecord): Promise<ProviderApiUsageLogRecord>;
+  summarizeSince(input: { sinceIso: string; provider?: string }): Promise<{
+    total: number;
+    byEndpoint: Record<ProviderEndpointType, number>;
+    byEvent: Record<string, number>;
+  }>;
+  listSince(input: {
+    sinceIso: string;
+    provider?: string;
+    limit?: number;
+  }): Promise<ProviderApiUsageLogRecord[]>;
   deleteOlderThan(cutoffIso: string): Promise<number>;
 }
 
@@ -164,7 +273,7 @@ export interface CachedAnalysisRepository {
   update(
     analysisKey: string,
     updates: Partial<Omit<CachedAnalysisRecord, "id" | "analysisKey" | "createdAt">>,
-  ): Promise<CachedAnalysisRecord>;
+  ): Promise<CachedAnalysisRecord | null>;
   markAccessed(analysisKey: string, lastAccessedAt: string): Promise<void>;
 }
 
@@ -185,9 +294,11 @@ export type GrantUnlockResult = {
   allowed: boolean;
   alreadyUnlocked: boolean;
   usedUnlock: boolean;
+  usedUnlockCredit: boolean;
   freeUnlocksTotal: number;
   freeUnlocksUsed: number;
   freeUnlocksRemaining: number;
+  unlockCreditsRemaining: number;
 };
 
 export interface VehicleUnlockRepository {

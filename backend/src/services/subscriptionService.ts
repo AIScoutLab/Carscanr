@@ -1,10 +1,31 @@
 import crypto from "node:crypto";
+import { normalizePlan } from "../lib/subscription.js";
 import { repositories } from "../lib/repositoryRegistry.js";
-import { SubscriptionRecord } from "../types/domain.js";
+import { SubscriptionRecord, UserPlan } from "../types/domain.js";
 
 export class SubscriptionService {
-  async getActivePlan(userId: string): Promise<"free" | "pro"> {
-    return (await repositories.subscriptions.findActiveByUser(userId))?.plan ?? "free";
+  private isUnlockPackProduct(productId: string) {
+    const normalized = productId.toLowerCase();
+    return normalized.includes("unlock");
+  }
+
+  async getActivePlan(userId: string): Promise<UserPlan> {
+    return normalizePlan((await repositories.subscriptions.findActiveByUser(userId))?.plan ?? "free");
+  }
+
+  private resolvePlanFromProductId(productId: string, receiptData: string): UserPlan {
+    const normalizedProductId = productId.toLowerCase();
+    const normalizedReceipt = receiptData.toLowerCase();
+
+    if (normalizedProductId.includes("year") || normalizedProductId.includes("annual") || normalizedReceipt.includes("year")) {
+      return "pro_yearly";
+    }
+
+    if (normalizedProductId.includes("month") || normalizedReceipt.includes("pro")) {
+      return "pro_monthly";
+    }
+
+    return "free";
   }
 
   async verifySubscription(input: {
@@ -13,14 +34,39 @@ export class SubscriptionService {
     receiptData: string;
     productId: string;
   }): Promise<SubscriptionRecord> {
-    const status = input.receiptData.includes("pro") ? "pro" : "free";
+    if (this.isUnlockPackProduct(input.productId)) {
+      const balance = await repositories.unlockBalances.getOrCreate(input.userId);
+      await repositories.unlockBalances.update({
+        ...balance,
+        unlockCredits: balance.unlockCredits + 5,
+        updatedAt: new Date().toISOString(),
+      });
+      return (
+        (await repositories.subscriptions.findActiveByUser(input.userId)) ?? {
+          id: crypto.randomUUID(),
+          userId: input.userId,
+          plan: "free",
+          status: "active",
+          productId: input.productId,
+          expiresAt: undefined,
+          verifiedAt: new Date().toISOString(),
+        }
+      );
+    }
+
+    const status = this.resolvePlanFromProductId(input.productId, input.receiptData);
     const record: SubscriptionRecord = {
       id: crypto.randomUUID(),
       userId: input.userId,
-      plan: status,
+      plan: normalizePlan(status),
       status: "active",
       productId: input.productId,
-      expiresAt: status === "pro" ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() : undefined,
+      expiresAt:
+        status === "pro_yearly"
+          ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
+          : status === "pro_monthly"
+            ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+            : undefined,
       verifiedAt: new Date().toISOString(),
     };
     return repositories.subscriptions.replaceActiveForUser(record);

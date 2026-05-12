@@ -1,9 +1,11 @@
 import crypto from "node:crypto";
 import { SupabaseClient } from "@supabase/supabase-js";
+import { FREE_PRO_UNLOCKS_TOTAL } from "../config/product.js";
 import { AppError } from "../errors/appError.js";
 import { logger } from "../lib/logger.js";
 import { resolveHorsepower } from "../lib/vehicleData.js";
 import {
+  ProviderEndpointType,
   ProviderApiUsageLogRecord,
   VehicleListingsCacheRow,
   VehicleSpecsCacheRow,
@@ -11,12 +13,17 @@ import {
 } from "../lib/providerCache.js";
 import {
   CanonicalVehicleRecord,
+  CanonicalGapQueueRecord,
+  CanonicalVehicleImageRecord,
   CachedAnalysisRecord,
   GarageItemRecord,
   UnlockBalanceRecord,
   UserVehicleUnlockRecord,
   ImageCacheRecord,
+  ListingClickRecord,
   ListingRecord,
+  VehiclePhotoClusterMemberRecord,
+  VehiclePhotoClusterRecord,
   ScanRecord,
   SubscriptionRecord,
   UsageCounterRecord,
@@ -28,9 +35,13 @@ import {
 } from "../types/domain.js";
 import {
   CanonicalVehiclesRepository,
+  CanonicalGapQueueRepository,
   CachedAnalysisRepository,
+  CanonicalVehicleImagesRepository,
   UnlockBalanceRepository,
   ListingsCacheRepository,
+  ListingClicksRepository,
+  VehiclePhotoClustersRepository,
   GarageItemsRepository,
   ImageCacheRepository,
   ListingResultsRepository,
@@ -161,6 +172,263 @@ function canonicalVehicleToRow(record: CanonicalVehicleRecord) {
     last_promoted_at: record.lastPromotedAt ?? null,
     created_at: record.createdAt,
     updated_at: record.updatedAt,
+  };
+}
+
+function mapCanonicalGapQueueRow(row: any): CanonicalGapQueueRecord {
+  return {
+    id: row.id,
+    gapKey: row.gap_key,
+    canonicalKey: row.canonical_key,
+    year: row.year,
+    make: row.make,
+    model: row.model,
+    trim: row.trim ?? null,
+    normalizedMake: row.normalized_make,
+    normalizedModel: row.normalized_model,
+    normalizedTrim: row.normalized_trim,
+    bodyType: row.body_type ?? null,
+    vehicleType: row.vehicle_type ?? null,
+    finalResultType: row.final_result_type,
+    payloadStrength: row.payload_strength,
+    exampleConfidence: row.example_confidence ?? null,
+    exampleScanId: row.example_scan_id ?? null,
+    visibleBadgeText: row.visible_badge_text ?? null,
+    visibleMakeText: row.visible_make_text ?? null,
+    visibleModelText: row.visible_model_text ?? null,
+    visibleTrimText: row.visible_trim_text ?? null,
+    notes: row.notes ?? null,
+    hitCount: row.hit_count ?? 0,
+    firstSeenAt: row.first_seen_at,
+    lastSeenAt: row.last_seen_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function canonicalGapQueueToRow(record: CanonicalGapQueueRecord) {
+  return {
+    id: record.id,
+    gap_key: record.gapKey,
+    canonical_key: record.canonicalKey,
+    year: record.year,
+    make: record.make,
+    model: record.model,
+    trim: record.trim ?? null,
+    normalized_make: record.normalizedMake,
+    normalized_model: record.normalizedModel,
+    normalized_trim: record.normalizedTrim,
+    body_type: record.bodyType ?? null,
+    vehicle_type: record.vehicleType ?? null,
+    final_result_type: record.finalResultType,
+    payload_strength: record.payloadStrength,
+    example_confidence: record.exampleConfidence ?? null,
+    example_scan_id: record.exampleScanId ?? null,
+    visible_badge_text: record.visibleBadgeText ?? null,
+    visible_make_text: record.visibleMakeText ?? null,
+    visible_model_text: record.visibleModelText ?? null,
+    visible_trim_text: record.visibleTrimText ?? null,
+    notes: record.notes ?? null,
+    hit_count: record.hitCount,
+    first_seen_at: record.firstSeenAt,
+    last_seen_at: record.lastSeenAt,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt,
+  };
+}
+
+function mapCanonicalVehicleImageRow(row: any): CanonicalVehicleImageRecord {
+  return {
+    id: row.id,
+    canonicalKey: row.canonical_key,
+    canonicalVehicleId: row.canonical_vehicle_id ?? null,
+    year: row.year ?? null,
+    make: row.make ?? null,
+    model: row.model ?? null,
+    trim: row.trim ?? null,
+    normalizedMake: row.normalized_make ?? null,
+    normalizedModel: row.normalized_model ?? null,
+    normalizedTrim: row.normalized_trim ?? null,
+    imageUrl: row.image_url,
+    imageKey: row.image_key ?? null,
+    source: row.source,
+    status: row.status,
+    safetyStatus: row.safety_status,
+    qualityScore: Number(row.quality_score ?? 0),
+    isPrimary: Boolean(row.is_primary),
+    scanCount: row.scan_count ?? 0,
+    uniqueUserCount: row.unique_user_count ?? 0,
+    firstSeenAt: row.first_seen_at,
+    lastSeenAt: row.last_seen_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function canonicalVehicleImageToRow(record: CanonicalVehicleImageRecord) {
+  return {
+    id: record.id,
+    canonical_key: record.canonicalKey,
+    canonical_vehicle_id: record.canonicalVehicleId ?? null,
+    year: record.year ?? null,
+    make: record.make ?? null,
+    model: record.model ?? null,
+    trim: record.trim ?? null,
+    normalized_make: record.normalizedMake ?? null,
+    normalized_model: record.normalizedModel ?? null,
+    normalized_trim: record.normalizedTrim ?? null,
+    image_url: record.imageUrl,
+    image_key: record.imageKey ?? null,
+    source: record.source,
+    status: record.status,
+    safety_status: record.safetyStatus,
+    quality_score: record.qualityScore,
+    is_primary: record.isPrimary,
+    scan_count: record.scanCount,
+    unique_user_count: record.uniqueUserCount,
+    first_seen_at: record.firstSeenAt,
+    last_seen_at: record.lastSeenAt,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt,
+  };
+}
+
+function mapVehiclePhotoClusterRow(row: any): VehiclePhotoClusterRecord {
+  return {
+    id: row.id,
+    clusterKey: row.cluster_key,
+    representativeVisualHash: row.representative_visual_hash,
+    canonicalScanId: row.canonical_scan_id ?? null,
+    canonicalPhotoHash: row.canonical_photo_hash ?? null,
+    canonicalVehicleId: row.canonical_vehicle_id ?? null,
+    canonicalKey: row.canonical_key ?? null,
+    canonicalMake: row.canonical_make ?? null,
+    canonicalModel: row.canonical_model ?? null,
+    canonicalBadge: row.canonical_badge ?? null,
+    canonicalYear: row.canonical_year ?? null,
+    canonicalMatchStrength: row.canonical_match_strength ?? null,
+    canonicalHammingDistance: row.canonical_hamming_distance ?? null,
+    year: row.year ?? null,
+    make: row.make ?? null,
+    model: row.model ?? null,
+    trim: row.trim ?? null,
+    normalizedMake: row.normalized_make ?? null,
+    normalizedModel: row.normalized_model ?? null,
+    normalizedTrim: row.normalized_trim ?? null,
+    memberCount: row.member_count ?? 0,
+    scanCount: row.scan_count ?? 1,
+    uniqueUserCount: row.unique_user_count ?? 1,
+    confidence: Number(row.confidence ?? 0),
+    lastSeenAt: row.last_seen_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function vehiclePhotoClusterToRow(record: VehiclePhotoClusterRecord) {
+  return {
+    id: record.id,
+    cluster_key: record.clusterKey,
+    representative_visual_hash: record.representativeVisualHash,
+    canonical_scan_id: record.canonicalScanId ?? null,
+    canonical_photo_hash: record.canonicalPhotoHash ?? record.representativeVisualHash,
+    canonical_vehicle_id: record.canonicalVehicleId ?? null,
+    canonical_key: record.canonicalKey ?? null,
+    canonical_make: record.canonicalMake ?? null,
+    canonical_model: record.canonicalModel ?? null,
+    canonical_badge: record.canonicalBadge ?? null,
+    canonical_year: record.canonicalYear ?? null,
+    canonical_match_strength: record.canonicalMatchStrength ?? null,
+    canonical_hamming_distance: record.canonicalHammingDistance ?? null,
+    year: record.year ?? null,
+    make: record.make ?? null,
+    model: record.model ?? null,
+    trim: record.trim ?? null,
+    normalized_make: record.normalizedMake ?? null,
+    normalized_model: record.normalizedModel ?? null,
+    normalized_trim: record.normalizedTrim ?? null,
+    member_count: record.memberCount,
+    scan_count: record.scanCount,
+    unique_user_count: record.uniqueUserCount,
+    confidence: record.confidence,
+    last_seen_at: record.lastSeenAt,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt,
+  };
+}
+
+function mapVehiclePhotoClusterMemberRow(row: any): VehiclePhotoClusterMemberRecord {
+  return {
+    id: row.id,
+    clusterId: row.cluster_id,
+    scanId: row.scan_id,
+    userId: row.user_id ?? null,
+    visualHash: row.visual_hash,
+    imageKey: row.image_key ?? null,
+    imageWidth: row.image_width ?? null,
+    imageHeight: row.image_height ?? null,
+    year: row.year ?? null,
+    make: row.make ?? null,
+    model: row.model ?? null,
+    badge: row.badge ?? null,
+    trim: row.trim ?? null,
+    hammingDistance: row.hamming_distance == null ? null : Number(row.hamming_distance),
+    matchStrength: row.match_strength,
+    confidence: row.confidence == null ? null : Number(row.confidence),
+    createdAt: row.created_at,
+  };
+}
+
+function vehiclePhotoClusterMemberToRow(record: VehiclePhotoClusterMemberRecord) {
+  return {
+    id: record.id,
+    cluster_id: record.clusterId,
+    scan_id: record.scanId ?? null,
+    user_id: record.userId ?? null,
+    visual_hash: record.visualHash,
+    image_key: record.imageKey ?? null,
+    image_width: record.imageWidth ?? null,
+    image_height: record.imageHeight ?? null,
+    year: record.year ?? null,
+    make: record.make ?? null,
+    model: record.model ?? null,
+    badge: record.badge ?? null,
+    trim: record.trim ?? null,
+    hamming_distance: record.hammingDistance ?? null,
+    match_strength: record.matchStrength,
+    confidence: record.confidence ?? null,
+    created_at: record.createdAt,
+  };
+}
+
+function canonicalGapQueueToRpcArgs(record: CanonicalGapQueueRecord) {
+  return {
+    p_id: record.id,
+    p_gap_key: record.gapKey,
+    p_canonical_key: record.canonicalKey,
+    p_year: record.year,
+    p_make: record.make,
+    p_model: record.model,
+    p_trim: record.trim ?? null,
+    p_normalized_make: record.normalizedMake,
+    p_normalized_model: record.normalizedModel,
+    p_normalized_trim: record.normalizedTrim,
+    p_body_type: record.bodyType ?? null,
+    p_vehicle_type: record.vehicleType ?? null,
+    p_final_result_type: record.finalResultType,
+    p_payload_strength: record.payloadStrength,
+    p_example_confidence: record.exampleConfidence ?? null,
+    p_example_scan_id: record.exampleScanId ?? null,
+    p_visible_badge_text: record.visibleBadgeText ?? null,
+    p_visible_make_text: record.visibleMakeText ?? null,
+    p_visible_model_text: record.visibleModelText ?? null,
+    p_visible_trim_text: record.visibleTrimText ?? null,
+    p_notes: record.notes ?? null,
+    p_hit_count: record.hitCount,
+    p_first_seen_at: record.firstSeenAt,
+    p_last_seen_at: record.lastSeenAt,
+    p_created_at: record.createdAt,
+    p_updated_at: record.updatedAt,
   };
 }
 
@@ -431,6 +699,10 @@ function mapListingRow(row: any): ListingRecord {
   return {
     id: row.id,
     vehicleId: row.vehicle_id,
+    year: row.year ?? null,
+    make: row.make ?? null,
+    model: row.model ?? null,
+    trim: row.trim ?? null,
     title: row.title,
     price: row.price,
     mileage: row.mileage,
@@ -438,7 +710,32 @@ function mapListingRow(row: any): ListingRecord {
     distanceMiles: row.distance_miles,
     location: row.location,
     imageUrl: row.image_url,
+    listingUrl: row.listing_url ?? row.url ?? row.vdp_url ?? null,
     listedAt: row.listed_at,
+  };
+}
+
+function mapListingClickRow(row: any): ListingClickRecord {
+  return {
+    id: row.id,
+    createdAt: row.created_at,
+    listingId: row.listing_id ?? null,
+    vehicle: row.vehicle ?? null,
+    url: row.url,
+    userId: row.user_id ?? null,
+    sessionId: row.session_id ?? null,
+  };
+}
+
+function listingClickToRow(record: ListingClickRecord) {
+  return {
+    id: record.id,
+    created_at: record.createdAt,
+    listing_id: record.listingId ?? null,
+    vehicle: record.vehicle ?? null,
+    url: record.url,
+    user_id: record.userId ?? null,
+    session_id: record.sessionId ?? null,
   };
 }
 
@@ -459,6 +756,7 @@ function mapUnlockBalanceRow(row: any): UnlockBalanceRecord {
     userId: row.user_id,
     freeUnlocksTotal: row.free_unlocks_total,
     freeUnlocksUsed: row.free_unlocks_used,
+    unlockCredits: Number(row.unlock_credits ?? 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -469,6 +767,7 @@ function unlockBalanceToRow(record: UnlockBalanceRecord) {
     user_id: record.userId,
     free_unlocks_total: record.freeUnlocksTotal,
     free_unlocks_used: record.freeUnlocksUsed,
+    unlock_credits: record.unlockCredits,
     created_at: record.createdAt,
     updated_at: record.updatedAt,
   };
@@ -755,6 +1054,19 @@ function providerApiUsageLogToRow(entry: ProviderApiUsageLogRecord) {
   };
 }
 
+function mapProviderApiUsageLogRow(row: any): ProviderApiUsageLogRecord {
+  return {
+    id: row.id,
+    provider: row.provider,
+    endpointType: row.endpoint_type,
+    eventType: row.event_type,
+    cacheKey: row.cache_key,
+    requestSummary: row.request_summary ?? {},
+    responseSummary: row.response_summary ?? {},
+    createdAt: row.created_at,
+  };
+}
+
 export class SupabaseScansRepository implements ScansRepository {
   constructor(private readonly client: DbClient) {}
 
@@ -829,6 +1141,94 @@ export class SupabaseCanonicalVehiclesRepository implements CanonicalVehiclesRep
       throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load canonical vehicle.", error);
     }
     return data ? mapCanonicalVehicleRow(data) : null;
+  }
+
+  async listSearchYears(): Promise<number[]> {
+    const baseQuery = this.client
+      .from("canonical_vehicles")
+      .select("year")
+      .eq("promotion_status", "promoted")
+      .not("specs_json", "is", null);
+
+    const [{ data: newestRows, error: newestError }, { data: oldestRows, error: oldestError }] = await Promise.all([
+      baseQuery.order("year", { ascending: false }).limit(1),
+      this.client
+        .from("canonical_vehicles")
+        .select("year")
+        .eq("promotion_status", "promoted")
+        .not("specs_json", "is", null)
+        .order("year", { ascending: true })
+        .limit(1),
+    ]);
+
+    if (newestError) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load canonical search years.", newestError);
+    if (oldestError) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load canonical search years.", oldestError);
+
+    const newestYear = Number(newestRows?.[0]?.year);
+    const oldestYear = Number(oldestRows?.[0]?.year);
+    if (!Number.isInteger(newestYear) || !Number.isInteger(oldestYear)) {
+      return [];
+    }
+
+    const years: number[] = [];
+    for (let year = newestYear; year >= oldestYear; year -= 1) {
+      years.push(year);
+    }
+    return years;
+  }
+
+  async listSearchMakes(year: number): Promise<string[]> {
+    const { data, error } = await this.client
+      .from("canonical_vehicles")
+      .select("make")
+      .eq("promotion_status", "promoted")
+      .not("specs_json", "is", null)
+      .eq("year", year)
+      .order("make", { ascending: true })
+      .limit(5000);
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load canonical search makes.", error);
+    return Array.from(
+      new Set(
+        (data ?? [])
+          .map((row) => (typeof row.make === "string" ? row.make.trim() : ""))
+          .filter((make): make is string => make.length > 0),
+      ),
+    ).sort((left, right) => left.localeCompare(right));
+  }
+
+  async listSearchModels(input: { year: number; make: string }): Promise<string[]> {
+    const { data, error } = await this.client
+      .from("canonical_vehicles")
+      .select("model")
+      .eq("promotion_status", "promoted")
+      .not("specs_json", "is", null)
+      .eq("year", input.year)
+      .eq("normalized_make", input.make)
+      .order("model", { ascending: true })
+      .limit(5000);
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load canonical search models.", error);
+    return Array.from(
+      new Set(
+        (data ?? [])
+          .map((row) => (typeof row.model === "string" ? row.model.trim() : ""))
+          .filter((model): model is string => model.length > 0),
+      ),
+    ).sort((left, right) => left.localeCompare(right));
+  }
+
+  async listSearchTrims(input: { year: number; make: string; model: string }): Promise<CanonicalVehicleRecord[]> {
+    const { data, error } = await this.client
+      .from("canonical_vehicles")
+      .select("*")
+      .eq("promotion_status", "promoted")
+      .not("specs_json", "is", null)
+      .eq("year", input.year)
+      .eq("normalized_make", input.make)
+      .eq("normalized_model", input.model)
+      .order("trim", { ascending: true })
+      .limit(5000);
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load canonical search trims.", error);
+    return (data ?? []).map(mapCanonicalVehicleRow);
   }
 
   async findPromotedMatch(input: {
@@ -959,6 +1359,40 @@ export class SupabaseCanonicalVehiclesRepository implements CanonicalVehiclesRep
       target_canonical_key: canonicalKey,
     });
     if (error) throw new AppError(500, "SUPABASE_UPDATE_FAILED", "Failed to increment canonical vehicle popularity.", error);
+  }
+}
+
+export class SupabaseCanonicalGapQueueRepository implements CanonicalGapQueueRepository {
+  constructor(private readonly client: DbClient) {}
+
+  async findByGapKey(gapKey: string): Promise<CanonicalGapQueueRecord | null> {
+    const { data, error } = await this.client.from("canonical_gap_queue").select("*").eq("gap_key", gapKey).maybeSingle();
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load canonical gap queue entry.", error);
+    return data ? mapCanonicalGapQueueRow(data) : null;
+  }
+
+  async recordGap(record: CanonicalGapQueueRecord): Promise<{ record: CanonicalGapQueueRecord; action: "insert" | "increment" }> {
+    const existing = await this.findByGapKey(record.gapKey);
+    const { data, error } = await this.client.rpc("upsert_canonical_gap_queue", canonicalGapQueueToRpcArgs(record));
+    if (error) {
+      throw new AppError(500, "SUPABASE_UPSERT_FAILED", "Failed to persist canonical gap queue entry.", error);
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    return {
+      record: mapCanonicalGapQueueRow(requireData(row, "Canonical gap queue upsert returned no row.")),
+      action: existing ? "increment" : "insert",
+    };
+  }
+
+  async listTop(limit: number): Promise<CanonicalGapQueueRecord[]> {
+    const { data, error } = await this.client
+      .from("canonical_gap_queue")
+      .select("*")
+      .order("hit_count", { ascending: false })
+      .order("last_seen_at", { ascending: false })
+      .limit(limit);
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to list canonical gap queue entries.", error);
+    return (data ?? []).map(mapCanonicalGapQueueRow);
   }
 }
 
@@ -1229,6 +1663,490 @@ export class SupabaseListingResultsRepository implements ListingResultsRepositor
   }
 }
 
+export class SupabaseListingClicksRepository implements ListingClicksRepository {
+  constructor(private readonly client: DbClient) {}
+
+  async create(record: ListingClickRecord): Promise<ListingClickRecord> {
+    const { data, error } = await this.client.from("listing_clicks").insert(listingClickToRow(record)).select().single();
+    if (error) throw new AppError(500, "SUPABASE_INSERT_FAILED", "Failed to persist listing click.", error);
+    return mapListingClickRow(requireData(data, "Listing click insert returned no row."));
+  }
+}
+
+export class SupabaseCanonicalVehicleImagesRepository implements CanonicalVehicleImagesRepository {
+  constructor(private readonly client: DbClient) {}
+
+  async findApprovedPrimaryByCanonicalKey(canonicalKey: string): Promise<CanonicalVehicleImageRecord | null> {
+    const { data, error } = await this.client
+      .from("canonical_vehicle_images")
+      .select("*")
+      .eq("canonical_key", canonicalKey)
+      .eq("is_primary", true)
+      .eq("status", "approved")
+      .eq("safety_status", "passed")
+      .maybeSingle();
+    if (error) {
+      throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load canonical vehicle image.", supabaseErrorDetails("canonical_vehicle_images", "select", error));
+    }
+    return data ? mapCanonicalVehicleImageRow(data) : null;
+  }
+
+  async findApprovedByCanonicalKey(canonicalKey: string, limit: number): Promise<CanonicalVehicleImageRecord[]> {
+    const { data, error } = await this.client
+      .from("canonical_vehicle_images")
+      .select("*")
+      .eq("canonical_key", canonicalKey)
+      .eq("status", "approved")
+      .eq("safety_status", "passed")
+      .order("is_primary", { ascending: false })
+      .order("quality_score", { ascending: false })
+      .limit(limit);
+    if (error) {
+      throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load canonical vehicle images.", supabaseErrorDetails("canonical_vehicle_images", "select", error));
+    }
+    return (data ?? []).map(mapCanonicalVehicleImageRow);
+  }
+
+  async upsertCandidateImage(record: CanonicalVehicleImageRecord): Promise<CanonicalVehicleImageRecord> {
+    if (record.imageKey) {
+      const { data: existing, error: existingError } = await this.client
+        .from("canonical_vehicle_images")
+        .select("*")
+        .eq("canonical_key", record.canonicalKey)
+        .eq("image_key", record.imageKey)
+        .maybeSingle();
+      if (existingError) {
+        throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to check canonical vehicle image candidate.", supabaseErrorDetails("canonical_vehicle_images", "select", existingError));
+      }
+      if (existing) {
+        const merged = {
+          ...mapCanonicalVehicleImageRow(existing),
+          ...record,
+          id: existing.id,
+          createdAt: existing.created_at,
+        };
+        const { data, error } = await this.client
+          .from("canonical_vehicle_images")
+          .update(canonicalVehicleImageToRow(merged))
+          .eq("id", existing.id)
+          .select("*")
+          .single();
+        if (error) {
+          throw new AppError(500, "SUPABASE_UPDATE_FAILED", "Failed to update canonical vehicle image candidate.", supabaseErrorDetails("canonical_vehicle_images", "update", error));
+        }
+        return mapCanonicalVehicleImageRow(requireData(data, "Canonical vehicle image update returned no row."));
+      }
+    }
+
+    const { data, error } = await this.client
+      .from("canonical_vehicle_images")
+      .insert(canonicalVehicleImageToRow(record))
+      .select("*")
+      .single();
+    if (error) {
+      throw new AppError(500, "SUPABASE_INSERT_FAILED", "Failed to persist canonical vehicle image candidate.", supabaseErrorDetails("canonical_vehicle_images", "insert", error));
+    }
+    return mapCanonicalVehicleImageRow(requireData(data, "Canonical vehicle image insert returned no row."));
+  }
+
+  async markApprovedPrimary(input: { canonicalKey: string; imageId: string }): Promise<CanonicalVehicleImageRecord | null> {
+    const unset = await this.client.from("canonical_vehicle_images").update({ is_primary: false }).eq("canonical_key", input.canonicalKey);
+    if (unset.error) {
+      throw new AppError(500, "SUPABASE_UPDATE_FAILED", "Failed to clear existing canonical primary image.", supabaseErrorDetails("canonical_vehicle_images", "update", unset.error));
+    }
+    const { data, error } = await this.client
+      .from("canonical_vehicle_images")
+      .update({ is_primary: true, status: "approved", safety_status: "passed" })
+      .eq("id", input.imageId)
+      .select("*")
+      .maybeSingle();
+    if (error) {
+      throw new AppError(500, "SUPABASE_UPDATE_FAILED", "Failed to promote canonical vehicle image.", supabaseErrorDetails("canonical_vehicle_images", "update", error));
+    }
+    return data ? mapCanonicalVehicleImageRow(data) : null;
+  }
+
+  async incrementImageStats(input: {
+    imageId: string;
+    scanCountDelta: number;
+    uniqueUserCountDelta: number;
+    lastSeenAt: string;
+  }): Promise<CanonicalVehicleImageRecord | null> {
+    const { data: existing, error: existingError } = await this.client
+      .from("canonical_vehicle_images")
+      .select("*")
+      .eq("id", input.imageId)
+      .maybeSingle();
+    if (existingError) {
+      throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load canonical vehicle image for stat update.", supabaseErrorDetails("canonical_vehicle_images", "select", existingError));
+    }
+    if (!existing) return null;
+    const mapped = mapCanonicalVehicleImageRow(existing);
+    const { data, error } = await this.client
+      .from("canonical_vehicle_images")
+      .update({
+        scan_count: mapped.scanCount + input.scanCountDelta,
+        unique_user_count: mapped.uniqueUserCount + input.uniqueUserCountDelta,
+        last_seen_at: input.lastSeenAt,
+      })
+      .eq("id", input.imageId)
+      .select("*")
+      .single();
+    if (error) {
+      throw new AppError(500, "SUPABASE_UPDATE_FAILED", "Failed to update canonical vehicle image stats.", supabaseErrorDetails("canonical_vehicle_images", "update", error));
+    }
+    return mapCanonicalVehicleImageRow(requireData(data, "Canonical vehicle image stats update returned no row."));
+  }
+
+  async rejectOrQuarantine(input: {
+    imageId: string;
+    status: "rejected" | "quarantined";
+    safetyStatus: "failed" | "manual_review";
+  }): Promise<CanonicalVehicleImageRecord | null> {
+    const { data, error } = await this.client
+      .from("canonical_vehicle_images")
+      .update({ status: input.status, safety_status: input.safetyStatus, is_primary: false })
+      .eq("id", input.imageId)
+      .select("*")
+      .maybeSingle();
+    if (error) {
+      throw new AppError(500, "SUPABASE_UPDATE_FAILED", "Failed to reject/quarantine canonical vehicle image.", supabaseErrorDetails("canonical_vehicle_images", "update", error));
+    }
+    return data ? mapCanonicalVehicleImageRow(data) : null;
+  }
+}
+
+export class SupabaseVehiclePhotoClustersRepository implements VehiclePhotoClustersRepository {
+  constructor(private readonly client: DbClient) {}
+
+  private getCanonicalPriorityRank(strength?: "exact" | "strong" | "possible" | null) {
+    switch (strength) {
+      case "exact":
+        return 3;
+      case "strong":
+        return 2;
+      case "possible":
+        return 1;
+      default:
+        return 0;
+    }
+  }
+
+  private getCanonicalMetadataRichness(input: {
+    canonicalVehicleId?: string | null;
+    canonicalKey?: string | null;
+    year?: number | null;
+    make?: string | null;
+    model?: string | null;
+    trim?: string | null;
+    normalizedMake?: string | null;
+    normalizedModel?: string | null;
+    normalizedTrim?: string | null;
+  }) {
+    return [
+      input.canonicalVehicleId,
+      input.canonicalKey,
+      input.year,
+      input.make,
+      input.model,
+      input.trim,
+      input.normalizedMake,
+      input.normalizedModel,
+      input.normalizedTrim,
+    ].filter((value) => value !== null && value !== undefined && value !== "").length;
+  }
+
+  private shouldUpgradeCanonicalIdentity(current: VehiclePhotoClusterRecord, input: {
+    canonicalVehicleId?: string | null;
+    canonicalKey?: string | null;
+    year?: number | null;
+    make?: string | null;
+    model?: string | null;
+    trim?: string | null;
+    normalizedMake?: string | null;
+    normalizedModel?: string | null;
+    normalizedTrim?: string | null;
+    confidence?: number | null;
+    canonicalScanId?: string | null;
+    canonicalPhotoHash?: string | null;
+    canonicalMake?: string | null;
+    canonicalModel?: string | null;
+    canonicalBadge?: string | null;
+    canonicalYear?: number | null;
+    matchStrength?: "exact" | "strong" | "possible" | null;
+    hammingDistance?: number | null;
+    representativeVisualHash?: string | null;
+    lastSeenAt?: string | null;
+  }) {
+    if (!current.canonicalKey && !current.canonicalVehicleId) return true;
+
+    const currentRank = this.getCanonicalPriorityRank(current.canonicalMatchStrength);
+    const nextRank = this.getCanonicalPriorityRank(input.matchStrength);
+    if (nextRank > currentRank) return true;
+    if (nextRank < currentRank) return false;
+
+    const currentDistance = current.canonicalHammingDistance;
+    const nextDistance = input.hammingDistance;
+    if (currentDistance != null && nextDistance != null) {
+      if (nextDistance < currentDistance) return true;
+      if (nextDistance > currentDistance) return false;
+    } else if (nextDistance != null && currentDistance == null) {
+      return true;
+    } else if (currentDistance != null && nextDistance == null) {
+      return false;
+    }
+
+    const currentRichness = this.getCanonicalMetadataRichness(current);
+    const nextRichness = this.getCanonicalMetadataRichness(input);
+    if (nextRichness > currentRichness) return true;
+    if (nextRichness < currentRichness) return false;
+
+    const currentConfidence = current.confidence ?? 0;
+    const nextConfidence = input.confidence ?? 0;
+    if (nextConfidence > currentConfidence) return true;
+    if (nextConfidence < currentConfidence) return false;
+
+    return Boolean(input.lastSeenAt && input.lastSeenAt > current.lastSeenAt);
+  }
+
+  async findRecentCandidates(input: {
+    normalizedMake?: string | null;
+    normalizedModel?: string | null;
+    normalizedTrim?: string | null;
+    canonicalKey?: string | null;
+    limit?: number;
+  }): Promise<VehiclePhotoClusterRecord[]> {
+    let query = this.client
+      .from("vehicle_photo_clusters")
+      .select("*")
+      .order("last_seen_at", { ascending: false })
+      .limit(input.limit ?? 25);
+
+    if (input.canonicalKey) {
+      query = query.eq("canonical_key", input.canonicalKey);
+    } else {
+      if (input.normalizedMake) query = query.eq("normalized_make", input.normalizedMake);
+      if (input.normalizedModel) query = query.eq("normalized_model", input.normalizedModel);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw new AppError(
+        500,
+        "SUPABASE_QUERY_FAILED",
+        "Failed to load vehicle photo cluster candidates.",
+        supabaseErrorDetails("vehicle_photo_clusters", "select", error),
+      );
+    }
+    return (data ?? []).map(mapVehiclePhotoClusterRow);
+  }
+
+  async findMemberByClusterAndScan(input: {
+    clusterId: string;
+    scanId: string;
+  }): Promise<VehiclePhotoClusterMemberRecord | null> {
+    const { data, error } = await this.client
+      .from("vehicle_photo_cluster_members")
+      .select("*")
+      .eq("cluster_id", input.clusterId)
+      .eq("scan_id", input.scanId)
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      throw new AppError(
+        500,
+        "SUPABASE_QUERY_FAILED",
+        "Failed to query vehicle photo cluster membership.",
+        supabaseErrorDetails("vehicle_photo_cluster_members", "select", error),
+      );
+    }
+    return data ? mapVehiclePhotoClusterMemberRow(data) : null;
+  }
+
+  async createCluster(record: VehiclePhotoClusterRecord): Promise<VehiclePhotoClusterRecord> {
+    const { data, error } = await this.client
+      .from("vehicle_photo_clusters")
+      .upsert(vehiclePhotoClusterToRow(record), { onConflict: "representative_visual_hash" })
+      .select("*")
+      .single();
+    if (error) {
+      throw new AppError(
+        500,
+        "SUPABASE_INSERT_FAILED",
+        "Failed to create vehicle photo cluster.",
+        supabaseErrorDetails("vehicle_photo_clusters", "insert", error),
+      );
+    }
+    return mapVehiclePhotoClusterRow(requireData(data, "Vehicle photo cluster insert returned no row."));
+  }
+
+  async addMember(record: VehiclePhotoClusterMemberRecord): Promise<VehiclePhotoClusterMemberRecord> {
+    const { data, error } = await this.client
+      .from("vehicle_photo_cluster_members")
+      .upsert(vehiclePhotoClusterMemberToRow(record), { onConflict: "cluster_id,scan_id", ignoreDuplicates: true })
+      .select("*")
+      .maybeSingle();
+    if (error) {
+      throw new AppError(
+        500,
+        "SUPABASE_INSERT_FAILED",
+        "Failed to add vehicle photo cluster member.",
+        supabaseErrorDetails("vehicle_photo_cluster_members", "insert", error),
+      );
+    }
+    if (data) return mapVehiclePhotoClusterMemberRow(data);
+    const existing = await this.findMemberByClusterAndScan({
+      clusterId: record.clusterId,
+      scanId: record.scanId,
+    });
+    if (existing) return existing;
+    throw new AppError(500, "SUPABASE_INSERT_FAILED", "Vehicle photo cluster member insert returned no row.");
+  }
+
+  async findUserContribution(input: { clusterId: string; userId: string }): Promise<VehiclePhotoClusterMemberRecord | null> {
+    const { data, error } = await this.client
+      .from("vehicle_photo_cluster_members")
+      .select("*")
+      .eq("cluster_id", input.clusterId)
+      .eq("user_id", input.userId)
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      throw new AppError(
+        500,
+        "SUPABASE_QUERY_FAILED",
+        "Failed to query vehicle photo cluster member.",
+        supabaseErrorDetails("vehicle_photo_cluster_members", "select", error),
+      );
+    }
+    return data ? mapVehiclePhotoClusterMemberRow(data) : null;
+  }
+
+  async incrementClusterStats(input: {
+    clusterId: string;
+    memberCountDelta?: number;
+    scanCountDelta: number;
+    uniqueUserCountDelta: number;
+    lastSeenAt: string;
+  }): Promise<VehiclePhotoClusterRecord | null> {
+    const { data: existing, error: existingError } = await this.client
+      .from("vehicle_photo_clusters")
+      .select("*")
+      .eq("id", input.clusterId)
+      .maybeSingle();
+    if (existingError) {
+      throw new AppError(
+        500,
+        "SUPABASE_QUERY_FAILED",
+        "Failed to load vehicle photo cluster for stat update.",
+        supabaseErrorDetails("vehicle_photo_clusters", "select", existingError),
+      );
+    }
+    if (!existing) return null;
+    const mapped = mapVehiclePhotoClusterRow(existing);
+    const { data, error } = await this.client
+      .from("vehicle_photo_clusters")
+      .update({
+        member_count: Math.max(0, mapped.memberCount + (input.memberCountDelta ?? 0)),
+        scan_count: mapped.scanCount + input.scanCountDelta,
+        unique_user_count: mapped.uniqueUserCount + input.uniqueUserCountDelta,
+        last_seen_at: input.lastSeenAt,
+      })
+      .eq("id", input.clusterId)
+      .select("*")
+      .single();
+    if (error) {
+      throw new AppError(
+        500,
+        "SUPABASE_UPDATE_FAILED",
+        "Failed to update vehicle photo cluster stats.",
+        supabaseErrorDetails("vehicle_photo_clusters", "update", error),
+      );
+    }
+    return mapVehiclePhotoClusterRow(requireData(data, "Vehicle photo cluster update returned no row."));
+  }
+
+  async updateCanonicalIdentity(input: {
+    clusterId: string;
+    canonicalVehicleId?: string | null;
+    canonicalKey?: string | null;
+    year?: number | null;
+    make?: string | null;
+    model?: string | null;
+    trim?: string | null;
+    normalizedMake?: string | null;
+    normalizedModel?: string | null;
+    normalizedTrim?: string | null;
+    confidence?: number | null;
+    representativeVisualHash?: string | null;
+    canonicalScanId?: string | null;
+    canonicalPhotoHash?: string | null;
+    canonicalMake?: string | null;
+    canonicalModel?: string | null;
+    canonicalBadge?: string | null;
+    canonicalYear?: number | null;
+    matchStrength?: "exact" | "strong" | "possible" | null;
+    hammingDistance?: number | null;
+    lastSeenAt?: string | null;
+  }): Promise<VehiclePhotoClusterRecord | null> {
+    const { data: existing, error: existingError } = await this.client
+      .from("vehicle_photo_clusters")
+      .select("*")
+      .eq("id", input.clusterId)
+      .maybeSingle();
+    if (existingError) {
+      throw new AppError(
+        500,
+        "SUPABASE_QUERY_FAILED",
+        "Failed to load vehicle photo cluster identity.",
+        supabaseErrorDetails("vehicle_photo_clusters", "select", existingError),
+      );
+    }
+    if (!existing) return null;
+    const current = mapVehiclePhotoClusterRow(existing);
+    const shouldUpgrade = this.shouldUpgradeCanonicalIdentity(current, input);
+
+    const { data, error } = await this.client
+      .from("vehicle_photo_clusters")
+      .update({
+        canonical_scan_id: shouldUpgrade ? input.canonicalScanId ?? current.canonicalScanId ?? null : current.canonicalScanId ?? null,
+        canonical_photo_hash: shouldUpgrade
+          ? input.canonicalPhotoHash ?? input.representativeVisualHash ?? current.canonicalPhotoHash ?? current.representativeVisualHash
+          : current.canonicalPhotoHash ?? current.representativeVisualHash,
+        canonical_vehicle_id: shouldUpgrade ? input.canonicalVehicleId ?? current.canonicalVehicleId ?? null : current.canonicalVehicleId ?? null,
+        canonical_key: shouldUpgrade ? input.canonicalKey ?? current.canonicalKey ?? null : current.canonicalKey ?? null,
+        canonical_make: shouldUpgrade ? input.canonicalMake ?? input.make ?? current.canonicalMake ?? current.make ?? null : current.canonicalMake ?? current.make ?? null,
+        canonical_model: shouldUpgrade ? input.canonicalModel ?? input.model ?? current.canonicalModel ?? current.model ?? null : current.canonicalModel ?? current.model ?? null,
+        canonical_badge: shouldUpgrade ? input.canonicalBadge ?? input.trim ?? current.canonicalBadge ?? current.trim ?? null : current.canonicalBadge ?? current.trim ?? null,
+        canonical_year: shouldUpgrade ? input.canonicalYear ?? input.year ?? current.canonicalYear ?? current.year ?? null : current.canonicalYear ?? current.year ?? null,
+        canonical_match_strength: shouldUpgrade ? input.matchStrength ?? current.canonicalMatchStrength ?? null : current.canonicalMatchStrength ?? null,
+        canonical_hamming_distance: shouldUpgrade ? input.hammingDistance ?? current.canonicalHammingDistance ?? null : current.canonicalHammingDistance ?? null,
+        year: shouldUpgrade ? input.year ?? current.year ?? null : current.year ?? null,
+        make: shouldUpgrade ? input.make ?? current.make ?? null : current.make ?? null,
+        model: shouldUpgrade ? input.model ?? current.model ?? null : current.model ?? null,
+        trim: shouldUpgrade ? input.trim ?? current.trim ?? null : current.trim ?? null,
+        normalized_make: shouldUpgrade ? input.normalizedMake ?? current.normalizedMake ?? null : current.normalizedMake ?? null,
+        normalized_model: shouldUpgrade ? input.normalizedModel ?? current.normalizedModel ?? null : current.normalizedModel ?? null,
+        normalized_trim: shouldUpgrade ? input.normalizedTrim ?? current.normalizedTrim ?? null : current.normalizedTrim ?? null,
+        confidence: shouldUpgrade ? Math.max(current.confidence, input.confidence ?? 0) : current.confidence,
+        representative_visual_hash: input.representativeVisualHash ?? undefined,
+        last_seen_at: input.lastSeenAt ?? undefined,
+      })
+      .eq("id", input.clusterId)
+      .select("*")
+      .maybeSingle();
+    if (error) {
+      throw new AppError(
+        500,
+        "SUPABASE_UPDATE_FAILED",
+        "Failed to update vehicle photo cluster identity.",
+        supabaseErrorDetails("vehicle_photo_clusters", "update", error),
+      );
+    }
+    return data ? mapVehiclePhotoClusterRow(data) : null;
+  }
+}
+
 export class SupabaseSubscriptionsRepository implements SubscriptionsRepository {
   constructor(private readonly client: DbClient) {}
 
@@ -1430,6 +2348,71 @@ export class SupabaseProviderApiUsageLogsRepository implements ProviderApiUsageL
     return record;
   }
 
+  async summarizeSince(input: {
+    sinceIso: string;
+    provider?: string;
+  }): Promise<{
+    total: number;
+    byEndpoint: Record<ProviderEndpointType, number>;
+    byEvent: Record<string, number>;
+  }> {
+    let query = this.client
+      .from("provider_api_usage_logs")
+      .select("endpoint_type,event_type")
+      .gte("created_at", input.sinceIso);
+
+    if (input.provider) {
+      query = query.eq("provider", input.provider);
+    }
+
+    const { data, error } = await query;
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to summarize provider API usage logs.", error);
+
+    const byEndpoint: Record<ProviderEndpointType, number> = {
+      specs: 0,
+      values: 0,
+      listings: 0,
+    };
+    const byEvent: Record<string, number> = {};
+
+    for (const row of data ?? []) {
+      const eventType = String(row.event_type ?? "unknown");
+      byEvent[eventType] = (byEvent[eventType] ?? 0) + 1;
+      const endpointType = row.endpoint_type as ProviderEndpointType | undefined;
+      if (eventType === "provider_request" && (endpointType === "specs" || endpointType === "values" || endpointType === "listings")) {
+        byEndpoint[endpointType] += 1;
+      }
+    }
+
+    return {
+      total: byEvent.provider_request ?? 0,
+      byEndpoint,
+      byEvent,
+    };
+  }
+
+  async listSince(input: {
+    sinceIso: string;
+    provider?: string;
+    limit?: number;
+  }): Promise<ProviderApiUsageLogRecord[]> {
+    let query = this.client
+      .from("provider_api_usage_logs")
+      .select("*")
+      .gte("created_at", input.sinceIso)
+      .order("created_at", { ascending: false })
+      .limit(input.limit ?? 200);
+
+    if (input.provider) {
+      query = query.eq("provider", input.provider);
+    }
+
+    const { data, error } = await query;
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to list provider API usage logs.", error);
+
+    return (data ?? []).map((row) => mapProviderApiUsageLogRow(row));
+  }
+
   async deleteOlderThan(cutoffIso: string): Promise<number> {
     const { data, error } = await this.client
       .from("provider_api_usage_logs")
@@ -1459,8 +2442,9 @@ export class SupabaseUnlockBalanceRepository implements UnlockBalanceRepository 
     if (existing) return existing;
     const record: UnlockBalanceRecord = {
       userId,
-      freeUnlocksTotal: 5,
+      freeUnlocksTotal: FREE_PRO_UNLOCKS_TOTAL,
       freeUnlocksUsed: 0,
+      unlockCredits: 0,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -1549,9 +2533,11 @@ export class SupabaseVehicleUnlockRepository implements VehicleUnlockRepository 
       allowed: Boolean(row.allowed),
       alreadyUnlocked: Boolean(row.already_unlocked),
       usedUnlock: Boolean(row.used_unlock),
+      usedUnlockCredit: Boolean(row.used_unlock_credit),
       freeUnlocksTotal: Number(row.free_unlocks_total ?? 0),
       freeUnlocksUsed: Number(row.free_unlocks_used ?? 0),
       freeUnlocksRemaining: Number(row.free_unlocks_remaining ?? 0),
+      unlockCreditsRemaining: Number(row.unlock_credits_remaining ?? 0),
     };
   }
 }
@@ -1575,22 +2561,29 @@ export class SupabaseCachedAnalysisRepository implements CachedAnalysisRepositor
       .insert(cachedAnalysisToRow(record))
       .select("*")
       .single();
-    if (error) throw error;
+    if (error) {
+      throw new AppError(500, "SUPABASE_INSERT_FAILED", "Failed to create cached analysis entry.", {
+        table: "cached_analysis",
+        operation: "insert",
+        filters: { analysis_key: record.analysisKey },
+        supabase: serializeSupabaseError(error),
+      });
+    }
     return mapCachedAnalysisRow(requireData(data, "Cached analysis insert returned no row."));
   }
 
   async update(
     analysisKey: string,
     updates: Partial<Omit<CachedAnalysisRecord, "id" | "analysisKey" | "createdAt">>,
-  ): Promise<CachedAnalysisRecord> {
+  ): Promise<CachedAnalysisRecord | null> {
     const { data, error } = await this.client
       .from("cached_analysis")
       .update(cachedAnalysisUpdateToRow(updates))
       .eq("analysis_key", analysisKey)
       .select("*")
-      .single();
+      .maybeSingle();
     if (error) throw new AppError(500, "SUPABASE_UPDATE_FAILED", "Failed to update cached analysis entry.", error);
-    return mapCachedAnalysisRow(requireData(data, "Cached analysis update returned no row."));
+    return data ? mapCachedAnalysisRow(data) : null;
   }
 
   async markAccessed(analysisKey: string, lastAccessedAt: string): Promise<void> {

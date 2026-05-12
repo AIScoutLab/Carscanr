@@ -2,8 +2,12 @@ import crypto from "node:crypto";
 import { seedListings, seedValuations, seedVehicles } from "../data/seedVehicles.js";
 import {
   CanonicalVehicleRecord,
+  CanonicalGapQueueRecord,
+  CanonicalVehicleImageRecord,
   GarageItemRecord,
   ListingRecord,
+  VehiclePhotoClusterMemberRecord,
+  VehiclePhotoClusterRecord,
   ScanRecord,
   SubscriptionRecord,
   UsageCounterRecord,
@@ -56,12 +60,16 @@ class MockDatabase {
   listingsCache: VehicleListingsCacheRow[] = [];
   providerApiUsageLogs: ProviderApiUsageLogRecord[] = [];
   canonicalVehicles: CanonicalVehicleRecord[] = [];
+  canonicalGapQueue: CanonicalGapQueueRecord[] = [];
   vehicleScanPopularity: VehicleScanPopularityRecord[] = [];
   vehicleGlobalTrending: VehicleGlobalTrendingRecord[] = [];
   cachedAnalysis: CachedAnalysisRecord[] = [];
   imageCache: ImageCacheRecord[] = [];
   unlockBalances: UnlockBalanceRecord[] = [];
   vehicleUnlocks: UserVehicleUnlockRecord[] = [];
+  vehiclePhotoClusters: VehiclePhotoClusterRecord[] = [];
+  vehiclePhotoClusterMembers: VehiclePhotoClusterMemberRecord[] = [];
+  canonicalVehicleImages: CanonicalVehicleImageRecord[] = [];
 }
 
 export const db = new MockDatabase();
