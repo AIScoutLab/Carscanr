@@ -10,6 +10,9 @@ dotenv.config();
 
 const providerSchema = z.enum(["mock", "marketcheck"]);
 const appEnvSchema = z.enum(["local", "preview", "production"]);
+const forceProviderModeSchema = z.enum(["live", "mock", "success", "quota_exhausted"]);
+const trendingPreseedModeSchema = z.enum(["bootstrap", "growth"]);
+const vehicleVisionProviderSchema = z.enum(["mock", "openai", "google", "aws", "clarifai", "ensemble"]);
 
 function booleanEnv(defaultValue: boolean) {
   return z.preprocess((value) => {
@@ -42,6 +45,9 @@ function booleanEnv(defaultValue: boolean) {
 }
 
 const envSchema = z.object({
+  BACKEND_BUILD_COMMIT: z
+    .string()
+    .default(process.env.RENDER_GIT_COMMIT ?? process.env.COMMIT_SHA ?? process.env.SOURCE_VERSION ?? process.env.GIT_COMMIT ?? "unknown"),
   PORT: z.coerce.number().default(4000),
   HOST: z.string().default("0.0.0.0"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -50,6 +56,12 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().default("*"),
   ALLOW_MOCK_FALLBACKS: booleanEnv(process.env.NODE_ENV === "production" ? false : true),
   ALLOW_PRELOAD: booleanEnv(process.env.NODE_ENV === "production" ? false : true),
+  FORCE_PROVIDER_MODE: forceProviderModeSchema.default("live"),
+  VEHICLE_VISION_PROVIDER: vehicleVisionProviderSchema.default(process.env.NODE_ENV === "production" ? "openai" : "ensemble"),
+  STRICT_DISPLAY_IDENTITY_LOCK: booleanEnv(true),
+  TRENDING_PRESEED_MODE: trendingPreseedModeSchema.default("bootstrap"),
+  TRENDING_PRESEED_SCORE_THRESHOLD: z.coerce.number().default(process.env.TRENDING_PRESEED_MODE === "growth" ? 20 : 35),
+  TRENDING_PRELOAD_BATCH_LIMIT: z.coerce.number().default(process.env.TRENDING_PRESEED_MODE === "growth" ? 50 : 12),
   SUPABASE_URL: z.string().url().or(z.literal("")).default(""),
   SUPABASE_SERVICE_ROLE_KEY: z.string().default(""),
   SUPABASE_JWT_SECRET: z.string().default(""),
@@ -64,14 +76,31 @@ const envSchema = z.object({
   OPENAI_BASE_URL: z.string().url().default("https://api.openai.com/v1"),
   OPENAI_VISION_MODEL: z.string().default("gpt-4o"),
   OPENAI_VISION_TIMEOUT_MS: z.coerce.number().default(12000),
+  CLARIFAI_API_KEY: z.string().default(""),
+  CLARIFAI_BASE_URL: z.string().url().default("https://api.clarifai.com/v2"),
+  CLARIFAI_VEHICLE_MODEL_ID: z.string().default("vehicle-recognition"),
+  AWS_REGION: z.string().default(""),
+  AWS_ACCESS_KEY_ID: z.string().default(""),
+  AWS_SECRET_ACCESS_KEY: z.string().default(""),
   SCAN_RATE_LIMIT_PER_MIN: z.coerce.number().default(5),
   UNLOCK_RATE_LIMIT_PER_10_MIN: z.coerce.number().default(10),
   VEHICLE_SPECS_PROVIDER: providerSchema.default("mock"),
   VEHICLE_VALUE_PROVIDER: providerSchema.default("mock"),
   VEHICLE_LISTINGS_PROVIDER: providerSchema.default("mock"),
+  MARKETCHECK_ENABLED: booleanEnv(true),
+  ENABLE_LIVE_PROVIDER_CALLS: booleanEnv(false),
+  ENABLE_BACKGROUND_MARKETCHECK: booleanEnv(false),
+  ENABLE_USER_IMAGE_AUTO_APPROVAL: booleanEnv(false),
   MARKETCHECK_API_KEY: z.string().default(""),
   MARKETCHECK_BASE_URL: z.string().url().default("https://api.marketcheck.com"),
   MARKETCHECK_VALUE_RADIUS_MILES: z.coerce.number().default(100),
+  MARKETCHECK_MONTHLY_CALL_LIMIT: z.coerce.number().default(500),
+  MARKETCHECK_WARN_AT: z.coerce.number().default(400),
+  MARKETCHECK_DISABLE_EXTERNAL_CALLS: booleanEnv(false),
+  MARKETCHECK_ENABLE_SCAN_ENRICHMENT: booleanEnv(false),
+  MARKETCHECK_ENABLE_AUTO_SPECS: booleanEnv(false),
+  MARKETCHECK_ENABLE_AUTO_LISTINGS: booleanEnv(false),
+  MARKETCHECK_ENABLE_BACKGROUND_REFRESH: booleanEnv(false),
   PROVIDER_SPECS_CACHE_TTL_HOURS: z.coerce.number().default(24 * 30),
   PROVIDER_VALUES_CACHE_TTL_HOURS: z.coerce.number().default(24),
   PROVIDER_LISTINGS_CACHE_TTL_HOURS: z.coerce.number().default(6),
@@ -83,17 +112,51 @@ function logStartupEnvDiagnostics(env: typeof parsedEnv) {
   console.info(
     "[startup-env]",
     JSON.stringify({
+      backendBuildCommit: env.BACKEND_BUILD_COMMIT,
       appEnv: env.APP_ENV,
       nodeEnv: env.NODE_ENV,
       authDevBypassEnabled: env.AUTH_DEV_BYPASS_ENABLED,
       allowMockFallbacks: env.ALLOW_MOCK_FALLBACKS,
       allowPreload: env.ALLOW_PRELOAD,
+      forceProviderMode: env.FORCE_PROVIDER_MODE,
+      strictDisplayIdentityLock: env.STRICT_DISPLAY_IDENTITY_LOCK,
+      trendingPreseedMode: env.TRENDING_PRESEED_MODE,
+      trendingPreseedScoreThreshold: env.TRENDING_PRESEED_SCORE_THRESHOLD,
+      trendingPreloadBatchLimit: env.TRENDING_PRELOAD_BATCH_LIMIT,
+      vehicleProviders: {
+        specs: env.VEHICLE_SPECS_PROVIDER,
+        value: env.VEHICLE_VALUE_PROVIDER,
+        listings: env.VEHICLE_LISTINGS_PROVIDER,
+      },
+      marketCheckEnabled: env.MARKETCHECK_ENABLED,
+      marketCheckMonthlyCallLimit: env.MARKETCHECK_MONTHLY_CALL_LIMIT,
+      marketCheckWarnAt: env.MARKETCHECK_WARN_AT,
+      marketCheckDisableExternalCalls: env.MARKETCHECK_DISABLE_EXTERNAL_CALLS,
+      marketCheckEnableScanEnrichment: env.MARKETCHECK_ENABLE_SCAN_ENRICHMENT,
+      marketCheckEnableAutoSpecs: env.MARKETCHECK_ENABLE_AUTO_SPECS,
+      marketCheckEnableAutoListings: env.MARKETCHECK_ENABLE_AUTO_LISTINGS,
+      marketCheckEnableBackgroundRefresh: env.MARKETCHECK_ENABLE_BACKGROUND_REFRESH,
+      enableLiveProviderCalls: env.ENABLE_LIVE_PROVIDER_CALLS,
+      enableBackgroundMarketCheck: env.ENABLE_BACKGROUND_MARKETCHECK,
+      enableUserImageAutoApproval: env.ENABLE_USER_IMAGE_AUTO_APPROVAL,
+      marketCheckConfigured: Boolean(env.MARKETCHECK_API_KEY),
     }),
   );
 }
 
 function isHostedLikeAppEnv(appEnv: z.infer<typeof appEnvSchema>) {
   return appEnv === "preview" || appEnv === "production";
+}
+
+export function isLiveProviderCallsEnabledForEnv(input: {
+  appEnv: z.infer<typeof appEnvSchema>;
+  enableLiveProviderCalls: boolean;
+}) {
+  if (isHostedLikeAppEnv(input.appEnv)) {
+    return true;
+  }
+
+  return input.enableLiveProviderCalls;
 }
 
 function validateEnv(env: typeof parsedEnv) {
@@ -128,12 +191,12 @@ function validateEnv(env: typeof parsedEnv) {
     issues.push("SUPABASE_JWT_SECRET is required for preview and production deployments.");
   }
 
-  if (hostedLike && env.VISION_PROVIDER === "mock") {
-    issues.push("VISION_PROVIDER cannot be mock for preview and production deployments.");
+  if (hostedLike && env.VEHICLE_VISION_PROVIDER === "mock") {
+    issues.push("VEHICLE_VISION_PROVIDER cannot be mock for preview and production deployments.");
   }
 
-  if (env.VISION_PROVIDER === "openai" && !env.OPENAI_API_KEY) {
-    issues.push("OPENAI_API_KEY is required when VISION_PROVIDER=openai.");
+  if ((env.VEHICLE_VISION_PROVIDER === "openai" || env.VEHICLE_VISION_PROVIDER === "ensemble") && !env.OPENAI_API_KEY && env.NODE_ENV === "production") {
+    issues.push("OPENAI_API_KEY is required for production when VEHICLE_VISION_PROVIDER relies on OpenAI.");
   }
 
   if (hostedLike && env.VEHICLE_SPECS_PROVIDER === "mock") {
@@ -171,6 +234,29 @@ export function isHostedAppEnv() {
   return isHostedLikeAppEnv(env.APP_ENV);
 }
 
+export function isLiveProviderCallsEnabled() {
+  return isLiveProviderCallsEnabledForEnv({
+    appEnv: env.APP_ENV,
+    enableLiveProviderCalls: env.ENABLE_LIVE_PROVIDER_CALLS,
+  });
+}
+
+export function isMarketCheckScanEnrichmentEnabled() {
+  return env.MARKETCHECK_ENABLE_SCAN_ENRICHMENT && isLiveProviderCallsEnabled();
+}
+
+export function isMarketCheckAutoSpecsEnabled() {
+  return env.MARKETCHECK_ENABLE_AUTO_SPECS && isLiveProviderCallsEnabled();
+}
+
+export function isMarketCheckAutoListingsEnabled() {
+  return env.MARKETCHECK_ENABLE_AUTO_LISTINGS && isLiveProviderCallsEnabled();
+}
+
+export function isMarketCheckBackgroundRefreshEnabled() {
+  return env.MARKETCHECK_ENABLE_BACKGROUND_REFRESH && env.ENABLE_BACKGROUND_MARKETCHECK && isLiveProviderCallsEnabled();
+}
+
 export function getStartupDiagnostics() {
   const supabaseHost = env.SUPABASE_URL
     ? (() => {
@@ -182,22 +268,40 @@ export function getStartupDiagnostics() {
       })()
     : null;
   return {
+    backendBuildCommit: env.BACKEND_BUILD_COMMIT,
     nodeEnv: env.NODE_ENV,
     appEnv: env.APP_ENV,
     port: env.PORT,
     host: env.HOST,
     allowMockFallbacks: env.ALLOW_MOCK_FALLBACKS,
-    allowPreload: env.ALLOW_PRELOAD,
+      allowPreload: env.ALLOW_PRELOAD,
+      forceProviderMode: env.FORCE_PROVIDER_MODE,
+      vehicleVisionProvider: env.VEHICLE_VISION_PROVIDER,
+      strictDisplayIdentityLock: env.STRICT_DISPLAY_IDENTITY_LOCK,
+    trendingPreseedMode: env.TRENDING_PRESEED_MODE,
+    trendingPreseedScoreThreshold: env.TRENDING_PRESEED_SCORE_THRESHOLD,
+    trendingPreloadBatchLimit: env.TRENDING_PRELOAD_BATCH_LIMIT,
     authDevBypassEnabled: env.AUTH_DEV_BYPASS_ENABLED,
     supabaseConfigured: Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY && env.SUPABASE_JWT_SECRET),
     supabaseHost,
     openAIConfigured: Boolean(env.OPENAI_API_KEY),
-    visionProvider: env.VISION_PROVIDER,
+    visionProvider: env.VEHICLE_VISION_PROVIDER,
     vehicleProviders: {
       specs: env.VEHICLE_SPECS_PROVIDER,
       value: env.VEHICLE_VALUE_PROVIDER,
       listings: env.VEHICLE_LISTINGS_PROVIDER,
     },
+    marketCheckEnabled: env.MARKETCHECK_ENABLED,
+    marketCheckMonthlyCallLimit: env.MARKETCHECK_MONTHLY_CALL_LIMIT,
+    marketCheckWarnAt: env.MARKETCHECK_WARN_AT,
+    marketCheckDisableExternalCalls: env.MARKETCHECK_DISABLE_EXTERNAL_CALLS,
+    marketCheckEnableScanEnrichment: env.MARKETCHECK_ENABLE_SCAN_ENRICHMENT,
+    marketCheckEnableAutoSpecs: env.MARKETCHECK_ENABLE_AUTO_SPECS,
+    marketCheckEnableAutoListings: env.MARKETCHECK_ENABLE_AUTO_LISTINGS,
+    marketCheckEnableBackgroundRefresh: env.MARKETCHECK_ENABLE_BACKGROUND_REFRESH,
+    liveProviderCallsEnabled: isLiveProviderCallsEnabled(),
+    enableBackgroundMarketCheck: env.ENABLE_BACKGROUND_MARKETCHECK,
+    enableUserImageAutoApproval: env.ENABLE_USER_IMAGE_AUTO_APPROVAL,
     marketCheckConfigured: Boolean(env.MARKETCHECK_API_KEY),
   };
 }

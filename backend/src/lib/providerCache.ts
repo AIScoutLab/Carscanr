@@ -3,7 +3,15 @@ import { ListingRecord, ValuationRecord, VehicleCondition, VehicleRecord, Vehicl
 
 export type ProviderEndpointType = "specs" | "values" | "listings";
 export type CacheSource = "cache" | "provider";
-export type ProviderApiLogEvent = "cache_hit" | "miss" | "stale_refresh" | "empty_hit" | "provider_error";
+export type ProviderApiLogEvent =
+  | "cache_hit"
+  | "miss"
+  | "stale_refresh"
+  | "empty_hit"
+  | "provider_error"
+  | "provider_request"
+  | "inflight_dedupe"
+  | "skipped_rate_guard";
 
 type BaseDescriptor = {
   year: number;
@@ -85,16 +93,16 @@ export type CachedServiceResult<T, TMeta = Record<string, unknown>> = {
 
 const CACHE_TTLS_MS = {
   specs: {
-    default: 30 * 24 * 60 * 60 * 1000,
+    default: 7 * 24 * 60 * 60 * 1000,
     empty: 7 * 24 * 60 * 60 * 1000,
   },
   values: {
-    default: 3 * 24 * 60 * 60 * 1000,
+    default: 24 * 60 * 60 * 1000,
     empty: 24 * 60 * 60 * 1000,
   },
   listings: {
-    default: 12 * 60 * 60 * 1000,
-    empty: 2 * 60 * 60 * 1000,
+    default: 6 * 60 * 60 * 1000,
+    empty: 60 * 60 * 1000,
   },
 } as const;
 

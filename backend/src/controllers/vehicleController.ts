@@ -1,6 +1,9 @@
 import { Request, Response } from "express";
 import { sendSuccess } from "../lib/http.js";
 import { logger } from "../lib/logger.js";
+import { repositories } from "../lib/repositoryRegistry.js";
+import { normalizeVehicleBadgeAlias } from "../lib/vehicleAliases.js";
+import { env, getStartupDiagnostics } from "../config/env.js";
 import { VehicleService } from "../services/vehicleService.js";
 import { VehicleLookupDescriptor, VehicleType } from "../types/domain.js";
 
@@ -21,6 +24,8 @@ function readLookupDescriptor(query: Request["query"]): VehicleLookupDescriptor 
   const year = Number(query.year);
   const make = typeof query.make === "string" ? query.make.trim() : "";
   const model = typeof query.model === "string" ? query.model.trim() : "";
+  const yearRangeStart = Number(query.yearRangeStart);
+  const yearRangeEnd = Number(query.yearRangeEnd);
   if (!Number.isFinite(year) || !make || !model) {
     return null;
   }
@@ -30,6 +35,13 @@ function readLookupDescriptor(query: Request["query"]): VehicleLookupDescriptor 
     make,
     model,
     trim: typeof query.trim === "string" && query.trim.trim().length > 0 ? query.trim.trim() : null,
+    yearRange:
+      Number.isFinite(yearRangeStart) && Number.isFinite(yearRangeEnd)
+        ? {
+            start: Math.min(yearRangeStart, yearRangeEnd),
+            end: Math.max(yearRangeStart, yearRangeEnd),
+          }
+        : null,
     vehicleType:
       typeof query.vehicleType === "string" && query.vehicleType.trim().length > 0
         ? (query.vehicleType.trim().toLowerCase() as VehicleType)
@@ -39,8 +51,122 @@ function readLookupDescriptor(query: Request["query"]): VehicleLookupDescriptor 
   };
 }
 
+function readOptionalBoolean(queryValue: unknown): boolean | undefined {
+  if (typeof queryValue !== "string") {
+    return undefined;
+  }
+  const normalized = queryValue.trim().toLowerCase();
+  if (["true", "1", "yes", "y", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["false", "0", "no", "n", "off"].includes(normalized)) {
+    return false;
+  }
+  return undefined;
+}
+
 export class VehicleController {
   constructor(private readonly vehicleService: VehicleService) {}
+
+  getMarketCheckDebugSummary = async (_req: Request, res: Response) => {
+    const sinceIso = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const entries = await repositories.providerApiUsageLogs.listSince({
+      sinceIso,
+      provider: "marketcheck",
+      limit: 250,
+    });
+
+    const byEndpoint: Record<string, number> = {};
+    const bySourceScreen: Record<string, number> = {};
+    const byRoute: Record<string, number> = {};
+    const byCacheKey: Record<string, number> = {};
+    const byEvent: Record<string, number> = {};
+
+    for (const entry of entries) {
+      const endpoint = entry.endpointType ?? "unknown";
+      const eventType = entry.eventType ?? "unknown";
+      const requestSummary = entry.requestSummary ?? {};
+      const sourceScreen = typeof requestSummary.sourceScreen === "string" && requestSummary.sourceScreen.trim().length > 0
+        ? requestSummary.sourceScreen.trim()
+        : "unknown";
+      const route = typeof requestSummary.route === "string" && requestSummary.route.trim().length > 0
+        ? requestSummary.route.trim()
+        : typeof requestSummary.caller === "string" && requestSummary.caller.trim().length > 0
+          ? requestSummary.caller.trim()
+          : "unknown";
+      const cacheKey = typeof entry.cacheKey === "string" && entry.cacheKey.trim().length > 0 ? entry.cacheKey.trim() : "unknown";
+
+      byEndpoint[endpoint] = (byEndpoint[endpoint] ?? 0) + 1;
+      bySourceScreen[sourceScreen] = (bySourceScreen[sourceScreen] ?? 0) + 1;
+      byRoute[route] = (byRoute[route] ?? 0) + 1;
+      byCacheKey[cacheKey] = (byCacheKey[cacheKey] ?? 0) + 1;
+      byEvent[eventType] = (byEvent[eventType] ?? 0) + 1;
+    }
+
+    return sendSuccess(
+      res,
+      {
+        sinceIso,
+        env: {
+          backendBuildCommit: env.BACKEND_BUILD_COMMIT,
+          marketCheckDisableExternalCalls: env.MARKETCHECK_DISABLE_EXTERNAL_CALLS,
+          marketCheckEnableScanEnrichment: env.MARKETCHECK_ENABLE_SCAN_ENRICHMENT,
+          marketCheckEnableAutoSpecs: env.MARKETCHECK_ENABLE_AUTO_SPECS,
+          marketCheckEnableAutoListings: env.MARKETCHECK_ENABLE_AUTO_LISTINGS,
+          marketCheckEnableBackgroundRefresh: env.MARKETCHECK_ENABLE_BACKGROUND_REFRESH,
+          enableBackgroundMarketCheck: env.ENABLE_BACKGROUND_MARKETCHECK,
+          enableLiveProviderCalls: env.ENABLE_LIVE_PROVIDER_CALLS,
+        },
+        startupDiagnostics: getStartupDiagnostics(),
+        counts: {
+          total: entries.length,
+          byEndpoint,
+          bySourceScreen,
+          byRoute,
+          byCacheKey,
+          byEvent,
+        },
+        recentEntries: entries.slice(0, 50),
+      },
+      { count: entries.length },
+    );
+  };
+
+  getSearchYears = async (_req: Request, res: Response) => {
+    const result = await this.vehicleService.getSearchYears();
+    return sendSuccess(res, result, { count: result.length });
+  };
+
+  getSearchMakes = async (req: Request, res: Response) => {
+    const result = await this.vehicleService.getSearchMakes(Number(req.query.year));
+    return sendSuccess(res, result, { count: result.length });
+  };
+
+  getSearchModels = async (req: Request, res: Response) => {
+    const normalized = normalizeVehicleBadgeAlias({
+      make: String(req.query.make ?? ""),
+      model: "",
+    });
+    const result = await this.vehicleService.getSearchModels({
+      year: Number(req.query.year),
+      make: normalized.make,
+    });
+    return sendSuccess(res, result, { count: result.length });
+  };
+
+  getSearchTrims = async (req: Request, res: Response) => {
+    const normalized = normalizeVehicleBadgeAlias({
+      make: String(req.query.make ?? ""),
+      model: String(req.query.model ?? ""),
+      trim: null,
+    });
+    const result = await this.vehicleService.getSearchTrims({
+      year: Number(req.query.year),
+      make: normalized.make,
+      model: normalized.model,
+    });
+    return sendSuccess(res, result, { count: result.length });
+  };
 
   search = async (req: Request, res: Response) => {
     const result = await this.vehicleService.searchVehicles({
@@ -65,6 +191,9 @@ export class VehicleController {
       vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
       descriptor: readLookupDescriptor(req.query),
       requestId: res.locals.requestId,
+      allowLive: readOptionalBoolean(req.query.allowLive),
+      fetchReason: typeof req.query.fetchReason === "string" ? req.query.fetchReason : undefined,
+      sourceScreen: typeof req.query.sourceScreen === "string" ? req.query.sourceScreen : undefined,
     });
     return sendSuccess(res, result.data, { source: result.source, fetchedAt: result.fetchedAt, expiresAt: result.expiresAt });
   };
@@ -127,6 +256,9 @@ export class VehicleController {
         zip: req.query.zip as string,
         mileage: Number(req.query.mileage),
         condition: normalizedCondition as string,
+        allowLive: readOptionalBoolean(req.query.allowLive),
+        fetchReason: typeof req.query.fetchReason === "string" ? req.query.fetchReason : undefined,
+        sourceScreen: typeof req.query.sourceScreen === "string" ? req.query.sourceScreen : undefined,
       });
       return sendSuccess(res, result.data, { source: result.source, fetchedAt: result.fetchedAt, expiresAt: result.expiresAt });
     } catch (error) {
@@ -164,6 +296,8 @@ export class VehicleController {
           make: req.query.make ?? null,
           model: req.query.model ?? null,
           trim: req.query.trim ?? null,
+          yearRangeStart: req.query.yearRangeStart ?? null,
+          yearRangeEnd: req.query.yearRangeEnd ?? null,
           zip: req.query.zip ?? null,
           radiusMiles: req.query.radiusMiles ?? null,
         },
@@ -178,6 +312,8 @@ export class VehicleController {
           make: req.query.make ?? null,
           model: req.query.model ?? null,
           trim: req.query.trim ?? null,
+          yearRangeStart: req.query.yearRangeStart ?? null,
+          yearRangeEnd: req.query.yearRangeEnd ?? null,
           zip: req.query.zip ?? null,
           radiusMiles: req.query.radiusMiles ?? null,
         },
@@ -191,6 +327,7 @@ export class VehicleController {
           parsedDescriptor: descriptor,
           zip: req.query.zip ?? null,
           radiusMiles: req.query.radiusMiles ?? null,
+          yearRange: descriptor?.yearRange ?? null,
         },
         "LISTINGS_API_INPUTS",
       );
@@ -200,6 +337,9 @@ export class VehicleController {
         descriptor,
         zip: req.query.zip as string,
         radiusMiles: Number(req.query.radiusMiles),
+        allowLive: readOptionalBoolean(req.query.allowLive),
+        fetchReason: typeof req.query.fetchReason === "string" ? req.query.fetchReason : undefined,
+        sourceScreen: typeof req.query.sourceScreen === "string" ? req.query.sourceScreen : undefined,
       });
       return sendSuccess(res, result.data, {
         count: result.data.length,

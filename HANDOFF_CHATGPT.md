@@ -18,8 +18,8 @@ Product goal:
 - Product direction is now explicitly guest-first for scanning
 - Monetization truth now being enforced in app state:
   - scans are unlimited
-  - free users get 5 free Pro unlocks
-  - only premium detail access should lock after free unlocks are exhausted
+  - free users get 3 free Pro unlocks
+  - only premium detail access should lock after free Pro unlocks are exhausted
 
 ## Current State Snapshot
 
@@ -32,14 +32,52 @@ Product goal:
 - `runtimeVersion` has been manually pinned and bumped during debugging to avoid stale OTA bundles overriding fresh TestFlight builds
 - App scheme is `carscanr`
 - Current icon source is [icon-1024.png](/Users/mattbrillman/Car_Identifier/icon-1024.png)
+- Mobile public env is now hardened in:
+  - [app.config.ts](/Users/mattbrillman/Car_Identifier/app.config.ts)
+  - [lib/env.ts](/Users/mattbrillman/Car_Identifier/lib/env.ts)
+  - [lib/mobileEnvValidation.ts](/Users/mattbrillman/Car_Identifier/lib/mobileEnvValidation.ts)
+- Preview/production builds now fail fast unless all of these are valid:
+  - `EXPO_PUBLIC_API_BASE_URL`
+  - `EXPO_PUBLIC_SUPABASE_URL`
+  - `EXPO_PUBLIC_SUPABASE_ANON_KEY`
+- Preview/production API URLs must be HTTPS and must not point at:
+  - `localhost`
+  - `127.0.0.1`
+  - `10.0.2.2`
+  - private LAN IPs such as `10.x`, `192.168.x.x`, or `172.16-31.x.x`
+- Production EAS config no longer enables QA debug by default
+- Release-safe mobile diagnostics now log only:
+  - `appEnv`
+  - API host
+  - Supabase host
+  - whether QA debug is enabled
 
 ### Backend / Render
 
 - Backend env parsing and startup guardrails are hardened in [backend/src/config/env.ts](/Users/mattbrillman/Car_Identifier/backend/src/config/env.ts)
 - `/health` is used as a lightweight wake/check endpoint before heavy scan requests
+- `/api/heartbeat` now runs a lightweight Supabase read for inactivity protection
+- backend startup now triggers one best-effort Supabase heartbeat, and a daily scheduler runs it at `3:00 AM` server time
 - Hosted backend now has much more explicit scan-stage logging
 - Guest scan support is implemented in backend code, but always verify the live Render deploy is on the newest backend before trusting behavior
 - Standard scan is now being refactored onto a canonical vehicle catalog flow instead of depending on the tiny `vehicles` table
+- Hosted backend safety expectations remain:
+  - `APP_ENV=preview` or `production`
+  - `AUTH_DEV_BYPASS_ENABLED=false`
+  - `ALLOW_MOCK_FALLBACKS=false`
+  - real `SUPABASE_*` values
+  - real provider keys
+  - intentional `CORS_ORIGIN`
+
+### Secret hygiene
+
+- [`.gitignore`](/Users/mattbrillman/Car_Identifier/.gitignore) already ignores:
+  - [`.env`](/Users/mattbrillman/Car_Identifier/.env)
+  - [`backend/.env`](/Users/mattbrillman/Car_Identifier/backend/.env)
+- Use [.env.example](/Users/mattbrillman/Car_Identifier/.env.example) and [backend/.env.example](/Users/mattbrillman/Car_Identifier/backend/.env.example) for placeholders only
+- Use EAS env/dashboard values for preview/production mobile vars
+- Use Render or your hosted backend dashboard for backend secrets
+- If real keys were ever committed, rotate them immediately
 
 ### Live Product State
 
@@ -56,6 +94,201 @@ Product goal:
   - keep it as a regression check during validation, not as current product truth
 
 ## Most Recent High-Signal Changes
+
+### Result / detail pill cleanup
+
+Low-value chip and badge cleanup has been applied across the scan result and vehicle detail experience.
+
+What was removed or suppressed:
+
+- [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx)
+  - removed the generic `AI Identified` pill from the best-match header
+  - kept the `Sample vehicle` pill only for curated demo/sample flows where it adds real context
+  - badge-text evidence still renders in plain language:
+    - `Read badge text: ...`
+    - `Matched using visible badge text.`
+- [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx)
+  - removed the default `Availability` badge from approximate/unavailable helper cards
+  - suppressed generic body-style-only labels when they are too broad to help:
+    - examples: `SUV`, `Sedan`, `Car`, `Vehicle`
+  - trim/body style rows now hide instead of rendering fallback filler like `Unavailable` or generic placeholders
+- [components/VehicleCard.tsx](/Users/mattbrillman/Car_Identifier/components/VehicleCard.tsx)
+  - removed the low-value `Garage vehicle` chip
+  - shared card metadata now filters filler values such as:
+    - `base`
+    - `unknown`
+    - `n/a`
+    - `null`
+    - `undefined`
+- [components/CandidateMatchCard.tsx](/Users/mattbrillman/Car_Identifier/components/CandidateMatchCard.tsx)
+  - candidate subtitle no longer shows `base` / `unknown` trim labels
+
+Current UI rule:
+
+- keep pills only when they communicate a meaningful user-facing fact
+- do not show technical/internal status chips if the same information is already obvious from the screen structure
+- do not render generic or placeholder values as trim/body-style facts
+
+### Subscription plan schema alignment
+
+The subscription plan model now supports both legacy and explicit billed Pro values.
+
+Current supported plan values:
+
+- `free`
+- `pro`
+- `pro_monthly`
+- `pro_yearly`
+
+Why `pro` still exists:
+
+- the live Supabase schema historically only allowed `free` and `pro`
+- some manually upgraded / admin-granted accounts already use `plan = 'pro'`
+- do not remove support for `pro` yet
+
+Which values unlock Pro entitlement:
+
+- `pro`
+- `pro_monthly`
+- `pro_yearly`
+
+Key implementation details:
+
+- frontend helper in [lib/subscription.ts](/Users/mattbrillman/Car_Identifier/lib/subscription.ts)
+  - `normalizePlan(plan)`
+  - `isProPlan(plan)`
+  - `planHasProEntitlement(plan)`
+- backend helper in [backend/src/lib/subscription.ts](/Users/mattbrillman/Car_Identifier/backend/src/lib/subscription.ts)
+  - `normalizePlan(plan)`
+  - `isProPlan(plan)`
+  - `planHasProEntitlement(plan)`
+- app and backend logic should rely on those helpers instead of duplicating string checks
+
+Migration added:
+
+- [backend/supabase/migrations/025_subscription_plan_values.sql](/Users/mattbrillman/Car_Identifier/backend/supabase/migrations/025_subscription_plan_values.sql)
+
+What that migration does:
+
+- drops the old `subscriptions_plan_check`
+- recreates it to allow:
+  - `free`
+  - `pro`
+  - `pro_monthly`
+  - `pro_yearly`
+
+Important product consequence:
+
+- monthly and yearly products should map to:
+  - `pro_monthly`
+  - `pro_yearly`
+- both still unlock the same Pro entitlement
+- legacy/manual `pro` remains valid for entitlement and UI recognition
+
+### OCR text dominance + focus crop for scan accuracy
+
+Recent scan accuracy work now treats readable badge/model text as a first-class identity constraint instead of a weak clue.
+
+Key product motivation:
+
+- A real rear photo of a Cadillac Lyriq with visible `LYRIQ 600` badging was incorrectly identified as a `2023 Cadillac Escalade`
+- The fix is meant to stop silhouette/popularity bias from overriding strong readable text
+
+Current backend behavior:
+
+- OpenAI vision extraction now returns structured `visible_text_evidence`
+  - `raw_text`
+  - `make_text`
+  - `model_text`
+  - `trim_text`
+  - `badge_text`
+  - `text_confidence`
+  - `evidence_regions`
+- The identify flow now creates a second AI-only image input:
+  - original full image
+  - heuristic center vehicle focus crop for badge/model reading
+- Focus crop is for AI analysis only
+  - the UI still shows the original photo
+  - the original image is never permanently replaced
+
+Hard dominance rules now implemented in [backend/src/services/scanService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/scanService.ts):
+
+- If `visible model text` exists and `text_confidence >= 0.75`
+  - candidate pool is hard-filtered to matching model family
+- If `visible make text` exists and `text_confidence >= 0.75`
+  - candidate pool is hard-filtered to matching make
+- If `visible trim/badge text` exists
+  - trim-compatible candidates are boosted
+- If hard OCR filtering removes all catalog/provider candidates
+  - backend must not silently fall back to an unrelated vehicle
+  - it now returns an AI-only text-dominant result instead
+
+Important safety rule:
+
+- if readable text says `Lyriq`, do not allow fallback to `Escalade`
+- if provider/canonical data lacks a Lyriq row, return a text-dominant AI-only Lyriq result instead of an unrelated Cadillac SUV
+
+Special normalization:
+
+- `lyriq`
+- `lyriq 600`
+- `lyriq 600e`
+- `600` near Cadillac context
+
+now normalize to Lyriq family with trim/badge preserved when possible.
+
+Primary logs to inspect after the next live scan:
+
+- `VISIBLE_TEXT_EVIDENCE_EXTRACTED`
+- `OCR_MODEL_HARD_FILTER_APPLIED`
+- `OCR_MAKE_HARD_FILTER_APPLIED`
+- `OCR_TRIM_BOOST_APPLIED`
+- `OCR_CANDIDATE_REJECTED_TEXT_CONFLICT`
+- `OCR_HARD_FILTER_NO_MATCH_AI_TEXT_RESULT`
+- `IDENTIFY_RESULT_TEXT_DOMINANCE_DECISION`
+- `VEHICLE_FOCUS_CROP_START`
+- `VEHICLE_FOCUS_CROP_CREATED`
+- `VEHICLE_FOCUS_CROP_FAILED`
+- `VISION_DUAL_IMAGE_REQUEST_START`
+- `VISION_DUAL_IMAGE_TEXT_EVIDENCE_USED`
+
+Files involved:
+
+- [backend/src/providers/openai/openAIVisionProvider.ts](/Users/mattbrillman/Car_Identifier/backend/src/providers/openai/openAIVisionProvider.ts)
+- [backend/src/services/scanService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/scanService.ts)
+- [backend/src/lib/vehicleImageCrop.ts](/Users/mattbrillman/Car_Identifier/backend/src/lib/vehicleImageCrop.ts)
+- [backend/src/controllers/scanController.ts](/Users/mattbrillman/Car_Identifier/backend/src/controllers/scanController.ts)
+- [backend/src/types/domain.ts](/Users/mattbrillman/Car_Identifier/backend/src/types/domain.ts)
+
+Known limitations:
+
+- focus crop is still heuristic, not detector-driven
+- low-resolution or motion-blurred badge text may still fall below the `0.75` hard-dominance threshold
+- text dominance is intentionally conservative below that threshold, where text acts as a boost instead of a hard filter
+
+### Fullscreen zoomable result/detail image viewer
+
+Scan result and vehicle detail hero images now support fullscreen viewing.
+
+Current behavior:
+
+- tapping the top image on [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx) opens a fullscreen dark modal
+- tapping the hero image on [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx) does the same
+- modal supports pinch zoom + pan
+- image opens in contain mode and keeps the original uncropped asset
+
+Files involved:
+
+- [components/ZoomableImageModal.tsx](/Users/mattbrillman/Car_Identifier/components/ZoomableImageModal.tsx)
+- [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx)
+- [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx)
+
+Viewer logs:
+
+- `RESULT_IMAGE_VIEWER_OPENED`
+- `RESULT_IMAGE_VIEWER_CLOSED`
+- `VEHICLE_DETAIL_IMAGE_VIEWER_OPENED`
+- `VEHICLE_DETAIL_IMAGE_VIEWER_CLOSED`
 
 ### Guest-first scanning
 
@@ -88,8 +321,8 @@ Key files:
 Current product truth:
 
 - scanning is always allowed
-- free users get 5 free Pro unlocks
-- scanning alone must not consume free unlocks
+- free users get 3 free Pro unlocks
+- scanning alone must not consume free Pro unlocks
 - basic scan result identification remains visible without Pro
 - only locked premium sections should depend on unlocks or Pro
 
@@ -97,7 +330,7 @@ Recent app-side fixes:
 
 - [app/(tabs)/scan.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/scan.tsx)
   - removed hard free-scan blocking logic
-  - upsell logic now keys off remaining free unlocks instead of scan counts
+  - upsell logic now keys off remaining free Pro unlocks instead of scan counts
 - [app/scan/camera.tsx](/Users/mattbrillman/Car_Identifier/app/scan/camera.tsx)
   - removed hard free-scan blocking logic
 - [app/paywall.tsx](/Users/mattbrillman/Car_Identifier/app/paywall.tsx)
@@ -391,6 +624,62 @@ CarScanr now ships a small bundled offline canonical dataset for fast local hydr
   - [services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/services/vehicleService.ts)
   - [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx)
   - loads bundled offline specs/value first when possible, then silently upgrades from backend when live data arrives
+
+### Bulk canonical seed import
+
+CarScanr now has a direct bulk seed/import path for `canonical_vehicles`, so coverage can be expanded without manually scanning vehicles first.
+
+- seed file location:
+  - [backend/data/canonical_seed/starter_demo_seed.json](/Users/mattbrillman/Car_Identifier/backend/data/canonical_seed/starter_demo_seed.json)
+  - larger files like a Top 100 seed should live in the same folder
+- importer:
+  - [backend/scripts/importCanonicalSeed.ts](/Users/mattbrillman/Car_Identifier/backend/scripts/importCanonicalSeed.ts)
+  - npm scripts in [backend/package.json](/Users/mattbrillman/Car_Identifier/backend/package.json):
+    - `npm run import:canonical-seed`
+    - `npm run validate:canonical`
+    - `npm run seed:canonical-and-export`
+- supported input:
+  - JSON only right now
+  - either a top-level array of rows or an object with `vehicles: [...]`
+- important fields for usable scan/detail coverage:
+  - `canonical_key`
+  - `year`
+  - `make`
+  - `model`
+  - `trim`
+  - `body_type`
+  - `vehicle_type`
+  - `engine`
+  - `drivetrain`
+  - `transmission`
+  - `fuel_type`
+  - `horsepower`
+  - `torque`
+  - `msrp`
+  - `source_provider`
+  - `source_vehicle_id`
+  - `specs_json`
+  - importer behavior:
+  - validates required fields and canonical key consistency
+  - normalizes make/model/trim/canonical key using the same backend helpers as the live scan path
+  - upserts by `canonical_key`
+  - never deletes rows
+  - preserves richer existing records when an incoming seed row is weaker
+  - logs inserted / updated / skipped totals
+  - default workflow rule:
+    - when modifying canonical vehicle data, CarAPI raw/source data, seed generation, import logic, vehicle aliasing, model normalization, or scan matching, always run `npm run validate:canonical` before reporting completion
+  - validation command:
+    - `npm run validate:canonical`
+    - runs:
+      - `npm run check:canonical-coverage`
+      - `npm run audit:canonical-lookup`
+- intended refresh flow:
+  1. put the seed JSON in `backend/data/canonical_seed/`
+  2. run `cd backend && npm run import:canonical-seed -- --file data/canonical_seed/top100.json`
+  3. `npm run import:canonical-seed` now runs canonical validation automatically after import
+  4. run `cd backend && npm run export:offline-canonical`
+  5. or run one command: `cd backend && npm run seed:canonical-and-export -- --file data/canonical_seed/top100.json`
+  6. the app then consumes the refreshed [assets/data/offline_canonical.json](/Users/mattbrillman/Car_Identifier/assets/data/offline_canonical.json)
 
 ### Scan-result trust model: generation-first, conservative year display, safer estimate detail
 
@@ -1595,6 +1884,143 @@ Historical / regression checks:
 
 - result-screen touch behavior was a real bug earlier; keep it as a regression check during device/TestFlight validation, not as the main active product blocker
 
+## IMPLEMENTATION_NOTES
+
+- free users now start with 3 free Pro unlocks, not 5
+- standard scans remain unlimited and are still separate from Pro unlock usage
+- value now has a zero-cost estimated path before any live market fetch
+- live value and live listings are now on-demand and cache-first instead of auto-loading on initial detail open
+- listings can render a cached/on-demand summary state without forcing MarketCheck
+- bootstrap-safe preseed tuning now defaults trending preload to a more conservative profile
+- canonical seed import now supports bulk starter/Top-100 style seeding into `canonical_vehicles`
+- offline canonical export can now be chained directly after seed import
+- new backend query flags used by the app:
+  - `allowLive`
+  - `fetchReason`
+- new verification logs include:
+  - `VALUE_LIVE_FETCH_GATE_EVALUATED`
+  - `VALUE_LIVE_FETCH_SKIPPED`
+  - `VALUE_LIVE_FETCH_ALLOWED`
+  - `LISTINGS_LIVE_FETCH_GATE_EVALUATED`
+  - `LISTINGS_LIVE_FETCH_SKIPPED`
+  - `LISTINGS_LIVE_FETCH_ALLOWED`
+  - `PROVIDER_CALL_SKIPPED_CACHE_HIT`
+  - `PROVIDER_CALL_SKIPPED_NOT_UNLOCKED`
+  - `PROVIDER_CALL_SKIPPED_ESTIMATE_GUARD`
+  - `PROVIDER_CALL_SKIPPED_INITIAL_LOAD`
+
+## Current Backend Truth
+
+### Standard identify behavior
+
+- `POST /api/scan/identify` is now intended to be:
+  - cache-aware
+  - canonical-first
+  - mock-fallback-disabled in live mode after OpenAI vision refusal
+- In `FORCE_PROVIDER_MODE=live`:
+  - OpenAI vision refusal or failure must not fall back to fake mock vehicle identity
+  - unknown-result fallback is preferred over fake make/model/year output
+  - exact image-key / analysis-cache reuse is allowed
+  - near-match stability reuse is not allowed; near matches force fresh identify
+- Key logs around this path:
+  - `SCAN_FORCE_FRESH_IDENTIFY`
+  - `SCAN_STABILITY_CACHE_HIT_EXACT`
+  - `SCAN_STABILITY_CACHE_SKIPPED_NEAR_MATCH`
+  - `LIVE_VISION_REFUSAL_NO_MOCK_FALLBACK`
+  - `SCAN_RESULT_UNKNOWN_AFTER_VISION_FAILURE`
+
+### Analysis cache status
+
+- Cached analysis reserve/complete flow is working again
+- The connected Supabase project previously missed `cached_analysis.analysis_type`; repair migration was added and runtime logging now shows:
+  - `ANALYSIS_CACHE_OPERATION`
+  - `ANALYSIS_CACHE_BEGIN_RESULT`
+  - `ANALYSIS_CACHE_COMPLETE_RESULT`
+- Expected healthy sequence:
+  - `get -> miss`
+  - `begin -> reserved`
+  - live vision
+  - `complete -> completed`
+
+### Mercedes SL-Class normalization / grounding
+
+- Mercedes SL badge normalization is now a shared runtime rule, not a one-off patch
+- Required invariant:
+  - `SL500`, `SL 500`, `SL-500` -> `model: SL-Class`, `trim: SL500`
+  - `SL600`, `SL 600`, `SL-600` -> `model: SL-Class`, `trim: SL600`
+  - `SL320`, `SL 320`, `SL-320` -> `model: SL-Class`, `trim: SL320`
+- This is applied across:
+  - normalized AI output
+  - alternate candidates
+  - badge/model text handling
+  - canonical lookup
+  - enrichment candidates
+  - popularity/stability keys
+- Key logs:
+  - `MERCEDES_SL_NORMALIZATION`
+  - `MERCEDES_SL_PRE_CANONICAL_LOOKUP`
+  - `MERCEDES_SL_POST_BADGE_FILTER`
+  - `MERCEDES_SL_ENRICHMENT_CANDIDATE`
+  - `MERCEDES_SL_CANONICAL_YEAR_PREFERENCE`
+- Important truth:
+  - do not regress to canonical keys shaped like `mercedes-benz:sl500:sl500`
+  - correct runtime keys must stay in `mercedes-benz:sl-class:sl500`
+
+### Canonical lookup fallback behavior
+
+- Canonical lookup order now matters:
+  1. exact canonical key
+  2. trim-relaxed same-year base canonical key, when a non-base trim was guessed
+  3. broader canonical promoted/family fallback
+  4. live provider rescue only after canonical miss paths fail
+- New trim-relaxed lookup logs:
+  - `CANONICAL_TRIM_RELAXED_LOOKUP_START`
+  - `CANONICAL_TRIM_RELAXED_LOOKUP_HIT`
+  - `CANONICAL_TRIM_RELAXED_LOOKUP_MISS`
+- This is intentionally generic and not PT Cruiser-only
+
+### Chrysler PT Cruiser canonical support
+
+- Added durable seed file:
+  - `backend/data/canonical_seed/chrysler_ptcruiser_expansion.json`
+- Coverage:
+  - Chrysler PT Cruiser years `2001` through `2010`
+  - canonical keys use `:base:unknown`
+- Runtime intent:
+  - if OpenAI identifies `2006 Chrysler PT Cruiser Limited`
+  - and exact `limited` canonical key misses
+  - same-year `base` canonical row should resolve before provider rescue
+- Important live-state caveat:
+  - direct probe against the connected Supabase project returned:
+    - `canonical:2006:chrysler:pt-cruiser:base:unknown -> data: null`
+  - that means the seed file exists in repo, but the connected project still needs the import run
+
+### Live canonical-miss provider rescue
+
+- Provider rescue is still intended as a fallback, not a default path
+- Rescue conditions:
+  - `FORCE_PROVIDER_MODE=live`
+  - canonical miss
+  - primary candidate only
+  - high confidence
+  - not already rate-limited
+- Rescue logging now has a dedicated decision helper and must emit one of:
+  - `LIVE_CANONICAL_MISS_PROVIDER_RESCUE_STARTED`
+  - `LIVE_CANONICAL_MISS_PROVIDER_RESCUE_SKIPPED`
+- Dev/test tripwire:
+  - `LIVE_CANONICAL_MISS_PROVIDER_RESCUE_MISSING_GATE`
+- Important truth:
+  - if bootstrap skip logs appear without rescue STARTED/SKIPPED first, that is a regression
+
+### Provider log severity cleanup
+
+- Normal provider-attempt lifecycle logs should not read like hard failures
+- Current intended severity:
+  - `CANONICAL_PROVIDER_ENRICH_START` -> `INFO`
+  - `PROVIDER_ENRICH_SKIPPED_AFTER_429` -> `WARN`
+  - graceful `CANONICAL_PROVIDER_ENRICH_FAILURE` fallback cases -> `WARN`
+  - true unexpected provider exceptions -> `ERROR`
+
 ## Useful Commands
 
 ### Mobile
@@ -1623,9 +2049,1039 @@ cd backend && npm run typecheck
 cd backend && npm run build
 ```
 
+### Source-First Canonical Ingestion
+
+```bash
+cd backend
+npm run fetch:source-data -- --targets data/source_ingestion/targets.example.json
+npm run transform:source-cache -- --cache-dir data/source_cache --output data/canonical_seed/source_ingestion_seed.json
+npm run import:canonical-seed -- --file data/canonical_seed/source_ingestion_seed.json
+npm run export:offline-canonical:top100
+```
+
+Notes:
+- authoritative-source adapters live in `backend/src/lib/sourceIngestion.ts`
+- alias normalization lives in `backend/src/lib/vehicleAliases.ts`
+- field-level provenance is stored in canonical `overview_json.fieldProvenance`
+- starter target packs:
+  - `backend/data/source_ingestion/top_common_targets.json`
+  - `backend/data/source_ingestion/older_specialty_targets.json`
+  - `backend/data/source_ingestion/mercedes_older_targets.json`
+- popularity-focused export packs:
+  - `npm run export:offline-canonical:top100`
+  - `npm run export:offline-canonical:top500`
+  - `npm run export:offline-canonical:older-specialty`
+- older Mercedes SL manual seed import:
+  - `npm run import:canonical-seed -- --file data/canonical_seed/mercedes_sl_older_expansion.json`
+  - `npm run export:offline-canonical:older-specialty`
+
 ### EAS build / submit
 
 ```bash
 eas build -p ios
 eas submit -p ios
 ```
+
+### Canonical gap queue + seed pipeline
+
+- Added `backend/supabase/migrations/019_canonical_gap_queue.sql`
+  - creates `public.canonical_gap_queue`
+  - adds duplicate-safe `public.upsert_canonical_gap_queue(...)`
+- Scan-time canonical misses now record durable gap rows when:
+  - `canonicalHit === false`
+  - and `finalResultType === "ai_only"` or `payloadStrength === "empty"`
+- New logs:
+  - `CANONICAL_GAP_RECORDED`
+  - `CANONICAL_GAP_INCREMENTED`
+  - `CANONICAL_SEED_GENERATED`
+  - `CANONICAL_SEED_IMPORT_SUMMARY`
+  - `CANONICAL_SEED_SKIPPED_EXISTING_STRONGER`
+
+Commands:
+
+```bash
+cd backend
+npm run export:canonical-gaps -- --limit 100
+npm run generate:canonical-seed -- --file data/canonical_source/common_vehicles_starter.json --output data/canonical_seed/generated_from_source.json
+npm run import:canonical-seed -- --file data/canonical_seed/generated_from_source.json
+npm run import:canonical-seed -- --dir data/canonical_seed
+npm run export:offline-canonical
+```
+
+Starter conservative source packs:
+
+- `backend/data/canonical_source/common_vehicles_starter.json`
+- `backend/data/canonical_source/older_specialty_starter.json`
+
+### Workbook-backed CarAPI canonical pipeline
+
+- canonical generation now supports the workbook:
+  - [backend/data/carapi_raw/v2-carapi-datafeed.xlsx](/Users/mattbrillman/Car_Identifier/backend/data/carapi_raw/v2-carapi-datafeed.xlsx)
+- generator entrypoint:
+  - [backend/scripts/generateCanonicalSeedFromCarApi.ts](/Users/mattbrillman/Car_Identifier/backend/scripts/generateCanonicalSeedFromCarApi.ts)
+- current behavior:
+  - prefers `v2-carapi-datafeed.xlsx` when it exists in `backend/data/carapi_raw`
+  - falls back to the legacy CSV set:
+    - `makes.csv`
+    - `models.csv`
+    - `submodels.csv`
+    - `trims.csv`
+    - `engines.csv`
+    - `bodies.csv`
+- workbook support was added using the `xlsx` package in:
+  - [backend/package.json](/Users/mattbrillman/Car_Identifier/backend/package.json)
+- important workbook field mapping:
+  - `Trims` sheet
+  - `Trim MSRP` -> canonical `msrp`
+  - `Trim Invoice` is available for future use but is not currently surfaced in the app
+- generator verification completed:
+  - source type logged as `workbook`
+  - source path logged as:
+    - `/Users/mattbrillman/Car_Identifier/backend/data/carapi_raw/v2-carapi-datafeed.xlsx`
+- canonical validation after workbook regeneration:
+  - `npm run validate:canonical`
+  - coverage passed
+  - alias audit passed
+
+Commands run successfully:
+
+```bash
+cd backend
+node --import tsx scripts/generateCanonicalSeedFromCarApi.ts
+npm run validate:canonical
+node --import tsx scripts/importCanonicalSeed.ts --file data/canonical_seed/carapi_generated.json --export-offline
+```
+
+Results from the real import/export run:
+
+- Supabase canonical import summary:
+  - file: `backend/data/canonical_seed/carapi_generated.json`
+  - rowCount: `13228`
+  - updated: `13228`
+  - failed: `0`
+- offline export completed:
+  - [assets/data/offline_canonical.json](/Users/mattbrillman/Car_Identifier/assets/data/offline_canonical.json)
+  - historical default top-pack export was later expanded beyond this
+
+### Offline canonical bundle status
+
+- the current default offline canonical export is no longer the old `top200`
+- current default behavior:
+  - `npm run export:offline-canonical`
+  - now exports the default `top500` pack
+- exporter:
+  - [backend/scripts/exportOfflineCanonical.ts](/Users/mattbrillman/Car_Identifier/backend/scripts/exportOfflineCanonical.ts)
+- current bundle size decision:
+  - `top500` was accepted because the real bundle size increase was still small enough for mobile use
+- current default bundled file:
+  - [assets/data/offline_canonical.json](/Users/mattbrillman/Car_Identifier/assets/data/offline_canonical.json)
+- current exported vehicle count is intentionally `503`, not `500`, because the bundle now force-includes required sample/demo vehicles on top of the default popularity pack
+
+Required sample/demo vehicles now always included in the offline bundle:
+
+- `2022-tesla-model-3-long-range`
+- `2019-ford-mustang-gt`
+- `2023-harley-davidson-street-glide-special`
+
+Why this was added:
+
+- the sample scan flow was using the offline/local canonical layer for locked/local spec hydration
+- those sample vehicles were missing from the popularity-based offline export
+- result: sample vehicles could show no local specs even though rich seed data existed elsewhere in the repo
+- fix:
+  - the exporter now force-merges those required sample vehicle IDs into every offline export
+
+Verified sample vehicle spec presence in the current exported bundle:
+
+- Tesla Model 3 Long Range:
+  - MSRP `50990`
+  - HP `449`
+  - engine `Dual Motor Electric`
+  - drivetrain `AWD`
+  - transmission `Single-speed`
+  - body style `Sedan`
+- Ford Mustang GT:
+  - MSRP `35995`
+  - HP `460`
+  - engine `5.0L V8`
+  - drivetrain `RWD`
+  - transmission `6-speed Manual`
+  - body style `Coupe`
+- Harley-Davidson Street Glide Special:
+  - MSRP `30399`
+  - HP `95`
+  - engine `Milwaukee-Eight 114 V-Twin`
+  - drivetrain `Belt`
+  - transmission `6-speed Manual`
+  - body style `Touring Motorcycle`
+
+Important caveat for older MSRP coverage:
+
+- the workbook is now the active preferred CarAPI source going forward
+- however, some older exact-year rows in the workbook still contain zero MSRP values
+- confirmed example:
+  - `1992-1997 Ford Ranger`
+  - `Trims` sheet rows show:
+    - `Trim MSRP = 0`
+    - `Trim Invoice = 0`
+- so updating the pipeline/Supabase/offline bundle does **not** magically restore real MSRP for those exact Ranger rows
+- in those cases, exact MSRP is absent from the source workbook itself
+- if real MSRP is needed for those older families, a second trusted source or a targeted backfill seed is still required
+
+### Locked Vehicle Specs preview status
+
+- active screen:
+  - [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx)
+- current product rule:
+  - free scan result shows identification only
+  - specs are rendered as a locked premium preview until the vehicle/report is unlocked
+- critical guardrails:
+  - do not remove or break the real spec data path
+  - keep:
+    - `freeDisplaySpecs`
+    - `freeSpecRows`
+    - `freeSpecLookup`
+    - `performanceSnapshot`
+  - unlocked state must still render readable real values normally
+- current locked-preview implementation:
+  - labels remain readable
+  - values render as obscured/blurred previews on the right
+  - centered lock overlay remains above the panel
+  - `Unlock Specs` remains the CTA
+- current MSRP-specific behavior:
+  - if real MSRP is available through canonical/backend/local fallback, it should render as a blurred preview like the other rows
+  - if exact-year MSRP is missing at the source, do not assume the app lost it by bug
+  - first verify whether the canonical/workbook row actually contains a nonzero MSRP
+- current row-inclusion behavior for locked preview:
+  - if a real raw spec value exists, render the row with an obscured/blurred preview
+  - if a real raw spec value does not exist, omit the row entirely
+  - do not render `Hidden`, dashes, or empty placeholder rows in the locked preview
+- current known caveat:
+  - the Ford Ranger `1992-1997` example still lacks true exact-year MSRP in the workbook-backed canonical source, so MSRP restoration for that family is a data problem, not just a UI problem
+
+### Sample vehicle unlock rules
+
+- built-in sample vehicles must be fully viewable without consuming a free Pro unlock
+- current sample list lives in:
+  - [features/scan/samplePhotos.ts](/Users/mattbrillman/Car_Identifier/features/scan/samplePhotos.ts)
+- current sample IDs:
+  - `2022-tesla-model-3-long-range`
+  - `2019-ford-mustang-gt`
+  - `2023-harley-davidson-street-glide-special`
+- current behavior:
+  - sample vehicles are treated as `already_unlocked`
+  - sample vehicles do not decrement `freeUnlocksUsed`
+  - sample vehicles are recognized as unlocked by both:
+    - [services/subscriptionService.ts](/Users/mattbrillman/Car_Identifier/services/subscriptionService.ts)
+    - [features/subscription/SubscriptionProvider.tsx](/Users/mattbrillman/Car_Identifier/features/subscription/SubscriptionProvider.tsx)
+- product intent:
+  - demo/sample cars should behave like built-in showcases
+  - users should not have to spend a free unlock just to inspect the bundled examples
+
+### Unlock reset/testing notes
+
+- the unlock counter is not stored in just one place
+- current test-device/user reset requires clearing both:
+  - backend unlock balance/history
+  - local simulator AsyncStorage cache
+- signed-in users:
+  - backend source of truth uses:
+    - `user_unlock_balances`
+    - `user_vehicle_unlocks`
+- local device cache:
+  - `carscanr.freeUnlocks.v1:<userId>`
+- helper script added for backend-side reset:
+  - [backend/scripts/resetUserUnlocks.ts](/Users/mattbrillman/Car_Identifier/backend/scripts/resetUserUnlocks.ts)
+- current usage:
+
+```bash
+cd /Users/mattbrillman/Car_Identifier/backend
+node --import tsx scripts/resetUserUnlocks.ts <email>
+```
+
+- important nuance:
+  - resetting the backend alone is not enough if the simulator still has stale local unlock cache
+  - the app merges backend unlock state with local persisted unlock state
+
+### Vehicle detail UI guardrails
+
+- unlocked vehicle detail screen:
+  - [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx)
+  - [components/ValueEstimateCard.tsx](/Users/mattbrillman/Car_Identifier/components/ValueEstimateCard.tsx)
+- current product rules for the unlocked `Value` tab:
+  - the condition selector is intentionally simplified to exactly `Fair`, `Good`, and `Excellent`
+  - condition choices must stay on one line and must not wrap into multiple rows
+  - when market value fields are unavailable, do not render the trade/private/retail mini cards with `Unavailable`
+  - instead render one intentional unavailable state:
+    - title: `Market value unavailable`
+    - body: `We couldn’t load a live value for this vehicle yet. Specs are still available.`
+    - action: `Refresh live market value` when eligible
+  - only show trade/private/retail metric cards when real numeric/range values exist
+  - do not expose provider names, quota/rate-limit messages, route params, or QA/debug labels in the user-facing vehicle detail UI
+- logging added for value refresh behavior:
+  - `VALUE_REFRESH_ATTEMPT`
+  - `VALUE_REFRESH_SUCCESS`
+  - `VALUE_REFRESH_UNAVAILABLE`
+  - `VALUE_REFRESH_PROVIDER_LIMITED`
+- when editing unlocked vehicle detail UI, preserve:
+  - no visible QA/debug cards
+  - no wrapped tab labels
+  - no distorted hero vehicle image
+
+### Shared premium UI styling system
+
+- shared styling primitives now live in:
+  - [design/tokens.ts](/Users/mattbrillman/Car_Identifier/design/tokens.ts)
+  - [design/patterns.ts](/Users/mattbrillman/Car_Identifier/design/patterns.ts)
+  - [constants/theme.ts](/Users/mattbrillman/Car_Identifier/constants/theme.ts)
+  - [components/AppContainer.tsx](/Users/mattbrillman/Car_Identifier/components/AppContainer.tsx)
+- locked premium style constants now exposed from [constants/theme.ts](/Users/mattbrillman/Car_Identifier/constants/theme.ts):
+  - `PremiumGradients`
+  - `PremiumCard`
+  - extended `Spacing`
+  - extended `Radius`
+- when adding new user-facing screens or cards, prefer shared theme exports over inline hex values whenever the design should match the unlocked report screen
+- current app-wide visual direction:
+  - layered dark navy backgrounds
+  - subtle depth between page, primary cards, and secondary cards
+  - restrained cyan/blue accents only
+  - no glow-heavy or gaming-style treatment
+- base palette in use:
+  - page background: `#050B14`
+  - page alt: `#08131F`
+  - primary card surface: `#0F2236`
+  - secondary card surface: `#0A1A2A`
+  - supporting panel surface: `#0B1A2A`
+  - input/control surface: `#13243A`
+  - border: `rgba(255,255,255,0.06)`
+  - accent border: `rgba(59,130,246,0.35)`
+  - primary text: `#E6EDF3`
+  - secondary text: `#9FB3C8`
+  - muted text: `#7890A8`
+  - accent cyan: `#5EEBFF`
+  - accent blue: `#1688FF`
+- card rules:
+  - primary cards use the shared `cardStyles.primary`
+  - secondary/helper cards use `cardStyles.standard` or `cardStyles.secondary`
+  - cards should keep:
+    - radius around `16`
+    - subtle border
+    - no heavy shadow
+    - padding `16-18`
+- container spacing rules:
+  - default horizontal screen padding: `16`
+  - default bottom padding: `28`
+  - major card spacing: about `18`
+  - bottom CTA spacing: about `14-18`
+- inputs:
+  - use `Colors.cardAlt` for input backgrounds
+  - keep the subtle border
+  - do not invent brighter fills for forms
+- buttons:
+  - keep the current blue primary button hierarchy
+  - secondary buttons should stay darker and restrained
+- explicit regression guards for styling-only passes:
+  - do not change vehicle image sizing, aspect ratio, or fit policy
+  - do not change tab count or tab behavior
+  - do not introduce horizontal overflow
+  - do not add visible QA/debug/dev panels to user-facing UI
+  - do not expose route params, provider labels, cache keys, or internal source wording in visible text
+- unlocked vehicle detail visual rules now also include:
+  - the main vehicle image should sit inside a primary-card-style frame, not directly on the page
+  - image frame treatment:
+    - same radius family as primary cards
+    - same subtle border
+    - subtle navy gradient shell
+    - `6-8` points of padding around the image
+  - the vehicle image itself must keep the existing fit behavior and must never be stretched
+  - the unlocked vehicle header card can use a slightly stronger visual emphasis than secondary cards
+    - acceptable: accent border around `rgba(59,130,246,0.25)`
+    - not acceptable: larger size, glow-heavy effect, or extra pills
+  - tab/content separation on the unlocked detail screen should keep a small breathing gap:
+    - about `10-12` points below the tab control before content starts
+  - the segmented tab control background can be slightly darker than the surrounding cards
+    - current target: `#081521`
+  - the app-wide page gradient should remain extremely subtle:
+    - slightly lighter navy at the top
+    - fading into the base background
+    - should be barely noticeable, not a hero effect
+- screens/components specifically updated to follow this system:
+  - [app/(tabs)/scan.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/scan.tsx)
+  - [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx)
+  - [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx)
+  - [app/(tabs)/garage.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/garage.tsx)
+  - [app/(tabs)/search.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/search.tsx)
+  - [app/(tabs)/profile.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/profile.tsx)
+  - [app/auth.tsx](/Users/mattbrillman/Car_Identifier/app/auth.tsx)
+  - [app/paywall.tsx](/Users/mattbrillman/Car_Identifier/app/paywall.tsx)
+  - [app/reset-password.tsx](/Users/mattbrillman/Car_Identifier/app/reset-password.tsx)
+  - [app/index.tsx](/Users/mattbrillman/Car_Identifier/app/index.tsx)
+  - [components/EmptyState.tsx](/Users/mattbrillman/Car_Identifier/components/EmptyState.tsx)
+  - [components/PaywallCard.tsx](/Users/mattbrillman/Car_Identifier/components/PaywallCard.tsx)
+  - [components/UpgradePromptCard.tsx](/Users/mattbrillman/Car_Identifier/components/UpgradePromptCard.tsx)
+  - [components/ValueEstimateCard.tsx](/Users/mattbrillman/Car_Identifier/components/ValueEstimateCard.tsx)
+
+### MarketCheck hard guard status
+
+- MarketCheck is now supposed to be locked behind explicit intent only
+- centralized outbound MarketCheck logging, cache, dedupe, and safety guards now live in:
+  - [backend/src/providers/marketcheck/marketCheckVehicleDataProvider.ts](/Users/mattbrillman/Car_Identifier/backend/src/providers/marketcheck/marketCheckVehicleDataProvider.ts)
+  - [backend/src/lib/providerCache.ts](/Users/mattbrillman/Car_Identifier/backend/src/lib/providerCache.ts)
+  - [backend/src/services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/vehicleService.ts)
+- current provider-level request logs:
+  - `MARKETCHECK_API_REQUEST_START`
+  - `MARKETCHECK_API_RESPONSE`
+  - `MARKETCHECK_API_CACHE_HIT`
+  - `MARKETCHECK_API_INFLIGHT_DEDUPE`
+  - `MARKETCHECK_API_SKIPPED_RATE_GUARD`
+  - `MARKETCHECK_API_FALLBACK_ATTEMPT`
+  - `MARKETCHECK_USAGE_SUMMARY`
+- old guard logs still matter where present:
+  - `MARKETCHECK_CALL_START`
+  - `MARKETCHECK_DISABLED_SKIP`
+- explicit guard rules now in effect:
+  - value calls require:
+    - `allowLive === true`
+    - `fetchReason === "user_requested_value_refresh"`
+  - listings calls require:
+    - `allowLive === true`
+    - `fetchReason === "user_requested_listings_refresh"`
+  - initial detail load must not call MarketCheck
+  - tab switches must not call MarketCheck
+  - unlocking specs must not call MarketCheck
+  - local/dev background trending MarketCheck must stay disabled unless:
+    - `ENABLE_BACKGROUND_MARKETCHECK=true`
+- new provider safety env vars:
+  - `MARKETCHECK_MONTHLY_CALL_LIMIT`
+  - `MARKETCHECK_WARN_AT`
+  - `MARKETCHECK_DISABLE_EXTERNAL_CALLS`
+- new stricter action-policy env vars:
+  - `MARKETCHECK_ENABLE_SCAN_ENRICHMENT`
+  - `MARKETCHECK_ENABLE_AUTO_SPECS`
+  - `MARKETCHECK_ENABLE_AUTO_LISTINGS`
+  - `MARKETCHECK_ENABLE_BACKGROUND_REFRESH`
+- current frontend explicit refresh reasons live in:
+  - [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx)
+- current backend guard files:
+  - [backend/src/services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/vehicleService.ts)
+  - [backend/src/services/scanService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/scanService.ts)
+  - [backend/src/services/trendingVehicleService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/trendingVehicleService.ts)
+- frontend duplicate-request guard files:
+  - [services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/services/vehicleService.ts)
+  - [lib/vehicleDetailMarket.ts](/Users/mattbrillman/Car_Identifier/lib/vehicleDetailMarket.ts)
+  - [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx)
+- current cache TTLs:
+  - specs lookup cache: `7d`
+  - value lookup cache: `24h`
+  - listings lookup cache: `6h`
+  - empty listings cache: `1h`
+- provider-level in-flight dedupe now exists:
+  - identical concurrent MarketCheck requests share one outbound promise instead of creating parallel provider calls
+- frontend in-flight dedupe now exists:
+  - identical repeated `getValue(...)` requests share one promise
+  - identical repeated `getListings(...)` requests share one promise
+- likely cause of the observed `+6` usage spike from one Value open:
+  - the vehicle detail screen could re-arm value/listings requests after state changes
+  - the client had no request-level in-flight dedupe
+  - the provider had DB cache support but did not collapse identical concurrent outbound calls early enough
+  - result: one screen open could fan out into multiple backend requests, and more than one could escape to MarketCheck before cache state settled
+- likely cause of the later `+16` spike from `3 scans + specs opens + one value click`:
+  - scan identify still had a provider-enrichment rescue path that could call MarketCheck specs/searchCandidates
+  - passive `getSpecs()` still allowed live MarketCheck specs fetches on detail/specs open
+  - background/trending code still needed an explicit second guard so hosted refresh/preload logic could not spend MarketCheck by accident
+  - result: even without explicit Value refreshes, MarketCheck could still be consumed by non-Value flows
+- likely cause of the later `+2` spike from `1 scan + no taps after scan`:
+  - the scan identify flow still had two MarketCheck-backed specs rescue branches in [backend/src/services/scanService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/scanService.ts):
+    - `providers.specsProvider.searchCandidates(...)`
+    - `providers.specsProvider.getVehicleSpecs(...)`
+  - both were tagged as:
+    - `reason: "scan_identify_provider_enrichment"`
+    - `sourceScreen: "scan"`
+    - `stackTag: "scan-identify"`
+  - the expected outbound type for both calls was `specs`
+  - provider-level source-screen guarding now blocks those requests even if env drift or permissive flags would otherwise allow them
+- if production/TestFlight still shows MarketCheck movement after that backend fix, the most likely explanations are:
+  - Render is not actually running the fixed backend commit
+  - a hidden background/preload/trending path is still live in the deployed env
+  - a request is arriving without expected source tagging and needs to be identified from production logs
+- final MarketCheck policy by action:
+  - scan action:
+    - max `0` MarketCheck calls by default
+    - MarketCheck scan enrichment is blocked unless `MARKETCHECK_ENABLE_SCAN_ENRICHMENT=true`
+  - vehicle detail open:
+    - max `0` MarketCheck calls by default
+    - internal/canonical/stored specs only
+  - specs open:
+    - max `0` MarketCheck calls by default
+    - live MarketCheck specs require explicit opt-in via `allowLive` + `fetchReason=user_requested_specs_refresh` and `MARKETCHECK_ENABLE_AUTO_SPECS=true`
+  - value click:
+    - max `1` MarketCheck value call for the same cache key
+    - repeats should hit cache or in-flight dedupe
+  - listings open:
+    - max `0` MarketCheck calls by default
+    - live listings require explicit opt-in and `MARKETCHECK_ENABLE_AUTO_LISTINGS=true`
+  - trending / preload / bootstrap / background hydration:
+    - max `0` MarketCheck calls by default
+    - requires `ENABLE_BACKGROUND_MARKETCHECK=true` and `MARKETCHECK_ENABLE_BACKGROUND_REFRESH=true`
+- current remaining call paths that can still reach MarketCheck when explicitly enabled:
+  - [backend/src/services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/vehicleService.ts)
+    - `getValue(...)`
+    - `getListings(...)`
+    - `getSpecs(...)`
+  - [backend/src/services/scanService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/scanService.ts)
+    - provider enrichment rescue path, now disabled by default behind `MARKETCHECK_ENABLE_SCAN_ENRICHMENT=false`
+  - [backend/src/services/trendingVehicleService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/trendingVehicleService.ts)
+    - background preload path, now disabled by default behind dual flags
+- new policy/guard logs to watch:
+  - `MARKETCHECK_ACTION_BUDGET_EXCEEDED`
+  - `MARKETCHECK_DISABLED_SKIP`
+  - `MARKETCHECK_API_SKIPPED_RATE_GUARD`
+  - `BACKEND_BUILD_COMMIT`
+  - `MARKETCHECK_USAGE_SUMMARY`
+- new production-proof startup log:
+  - `BACKEND_BUILD_COMMIT`
+  - includes:
+    - `backendBuildCommit`
+    - `marketCheckDisableExternalCalls`
+    - `marketCheckEnableScanEnrichment`
+    - `marketCheckEnableAutoSpecs`
+    - `marketCheckEnableAutoListings`
+    - `marketCheckEnableBackgroundRefresh`
+- new debug endpoint:
+  - `GET /api/debug/marketcheck`
+  - returns:
+    - current env flag values
+    - current startup diagnostics
+    - recent MarketCheck usage logs for the last 10 minutes
+    - grouped counts by:
+      - endpoint
+      - sourceScreen
+      - route
+      - cacheKey
+      - event type
+- expected behavior after this fix:
+  - scans should consume `0` MarketCheck calls by default
+  - opening vehicle detail or Specs should consume `0` MarketCheck calls by default
+  - first valid explicit live value fetch may consume one MarketCheck call
+  - repeated opens of the same Value screen should reuse cached/stored data
+  - concurrent identical opens or repeated state-triggered fetches should dedupe instead of multiplying calls
+- validation that passed for this work:
+  - `npm run typecheck`
+  - `cd /Users/mattbrillman/Car_Identifier/backend && npm run typecheck`
+  - `cd /Users/mattbrillman/Car_Identifier/backend && npm run build`
+  - `cd /Users/mattbrillman/Car_Identifier/backend && node --import tsx --test tests/marketCheckProvider.test.ts tests/bootstrapCostControl.test.ts`
+  - `cd /Users/mattbrillman/Car_Identifier && node --import ./backend/node_modules/tsx/dist/loader.mjs --test tests/vehicleDetailMarket.test.ts`
+
+How to verify after the next live deploy:
+
+- scan 3 different vehicles
+- inspect logs and confirm:
+  - no `MARKETCHECK_API_REQUEST_START` from `sourceScreen: "scan"`
+  - any blocked scan attempt logs `MARKETCHECK_DISABLED_SKIP` and `MARKETCHECK_ACTION_BUDGET_EXCEEDED`
+- open a vehicle detail screen and Specs
+- confirm:
+  - no `MARKETCHECK_API_REQUEST_START` from `sourceScreen: "vehicleDetail"` or `sourceScreen: "specsScreen"`
+- trigger `Refresh live market value` once
+- inspect logs for exactly one `MARKETCHECK_API_REQUEST_START` for `endpointType: "value"` for that cache key
+- reopen the same Value screen without changing the descriptor
+- expected result:
+  - `MARKETCHECK_API_CACHE_HIT` or `MARKETCHECK_API_INFLIGHT_DEDUPE`
+  - no additional outbound MarketCheck request
+  - if multiple `MARKETCHECK_API_REQUEST_START` logs appear for the same value cache key during one user action, that is a regression
+  - for scan-only verification after deploy:
+    - scan one car
+    - inspect Render logs and confirm:
+      - the startup log shows the expected `BACKEND_BUILD_COMMIT`
+      - no `MARKETCHECK_API_REQUEST_START` appears with:
+        - `sourceScreen: "scan"`
+        - `reason: "scan_identify_provider_enrichment"`
+      - if anything attempts to escape:
+        - `MARKETCHECK_ACTION_BUDGET_EXCEEDED`
+        - `MARKETCHECK_API_SKIPPED_RATE_GUARD`
+    - query `/api/debug/marketcheck` and inspect the last 10 minutes grouped totals
+
+### For Sale listing open behavior
+
+- listing cards should open only from already-loaded listing URLs
+- tapping a listing card must never:
+  - call MarketCheck
+  - hit backend listing refresh endpoints
+  - refresh cache
+  - trigger any listing reload action
+- current tap implementation lives in:
+  - [components/ListingCard.tsx](/Users/mattbrillman/Car_Identifier/components/ListingCard.tsx)
+- current behavior:
+  - validate existing loaded URL
+  - log tap
+  - open inside the app with `expo-web-browser`
+  - fall back to `Linking.openURL(...)` only if the in-app browser fails
+- current URL normalization path:
+  - frontend uses `listing.listingUrl`
+  - aliases preserved/mapped from:
+    - `listingUrl`
+    - `url`
+    - `vdpUrl`
+    - `dealerUrl`
+    - `sourceUrl`
+- current backend URL-preservation files:
+  - [backend/src/providers/marketcheck/marketCheckVehicleDataProvider.ts](/Users/mattbrillman/Car_Identifier/backend/src/providers/marketcheck/marketCheckVehicleDataProvider.ts)
+  - [backend/src/repositories/supabaseRepositories.ts](/Users/mattbrillman/Car_Identifier/backend/src/repositories/supabaseRepositories.ts)
+  - [services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/services/vehicleService.ts)
+- current product/UI rule:
+  - if a card has a real listing URL, it should show `View listing`
+  - do not fall back to generic Google search anymore
+  - stale/no-URL listing rows should not be presented as openable dealer listings
+
+### Affiliate click tracking
+
+- affiliate click tracking endpoint now exists:
+  - `POST /api/click/listing`
+- route/controller/service files:
+  - [backend/src/routes/index.ts](/Users/mattbrillman/Car_Identifier/backend/src/routes/index.ts)
+  - [backend/src/controllers/clickController.ts](/Users/mattbrillman/Car_Identifier/backend/src/controllers/clickController.ts)
+  - [backend/src/services/listingClickService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/listingClickService.ts)
+- repository wiring:
+  - [backend/src/repositories/interfaces.ts](/Users/mattbrillman/Car_Identifier/backend/src/repositories/interfaces.ts)
+  - [backend/src/repositories/mockRepositories.ts](/Users/mattbrillman/Car_Identifier/backend/src/repositories/mockRepositories.ts)
+  - [backend/src/repositories/supabaseRepositories.ts](/Users/mattbrillman/Car_Identifier/backend/src/repositories/supabaseRepositories.ts)
+  - [backend/src/lib/repositoryRegistry.ts](/Users/mattbrillman/Car_Identifier/backend/src/lib/repositoryRegistry.ts)
+- request body:
+  - `listingId?: string`
+  - `vehicle?: string`
+  - `url: string`
+  - `sessionId?: string`
+- Supabase destination table:
+  - `listing_clicks`
+- auth behavior:
+  - guests allowed
+  - store `user_id` when authenticated
+  - otherwise store `session_id` when available
+- critical product rule:
+  - click tracking must be fire-and-forget
+  - logging failure must never block browser open
+  - logging must not trigger MarketCheck or listing refresh
+- frontend fire-and-forget helper lives in:
+  - [services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/services/vehicleService.ts)
+- current frontend tap logs:
+  - `LISTING_CARD_TAPPED`
+  - `LISTING_AFFILIATE_CLICK_TRACK_START`
+  - `LISTING_AFFILIATE_CLICK_TRACK_SUCCESS`
+  - `LISTING_AFFILIATE_CLICK_TRACK_FAILURE`
+  - `LISTING_AFFILIATE_CLICK`
+  - `LISTING_URL_OPENED`
+  - `LISTING_URL_OPEN_FAILED`
+  - `LISTING_URL_MISSING`
+  - `LISTING_URL_INVALID`
+- `LISTING_AFFILIATE_CLICK` payload now includes:
+  - `listingId`
+  - `vehicle`
+  - `timestamp`
+  - `url`
+- backend smoke test already passed for this endpoint:
+
+```bash
+curl -s http://127.0.0.1:4000/api/click/listing \
+  -H 'Content-Type: application/json' \
+  -d '{"listingId":"test-listing","vehicle":"Test Vehicle","url":"https://example.com/listing","sessionId":"test-session"}'
+```
+
+- expected success response:
+  - `{"success":true,"data":{"success":true}, ...}`
+
+### In-app browser requirement
+
+- listing pages should open inside the app, not jump straight to Safari/Chrome in the normal success path
+- current implementation uses:
+  - `expo-web-browser`
+- file:
+  - [components/ListingCard.tsx](/Users/mattbrillman/Car_Identifier/components/ListingCard.tsx)
+- important native-module note:
+  - after adding `expo-web-browser`, the app needed a fresh native rebuild/reinstall
+  - if the simulator still opens an external browser after code changes, confirm the app was rebuilt with:
+
+```bash
+cd /Users/mattbrillman/Car_Identifier
+npx expo run:ios
+```
+
+### Condition selector / local-only value recalc rule
+
+- changing `Fair / Good / Excellent` must not hit backend
+- changing condition must not trigger MarketCheck
+- non-refresh changes now recalculate from already-loaded seeded valuation only
+- only explicit `Refresh live market value` is allowed to call:
+  - [services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/services/vehicleService.ts) `getValue(...)`
+- current frontend logs:
+  - `VALUE_LOCAL_RECALC_APPLIED`
+  - `VALUE_BACKEND_REQUEST_SKIPPED_LOCAL_ONLY`
+- if MarketCheck logs appear while just changing condition, that is a regression
+
+### Simulator unlock reset procedure that actually worked
+
+- current signed-in simulator user discovered in AsyncStorage:
+  - email: `eus090474@gmail.com`
+  - user id: `08cb4e24-99b5-405e-bc2a-c95cd8d8bc1c`
+- backend reset script succeeded with:
+
+```bash
+cd /Users/mattbrillman/Car_Identifier/backend
+npx tsx scripts/resetUserUnlocks.ts eus090474@gmail.com
+```
+
+- successful reset result returned:
+  - `freeUnlocksTotal: 3`
+  - `freeUnlocksUsed: 0`
+  - `unlockCredits: 0`
+  - `clearedVehicleUnlocks: true`
+- local simulator unlock cache also had to be reset
+- relevant simulator AsyncStorage path at the time of reset:
+  - `/Users/mattbrillman/Library/Developer/CoreSimulator/Devices/310ABD5C-5486-4A98-959F-1CD7013A20B7/data/Containers/Data/Application/3C702B06-CAB2-4434-A112-DEC7DB74355B/Library/Application Support/com.mattbrillman.carscanr/RCTAsyncLocalStorage_V1/manifest.json`
+- key reset locally:
+  - `carscanr.freeUnlocks.v1:08cb4e24-99b5-405e-bc2a-c95cd8d8bc1c`
+- important nuance:
+  - editing that manifest with malformed JSON causes the app to redbox with:
+    - `Failed to parse manifest - creating a new one`
+  - if local reset is done manually, keep manifest JSON valid
+- current verified post-reset simulator state:
+  - `0 of 3 free Pro unlocks used`
+  - `3 free Pro unlocks remaining for premium access.`
+
+### Current backend runtime state
+
+- backend was restarted after affiliate-click tracking changes
+- active startup state at last verification:
+  - `appEnv: "local"`
+  - `nodeEnv: "development"`
+  - `marketCheckEnabled: true`
+  - `enableBackgroundMarketCheck: false`
+  - provider mode: `live`
+- health/click endpoint was confirmed live after restart
+
+### Manual Search selector status
+
+- Search no longer uses free-text year/make/model entry
+- current Search flow is structured:
+  - `Year`
+  - `Make`
+  - `Model`
+  - `Trim`
+- current canonical selector endpoints:
+  - `GET /api/vehicle/search-options/years`
+  - `GET /api/vehicle/search-options/makes?year=...`
+  - `GET /api/vehicle/search-options/models?year=...&make=...`
+  - `GET /api/vehicle/search-options/trims?year=...&make=...&model=...`
+- frontend selector screen:
+  - [app/(tabs)/search.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/search.tsx)
+- backend selector stack:
+  - [backend/src/routes/index.ts](/Users/mattbrillman/Car_Identifier/backend/src/routes/index.ts)
+  - [backend/src/controllers/vehicleController.ts](/Users/mattbrillman/Car_Identifier/backend/src/controllers/vehicleController.ts)
+  - [backend/src/services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/vehicleService.ts)
+  - [backend/src/repositories/supabaseRepositories.ts](/Users/mattbrillman/Car_Identifier/backend/src/repositories/supabaseRepositories.ts)
+- important year-picker bug that was fixed:
+  - the years endpoint had been returning only `2027`, `2026`, `2025`, `2024`
+  - root cause: year options were being derived from a bad recent duplicate-heavy slice of canonical rows
+  - fix: year options now derive from the full promoted canonical year span
+  - last live verification:
+    - endpoint returned years down through `1936`
+    - simulator year picker showed a long list instead of only four years
+- manual Search must not trigger MarketCheck:
+  - selector endpoints query canonical data only
+  - opening a selected vehicle must not auto-fetch value/listings
+
+### Manual Search detail-image fallback policy
+
+- manual Search / canonical-detail pages must never fall back to the generic Camaro/showroom image
+- current fallback resolver file:
+  - [assets/data/vehicle_image_fallbacks.ts](/Users/mattbrillman/Car_Identifier/assets/data/vehicle_image_fallbacks.ts)
+- image support fields now present on `VehicleRecord`:
+  - `imageUrl?: string | null`
+  - `heroImageUrl?: string | null`
+  - `fallbackImageUrl?: string | null`
+- current image priority on the vehicle detail screen:
+  1. route scanned image
+  2. Garage durable image passed through the route
+  3. trusted canonical/exact image
+  4. curated make/model fallback
+  5. body-style fallback
+  6. clean neutral placeholder
+- this priority is implemented across:
+  - [services/offlineCanonicalService.ts](/Users/mattbrillman/Car_Identifier/services/offlineCanonicalService.ts)
+  - [services/vehicleService.ts](/Users/mattbrillman/Car_Identifier/services/vehicleService.ts)
+  - [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx)
+- current curated make/model fallbacks include:
+  - `Honda CR-V`
+  - `Toyota Highlander`
+  - `Toyota Corolla`
+  - `Ford Ranger`
+  - `Mercedes-Benz S-Class`
+  - `Mercedes-Benz SL-Class`
+  - plus a few other mainstream entries
+- current body-style fallbacks include:
+  - `SUV`
+  - `truck`
+  - `sedan`
+  - `coupe`
+  - `convertible`
+  - `hatchback`
+  - `wagon`
+  - `van`
+  - `motorcycle`
+- critical rule:
+  - do not use provider/listing image drift for manual Search fallback imagery
+  - no `listings[0].imageUrl` fallback for manual detail pages
+  - no MarketCheck or paid image source should be introduced for this
+- current detail log:
+  - `VEHICLE_IMAGE_SOURCE_SELECTED`
+- expected source values:
+  - `scanned_image`
+  - `garage_durable_image`
+  - `canonical_image`
+  - `curated_model_fallback`
+  - `body_style_fallback`
+  - `neutral_placeholder`
+- expected behavior after this work:
+  - `2015 Honda CR-V` must not show Camaro/showroom imagery
+  - `Toyota Highlander` must not show Camaro/Porsche/showroom imagery
+  - `Ford Ranger` should use the truck fallback if no exact image exists
+
+### Canonical vehicle image safety system
+
+- shared canonical vehicle imagery now has a dedicated storage/review path
+- migration added:
+  - [backend/supabase/migrations/024_canonical_vehicle_images.sql](/Users/mattbrillman/Car_Identifier/backend/supabase/migrations/024_canonical_vehicle_images.sql)
+- table:
+  - `public.canonical_vehicle_images`
+- key rules:
+  - user scan images are never globally shared by default
+  - `user_scan` image candidates start as:
+    - `status = 'pending'`
+    - `safety_status = 'unreviewed'` or `manual_review`
+    - `is_primary = false`
+  - only images with:
+    - `status = 'approved'`
+    - `safety_status = 'passed'`
+    can be exported or shown cross-user as canonical/shared images
+  - pending/rejected/quarantined user images must not be shown to other users
+  - if in doubt, show curated fallback or neutral placeholder instead
+
+- repository support added in:
+  - [backend/src/repositories/interfaces.ts](/Users/mattbrillman/Car_Identifier/backend/src/repositories/interfaces.ts)
+  - [backend/src/repositories/supabaseRepositories.ts](/Users/mattbrillman/Car_Identifier/backend/src/repositories/supabaseRepositories.ts)
+  - [backend/src/repositories/mockRepositories.ts](/Users/mattbrillman/Car_Identifier/backend/src/repositories/mockRepositories.ts)
+  - [backend/src/repositories/mockDatabase.ts](/Users/mattbrillman/Car_Identifier/backend/src/repositories/mockDatabase.ts)
+  - [backend/src/lib/repositoryRegistry.ts](/Users/mattbrillman/Car_Identifier/backend/src/lib/repositoryRegistry.ts)
+
+- safety helper:
+  - [backend/src/lib/vehicleImageSafety.ts](/Users/mattbrillman/Car_Identifier/backend/src/lib/vehicleImageSafety.ts)
+- env flag:
+  - `ENABLE_USER_IMAGE_AUTO_APPROVAL`
+  - default is effectively `false`
+  - if false, user scan candidates stay pending/manual-review even when clustering/confidence is strong
+
+- conservative auto-approval rules:
+  - successful scan context only
+  - confidence `>= 0.90`
+  - no badge/make/model conflict
+  - cluster support:
+    - `scan_count >= 3` or
+    - `unique_user_count >= 2`
+  - image dimensions must be reasonable
+  - source must be `user_scan` or `curated`
+  - without `ENABLE_USER_IMAGE_AUTO_APPROVAL=true`, `user_scan` images should not auto-promote globally
+
+- v1 image quality score helper is also in:
+  - [backend/src/lib/vehicleImageSafety.ts](/Users/mattbrillman/Car_Identifier/backend/src/lib/vehicleImageSafety.ts)
+- rough scoring inputs:
+  - scanned source present
+  - high confidence
+  - badge text support
+  - cluster support
+  - reasonable aspect ratio/dimensions
+  - penalties for tiny images or badge conflict
+
+- clustering now saves image candidates when safe to record:
+  - [backend/src/services/photoClusterService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/photoClusterService.ts)
+- current candidate image logs:
+  - `CANONICAL_IMAGE_CANDIDATE_SAVED`
+  - `CANONICAL_IMAGE_PENDING_REVIEW`
+  - `CANONICAL_IMAGE_AUTO_APPROVED`
+  - `CANONICAL_IMAGE_QUARANTINED`
+
+- offline canonical export support:
+  - [backend/scripts/exportOfflineCanonical.ts](/Users/mattbrillman/Car_Identifier/backend/scripts/exportOfflineCanonical.ts)
+  - only exports canonical image metadata when:
+    - `status = 'approved'`
+    - `safety_status = 'passed'`
+  - pending user images must never be exported into the bundled offline dataset
+
+- current hero image priority on detail pages:
+  1. route scanned image from the current scan
+  2. Garage durable / recent user image
+  3. approved canonical image from offline/canonical data
+  4. curated local fallback
+  5. neutral body-style placeholder
+  6. `Vehicle image unavailable`
+
+- explicit exclusion rule:
+  - MarketCheck/provider/listing images must not be used for manual/offline/detail hero image fallback
+  - frontend detail resolution now avoids provider/live vehicle `imageUrl` as a shared hero source
+  - provider/listing images may still exist in listing cards, but not in the manual/offline hero path
+
+- current detail image logs:
+  - `VEHICLE_IMAGE_SOURCE_SELECTED`
+  - `VEHICLE_IMAGE_LOAD_FAILED`
+  - `VEHICLE_IMAGE_FALLBACK_ADVANCED`
+  - `VEHICLE_IMAGE_PLACEHOLDER_RENDERED`
+
+- future admin review path:
+  - admin/ops should review pending `canonical_vehicle_images`
+  - approved images can then be marked primary for a `canonical_key`
+  - only one approved primary per canonical key should exist at a time
+
+### v1 photo clustering / dedupe
+
+- lightweight photo clustering now exists for repeat-scan stability and duplicate-noise reduction
+- this is intentionally conservative v1:
+  - perceptual hash only
+  - no embeddings
+  - no multi-angle re-identification
+  - false merges are treated as worse than duplicate clusters
+- schema migration added:
+  - [backend/supabase/migrations/023_vehicle_photo_clusters.sql](/Users/mattbrillman/Car_Identifier/backend/supabase/migrations/023_vehicle_photo_clusters.sql)
+- new tables:
+  - `public.vehicle_photo_clusters`
+  - `public.vehicle_photo_cluster_members`
+- current schema shape is intentionally based on the existing shipped v1 implementation, not a renamed rewrite:
+  - cluster row keeps `cluster_key` + `representative_visual_hash`
+  - hardening columns now also include:
+    - `canonical_scan_id`
+    - `canonical_photo_hash`
+    - `canonical_make`
+    - `canonical_model`
+    - `canonical_badge`
+    - `canonical_year`
+    - `canonical_match_strength`
+    - `canonical_hamming_distance`
+    - `member_count`
+  - member row now also includes:
+    - `badge`
+    - `hamming_distance`
+    - `match_strength`
+- safety constraints/indexes now include:
+  - exact-hash uniqueness on `representative_visual_hash`
+  - unique `(cluster_id, scan_id)` membership
+  - non-negative count / hamming checks
+  - hash-length checks
+  - `match_strength in ('exact','strong','possible')`
+  - RLS enabled, with no public write policy added
+  - service-role backend path is still the intended writer
+- stored data is privacy-conscious:
+  - visual hashes
+  - scan id
+  - image key
+  - coarse vehicle identity
+  - dimensions
+  - user id only in the same internal sense already used elsewhere
+  - no raw image bytes are stored
+
+- hash helper file:
+  - [backend/src/lib/photoClusterHash.ts](/Users/mattbrillman/Car_Identifier/backend/src/lib/photoClusterHash.ts)
+- thresholds:
+  - exact match: Hamming distance `0`
+  - strong similar: distance `<= 6` for 16-char hex hashes
+  - possible similar: distance `<= 10` only when normalized make/model already agree
+  - anything broader should create a new cluster, not merge
+  - note:
+    - distance `7-10` is intentionally rejected unless make/model already normalize the same
+    - missing badge is not treated as a conflict
+    - explicit make/model conflict always wins over hash similarity
+
+- clustering service:
+  - [backend/src/services/photoClusterService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/photoClusterService.ts)
+- repository plumbing added in:
+  - [backend/src/repositories/interfaces.ts](/Users/mattbrillman/Car_Identifier/backend/src/repositories/interfaces.ts)
+  - [backend/src/repositories/supabaseRepositories.ts](/Users/mattbrillman/Car_Identifier/backend/src/repositories/supabaseRepositories.ts)
+  - [backend/src/repositories/mockRepositories.ts](/Users/mattbrillman/Car_Identifier/backend/src/repositories/mockRepositories.ts)
+  - [backend/src/repositories/mockDatabase.ts](/Users/mattbrillman/Car_Identifier/backend/src/repositories/mockDatabase.ts)
+  - [backend/src/lib/repositoryRegistry.ts](/Users/mattbrillman/Car_Identifier/backend/src/lib/repositoryRegistry.ts)
+
+- current scan-flow behavior:
+  - after normalized AI result exists, scan flow checks cluster candidates by `visualHash`
+  - if a strong cluster match exists with canonical identity, scan flow can bias the normalized identity before catalog matching
+  - if cluster identity conflicts with readable badge/model text, the hint is rejected
+  - clustering must never call providers and must never block scan result delivery
+  - after successful scan persistence, the cluster write runs fire-and-forget
+  - clustering failures are swallowed and logged, not thrown to the user path
+  - hint ordering is intentionally conservative:
+    1. normalize identity
+    2. fetch recent DB-only candidates
+    3. compute Hamming distance
+    4. reject identity/badge conflicts first
+    5. apply exact/strong/possible thresholds
+    6. use the result only as a hint before catalog resolution
+
+- race / idempotency protections:
+  - `createCluster(...)`
+    - idempotent on exact representative hash
+    - returns existing cluster on conflict instead of forking
+  - `addMember(...)`
+    - duplicate-safe on `(cluster_id, scan_id)`
+    - duplicate insert attempts must not throw
+  - cluster stats increment only after a new membership is actually recorded
+  - canonical identity updates are deterministic and never intentionally downgrade:
+    - exact > strong > possible
+    - lower Hamming distance wins inside the same class
+    - richer metadata wins next
+    - newer scan timestamp is only the last tiebreaker
+
+- clustering logs:
+  - `PHOTO_CLUSTER_LOOKUP_START`
+  - `PHOTO_CLUSTER_CANDIDATE_FOUND`
+  - `PHOTO_CLUSTER_MATCH_CONFIRMED`
+  - `PHOTO_CLUSTER_MATCH_REJECTED`
+  - `PHOTO_CLUSTER_CREATED`
+  - `PHOTO_CLUSTER_MEMBER_ADDED`
+  - `PHOTO_CLUSTER_CANONICAL_UPDATED`
+  - `PHOTO_CLUSTER_SKIPPED`
+  - `PHOTO_CLUSTER_FAILURE`
+  - `PHOTO_CLUSTER_IDENTITY_HINT_USED`
+  - `PHOTO_CLUSTER_HINT_REJECTED_BADGE_CONFLICT`
+- current log payload improvements:
+  - lookup:
+    - `scanId`
+    - `phase`
+    - `hashPrefix`
+    - `candidateCount`
+  - candidate:
+    - `clusterId`
+    - `distance`
+    - `similarity`
+    - `matchStrength`
+  - rejection:
+    - `reason`
+    - normalized source/candidate identities
+  - failure:
+    - `operation`
+    - safe serialized error
+
+- what v1 clustering does:
+  - groups very similar repeated scan photos
+  - preserves a representative visual hash and coarse canonical identity
+  - provides a conservative identity hint for future repeat scans
+  - increments scan/user counters on clusters
+
+- what v1 clustering does not do yet:
+  - no ML embeddings
+  - no robust multi-angle vehicle re-ID
+  - no public API exposure
+  - no user-facing cluster UI
+  - no SQL-side Hamming-distance search yet
+  - no prefix-hash narrowing in SQL yet
+  - no cluster split / merge admin tooling yet
+
+- next likely future upgrade:
+  - SQL Hamming-distance / prefix-hash candidate narrowing
+  - improved indexing strategy as volume grows
+  - hybrid perceptual-hash + embedding scoring (`pgvector`) once cost/ops justify it
+  - multi-angle vehicle re-identification
+  - cluster split / merge and debugging tools

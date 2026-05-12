@@ -1,14 +1,15 @@
 import { AppError } from "../errors/appError.js";
-import { env } from "../config/env.js";
+import { env, isMarketCheckBackgroundRefreshEnabled } from "../config/env.js";
 import { upsertCanonicalVehicleFromAiLearned, upsertCanonicalVehicleFromProvider } from "../lib/canonicalVehicleCatalog.js";
 import { logger } from "../lib/logger.js";
 import { providers } from "../lib/providerRegistry.js";
 import { buildCanonicalKey, normalizeLookupText } from "../lib/providerCache.js";
 import { repositories } from "../lib/repositoryRegistry.js";
+import { providerBudgetService } from "./providerBudgetService.js";
 
 const TRENDING_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
-const TRENDING_PRESEED_THRESHOLD = 20;
-const PRELOAD_BATCH_LIMIT = 50;
+const TRENDING_PRESEED_THRESHOLD = env.TRENDING_PRESEED_SCORE_THRESHOLD;
+const PRELOAD_BATCH_LIMIT = env.TRENDING_PRELOAD_BATCH_LIMIT;
 const POPULAR_BRANDS = new Set(["ford", "toyota", "honda", "bmw", "chevrolet", "chevy", "nissan", "hyundai", "kia", "gmc", "ram", "jeep", "subaru", "lexus", "tesla"]);
 const HIGH_VOLUME_MODEL_HINTS = ["suv", "truck", "f150", "f-150", "rav4", "crv", "cr-v", "silverado", "camry", "accord", "civic", "corolla", "explorer", "expedition", "tacoma"];
 
@@ -81,7 +82,7 @@ export class TrendingVehicleService {
         normalizedModel: row.normalizedModel,
       });
       if (priorityBoost > 0) {
-        logger.error(
+        logger.info(
           {
             label: "TREND_PRIORITY_BOOST_APPLIED",
             normalizedKey: row.normalizedKey,
@@ -108,7 +109,7 @@ export class TrendingVehicleService {
         updatedAt: new Date().toISOString(),
       });
     }
-    logger.error(
+    logger.info(
       {
         label: "GLOBAL_TRENDING_UPDATED",
         rowCount: popularityRows.length,
@@ -118,20 +119,88 @@ export class TrendingVehicleService {
   }
 
   async preloadTrendingCanonicalBatch() {
-    logger.error(
+    // Bootstrap mode keeps trending useful without letting preseed become a default MarketCheck spend path.
+    const backgroundMarketCheckAllowed = isMarketCheckBackgroundRefreshEnabled();
+    if (!backgroundMarketCheckAllowed && providers.specsProviderName === "marketcheck") {
+      logger.info(
+        {
+          label: "MARKETCHECK_DISABLED_SKIP",
+          endpoint: "/v2/search/car/active",
+          reason: "background_trending_preseed_disabled",
+          allowLive: false,
+          scanId: null,
+          vehicleId: null,
+          year: null,
+          make: null,
+          model: null,
+          trim: null,
+          caller: "TrendingVehicleService.preloadTrendingCanonicalBatch",
+          stackTag: "background-trending",
+        },
+        "MARKETCHECK_DISABLED_SKIP",
+      );
+      logger.warn(
+        {
+          label: "MARKETCHECK_ACTION_BUDGET_EXCEEDED",
+          action: "backgroundHydration",
+          endpointType: "specs",
+          reason: "background_trending_preseed_disabled",
+          allowedCalls: 0,
+        },
+        "MARKETCHECK_ACTION_BUDGET_EXCEEDED",
+      );
+      return;
+    }
+    logger.info(
       {
         label: "CANONICAL_PRELOAD_BATCH_STARTED",
         limit: PRELOAD_BATCH_LIMIT,
         threshold: TRENDING_PRESEED_THRESHOLD,
+        mode: env.TRENDING_PRESEED_MODE,
       },
       "CANONICAL_PRELOAD_BATCH_STARTED",
     );
     const trendingRows = await repositories.vehicleGlobalTrending.listTop(PRELOAD_BATCH_LIMIT);
+    const sourceCounts = {
+      fetched: trendingRows.length,
+      aboveThreshold: 0,
+      existingCanonical: 0,
+      providerSeeded: 0,
+      aiFallbackSeeded: 0,
+      providerEmptyFallbacks: 0,
+      rateLimitedBreaks: 0,
+    };
+    const recordSample = trendingRows.slice(0, 5).map((row) => ({
+      normalizedKey: row.normalizedKey,
+      year: row.year,
+      normalizedMake: row.normalizedMake,
+      normalizedModel: row.normalizedModel,
+      normalizedTrim: row.normalizedTrim,
+      trendScore: row.trendScore,
+    }));
+    logger.info(
+      {
+        label: "CANONICAL_PRELOAD_SOURCE_COUNTS",
+        sourceCounts: {
+          ...sourceCounts,
+          fetched: trendingRows.length,
+        },
+      },
+      "CANONICAL_PRELOAD_SOURCE_COUNTS",
+    );
+    logger.info(
+      {
+        label: "CANONICAL_PRELOAD_RECORD_SAMPLE",
+        sample: recordSample,
+      },
+      "CANONICAL_PRELOAD_RECORD_SAMPLE",
+    );
     let processed = 0;
     for (const row of trendingRows) {
       if (row.trendScore < TRENDING_PRESEED_THRESHOLD) {
         continue;
       }
+      sourceCounts.aboveThreshold += 1;
       const canonicalKey = buildCanonicalKey({
         year: row.year,
         make: titleize(row.normalizedMake),
@@ -141,22 +210,104 @@ export class TrendingVehicleService {
       });
       const existing = await repositories.canonicalVehicles.findByCanonicalKey(canonicalKey);
       if (existing) {
+        sourceCounts.existingCanonical += 1;
         continue;
       }
       try {
-        const providerCandidates = await providers.specsProvider.searchCandidates({
-          year: row.year,
-          make: titleize(row.normalizedMake),
-          model: titleize(row.normalizedModel),
-          trim: row.normalizedTrim === "base" ? undefined : titleize(row.normalizedTrim),
+        const providerDecision = providerBudgetService.evaluate({
+          provider: providers.specsProviderName,
+          operation: "specs",
+          userTier: "unknown",
+          confidence: 0.98,
+          duplicateRequest: false,
+          cacheFresh: false,
+          providerCooldownActive: false,
         });
+        let providerCandidates = [] as Awaited<ReturnType<typeof providers.specsProvider.searchCandidates>>;
+        if (providerDecision.shouldSimulateSuccess) {
+          providerCandidates = await providerBudgetService.simulateSpecsSearchCandidates({
+            year: row.year,
+            make: titleize(row.normalizedMake),
+            model: titleize(row.normalizedModel),
+            trim: row.normalizedTrim === "base" ? undefined : titleize(row.normalizedTrim),
+          });
+        } else if (providerDecision.allowLiveProvider) {
+          if (providers.specsProviderName === "marketcheck") {
+            logger.info(
+              {
+                label: "MARKETCHECK_CALL_SITE",
+                route: "background-trending-preload",
+                service: "TrendingVehicleService.preloadTrendingCanonicalBatch",
+                provider: providers.specsProviderName,
+                reason: "background_trending_preseed",
+                requestMeta: {
+                  allowLive: backgroundMarketCheckAllowed,
+                  year: row.year,
+                  make: titleize(row.normalizedMake),
+                  model: titleize(row.normalizedModel),
+                  trim: row.normalizedTrim === "base" ? null : titleize(row.normalizedTrim),
+                  sourceScreen: "trendingScheduler",
+                  action: "backgroundHydration",
+                  route: "background-trending-preload",
+                  caller: "TrendingVehicleService.preloadTrendingCanonicalBatch",
+                  stackTag: "background-trending",
+                },
+              },
+              "MARKETCHECK_CALL_SITE",
+            );
+          }
+          providerCandidates = await providers.specsProvider.searchCandidates({
+            year: row.year,
+            make: titleize(row.normalizedMake),
+            model: titleize(row.normalizedModel),
+            trim: row.normalizedTrim === "base" ? undefined : titleize(row.normalizedTrim),
+            requestMeta: {
+              reason: "background_trending_preseed",
+              allowLive: backgroundMarketCheckAllowed,
+              year: row.year,
+              make: titleize(row.normalizedMake),
+              model: titleize(row.normalizedModel),
+              trim: row.normalizedTrim === "base" ? null : titleize(row.normalizedTrim),
+              sourceScreen: "trendingScheduler",
+              action: "backgroundHydration",
+              route: "background-trending-preload",
+              caller: "TrendingVehicleService.preloadTrendingCanonicalBatch",
+              stackTag: "background-trending",
+            },
+          });
+        } else {
+          if (providerDecision.shouldSimulateQuotaExhausted) {
+            logger.warn(
+              {
+                label: "PROVIDER_QUOTA_EXHAUSTED",
+                provider: providers.specsProviderName,
+                operation: "specs",
+                normalizedKey: row.normalizedKey,
+                mode: providerDecision.forcedMode,
+              },
+              "PROVIDER_QUOTA_EXHAUSTED",
+            );
+          }
+          logger.info(
+            {
+              label: "FALLBACK_USED",
+              provider: providers.specsProviderName,
+              operation: "specs",
+              normalizedKey: row.normalizedKey,
+              mode: providerDecision.forcedMode,
+              reason: providerDecision.reason,
+              route: "trending-preload",
+            },
+            "FALLBACK_USED",
+          );
+        }
         if (providerCandidates.length > 0) {
           const canonical = await upsertCanonicalVehicleFromProvider({
             vehicle: providerCandidates[0],
             sourceProvider: "preseed_provider",
             sourceVehicleId: providerCandidates[0].id,
           });
-          logger.error(
+          logger.info(
             {
               label: "CANONICAL_PRESEEDED_FROM_TREND",
               normalizedKey: row.normalizedKey,
@@ -165,6 +316,7 @@ export class TrendingVehicleService {
             },
             "CANONICAL_PRESEEDED_FROM_TREND",
           );
+          sourceCounts.providerSeeded += 1;
         } else {
           const canonical = await upsertCanonicalVehicleFromAiLearned({
             year: row.year,
@@ -173,7 +325,7 @@ export class TrendingVehicleService {
             trim: row.normalizedTrim === "base" ? "" : titleize(row.normalizedTrim),
             vehicleType: "car",
           });
-          logger.error(
+          logger.info(
             {
               label: "CANONICAL_PRESEEDED_AI_FALLBACK",
               normalizedKey: row.normalizedKey,
@@ -182,15 +334,19 @@ export class TrendingVehicleService {
             },
             "CANONICAL_PRESEEDED_AI_FALLBACK",
           );
+          sourceCounts.providerEmptyFallbacks += 1;
+          sourceCounts.aiFallbackSeeded += 1;
         }
         processed += 1;
       } catch (error) {
         if (isRateLimitError(error)) {
-          logger.error(
+          sourceCounts.rateLimitedBreaks += 1;
+          logger.warn(
             {
               label: "PRESEED_RATE_LIMIT_BACKOFF",
               normalizedKey: row.normalizedKey,
               trendScore: row.trendScore,
+              mode: env.TRENDING_PRESEED_MODE,
               message: error instanceof Error ? error.message : "Provider rate limited during preseed.",
             },
             "PRESEED_RATE_LIMIT_BACKOFF",
@@ -204,7 +360,7 @@ export class TrendingVehicleService {
           trim: row.normalizedTrim === "base" ? "" : titleize(row.normalizedTrim),
           vehicleType: "car",
         });
-        logger.error(
+        logger.info(
           {
             label: "CANONICAL_PRESEEDED_AI_FALLBACK",
             normalizedKey: row.normalizedKey,
@@ -214,14 +370,37 @@ export class TrendingVehicleService {
           },
           "CANONICAL_PRESEEDED_AI_FALLBACK",
         );
+        sourceCounts.aiFallbackSeeded += 1;
+        processed += 1;
       }
     }
-    logger.error(
+    if (processed === 0 && trendingRows.length > 0) {
+      logger.warn(
+        {
+          label: "CANONICAL_PRELOAD_EMPTY",
+          mode: env.TRENDING_PRESEED_MODE,
+          limit: PRELOAD_BATCH_LIMIT,
+          threshold: TRENDING_PRESEED_THRESHOLD,
+          sourceCounts,
+          sample: recordSample,
+        },
+        "CANONICAL_PRELOAD_EMPTY",
+      );
+    }
+    logger.info(
       {
         label: "CANONICAL_PRELOAD_BATCH_COMPLETED",
         processed,
+        sourceCounts,
       },
       "CANONICAL_PRELOAD_BATCH_COMPLETED",
+    );
+    logger.info(
+      {
+        label: "CANONICAL_PRELOAD_SOURCE_COUNTS",
+        sourceCounts,
+      },
+      "CANONICAL_PRELOAD_SOURCE_COUNTS",
     );
   }
 

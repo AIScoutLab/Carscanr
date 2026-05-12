@@ -7,7 +7,7 @@ services:
     autoDeploy: false
     envVars:
       - key: APP_ENV
-        value: preview
+        value: production
       - key: NODE_ENV
         value: production
       - key: HOST
@@ -26,10 +26,16 @@ services:
         sync: false
       - key: SUPABASE_JWT_SECRET
         sync: false
-      - key: VISION_PROVIDER
+      - key: VEHICLE_VISION_PROVIDER
         value: openai
       - key: OPENAI_API_KEY
         sync: false
+      - key: MARKETCHECK_ENABLED
+        value: "true"
+      - key: ENABLE_LIVE_PROVIDER_CALLS
+        value: "true"
+      - key: ENABLE_BACKGROUND_MARKETCHECK
+        value: "false"
       - key: VEHICLE_SPECS_PROVIDER
         value: marketcheck
       - key: VEHICLE_VALUE_PROVIDER
@@ -40,6 +46,20 @@ services:
         sync: false
       - key: MARKETCHECK_BASE_URL
         value: https://api.marketcheck.com
+      - key: MARKETCHECK_MONTHLY_CALL_LIMIT
+        value: "500"
+      - key: MARKETCHECK_WARN_AT
+        value: "400"
+      - key: MARKETCHECK_DISABLE_EXTERNAL_CALLS
+        value: "false"
+      - key: MARKETCHECK_ENABLE_SCAN_ENRICHMENT
+        value: "false"
+      - key: MARKETCHECK_ENABLE_AUTO_SPECS
+        value: "false"
+      - key: MARKETCHECK_ENABLE_AUTO_LISTINGS
+        value: "false"
+      - key: MARKETCHECK_ENABLE_BACKGROUND_REFRESH
+        value: "false"
       - key: MARKETCHECK_VALUE_RADIUS_MILES
         value: "100"
       - key: PROVIDER_SPECS_CACHE_TTL_HOURS
@@ -48,3 +68,11 @@ services:
         value: "24"
       - key: PROVIDER_LISTINGS_CACHE_TTL_HOURS
         value: "6"
+  - type: cron
+    name: carscanr-heartbeat
+    runtime: node
+    rootDir: backend
+    schedule: "0 3 * * *"
+    autoDeploy: false
+    buildCommand: echo "No build needed"
+    startCommand: curl -fsS https://carscanr.onrender.com/api/heartbeat
