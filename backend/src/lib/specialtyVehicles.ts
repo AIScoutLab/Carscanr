@@ -60,6 +60,29 @@ export function isTrustedSpecialtyValuationSource(valuation: ValuationRecord | n
   );
 }
 
+export function isGenericFallbackValuation(valuation: ValuationRecord | null | undefined) {
+  if (!valuation) {
+    return false;
+  }
+
+  if (
+    valuation.modelType === "estimated_depreciation" ||
+    valuation.modelType === "estimated_family_model"
+  ) {
+    return true;
+  }
+
+  const normalizedSource = String(valuation.sourceLabel ?? "")
+    .trim()
+    .toLowerCase();
+  return (
+    normalizedSource.includes("estimated from vehicle data") ||
+    normalizedSource.includes("estimated from vehicle family data") ||
+    normalizedSource.includes("fallback") ||
+    normalizedSource.includes("synthetic")
+  );
+}
+
 export function buildSpecialtyUnavailableValuation(input: {
   vehicleId: string;
   zip: string;

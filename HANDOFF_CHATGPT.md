@@ -124,10 +124,33 @@ Current valuation policy:
   - do not use `estimated_depreciation`
   - do not use `estimated_family_model`
   - do not use generic MSRP/depreciation fallback pricing
+  - do not accept stale exact/family cache rows if they are generic fallback valuations
   - if no trusted live/stored/derived market value exists, return:
     - `sourceLabel = Specialty market value unavailable`
     - `modelType = specialty_unavailable`
   - frontend should hide fake trade/private/retail numbers and show an explicit `Load live market value` CTA instead
+
+Specialty explicit refresh cache rule:
+
+- Production logs showed `2006 Ferrari F430` explicit refresh hitting:
+  - `cacheKey = values:2006:ferrari:f430:family:60610:18400:good`
+  - `modelType = estimated_depreciation`
+  - `sourceLabel = Estimated from vehicle data`
+- That generic family cache must be rejected for specialty vehicles
+- On explicit `allowLive=true` + `fetchReason=user_requested_value_refresh` + `sourceScreen=valueScreen`:
+  - bypass invalid generic cache
+  - attempt one live MarketCheck value call
+  - if live returns no trusted value, return `specialty_unavailable`
+- On passive value open:
+  - do not call MarketCheck
+  - return `specialty_unavailable`
+
+Relevant logs:
+
+- `SPECIALTY_GENERIC_VALUE_CACHE_REJECTED`
+- `SPECIALTY_VALUE_REFRESH_BYPASSING_GENERIC_CACHE`
+- `VALUE_REFRESH_LIVE_PROVIDER_ATTEMPTED`
+- `SPECIALTY_VALUE_UNAVAILABLE_RETURNED`
 
 Trusted value sources for specialty vehicles:
 

@@ -22,6 +22,7 @@ import { providers } from "../lib/providerRegistry.js";
 import { repositories } from "../lib/repositoryRegistry.js";
 import {
   buildSpecialtyUnavailableValuation,
+  isGenericFallbackValuation,
   isSpecialtyExoticMake,
   isTrustedSpecialtyValuationSource,
 } from "../lib/specialtyVehicles.js";
@@ -53,6 +54,20 @@ function retentionCutoffIso(retentionMs: number) {
 
 function usageLogsCutoffIso() {
   return new Date(Date.now() - USAGE_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function isExplicitUserRequestedValueRefresh(input: {
+  allowLive?: boolean;
+  fetchReason?: string | null;
+  sourceScreen?: string | null;
+  action?: string | null;
+}) {
+  return (
+    input.allowLive === true &&
+    input.fetchReason === "user_requested_value_refresh" &&
+    (input.sourceScreen ?? "valueScreen") === "valueScreen" &&
+    (input.action ?? "valueRefresh") === "valueRefresh"
+  );
 }
 
 function isMissingSupabaseRelationError(error: unknown, relationName: string) {
@@ -2628,6 +2643,14 @@ export class VehicleService {
       const shouldDebugCrv =
         isCrvTraceTarget({ make: vehicle?.make ?? descriptor?.make ?? null, model: vehicle?.model ?? descriptor?.model ?? null }) ||
         (!vehicle && !descriptor && String(lookupVehicleId).includes("cr"));
+      const lookupBaseVehicle = lookup.lookupVehicle;
+      const isSpecialtyLookupVehicle = Boolean(lookupBaseVehicle && isSpecialtyExoticMake(lookupBaseVehicle.make));
+      const isExplicitValueRefresh = isExplicitUserRequestedValueRefresh({
+        allowLive,
+        fetchReason,
+        sourceScreen: input.sourceScreen,
+        action: input.action,
+      });
       logger.info(
         {
           label: "VALUE_LOOKUP_QUERY",
@@ -2704,32 +2727,83 @@ export class VehicleService {
               responseSummary: { isEmpty: cached.responseJson.isEmpty, expiresAt: cached.expiresAt },
             });
             if (cached.responseJson.data) {
-              logCacheHitProviderSkip({
-                requestId: input.requestId,
-                vehicleId: lookupVehicleId,
-                operation: "value",
-                cacheLevel: "exact",
-              });
-              logMarketCheckApiCacheHit({
-                requestId: input.requestId,
-                endpointType: "value",
-                vehicleId: lookupVehicleId,
-                cacheKey,
-                cacheLevel: "exact",
-                year: cacheDescriptor?.year ?? null,
-                make: cacheDescriptor?.make ?? null,
-                model: cacheDescriptor?.model ?? null,
-                trim: cacheDescriptor?.trim ?? null,
-                zip: input.zip,
-                mileage: input.mileage,
-                condition: input.condition,
-                resultCount: 1,
-              });
               const shaped = shapeValuationRecord({
                 valuation: cached.responseJson.data,
                 vehicle,
                 source: "cache",
               });
+              if (isSpecialtyLookupVehicle && isGenericFallbackValuation(shaped)) {
+                logger.info(
+                  {
+                    label: "SPECIALTY_GENERIC_VALUE_CACHE_REJECTED",
+                    requestId: input.requestId,
+                    vehicleId: lookupVehicleId,
+                    cacheKey,
+                    cacheLevel: "exact",
+                    modelType: shaped.modelType ?? null,
+                    sourceLabel: shaped.sourceLabel ?? null,
+                    explicitRefresh: isExplicitValueRefresh,
+                  },
+                  "SPECIALTY_GENERIC_VALUE_CACHE_REJECTED",
+                );
+                if (isExplicitValueRefresh) {
+                  logger.info(
+                    {
+                      label: "SPECIALTY_VALUE_REFRESH_BYPASSING_GENERIC_CACHE",
+                      requestId: input.requestId,
+                      vehicleId: lookupVehicleId,
+                      cacheKey,
+                      cacheLevel: "exact",
+                    },
+                    "SPECIALTY_VALUE_REFRESH_BYPASSING_GENERIC_CACHE",
+                  );
+                } else if (lookupBaseVehicle) {
+                  const unavailableValue = buildSpecialtyUnavailableValuation({
+                    vehicle: lookupBaseVehicle,
+                    vehicleId: lookupVehicleId,
+                    zip: input.zip,
+                    mileage: input.mileage,
+                    condition: normalizeCondition(input.condition),
+                  });
+                  logger.info(
+                    {
+                      label: "SPECIALTY_VALUE_UNAVAILABLE_RETURNED",
+                      requestId: input.requestId,
+                      vehicleId: lookupVehicleId,
+                      reason: "generic-exact-cache-rejected",
+                      fetchReason,
+                    },
+                    "SPECIALTY_VALUE_UNAVAILABLE_RETURNED",
+                  );
+                  return {
+                    data: unavailableValue,
+                    source: "cache",
+                    fetchedAt: cached.fetchedAt,
+                    expiresAt: cached.expiresAt,
+                  };
+                }
+              } else {
+                logCacheHitProviderSkip({
+                  requestId: input.requestId,
+                  vehicleId: lookupVehicleId,
+                  operation: "value",
+                  cacheLevel: "exact",
+                });
+                logMarketCheckApiCacheHit({
+                  requestId: input.requestId,
+                  endpointType: "value",
+                  vehicleId: lookupVehicleId,
+                  cacheKey,
+                  cacheLevel: "exact",
+                  year: cacheDescriptor?.year ?? null,
+                  make: cacheDescriptor?.make ?? null,
+                  model: cacheDescriptor?.model ?? null,
+                  trim: cacheDescriptor?.trim ?? null,
+                  zip: input.zip,
+                  mileage: input.mileage,
+                  condition: input.condition,
+                  resultCount: 1,
+                });
               logger.info(
                 {
                   label: "VALUE_CONDITION_COMPARISON",
@@ -2748,6 +2822,7 @@ export class VehicleService {
                 fetchedAt: cached.fetchedAt,
                 expiresAt: cached.expiresAt,
               };
+              }
             }
           } else {
             await writeUsageLog({
@@ -2792,60 +2867,112 @@ export class VehicleService {
         );
         const familyCached = await repositories.valuesCache.findByCacheKey(familyCacheKey);
         if (familyCached && isFresh(familyCached.expiresAt, currentIso) && familyCached.responseJson.data) {
-          await repositories.valuesCache.markAccessed(familyCacheKey, currentIso);
-          logCacheHitProviderSkip({
-            requestId: input.requestId,
-            vehicleId: lookupVehicleId,
-            operation: "value",
-            cacheLevel: "family",
+          const shapedFamilyValue = shapeValuationRecord({
+            valuation: {
+              ...familyCached.responseJson.data,
+              vehicleId: lookupVehicleId,
+            },
+            vehicle,
+            source: "cache",
           });
-          logMarketCheckApiCacheHit({
-            requestId: input.requestId,
-            endpointType: "value",
-            vehicleId: lookupVehicleId,
-            cacheKey: familyCacheKey,
-            cacheLevel: "family",
-            year: descriptor?.year ?? null,
-            make: descriptor?.make ?? null,
-            model: descriptor?.model ?? null,
-            trim: "family",
-            zip: input.zip,
-            mileage: input.mileage,
-            condition: input.condition,
-            resultCount: 1,
-          });
-          logger.info(
-            {
-              label: "VALUE_FINAL_RESOLUTION",
+          if (isSpecialtyLookupVehicle && isGenericFallbackValuation(shapedFamilyValue)) {
+            logger.info(
+              {
+                label: "SPECIALTY_GENERIC_VALUE_CACHE_REJECTED",
+                requestId: input.requestId,
+                vehicleId: lookupVehicleId,
+                cacheKey: familyCacheKey,
+                cacheLevel: "family",
+                modelType: shapedFamilyValue.modelType ?? null,
+                sourceLabel: shapedFamilyValue.sourceLabel ?? null,
+                explicitRefresh: isExplicitValueRefresh,
+              },
+              "SPECIALTY_GENERIC_VALUE_CACHE_REJECTED",
+            );
+            if (isExplicitValueRefresh) {
+              logger.info(
+                {
+                  label: "SPECIALTY_VALUE_REFRESH_BYPASSING_GENERIC_CACHE",
+                  requestId: input.requestId,
+                  vehicleId: lookupVehicleId,
+                  cacheKey: familyCacheKey,
+                  cacheLevel: "family",
+                },
+                "SPECIALTY_VALUE_REFRESH_BYPASSING_GENERIC_CACHE",
+              );
+            } else if (lookupBaseVehicle) {
+              const unavailableValue = buildSpecialtyUnavailableValuation({
+                vehicle: lookupBaseVehicle,
+                vehicleId: lookupVehicleId,
+                zip: input.zip,
+                mileage: input.mileage,
+                condition: normalizeCondition(input.condition),
+              });
+              logger.info(
+                {
+                  label: "SPECIALTY_VALUE_UNAVAILABLE_RETURNED",
+                  requestId: input.requestId,
+                  vehicleId: lookupVehicleId,
+                  reason: "generic-family-cache-rejected",
+                  fetchReason,
+                },
+                "SPECIALTY_VALUE_UNAVAILABLE_RETURNED",
+              );
+              return {
+                data: unavailableValue,
+                source: "cache",
+                fetchedAt: familyCached.fetchedAt,
+                expiresAt: familyCached.expiresAt,
+              };
+            }
+          } else {
+            await repositories.valuesCache.markAccessed(familyCacheKey, currentIso);
+            logCacheHitProviderSkip({
               requestId: input.requestId,
               vehicleId: lookupVehicleId,
-              finalValueSource: familyCached.responseJson.data.sourceLabel ?? familyCached.responseJson.data.modelType ?? "family_cache",
-              familyCacheUsed: true,
-              similarVehicleFallbackUsed:
-                familyCached.responseJson.data.sourceLabel === "Estimated from similar vehicles" ||
-                familyCached.responseJson.data.modelType === "listing_derived",
-              adjacentYearRescueUsed: false,
-              fallbackReason: "family-cache-hit",
-            },
-            "VALUE_FINAL_RESOLUTION",
-          );
-          return {
-            data: shapeValuationRecord({
-              valuation: {
-                ...familyCached.responseJson.data,
+              operation: "value",
+              cacheLevel: "family",
+            });
+            logMarketCheckApiCacheHit({
+              requestId: input.requestId,
+              endpointType: "value",
+              vehicleId: lookupVehicleId,
+              cacheKey: familyCacheKey,
+              cacheLevel: "family",
+              year: descriptor?.year ?? null,
+              make: descriptor?.make ?? null,
+              model: descriptor?.model ?? null,
+              trim: "family",
+              zip: input.zip,
+              mileage: input.mileage,
+              condition: input.condition,
+              resultCount: 1,
+            });
+            logger.info(
+              {
+                label: "VALUE_FINAL_RESOLUTION",
+                requestId: input.requestId,
                 vehicleId: lookupVehicleId,
+                finalValueSource: familyCached.responseJson.data.sourceLabel ?? familyCached.responseJson.data.modelType ?? "family_cache",
+                familyCacheUsed: true,
+                similarVehicleFallbackUsed:
+                  familyCached.responseJson.data.sourceLabel === "Estimated from similar vehicles" ||
+                  familyCached.responseJson.data.modelType === "listing_derived",
+                adjacentYearRescueUsed: false,
+                fallbackReason: "family-cache-hit",
               },
-              vehicle,
+              "VALUE_FINAL_RESOLUTION",
+            );
+            return {
+              data: shapedFamilyValue,
               source: "cache",
-            }),
-            source: "cache",
-            fetchedAt: familyCached.fetchedAt,
-            expiresAt: familyCached.expiresAt,
-          };
+              fetchedAt: familyCached.fetchedAt,
+              expiresAt: familyCached.expiresAt,
+            };
+          }
         }
       }
 
-      const lookupBaseVehicle = lookup.lookupVehicle;
       const rawValueAttempts = lookupBaseVehicle ? await buildValueFallbackAttempts(lookupBaseVehicle) : [];
       const valueAttempts = lookupBaseVehicle ? ensureValueAttempts(lookupBaseVehicle, rawValueAttempts) : [];
       if (lookup.effectiveDescriptor && valueAttempts.length === 0) {
@@ -2970,6 +3097,19 @@ export class VehicleService {
           vehicleId: lookupVehicleId,
           fetchReason,
         });
+        if (isExplicitValueRefresh) {
+          logger.info(
+            {
+              label: "VALUE_REFRESH_LIVE_PROVIDER_ATTEMPTED",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              sourceScreen: input.sourceScreen ?? "valueScreen",
+              action: input.action ?? "valueRefresh",
+              cacheKey,
+            },
+            "VALUE_REFRESH_LIVE_PROVIDER_ATTEMPTED",
+          );
+        }
         valueWasSimulated = valueDecision.shouldSimulateSuccess;
         for (const attempt of providerValueAttempts) {
           logMarketCheckApiFallbackAttempt({
@@ -3246,7 +3386,6 @@ export class VehicleService {
           expiresAt: cacheRow?.expiresAt ?? currentIso,
         };
       }
-      const isSpecialtyLookupVehicle = Boolean(lookupBaseVehicle && isSpecialtyExoticMake(lookupBaseVehicle.make));
       let fallbackValue: ValuationRecord | null = null;
       for (const attempt of valueAttempts) {
         const variantDescriptor = buildCacheDescriptor({ vehicle: attempt.vehicle });
@@ -3413,14 +3552,18 @@ export class VehicleService {
         });
         logger.info(
           {
-            label: "SPECIALTY_VALUE_UNAVAILABLE",
+            label: "SPECIALTY_VALUE_UNAVAILABLE_RETURNED",
             requestId: input.requestId,
             vehicleId: lookupVehicleId,
             make: lookupBaseVehicle.make,
             model: lookupBaseVehicle.model,
             fetchReason,
+            reason:
+              isExplicitValueRefresh && valueDecision.allowLiveProvider
+                ? "live-provider-no-specialty-value"
+                : "passive-specialty-value-unavailable",
           },
-          "SPECIALTY_VALUE_UNAVAILABLE",
+          "SPECIALTY_VALUE_UNAVAILABLE_RETURNED",
         );
       }
 

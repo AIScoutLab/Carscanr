@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { env } from "../src/config/env.js";
 import {
   buildFamilyCacheDescriptor,
+  createValuesCacheRow,
   createListingsCacheRow,
+  getFamilyValuesCacheKey,
   getFamilyListingsCacheKey,
 } from "../src/lib/providerCache.js";
 import { setProviders } from "../src/lib/providerRegistry.js";
@@ -122,6 +124,378 @@ describe("bootstrap cost control", () => {
     assert.equal(result.data.modelType, "specialty_unavailable");
     assert.equal(result.data.sourceLabel, "Specialty market value unavailable");
     assert.equal(result.data.privateParty, 0);
+  });
+
+  test("Ferrari F430 passive value open rejects generic family cached valuation and makes zero calls", async () => {
+    const ferrariDescriptor = {
+      year: 2006,
+      make: "Ferrari",
+      model: "F430",
+      trim: "Base",
+      vehicleType: "car" as const,
+      normalizedMake: "ferrari",
+      normalizedModel: "f430",
+      normalizedTrim: "base",
+    };
+    const testRepositories = createTestRepositories({
+      vehicles: [
+        {
+          id: "2006-ferrari-f430",
+          year: 2006,
+          make: "Ferrari",
+          model: "F430",
+          trim: "Base",
+          bodyStyle: "Coupe",
+          vehicleType: "car",
+          msrp: 186925,
+          engine: "4.3L V8",
+          horsepower: 483,
+          torque: "343 lb-ft",
+          transmission: "6-speed automated manual",
+          drivetrain: "RWD",
+          mpgOrRange: "11 city / 16 highway",
+          colors: ["Rosso Corsa"],
+        },
+      ],
+      valuations: [],
+      listings: [],
+    });
+    testRepositories.state.valuesCache.push(
+      createValuesCacheRow({
+        descriptor: buildFamilyCacheDescriptor(ferrariDescriptor),
+        cacheKey: getFamilyValuesCacheKey(ferrariDescriptor, {
+          zip: "60610",
+          mileage: 18400,
+          condition: "good",
+        }),
+        provider: "marketcheck",
+        zip: "60610",
+        mileage: 18400,
+        condition: "good",
+        payload: {
+          id: "cached-ferrari-family",
+          vehicleId: "2006-ferrari-f430",
+          zip: "60610",
+          mileage: 18400,
+          condition: "good",
+          tradeIn: 27822,
+          privateParty: 30215,
+          dealerRetail: 32104,
+          currency: "USD",
+          generatedAt: "2026-05-13T00:00:00.000Z",
+          sourceLabel: "Estimated from vehicle data",
+          confidenceLabel: "Built from vehicle year, class, and original pricing data.",
+          modelType: "estimated_depreciation",
+        },
+      }),
+    );
+    setRepositories(testRepositories.repositories);
+
+    let providerCalls = 0;
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          providerCalls += 1;
+          return null;
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2006-ferrari-f430",
+      zip: "60610",
+      mileage: 18400,
+      condition: "good",
+      allowLive: false,
+      fetchReason: "initial_load",
+      sourceScreen: "valueScreen",
+    });
+
+    assert.equal(providerCalls, 0);
+    assert.equal(result.data.modelType, "specialty_unavailable");
+    assert.equal(result.data.sourceLabel, "Specialty market value unavailable");
+  });
+
+  test("Ferrari F430 explicit value refresh bypasses generic cached valuation and makes one live call", async () => {
+    const ferrariDescriptor = {
+      year: 2006,
+      make: "Ferrari",
+      model: "F430",
+      trim: "Base",
+      vehicleType: "car" as const,
+      normalizedMake: "ferrari",
+      normalizedModel: "f430",
+      normalizedTrim: "base",
+    };
+    const testRepositories = createTestRepositories({
+      vehicles: [
+        {
+          id: "2006-ferrari-f430",
+          year: 2006,
+          make: "Ferrari",
+          model: "F430",
+          trim: "Base",
+          bodyStyle: "Coupe",
+          vehicleType: "car",
+          msrp: 186925,
+          engine: "4.3L V8",
+          horsepower: 483,
+          torque: "343 lb-ft",
+          transmission: "6-speed automated manual",
+          drivetrain: "RWD",
+          mpgOrRange: "11 city / 16 highway",
+          colors: ["Rosso Corsa"],
+        },
+      ],
+      valuations: [],
+      listings: [],
+    });
+    testRepositories.state.valuesCache.push(
+      createValuesCacheRow({
+        descriptor: buildFamilyCacheDescriptor(ferrariDescriptor),
+        cacheKey: getFamilyValuesCacheKey(ferrariDescriptor, {
+          zip: "60610",
+          mileage: 18400,
+          condition: "good",
+        }),
+        provider: "marketcheck",
+        zip: "60610",
+        mileage: 18400,
+        condition: "good",
+        payload: {
+          id: "cached-ferrari-family",
+          vehicleId: "2006-ferrari-f430",
+          zip: "60610",
+          mileage: 18400,
+          condition: "good",
+          tradeIn: 27822,
+          privateParty: 30215,
+          dealerRetail: 32104,
+          currency: "USD",
+          generatedAt: "2026-05-13T00:00:00.000Z",
+          sourceLabel: "Estimated from vehicle data",
+          confidenceLabel: "Built from vehicle year, class, and original pricing data.",
+          modelType: "estimated_depreciation",
+        },
+      }),
+    );
+    setRepositories(testRepositories.repositories);
+
+    let providerCalls = 0;
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          providerCalls += 1;
+          return {
+            id: "live-f430-value",
+            vehicleId: "2006-ferrari-f430",
+            zip: "60610",
+            mileage: 18400,
+            condition: "good",
+            tradeIn: 142000,
+            privateParty: 156000,
+            dealerRetail: 169000,
+            currency: "USD",
+            generatedAt: "2026-05-13T00:00:00.000Z",
+            sourceLabel: "Based on market data",
+            confidenceLabel: "High confidence",
+            modelType: "provider_range",
+            tradeInLow: 136000,
+            tradeInHigh: 148000,
+            privatePartyLow: 150000,
+            privatePartyHigh: 162000,
+            dealerRetailLow: 163000,
+            dealerRetailHigh: 175000,
+          };
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2006-ferrari-f430",
+      zip: "60610",
+      mileage: 18400,
+      condition: "good",
+      allowLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
+
+    assert.equal(providerCalls, 1);
+    assert.equal(result.data.modelType, "provider_range");
+    assert.ok((result.data.privateParty ?? 0) >= 150000);
+  });
+
+  test("Ferrari F430 explicit value refresh returns specialty unavailable when live provider has no result", async () => {
+    const ferrariDescriptor = {
+      year: 2006,
+      make: "Ferrari",
+      model: "F430",
+      trim: "Base",
+      vehicleType: "car" as const,
+      normalizedMake: "ferrari",
+      normalizedModel: "f430",
+      normalizedTrim: "base",
+    };
+    const testRepositories = createTestRepositories({
+      vehicles: [
+        {
+          id: "2006-ferrari-f430",
+          year: 2006,
+          make: "Ferrari",
+          model: "F430",
+          trim: "Base",
+          bodyStyle: "Coupe",
+          vehicleType: "car",
+          msrp: 186925,
+          engine: "4.3L V8",
+          horsepower: 483,
+          torque: "343 lb-ft",
+          transmission: "6-speed automated manual",
+          drivetrain: "RWD",
+          mpgOrRange: "11 city / 16 highway",
+          colors: ["Rosso Corsa"],
+        },
+      ],
+      valuations: [],
+      listings: [],
+    });
+    testRepositories.state.valuesCache.push(
+      createValuesCacheRow({
+        descriptor: buildFamilyCacheDescriptor(ferrariDescriptor),
+        cacheKey: getFamilyValuesCacheKey(ferrariDescriptor, {
+          zip: "60610",
+          mileage: 18400,
+          condition: "good",
+        }),
+        provider: "marketcheck",
+        zip: "60610",
+        mileage: 18400,
+        condition: "good",
+        payload: {
+          id: "cached-ferrari-family",
+          vehicleId: "2006-ferrari-f430",
+          zip: "60610",
+          mileage: 18400,
+          condition: "good",
+          tradeIn: 27822,
+          privateParty: 30215,
+          dealerRetail: 32104,
+          currency: "USD",
+          generatedAt: "2026-05-13T00:00:00.000Z",
+          sourceLabel: "Estimated from vehicle data",
+          confidenceLabel: "Built from vehicle year, class, and original pricing data.",
+          modelType: "estimated_depreciation",
+        },
+      }),
+    );
+    setRepositories(testRepositories.repositories);
+
+    let providerCalls = 0;
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          providerCalls += 1;
+          return null;
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2006-ferrari-f430",
+      zip: "60610",
+      mileage: 18400,
+      condition: "good",
+      allowLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
+
+    assert.equal(providerCalls, 1);
+    assert.equal(result.data.modelType, "specialty_unavailable");
+    assert.equal(result.data.sourceLabel, "Specialty market value unavailable");
+  });
+
+  test("normal family cached estimated valuation still works for common vehicles", async () => {
+    const civicDescriptor = {
+      year: 2020,
+      make: "Honda",
+      model: "Civic",
+      trim: "EX",
+      vehicleType: "car" as const,
+      normalizedMake: "honda",
+      normalizedModel: "civic",
+      normalizedTrim: "ex",
+    };
+    const testRepositories = createTestRepositories();
+    testRepositories.state.valuesCache.push(
+      createValuesCacheRow({
+        descriptor: buildFamilyCacheDescriptor(civicDescriptor),
+        cacheKey: getFamilyValuesCacheKey(civicDescriptor, {
+          zip: "60610",
+          mileage: 18400,
+          condition: "good",
+        }),
+        provider: "marketcheck",
+        zip: "60610",
+        mileage: 18400,
+        condition: "good",
+        payload: {
+          id: "cached-civic-family",
+          vehicleId: "2020-honda-civic-ex",
+          zip: "60610",
+          mileage: 18400,
+          condition: "good",
+          tradeIn: 19200,
+          privateParty: 20800,
+          dealerRetail: 22100,
+          currency: "USD",
+          generatedAt: "2026-05-13T00:00:00.000Z",
+          sourceLabel: "Estimated from vehicle family data",
+          confidenceLabel: "Built from vehicle year, class, and family pricing data.",
+          modelType: "estimated_family_model",
+        },
+      }),
+    );
+    setRepositories(testRepositories.repositories);
+
+    let providerCalls = 0;
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          providerCalls += 1;
+          return null;
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2020-honda-civic-ex",
+      zip: "60610",
+      mileage: 18400,
+      condition: "good",
+      allowLive: false,
+      fetchReason: "initial_load",
+      sourceScreen: "valueScreen",
+    });
+
+    assert.equal(providerCalls, 0);
+    assert.equal(result.data.modelType, "estimated_family_model");
+    assert.equal(result.data.sourceLabel, "Estimated from vehicle family data");
   });
 
   test("initial listings load does not call live provider", async () => {
