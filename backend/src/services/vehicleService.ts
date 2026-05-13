@@ -2708,7 +2708,7 @@ export class VehicleService {
           );
           return {
             data: unavailableValue,
-            source: "fallback",
+            source: "cache",
             fetchedAt: currentIso,
             expiresAt: currentIso,
           };
