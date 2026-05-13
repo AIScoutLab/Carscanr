@@ -525,6 +525,33 @@ export function createTestRepositories(seed?: {
         state.providerApiUsageLogs.push(record);
         return record;
       },
+      async summarizeSince(input) {
+        const filtered = state.providerApiUsageLogs.filter(
+          (entry) => entry.createdAt >= input.sinceIso && (!input.provider || entry.provider === input.provider),
+        );
+        return filtered.reduce(
+          (summary, entry) => {
+            summary.total += 1;
+            summary.byEndpoint[entry.endpointType] = (summary.byEndpoint[entry.endpointType] ?? 0) + 1;
+            summary.byEvent[entry.eventType] = (summary.byEvent[entry.eventType] ?? 0) + 1;
+            return summary;
+          },
+          {
+            total: 0,
+            byEndpoint: {
+              specs: 0,
+              values: 0,
+              listings: 0,
+            },
+            byEvent: {} as Record<string, number>,
+          },
+        );
+      },
+      async listSince(input) {
+        return state.providerApiUsageLogs.filter(
+          (entry) => entry.createdAt >= input.sinceIso && (!input.provider || entry.provider === input.provider),
+        );
+      },
       async deleteOlderThan(cutoffIso) {
         const before = state.providerApiUsageLogs.length;
         state.providerApiUsageLogs = state.providerApiUsageLogs.filter((entry) => entry.createdAt >= cutoffIso);

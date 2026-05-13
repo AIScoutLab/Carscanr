@@ -2569,11 +2569,14 @@ node --import tsx scripts/resetUserUnlocks.ts <email>
     - max `0` MarketCheck calls by default
     - live MarketCheck specs require explicit opt-in via `allowLive` + `fetchReason=user_requested_specs_refresh` and `MARKETCHECK_ENABLE_AUTO_SPECS=true`
   - value click:
+    - passive Value tab open still makes `0` MarketCheck calls by default
+    - only explicit `sourceScreen=valueScreen` + `action=valueRefresh` may call live MarketCheck
     - max `1` MarketCheck value call for the same cache key
     - repeats should hit cache or in-flight dedupe
   - listings open:
     - max `0` MarketCheck calls by default
-    - live listings require explicit opt-in and `MARKETCHECK_ENABLE_AUTO_LISTINGS=true`
+    - only explicit `sourceScreen=listingsScreen` + `action=listingsRefresh` may call live MarketCheck
+    - `MARKETCHECK_ENABLE_AUTO_LISTINGS=false` must block automatic listings hydration only, not explicit user refresh
   - trending / preload / bootstrap / background hydration:
     - max `0` MarketCheck calls by default
     - requires `ENABLE_BACKGROUND_MARKETCHECK=true` and `MARKETCHECK_ENABLE_BACKGROUND_REFRESH=true`
@@ -2617,7 +2620,9 @@ node --import tsx scripts/resetUserUnlocks.ts <email>
   - scans should consume `0` MarketCheck calls by default
   - opening vehicle detail or Specs should consume `0` MarketCheck calls by default
   - first valid explicit live value fetch may consume one MarketCheck call
+  - first valid explicit live listings fetch may consume one MarketCheck call
   - repeated opens of the same Value screen should reuse cached/stored data
+  - repeated opens of the same Listings screen should reuse cached/stored data
   - concurrent identical opens or repeated state-triggered fetches should dedupe instead of multiplying calls
 - validation that passed for this work:
   - `npm run typecheck`
@@ -2637,11 +2642,23 @@ How to verify after the next live deploy:
   - no `MARKETCHECK_API_REQUEST_START` from `sourceScreen: "vehicleDetail"` or `sourceScreen: "specsScreen"`
 - trigger `Refresh live market value` once
 - inspect logs for exactly one `MARKETCHECK_API_REQUEST_START` for `endpointType: "value"` for that cache key
+- confirm logs include:
+  - `VALUE_LIVE_REFRESH_REQUESTED`
+  - `MARKETCHECK_EXPLICIT_ACTION_ALLOWED`
 - reopen the same Value screen without changing the descriptor
 - expected result:
   - `MARKETCHECK_API_CACHE_HIT` or `MARKETCHECK_API_INFLIGHT_DEDUPE`
   - no additional outbound MarketCheck request
   - if multiple `MARKETCHECK_API_REQUEST_START` logs appear for the same value cache key during one user action, that is a regression
+- trigger `Load live listings` once
+- inspect logs for exactly one `MARKETCHECK_API_REQUEST_START` for `endpointType: "listings"` for that cache key
+- confirm logs include:
+  - `LISTINGS_LIVE_REFRESH_REQUESTED`
+  - `MARKETCHECK_EXPLICIT_ACTION_ALLOWED`
+- reopen the same Listings tab without changing the descriptor
+- expected result:
+  - `MARKETCHECK_API_CACHE_HIT` or `MARKETCHECK_API_INFLIGHT_DEDUPE`
+  - no additional outbound MarketCheck request
   - for scan-only verification after deploy:
     - scan one car
     - inspect Render logs and confirm:

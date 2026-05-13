@@ -1,4 +1,4 @@
-import { env, isMarketCheckAutoListingsEnabled, isMarketCheckAutoSpecsEnabled } from "../config/env.js";
+import { env, isMarketCheckAutoSpecsEnabled } from "../config/env.js";
 import { AppError } from "../errors/appError.js";
 import {
   buildCacheDescriptor,
@@ -234,7 +234,7 @@ function isListingsLiveFetchAllowed(allowLive: boolean, fetchReason: MarketFetch
   if (providers.listingsProviderName !== "marketcheck") {
     return true;
   }
-  return fetchReason === "user_requested_listings_refresh" && isMarketCheckEnabled() && isMarketCheckAutoListingsEnabled();
+  return fetchReason === "user_requested_listings_refresh" && isMarketCheckEnabled();
 }
 
 function logMarketGateEvaluated(input: {
@@ -2563,6 +2563,7 @@ export class VehicleService {
     allowLive?: boolean;
     fetchReason?: string;
     sourceScreen?: string | null;
+    action?: string | null;
   }): Promise<CachedServiceResult<ValuationRecord>> {
     try {
       const currentIso = nowIso();
@@ -2950,6 +2951,19 @@ export class VehicleService {
             shouldSimulateQuotaExhausted: false,
           };
       if (valueDecision.shouldSimulateSuccess || valueDecision.allowLiveProvider) {
+        if (fetchReason === "user_requested_value_refresh") {
+          logger.info(
+            {
+              label: "VALUE_LIVE_REFRESH_REQUESTED",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              sourceScreen: input.sourceScreen ?? "valueScreen",
+              action: input.action ?? "valueRefresh",
+              cacheKey,
+            },
+            "VALUE_LIVE_REFRESH_REQUESTED",
+          );
+        }
         logMarketGateAllowed({
           label: "VALUE_LIVE_FETCH_ALLOWED",
           requestId: input.requestId,
@@ -2999,6 +3013,7 @@ export class VehicleService {
                 requestMeta: {
                   requestId: input.requestId,
                   allowLive,
+                  action: input.action ?? "valueRefresh",
                   vehicleId: lookupVehicleId,
                   cacheKey,
                   year: attempt.vehicle.year,
@@ -3029,6 +3044,7 @@ export class VehicleService {
                   requestId: input.requestId,
                   reason: fetchReason,
                   allowLive,
+                  action: input.action ?? "valueRefresh",
                   vehicleId: lookupVehicleId,
                   cacheKey,
                   year: attempt.vehicle.year,
@@ -3630,6 +3646,7 @@ export class VehicleService {
     allowLive?: boolean;
     fetchReason?: string;
     sourceScreen?: string | null;
+    action?: string | null;
   }): Promise<CachedServiceResult<ListingRecord[], ListingsDebugMeta>> {
     try {
       const currentIso = nowIso();
@@ -4062,6 +4079,19 @@ export class VehicleService {
             shouldSimulateQuotaExhausted: false,
           };
       if (listingsDecision.shouldSimulateSuccess || listingsDecision.allowLiveProvider) {
+        if (fetchReason === "user_requested_listings_refresh") {
+          logger.info(
+            {
+              label: "LISTINGS_LIVE_REFRESH_REQUESTED",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              sourceScreen: input.sourceScreen ?? "listingsScreen",
+              action: input.action ?? "listingsRefresh",
+              cacheKey,
+            },
+            "LISTINGS_LIVE_REFRESH_REQUESTED",
+          );
+        }
         logMarketGateAllowed({
           label: "LISTINGS_LIVE_FETCH_ALLOWED",
           requestId: input.requestId,
@@ -4111,6 +4141,7 @@ export class VehicleService {
                 requestMeta: {
                   requestId: input.requestId,
                   allowLive,
+                  action: input.action ?? "listingsRefresh",
                   vehicleId: lookupVehicleId,
                   cacheKey,
                   year: attempt.vehicle.year,
@@ -4141,6 +4172,7 @@ export class VehicleService {
                   requestId: input.requestId,
                   reason: fetchReason,
                   allowLive,
+                  action: input.action ?? "listingsRefresh",
                   vehicleId: lookupVehicleId,
                   cacheKey,
                   year: attempt.vehicle.year,

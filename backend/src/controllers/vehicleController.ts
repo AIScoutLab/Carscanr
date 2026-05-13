@@ -259,6 +259,7 @@ export class VehicleController {
         allowLive: readOptionalBoolean(req.query.allowLive),
         fetchReason: typeof req.query.fetchReason === "string" ? req.query.fetchReason : undefined,
         sourceScreen: typeof req.query.sourceScreen === "string" ? req.query.sourceScreen : undefined,
+        action: typeof req.query.action === "string" ? req.query.action : undefined,
       });
       return sendSuccess(res, result.data, { source: result.source, fetchedAt: result.fetchedAt, expiresAt: result.expiresAt });
     } catch (error) {
@@ -340,6 +341,7 @@ export class VehicleController {
         allowLive: readOptionalBoolean(req.query.allowLive),
         fetchReason: typeof req.query.fetchReason === "string" ? req.query.fetchReason : undefined,
         sourceScreen: typeof req.query.sourceScreen === "string" ? req.query.sourceScreen : undefined,
+        action: typeof req.query.action === "string" ? req.query.action : undefined,
       });
       return sendSuccess(res, result.data, {
         count: result.data.length,

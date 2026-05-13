@@ -214,6 +214,8 @@ describe("bootstrap cost control", () => {
       condition: "good",
       allowLive: true,
       fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
     });
 
     assert.equal(valueProviderCalls, 1);
@@ -221,17 +223,40 @@ describe("bootstrap cost control", () => {
   });
 
   test("user requested listings refresh calls MarketCheck listings at most once", async () => {
-    env.MARKETCHECK_ENABLE_AUTO_LISTINGS = true;
     env.ENABLE_LIVE_PROVIDER_CALLS = true;
-    let providerCalls = 0;
+    let listingsProviderCalls = 0;
+    let valueProviderCalls = 0;
+    let specsProviderCalls = 0;
     const providerTrims: Array<string | null> = [];
     const testProviders = createTestProviders();
     setProviders({
       ...testProviders,
+      valueProviderName: "marketcheck",
+      specsProviderName: "marketcheck",
       listingsProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          valueProviderCalls += 1;
+          return null;
+        },
+      },
+      specsProvider: {
+        async getVehicleSpecs() {
+          specsProviderCalls += 1;
+          return null;
+        },
+        async searchVehicles() {
+          specsProviderCalls += 1;
+          return [];
+        },
+        async searchCandidates() {
+          specsProviderCalls += 1;
+          return [];
+        },
+      },
       listingsProvider: {
         async getListings(input) {
-          providerCalls += 1;
+          listingsProviderCalls += 1;
           providerTrims.push(input.vehicle?.trim ?? null);
           return [];
         },
@@ -254,9 +279,13 @@ describe("bootstrap cost control", () => {
       radiusMiles: 50,
       allowLive: true,
       fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
     });
 
-    assert.equal(providerCalls, 1);
+    assert.equal(listingsProviderCalls, 1);
+    assert.equal(valueProviderCalls, 0);
+    assert.equal(specsProviderCalls, 0);
     assert.deepEqual(providerTrims, [""]);
   });
 

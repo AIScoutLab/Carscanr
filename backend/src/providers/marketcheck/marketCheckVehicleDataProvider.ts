@@ -180,6 +180,21 @@ function shouldBlockExternalMarketCheckForSource(requestMeta?: MarketCheckReques
   };
 }
 
+function isExplicitMarketCheckActionAllowed(operation: InventoryOperation, requestMeta?: MarketCheckRequestMeta) {
+  const sourceScreen = normalizeSourceScreen(requestMeta?.sourceScreen);
+  const action = requestMeta?.action ?? null;
+
+  if (operation === "values") {
+    return sourceScreen === "valueScreen" && action === "valueRefresh";
+  }
+
+  if (operation === "listings") {
+    return sourceScreen === "listingsScreen" && action === "listingsRefresh";
+  }
+
+  return false;
+}
+
 function normalizeMarketCheckKeyPart(value: string | number | undefined | null) {
   return String(value ?? "")
     .trim()
@@ -721,6 +736,15 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
       }
 
       const summary = await this.getMonthlySummary();
+      if (isExplicitMarketCheckActionAllowed(typedOperation, requestMeta)) {
+        logger.info(
+          {
+            label: "MARKETCHECK_EXPLICIT_ACTION_ALLOWED",
+            ...requestContext,
+          },
+          "MARKETCHECK_EXPLICIT_ACTION_ALLOWED",
+        );
+      }
       const limitReached = env.MARKETCHECK_DISABLE_EXTERNAL_CALLS || summary.total >= env.MARKETCHECK_MONTHLY_CALL_LIMIT;
       if (summary.total >= env.MARKETCHECK_WARN_AT) {
         logger.warn(

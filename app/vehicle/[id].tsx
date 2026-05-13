@@ -775,6 +775,7 @@ export default function VehicleDetailScreen() {
   const [mileage, setMileage] = useState(defaultMileage);
   const [condition, setCondition] = useState(defaultCondition);
   const [valuationLoading, setValuationLoading] = useState(false);
+  const [listingsRefreshLoading, setListingsRefreshLoading] = useState(false);
   const [valueDebugStatus, setValueDebugStatus] = useState<ValueDebugStatus>("idle");
   const [valueDebugOrigin, setValueDebugOrigin] = useState<ValueDebugOrigin>("hydrated");
   const [valueDebugUpdateCount, setValueDebugUpdateCount] = useState(0);
@@ -1080,12 +1081,22 @@ export default function VehicleDetailScreen() {
     pendingValueRequestKeyRef.current = requestKey;
     setValueDebugStatus("requested");
     setValuationLoading(true);
+    console.log("[vehicle-detail] VALUE_LIVE_REFRESH_REQUESTED", {
+      routeId: id,
+      scanId: typeof scanId === "string" ? scanId : null,
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+      zip: normalizedZip,
+      mileage: normalizedMileage,
+      condition: normalizedCondition,
+    });
 
     vehicleService
       .getValue(valueLookupInput, normalizedZip, normalizedMileage, normalizedCondition, {
         allowLive: true,
         fetchReason: "user_requested_value_refresh",
         sourceScreen: "valueScreen",
+        action: "valueRefresh",
       })
       .then((result) => {
         const nextResult =
@@ -1121,6 +1132,48 @@ export default function VehicleDetailScreen() {
     vehicle,
     zipCode,
   ]);
+  const requestExplicitLiveListings = useCallback(() => {
+    if (!vehicle || !valueLookupInput) {
+      return;
+    }
+
+    const normalizedZip = zipCode.trim();
+    if (!normalizedZip) {
+      return;
+    }
+
+    setListingsRefreshLoading(true);
+    console.log("[vehicle-detail] LISTINGS_LIVE_REFRESH_REQUESTED", {
+      routeId: id,
+      scanId: typeof scanId === "string" ? scanId : null,
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+      zip: normalizedZip,
+    });
+
+    vehicleService
+      .getListings(valueLookupInput, normalizedZip, {
+        allowLive: true,
+        fetchReason: "user_requested_listings_refresh",
+        sourceScreen: "listingsScreen",
+        action: "listingsRefresh",
+        radiusMiles: 50,
+      })
+      .then((result) => {
+        setListingsDebugMeta(result.meta);
+        setVehicle((current) =>
+          current
+            ? {
+                ...current,
+                listings: result.listings,
+              }
+            : current,
+        );
+      })
+      .finally(() => {
+        setListingsRefreshLoading(false);
+      });
+  }, [id, scanId, valueLookupInput, vehicle, zipCode]);
 
   useEffect(() => {
     if (__DEV__) {
@@ -3142,8 +3195,11 @@ export default function VehicleDetailScreen() {
                     ? "This vehicle was identified with high confidence, so the specs shown here remain the strongest available details."
                     : "The current result still includes the best available specs while local market coverage catches up."
                 }
+                actionLabel="Load live listings"
+                onAction={requestExplicitLiveListings}
                 badgeLabel={null}
               />
+              {listingsRefreshLoading ? <Text style={styles.valueLoading}>Updating live listings…</Text> : null}
               {showQaDebugStrip ? <QaDebugStrip title="QA Listings Debug" rows={listingsQaRows} /> : null}
             </>
           )
@@ -3170,6 +3226,18 @@ export default function VehicleDetailScreen() {
                   ))}
               </View>
             </LockedContentPreview>
+          ) : resolveListingsUsefulness(vehicle.listings) === "listings_unavailable" ? (
+            <>
+              <ApproximateDataState
+                title="Live listings unavailable"
+                body="We don't have trusted nearby listings for this vehicle yet."
+                supportNote="Load live listings when you're ready to check current comps."
+                actionLabel="Load live listings"
+                onAction={requestExplicitLiveListings}
+                badgeLabel={null}
+              />
+              {listingsRefreshLoading ? <Text style={styles.valueLoading}>Updating live listings…</Text> : null}
+            </>
           ) : (
             <View style={styles.listingsWrap}>
               {vehicle.listings.map((listing, index) => (

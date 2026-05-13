@@ -117,6 +117,15 @@ type ValueRequestOptions = {
   allowLive?: boolean;
   fetchReason?: string;
   sourceScreen?: string;
+  action?: string;
+};
+
+type ListingsRequestOptions = {
+  allowLive?: boolean;
+  fetchReason?: string;
+  sourceScreen?: string;
+  action?: string;
+  radiusMiles?: number;
 };
 
 function defaultOverview(vehicle: BackendVehicle) {
@@ -444,6 +453,9 @@ export const vehicleService = {
     if (typeof options?.sourceScreen === "string" && options.sourceScreen.trim().length > 0) {
       params.set("sourceScreen", options.sourceScreen.trim());
     }
+    if (typeof options?.action === "string" && options.action.trim().length > 0) {
+      params.set("action", options.action.trim());
+    }
     const path = `/api/vehicle/value?${params.toString()}`;
     console.log("[vehicle-service] VALUE_REQUEST_PARAMS", {
       vehicleLookup,
@@ -487,14 +499,31 @@ export const vehicleService = {
     return response.data ? mapResolvedSpecsVehicle(response.data) : null;
   },
 
-  async getListings(vehicleLookup: VehicleLookupInput, zip: string): Promise<ListingsResultEnvelope> {
+  async getListings(
+    vehicleLookup: VehicleLookupInput,
+    zip: string,
+    options?: ListingsRequestOptions,
+  ): Promise<ListingsResultEnvelope> {
     const params = buildVehicleLookupParams(vehicleLookup);
     params.set("zip", zip);
-    params.set("radiusMiles", "50");
+    params.set("radiusMiles", String(options?.radiusMiles ?? 50));
+    if (typeof options?.allowLive === "boolean") {
+      params.set("allowLive", options.allowLive ? "true" : "false");
+    }
+    if (typeof options?.fetchReason === "string" && options.fetchReason.trim().length > 0) {
+      params.set("fetchReason", options.fetchReason.trim());
+    }
+    if (typeof options?.sourceScreen === "string" && options.sourceScreen.trim().length > 0) {
+      params.set("sourceScreen", options.sourceScreen.trim());
+    }
+    if (typeof options?.action === "string" && options.action.trim().length > 0) {
+      params.set("action", options.action.trim());
+    }
     const path = `/api/vehicle/listings?${params.toString()}`;
     console.log("[vehicle-service] LISTINGS_REQUEST_PARAMS", {
       vehicleLookup,
       zip,
+      options: options ?? null,
       path,
     });
     const response = await apiRequestEnvelope<BackendListing[], ListingsDebugMeta>({
