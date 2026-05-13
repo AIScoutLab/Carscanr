@@ -41,6 +41,7 @@ export type MarketCheckRequestMeta = {
   mileage?: number | null;
   condition?: string | null;
   sourceScreen?: string | null;
+  forceLive?: boolean | null;
   cacheKey?: string | null;
   retryAttempt?: number | null;
   caller?: string | null;

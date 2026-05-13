@@ -141,6 +141,26 @@ Specialty explicit refresh cache rule:
   - bypass invalid generic cache
   - attempt one live MarketCheck value call
   - if live returns no trusted value, return `specialty_unavailable`
+- explicit value refresh metadata contract:
+  - frontend logs `VALUE_LIVE_REFRESH_BUTTON_PRESSED`
+  - frontend request logs `VALUE_LIVE_REFRESH_REQUEST_SENT`
+  - frontend sends:
+    - `allowLive=true`
+    - `fetchReason=user_requested_value_refresh`
+    - `sourceScreen=valueScreen`
+    - `action=valueRefresh`
+    - `forceLive=true`
+  - backend/controller logs:
+    - `VALUE_API_REQUEST_RECEIVED`
+    - `VALUE_LIVE_REFRESH_REQUESTED`
+    - `VALUE_REFRESH_ACTION_METADATA`
+  - backend/service treats the request as explicit even if `action` is missing when any of these are true:
+    - `action === "valueRefresh"`
+    - `fetchReason === "user_requested_value_refresh"`
+    - `sourceScreen === "valueScreen" && allowLive === true`
+    - `forceLive === true`
+  - when `MARKETCHECK_DISABLE_EXTERNAL_CALLS=true`, specialty explicit refresh now short-circuits before any provider attempt and logs:
+    - `VALUE_REFRESH_BLOCKED_DISABLE_EXTERNAL_CALLS`
 - On passive value open:
   - do not call MarketCheck
   - return `specialty_unavailable`
@@ -2593,7 +2613,11 @@ node --import tsx scripts/resetUserUnlocks.ts <email>
     - live MarketCheck specs require explicit opt-in via `allowLive` + `fetchReason=user_requested_specs_refresh` and `MARKETCHECK_ENABLE_AUTO_SPECS=true`
   - value click:
     - passive Value tab open still makes `0` MarketCheck calls by default
-    - only explicit `sourceScreen=valueScreen` + `action=valueRefresh` may call live MarketCheck
+    - explicit live refresh is allowed when any of these metadata signals identify a user-requested value refresh:
+      - `action=valueRefresh`
+      - `fetchReason=user_requested_value_refresh`
+      - `sourceScreen=valueScreen` with `allowLive=true`
+      - `forceLive=true`
     - max `1` MarketCheck value call for the same cache key
     - repeats should hit cache or in-flight dedupe
   - listings open:

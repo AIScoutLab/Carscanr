@@ -427,6 +427,115 @@ describe("bootstrap cost control", () => {
     assert.equal(result.data.sourceLabel, "Specialty market value unavailable");
   });
 
+  test("Ferrari explicit refresh still attempts one live call when action is missing but fetch metadata is explicit", async () => {
+    const testRepositories = createTestRepositories({
+      vehicles: [
+        {
+          id: "2006-ferrari-f430",
+          year: 2006,
+          make: "Ferrari",
+          model: "F430",
+          trim: "Base",
+          bodyStyle: "Coupe",
+          vehicleType: "car",
+          msrp: 186925,
+          engine: "4.3L V8",
+          horsepower: 483,
+          torque: "343 lb-ft",
+          transmission: "6-speed automated manual",
+          drivetrain: "RWD",
+          mpgOrRange: "11 city / 16 highway",
+          colors: ["Rosso Corsa"],
+        },
+      ],
+      valuations: [],
+      listings: [],
+    });
+    setRepositories(testRepositories.repositories);
+
+    let providerCalls = 0;
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          providerCalls += 1;
+          return null;
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2006-ferrari-f430",
+      zip: "60610",
+      mileage: 18400,
+      condition: "good",
+      allowLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+    });
+
+    assert.equal(providerCalls, 1);
+    assert.equal(result.data.modelType, "specialty_unavailable");
+  });
+
+  test("Ferrari explicit refresh is blocked when external MarketCheck calls are disabled", async () => {
+    const testRepositories = createTestRepositories({
+      vehicles: [
+        {
+          id: "2006-ferrari-f430",
+          year: 2006,
+          make: "Ferrari",
+          model: "F430",
+          trim: "Base",
+          bodyStyle: "Coupe",
+          vehicleType: "car",
+          msrp: 186925,
+          engine: "4.3L V8",
+          horsepower: 483,
+          torque: "343 lb-ft",
+          transmission: "6-speed automated manual",
+          drivetrain: "RWD",
+          mpgOrRange: "11 city / 16 highway",
+          colors: ["Rosso Corsa"],
+        },
+      ],
+      valuations: [],
+      listings: [],
+    });
+    setRepositories(testRepositories.repositories);
+    env.MARKETCHECK_DISABLE_EXTERNAL_CALLS = true;
+
+    let providerCalls = 0;
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          providerCalls += 1;
+          return null;
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2006-ferrari-f430",
+      zip: "60610",
+      mileage: 18400,
+      condition: "good",
+      allowLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+      forceLive: true,
+    });
+
+    assert.equal(providerCalls, 0);
+    assert.equal(result.data.modelType, "specialty_unavailable");
+  });
+
   test("normal family cached estimated valuation still works for common vehicles", async () => {
     const civicDescriptor = {
       year: 2020,

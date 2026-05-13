@@ -61,12 +61,16 @@ function isExplicitUserRequestedValueRefresh(input: {
   fetchReason?: string | null;
   sourceScreen?: string | null;
   action?: string | null;
+  forceLive?: boolean | null;
 }) {
+  const sourceScreen = input.sourceScreen ?? "valueScreen";
+  const action = input.action ?? null;
+  const fetchReason = input.fetchReason ?? null;
   return (
-    input.allowLive === true &&
-    input.fetchReason === "user_requested_value_refresh" &&
-    (input.sourceScreen ?? "valueScreen") === "valueScreen" &&
-    (input.action ?? "valueRefresh") === "valueRefresh"
+    input.forceLive === true ||
+    action === "valueRefresh" ||
+    (input.allowLive === true && fetchReason === "user_requested_value_refresh") ||
+    (input.allowLive === true && sourceScreen === "valueScreen")
   );
 }
 
@@ -2579,6 +2583,7 @@ export class VehicleService {
     fetchReason?: string;
     sourceScreen?: string | null;
     action?: string | null;
+    forceLive?: boolean | null;
   }): Promise<CachedServiceResult<ValuationRecord>> {
     try {
       const currentIso = nowIso();
@@ -2650,7 +2655,65 @@ export class VehicleService {
         fetchReason,
         sourceScreen: input.sourceScreen,
         action: input.action,
+        forceLive: input.forceLive,
       });
+      if (isSpecialtyLookupVehicle && isExplicitValueRefresh) {
+        logger.info(
+          {
+            label: "VALUE_REFRESH_SPECIALTY_EXPLICIT_PATH_ENTERED",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            make: lookupBaseVehicle?.make ?? null,
+            model: lookupBaseVehicle?.model ?? null,
+            year: lookupBaseVehicle?.year ?? null,
+            allowLive,
+            fetchReason,
+            sourceScreen: input.sourceScreen ?? null,
+            action: input.action ?? null,
+            forceLive: input.forceLive ?? null,
+          },
+          "VALUE_REFRESH_SPECIALTY_EXPLICIT_PATH_ENTERED",
+        );
+        if (env.MARKETCHECK_DISABLE_EXTERNAL_CALLS && lookupBaseVehicle) {
+          logger.warn(
+            {
+              label: "VALUE_REFRESH_BLOCKED_DISABLE_EXTERNAL_CALLS",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              allowLive,
+              fetchReason,
+              sourceScreen: input.sourceScreen ?? null,
+              action: input.action ?? null,
+              forceLive: input.forceLive ?? null,
+              reason: "external-calls-disabled",
+            },
+            "VALUE_REFRESH_BLOCKED_DISABLE_EXTERNAL_CALLS",
+          );
+          const unavailableValue = buildSpecialtyUnavailableValuation({
+            vehicle: lookupBaseVehicle,
+            vehicleId: lookupVehicleId,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: normalizeCondition(input.condition),
+          });
+          logger.info(
+            {
+              label: "SPECIALTY_VALUE_UNAVAILABLE_RETURNED",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              reason: "external-calls-disabled",
+              fetchReason,
+            },
+            "SPECIALTY_VALUE_UNAVAILABLE_RETURNED",
+          );
+          return {
+            data: unavailableValue,
+            source: "fallback",
+            fetchedAt: currentIso,
+            expiresAt: currentIso,
+          };
+        }
+      }
       logger.info(
         {
           label: "VALUE_LOOKUP_QUERY",
@@ -3077,6 +3140,23 @@ export class VehicleService {
             shouldSimulateSuccess: false,
             shouldSimulateQuotaExhausted: false,
           };
+      if (isExplicitValueRefresh && !valueDecision.allowLiveProvider && !valueDecision.shouldSimulateSuccess) {
+        const blockedReason = env.MARKETCHECK_DISABLE_EXTERNAL_CALLS ? "external-calls-disabled" : valueDecision.reason;
+        logger.warn(
+          {
+            label: blockedReason === "external-calls-disabled" ? "VALUE_REFRESH_BLOCKED_DISABLE_EXTERNAL_CALLS" : "VALUE_REFRESH_BLOCKED_REASON",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            allowLive,
+            fetchReason,
+            sourceScreen: input.sourceScreen ?? null,
+            action: input.action ?? null,
+            forceLive: input.forceLive ?? null,
+            reason: blockedReason,
+          },
+          blockedReason === "external-calls-disabled" ? "VALUE_REFRESH_BLOCKED_DISABLE_EXTERNAL_CALLS" : "VALUE_REFRESH_BLOCKED_REASON",
+        );
+      }
       if (valueDecision.shouldSimulateSuccess || valueDecision.allowLiveProvider) {
         if (fetchReason === "user_requested_value_refresh") {
           logger.info(
@@ -3153,6 +3233,7 @@ export class VehicleService {
                 requestMeta: {
                   requestId: input.requestId,
                   allowLive,
+                  forceLive: input.forceLive ?? null,
                   action: input.action ?? "valueRefresh",
                   vehicleId: lookupVehicleId,
                   cacheKey,
@@ -3184,6 +3265,7 @@ export class VehicleService {
                   requestId: input.requestId,
                   reason: fetchReason,
                   allowLive,
+                  forceLive: input.forceLive ?? null,
                   action: input.action ?? "valueRefresh",
                   vehicleId: lookupVehicleId,
                   cacheKey,
@@ -3476,7 +3558,7 @@ export class VehicleService {
         }
       }
 
-      if (!fallbackValue && isValueLiveFetchAllowed(allowLive, fetchReason) && lookupBaseVehicle) {
+      if (!fallbackValue && valueDecision.allowLiveProvider && lookupBaseVehicle) {
         const derivedFromListings = await deriveValuationFromSimilarVehicles({
           vehicle: lookupBaseVehicle,
           vehicleId: lookupVehicleId,
@@ -3500,7 +3582,7 @@ export class VehicleService {
         }
       }
 
-      if (!fallbackValue && isValueLiveFetchAllowed(allowLive, fetchReason) && !isSpecialtyLookupVehicle) {
+      if (!fallbackValue && valueDecision.allowLiveProvider && !isSpecialtyLookupVehicle) {
         const seededFallback = lookupBaseVehicle
           ? await mockValueProvider.getValuation({
               vehicleId: lookupVehicleId,

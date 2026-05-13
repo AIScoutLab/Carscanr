@@ -329,6 +329,58 @@ describe("MarketCheck provider request guards", () => {
     assert.equal(specsResult, null);
   });
 
+  test("explicit value refresh is allowed when action is missing but allowLive/fetchReason/sourceScreen are present", async () => {
+    let fetchCalls = 0;
+    global.fetch = (async () => {
+      fetchCalls += 1;
+      return createJsonResponse({
+        stats: {
+          price: {
+            median: 156000,
+            min: 150000,
+            max: 162000,
+          },
+        },
+      });
+    }) as typeof fetch;
+
+    const provider = new MarketCheckVehicleDataProvider();
+    const result = await provider.getValuation({
+      vehicleId: "2006-ferrari-f430",
+      vehicle: {
+        id: "2006-ferrari-f430",
+        vin: null,
+        year: 2006,
+        make: "Ferrari",
+        model: "F430",
+        trim: "Base",
+        bodyStyle: "Coupe",
+        vehicleType: "car" as const,
+        msrp: 0,
+        engine: "",
+        horsepower: null,
+        torque: "",
+        transmission: "",
+        drivetrain: "",
+        mpgOrRange: "",
+        colors: [],
+      },
+      zip: "60610",
+      mileage: 18400,
+      condition: "good",
+      requestMeta: {
+        requestId: "req-explicit-metadata",
+        cacheKey: "value:ferrari:f430:explicit",
+        allowLive: true,
+        reason: "user_requested_value_refresh",
+        sourceScreen: "valueScreen",
+      },
+    });
+
+    assert.equal(fetchCalls, 1);
+    assert.ok((result?.privateParty ?? 0) > 0);
+  });
+
   test("scan-tagged requests never make outbound MarketCheck calls", async () => {
     let fetchCalls = 0;
     global.fetch = (async () => {

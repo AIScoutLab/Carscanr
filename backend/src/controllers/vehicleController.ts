@@ -233,6 +233,40 @@ export class VehicleController {
         },
         "VALUE_API_INPUTS",
       );
+      const allowLive = readOptionalBoolean(req.query.allowLive);
+      const forceLive = readOptionalBoolean(req.query.forceLive);
+      const fetchReason = typeof req.query.fetchReason === "string" ? req.query.fetchReason : undefined;
+      const sourceScreen = typeof req.query.sourceScreen === "string" ? req.query.sourceScreen : undefined;
+      const action = typeof req.query.action === "string" ? req.query.action : undefined;
+      logger.info(
+        {
+          label: "VALUE_REFRESH_ACTION_METADATA",
+          requestId: res.locals.requestId,
+          vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
+          allowLive: allowLive ?? null,
+          fetchReason: fetchReason ?? null,
+          sourceScreen: sourceScreen ?? null,
+          action: action ?? null,
+          forceLive: forceLive ?? null,
+          parsedDescriptor: descriptor,
+        },
+        "VALUE_REFRESH_ACTION_METADATA",
+      );
+      if (allowLive || forceLive || fetchReason === "user_requested_value_refresh" || sourceScreen === "valueScreen") {
+        logger.info(
+          {
+            label: "VALUE_LIVE_REFRESH_REQUESTED",
+            requestId: res.locals.requestId,
+            vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
+            allowLive: allowLive ?? null,
+            fetchReason: fetchReason ?? null,
+            sourceScreen: sourceScreen ?? null,
+            action: action ?? null,
+            forceLive: forceLive ?? null,
+          },
+          "VALUE_LIVE_REFRESH_REQUESTED",
+        );
+      }
       logger.info(
         {
           label: "VALUE_RECALC_REQUEST_RECEIVED",
@@ -256,10 +290,11 @@ export class VehicleController {
         zip: req.query.zip as string,
         mileage: Number(req.query.mileage),
         condition: normalizedCondition as string,
-        allowLive: readOptionalBoolean(req.query.allowLive),
-        fetchReason: typeof req.query.fetchReason === "string" ? req.query.fetchReason : undefined,
-        sourceScreen: typeof req.query.sourceScreen === "string" ? req.query.sourceScreen : undefined,
-        action: typeof req.query.action === "string" ? req.query.action : undefined,
+        allowLive,
+        fetchReason,
+        sourceScreen,
+        action,
+        forceLive,
       });
       return sendSuccess(res, result.data, { source: result.source, fetchedAt: result.fetchedAt, expiresAt: result.expiresAt });
     } catch (error) {

@@ -1081,7 +1081,7 @@ export default function VehicleDetailScreen() {
     pendingValueRequestKeyRef.current = requestKey;
     setValueDebugStatus("requested");
     setValuationLoading(true);
-    console.log("[vehicle-detail] VALUE_LIVE_REFRESH_REQUESTED", {
+    console.log("[vehicle-detail] VALUE_LIVE_REFRESH_BUTTON_PRESSED", {
       routeId: id,
       scanId: typeof scanId === "string" ? scanId : null,
       sourceScreen: "valueScreen",
@@ -1097,6 +1097,7 @@ export default function VehicleDetailScreen() {
         fetchReason: "user_requested_value_refresh",
         sourceScreen: "valueScreen",
         action: "valueRefresh",
+        forceLive: true,
       })
       .then((result) => {
         const nextResult =

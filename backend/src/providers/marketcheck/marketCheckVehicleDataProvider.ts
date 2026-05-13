@@ -183,13 +183,16 @@ function shouldBlockExternalMarketCheckForSource(requestMeta?: MarketCheckReques
 function isExplicitMarketCheckActionAllowed(operation: InventoryOperation, requestMeta?: MarketCheckRequestMeta) {
   const sourceScreen = normalizeSourceScreen(requestMeta?.sourceScreen);
   const action = requestMeta?.action ?? null;
+  const forceLive = requestMeta?.forceLive === true;
+  const allowLive = requestMeta?.allowLive === true;
+  const reason = requestMeta?.reason ?? null;
 
   if (operation === "values") {
-    return sourceScreen === "valueScreen" && action === "valueRefresh";
+    return forceLive || action === "valueRefresh" || reason === "user_requested_value_refresh" || (sourceScreen === "valueScreen" && allowLive);
   }
 
   if (operation === "listings") {
-    return sourceScreen === "listingsScreen" && action === "listingsRefresh";
+    return forceLive || action === "listingsRefresh" || reason === "user_requested_listings_refresh" || (sourceScreen === "listingsScreen" && allowLive);
   }
 
   return false;
@@ -579,6 +582,7 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
       stackTag: input.requestMeta?.stackTag ?? null,
       scanId: input.requestMeta?.scanId ?? null,
       sourceScreen: normalizeSourceScreen(input.requestMeta?.sourceScreen),
+      forceLive: input.requestMeta?.forceLive ?? null,
       cacheKey: input.cacheKey,
       retryAttempt: input.retryAttempt ?? input.requestMeta?.retryAttempt ?? 0,
       zip: input.requestMeta?.zip ?? null,

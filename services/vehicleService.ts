@@ -118,6 +118,7 @@ type ValueRequestOptions = {
   fetchReason?: string;
   sourceScreen?: string;
   action?: string;
+  forceLive?: boolean;
 };
 
 type ListingsRequestOptions = {
@@ -456,6 +457,9 @@ export const vehicleService = {
     if (typeof options?.action === "string" && options.action.trim().length > 0) {
       params.set("action", options.action.trim());
     }
+    if (typeof options?.forceLive === "boolean") {
+      params.set("forceLive", options.forceLive ? "true" : "false");
+    }
     const path = `/api/vehicle/value?${params.toString()}`;
     console.log("[vehicle-service] VALUE_REQUEST_PARAMS", {
       vehicleLookup,
@@ -463,6 +467,15 @@ export const vehicleService = {
       mileage,
       condition,
       options: options ?? null,
+      path,
+    });
+    console.log("[vehicle-service] VALUE_LIVE_REFRESH_REQUEST_SENT", {
+      vehicleLookup,
+      allowLive: options?.allowLive ?? null,
+      fetchReason: options?.fetchReason ?? null,
+      sourceScreen: options?.sourceScreen ?? null,
+      action: options?.action ?? null,
+      forceLive: options?.forceLive ?? null,
       path,
     });
     const response = await apiRequestEnvelope<BackendValuation>({
