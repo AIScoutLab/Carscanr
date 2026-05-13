@@ -155,7 +155,7 @@ export type ValuationRecord = {
   generatedAt: string;
   sourceLabel?: string;
   confidenceLabel?: string;
-  modelType?: "provider_range" | "listing_derived" | "modeled" | "estimated_depreciation" | "estimated_family_model";
+  modelType?: "provider_range" | "listing_derived" | "modeled" | "estimated_depreciation" | "estimated_family_model" | "specialty_unavailable";
   listingCount?: number | null;
 };
 

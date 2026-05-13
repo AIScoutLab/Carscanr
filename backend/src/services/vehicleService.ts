@@ -20,6 +20,11 @@ import { mapCanonicalVehicleToRecord, resolveStoredVehicleRecordById, upsertCano
 import { logger } from "../lib/logger.js";
 import { providers } from "../lib/providerRegistry.js";
 import { repositories } from "../lib/repositoryRegistry.js";
+import {
+  buildSpecialtyUnavailableValuation,
+  isSpecialtyExoticMake,
+  isTrustedSpecialtyValuationSource,
+} from "../lib/specialtyVehicles.js";
 import { parseLiveVehicleId } from "../providers/marketcheck/vehicleId.js";
 import { MockVehicleValueProvider } from "../providers/mock/mockVehicleValueProvider.js";
 import { ListingRecord, PayloadEvaluation, ValuationRecord, VehicleLookupDescriptor, VehicleRecord, VehicleType } from "../types/domain.js";
@@ -735,6 +740,9 @@ function preferVehicleType(primary: VehicleType, fallback: VehicleType | null | 
 }
 
 function inferMsrpAnchorFromVehicle(vehicle: VehicleRecord) {
+  if (isSpecialtyExoticMake(vehicle.make)) {
+    return null;
+  }
   const directMsrp = typeof vehicle.msrp === "number" && Number.isFinite(vehicle.msrp) && vehicle.msrp > 0 ? vehicle.msrp : null;
   if (directMsrp) {
     return { anchorMsrp: directMsrp, modelType: "estimated_depreciation" as const };
@@ -779,6 +787,9 @@ function buildEstimatedMarketRangeFromVehicle(input: {
   condition: string;
 }): ValuationRecord | null {
   const msrpAnchor = inferMsrpAnchorFromVehicle(input.vehicle);
+  if (!msrpAnchor) {
+    return null;
+  }
   const msrp = msrpAnchor.anchorMsrp;
 
   const age = Math.max(0, new Date().getFullYear() - input.vehicle.year);
@@ -1858,6 +1869,13 @@ function shapeValuationRecord(input: {
   source: "cache" | "provider" | "stored";
 }) {
   const valuation = { ...input.valuation };
+  if (valuation.modelType === "specialty_unavailable") {
+    valuation.sourceLabel = valuation.sourceLabel ?? "Specialty market value unavailable";
+    valuation.confidenceLabel =
+      valuation.confidenceLabel ??
+      "Load live market value. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance.";
+    return valuation;
+  }
   const providerRangeAvailable =
     typeof valuation.privatePartyLow === "number" &&
     typeof valuation.privatePartyHigh === "number" &&
@@ -3212,19 +3230,36 @@ export class VehicleService {
           expiresAt: cacheRow?.expiresAt ?? currentIso,
         };
       }
+      const isSpecialtyLookupVehicle = Boolean(lookupBaseVehicle && isSpecialtyExoticMake(lookupBaseVehicle.make));
       let fallbackValue: ValuationRecord | null = null;
       for (const attempt of valueAttempts) {
         const variantDescriptor = buildCacheDescriptor({ vehicle: attempt.vehicle });
         const variantCacheKey = variantDescriptor ? getValuesCacheKey(variantDescriptor, input) : null;
         const cached = variantCacheKey ? await repositories.valuesCache.findByCacheKey(variantCacheKey) : null;
         if (cached?.responseJson.data) {
-          fallbackValue = {
+          const cachedValue = {
             ...cached.responseJson.data,
             vehicleId: lookupVehicleId,
             sourceLabel: cached.responseJson.data.sourceLabel ?? "Estimated from vehicle data",
             confidenceLabel: "Moderate confidence",
             modelType: cached.responseJson.data.modelType ?? "estimated_depreciation",
           };
+          if (isSpecialtyLookupVehicle && !isTrustedSpecialtyValuationSource(cachedValue)) {
+            logger.info(
+              {
+                label: "SPECIALTY_VALUE_FALLBACK_SUPPRESSED",
+                requestId: input.requestId,
+                vehicleId: lookupVehicleId,
+                source: "cached-historical-value",
+                sourceVehicleId: attempt.vehicle.id,
+                modelType: cachedValue.modelType ?? null,
+                sourceLabel: cachedValue.sourceLabel ?? null,
+              },
+              "SPECIALTY_VALUE_FALLBACK_SUPPRESSED",
+            );
+            continue;
+          }
+          fallbackValue = cachedValue;
           logger.error(
             {
               label: "VALUE_LOOKUP_SUCCESS",
@@ -3248,13 +3283,29 @@ export class VehicleService {
             condition: input.condition,
           });
           if (stored) {
-            fallbackValue = {
+            const storedValue = {
               ...stored,
               vehicleId: lookupVehicleId,
               sourceLabel: stored.sourceLabel ?? "Estimated from vehicle data",
               confidenceLabel: "Moderate confidence",
               modelType: stored.modelType ?? "estimated_depreciation",
             };
+            if (isSpecialtyLookupVehicle && !isTrustedSpecialtyValuationSource(storedValue)) {
+              logger.info(
+                {
+                  label: "SPECIALTY_VALUE_FALLBACK_SUPPRESSED",
+                  requestId: input.requestId,
+                  vehicleId: lookupVehicleId,
+                  source: "stored-valuation-fallback",
+                  sourceVehicleId: attempt.vehicle.id,
+                  modelType: storedValue.modelType ?? null,
+                  sourceLabel: storedValue.sourceLabel ?? null,
+                },
+                "SPECIALTY_VALUE_FALLBACK_SUPPRESSED",
+              );
+              continue;
+            }
+            fallbackValue = storedValue;
             logger.error(
               {
                 label: "VALUE_LOOKUP_SUCCESS",
@@ -3294,7 +3345,7 @@ export class VehicleService {
         }
       }
 
-      if (!fallbackValue && isValueLiveFetchAllowed(allowLive, fetchReason)) {
+      if (!fallbackValue && isValueLiveFetchAllowed(allowLive, fetchReason) && !isSpecialtyLookupVehicle) {
         const seededFallback = lookupBaseVehicle
           ? await mockValueProvider.getValuation({
               vehicleId: lookupVehicleId,
@@ -3315,7 +3366,7 @@ export class VehicleService {
           : null;
       }
 
-      if (!fallbackValue && lookupBaseVehicle) {
+      if (!fallbackValue && lookupBaseVehicle && !isSpecialtyLookupVehicle) {
         fallbackValue = buildEstimatedMarketRangeFromVehicle({
           vehicle: lookupBaseVehicle,
           vehicleId: lookupVehicleId,
@@ -3334,6 +3385,27 @@ export class VehicleService {
             "VALUE_LOOKUP_SUCCESS",
           );
         }
+      }
+
+      if (!fallbackValue && lookupBaseVehicle && isSpecialtyLookupVehicle) {
+        fallbackValue = buildSpecialtyUnavailableValuation({
+          vehicle: lookupBaseVehicle,
+          vehicleId: lookupVehicleId,
+          zip: input.zip,
+          mileage: input.mileage,
+          condition: normalizeCondition(input.condition),
+        });
+        logger.info(
+          {
+            label: "SPECIALTY_VALUE_UNAVAILABLE",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            make: lookupBaseVehicle.make,
+            model: lookupBaseVehicle.model,
+            fetchReason,
+          },
+          "SPECIALTY_VALUE_UNAVAILABLE",
+        );
       }
 
       if (fallbackValue) {

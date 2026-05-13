@@ -18,6 +18,7 @@ import { cardStyles } from "@/design/patterns";
 import { useSubscription } from "@/hooks/useSubscription";
 import { formatHorsepowerLabel } from "@/lib/vehicleData";
 import { mobileEnv } from "@/lib/env";
+import { buildSpecialtyVehicleOverview, isSpecialtyExoticMake } from "@/lib/specialtyVehicles";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { scanService } from "@/services/scanService";
 import { buildVehicleSoftUnlockId, buildVehicleUnlockId } from "@/services/subscriptionService";
@@ -149,6 +150,9 @@ function hasStructuredValueEvidence(result: ValuationResult | null | undefined) 
   if (!result) {
     return false;
   }
+  if (result.modelType === "specialty_unavailable") {
+    return false;
+  }
   const rangeFields = [
     result.tradeInRange,
     result.privatePartyRange,
@@ -162,6 +166,10 @@ function hasStructuredValueEvidence(result: ValuationResult | null | undefined) 
     result.sourceLabel.trim().length > 0 &&
     result.sourceLabel !== "No live value source";
   return hasRange || hasMidpoint || hasSourceLabel;
+}
+
+function hasResolvedValueState(result: ValuationResult | null | undefined) {
+  return hasStructuredValueEvidence(result) || result?.modelType === "specialty_unavailable";
 }
 
 function choosePreferredValuation(
@@ -374,6 +382,20 @@ function buildApproximateValuation(base: ValuationResult, familyLabel: string, y
     ...base,
     sourceLabel: `Nearby market range for ${familyContext}`.trim(),
     confidenceLabel: `Market estimate based on nearby ${familyContext}`.trim(),
+  };
+}
+
+function buildSpecialtyValueStateCopy(input: {
+  make: string;
+  model: string;
+  trustedResult: boolean;
+}) {
+  return {
+    title: "Specialty market value unavailable",
+    body: `${input.make} ${input.model} uses specialty-market pricing. We won't show a generic depreciation estimate for this vehicle.`,
+    supportNote: input.trustedResult
+      ? "Load live market value when you want a current market-based estimate. Pricing can vary widely by mileage, condition, options, service history, and provenance."
+      : "This vehicle was identified, but specialty pricing should be loaded from live market data instead of a generic fallback. Pricing can vary widely by mileage, condition, options, service history, and provenance.",
   };
 }
 
@@ -950,6 +972,8 @@ export default function VehicleDetailScreen() {
       ? "sticky_fallback"
       : valueDebugOrigin;
   const hasApproximateValue = hasStructuredValueEvidence(displayValuation);
+  const hasResolvedValue = hasResolvedValueState(displayValuation);
+  const specialtyValueUnavailable = displayValuation.modelType === "specialty_unavailable";
   const hasBelievableListings = (vehicle?.listings ?? []).some(isBelievableListing);
   const trustedUnlockedConfidence = Number.parseFloat(typeof confidence === "string" ? confidence : "");
   const unlockConfirmationRequired =
@@ -973,7 +997,7 @@ export default function VehicleDetailScreen() {
   const trustedUnlockedModel = vehicle?.model || (typeof model === "string" ? model : "");
   const unlockedEstimateCase = Boolean(isEstimateMode && hasFullAccess);
   const trustedUnlockedCase = Boolean(unlockedEstimateCase && trustedResult);
-  const trustedValueAvailable = Boolean(unlockedEstimateCase && hasApproximateValue);
+  const trustedValueAvailable = Boolean(unlockedEstimateCase && hasResolvedValue);
   const trustedListingsAvailable = Boolean(unlockedEstimateCase && hasBelievableListings);
   const resolvedSpecsAvailable = hasResolvedSpecEvidence(vehicle, horsepowerSupport);
   const valueTabFinalState: ValueTabFinalState = unlockedEstimateCase
@@ -994,6 +1018,27 @@ export default function VehicleDetailScreen() {
       : vehicle?.listings.length
         ? estimateSupport?.marketSourceLabel ?? "Comparable listings"
         : null);
+  const valueLookupInput = useMemo(() => {
+    if (!vehicle) {
+      return null;
+    }
+    if (isEstimateMode) {
+      if (estimateSupport?.groundedVehicleDescriptor) {
+        return {
+          vehicleId: estimateSupport.groundedVehicleId,
+          descriptor: estimateSupport.groundedVehicleDescriptor,
+        };
+      }
+      if (estimateSupport?.groundedVehicleId) {
+        return {
+          vehicleId: estimateSupport.groundedVehicleId,
+          descriptor: null,
+        };
+      }
+      return null;
+    }
+    return vehicle.id;
+  }, [estimateSupport?.groundedVehicleDescriptor, estimateSupport?.groundedVehicleId, isEstimateMode, vehicle]);
   const believableListingsCount = (vehicle?.listings ?? []).filter(isBelievableListing).length;
   const valueQaRows = [
     { label: "Value source", value: displayValuation.sourceLabel ?? "none" },
@@ -1011,6 +1056,71 @@ export default function VehicleDetailScreen() {
     { label: "Fallback shown", value: forSaleTabFinalState === "listings_unavailable" ? "yes" : "no" },
     { label: "Listings mode", value: formatListingsModeLabel(listingsDebugMeta?.mode) },
   ];
+  const specialtyValueCopy =
+    vehicle && specialtyValueUnavailable
+      ? buildSpecialtyValueStateCopy({
+          make: vehicle.make,
+          model: vehicle.model,
+          trustedResult,
+        })
+      : null;
+  const requestExplicitLiveValue = useCallback(() => {
+    if (!vehicle || !valueLookupInput) {
+      return;
+    }
+
+    const normalizedZip = zipCode.trim();
+    const normalizedMileage = mileage.trim();
+    const normalizedCondition = normalizeCondition(condition);
+    if (!normalizedZip || !normalizedMileage || !normalizedCondition) {
+      return;
+    }
+
+    const requestKey = buildValueRequestKey(valueLookupInput, normalizedZip, normalizedMileage, normalizedCondition) ?? "";
+    pendingValueRequestKeyRef.current = requestKey;
+    setValueDebugStatus("requested");
+    setValuationLoading(true);
+
+    vehicleService
+      .getValue(valueLookupInput, normalizedZip, normalizedMileage, normalizedCondition, {
+        allowLive: true,
+        fetchReason: "user_requested_value_refresh",
+        sourceScreen: "valueScreen",
+      })
+      .then((result) => {
+        const nextResult =
+          isEstimateMode && estimateSupport?.familyLabel
+            ? buildApproximateValuation(result, estimateSupport.familyLabel, estimateSupport.yearRangeLabel)
+            : result;
+        setValueDebugStatus(hasResolvedValueState(nextResult) ? "accepted" : "rejected");
+        lastValueRequestKeyRef.current = requestKey;
+        applyValuationUpdate(nextResult, "value-refresh-success", {
+          allowReplacement: true,
+        });
+        setVehicle((current) => (current ? { ...current, valuation: nextResult } : current));
+        previousConditionRef.current = normalizedCondition;
+        previousValueRef.current = JSON.stringify(result);
+      })
+      .catch(() => {
+        setValueDebugStatus("rejected");
+      })
+      .finally(() => {
+        if (pendingValueRequestKeyRef.current === requestKey) {
+          pendingValueRequestKeyRef.current = null;
+        }
+        setValuationLoading(false);
+      });
+  }, [
+    applyValuationUpdate,
+    condition,
+    estimateSupport?.familyLabel,
+    estimateSupport?.yearRangeLabel,
+    isEstimateMode,
+    mileage,
+    valueLookupInput,
+    vehicle,
+    zipCode,
+  ]);
 
   useEffect(() => {
     if (__DEV__) {
@@ -1290,14 +1400,20 @@ export default function VehicleDetailScreen() {
           trim: resolvedDisplayTrim,
           bodyStyle: resolvedBodyStyle,
           heroImage: "",
-          overview: [
-            highConfidenceTrustedCase ? "High-confidence vehicle identification." : "Vehicle identification from photo analysis.",
-            resolvedConfidence ? `Confidence: ${Math.round(Number(resolvedConfidence) * 100)}%.` : null,
-            groundedYearRangeLabel && !highConfidenceTrustedCase ? `Likely production range: ${groundedYearRangeLabel}.` : null,
-            highConfidenceTrustedCase ? null : specsSourceLabel,
-          ]
-            .filter(Boolean)
-            .join(" "),
+          overview: isSpecialtyExoticMake(resolvedMake)
+            ? buildSpecialtyVehicleOverview({
+                make: resolvedMake,
+                model: resolvedModel,
+                bodyStyle: resolvedBodyStyle,
+              })
+            : [
+                highConfidenceTrustedCase ? "High-confidence vehicle identification." : "Vehicle identification from photo analysis.",
+                resolvedConfidence ? `Confidence: ${Math.round(Number(resolvedConfidence) * 100)}%.` : null,
+                groundedYearRangeLabel && !highConfidenceTrustedCase ? `Likely production range: ${groundedYearRangeLabel}.` : null,
+                highConfidenceTrustedCase ? null : specsSourceLabel,
+              ]
+                .filter(Boolean)
+                .join(" "),
           specs: mergeApproximateSpecs(groundedRecord, approximateFamilySupport),
           valuation:
             groundedRecord && strongMarketFallback
@@ -1780,19 +1896,6 @@ export default function VehicleDetailScreen() {
       });
     }
 
-    const valueLookupInput = isEstimateMode
-      ? estimateSupport?.groundedVehicleDescriptor
-        ? {
-            vehicleId: estimateSupport.groundedVehicleId,
-            descriptor: estimateSupport.groundedVehicleDescriptor,
-          }
-        : estimateSupport?.groundedVehicleId
-          ? {
-              vehicleId: estimateSupport.groundedVehicleId,
-              descriptor: null,
-            }
-          : null
-      : vehicle.id;
     if (!valueLookupInput) {
       return;
     }
@@ -1859,7 +1962,10 @@ export default function VehicleDetailScreen() {
       return;
     }
 
-    if (lastValueRequestKeyRef.current === requestKey && hasStructuredValueEvidence(displayValuation)) {
+    if (
+      lastValueRequestKeyRef.current === requestKey &&
+      (hasStructuredValueEvidence(displayValuation) || displayValuation.modelType === "specialty_unavailable")
+    ) {
       if (__DEV__) {
         console.log("[vehicle-detail] VEHICLE_VALUE_RECALC_SKIPPED", {
           routeId: id,
@@ -2027,7 +2133,7 @@ export default function VehicleDetailScreen() {
             );
           }
           setValueDebugStatus(acceptedForDisplay ? "accepted" : "rejected");
-          if (hasStructuredValueEvidence(nextResult)) {
+          if (hasResolvedValueState(nextResult)) {
             lastValueRequestKeyRef.current = requestKey;
           }
           applyValuationUpdate(nextResult, "value-refresh-success", {
@@ -2529,6 +2635,14 @@ export default function VehicleDetailScreen() {
           : "provider/generic fallback";
   const scannedImageSelected = heroUsesResolvedImage || selectedImageSourceLabel === "cropped scan fallback";
   const heroImageFitMode = "cover";
+  const overviewCopy =
+    vehicle && isSpecialtyExoticMake(vehicle.make)
+      ? buildSpecialtyVehicleOverview({
+          make: vehicle.make,
+          model: vehicle.model,
+          bodyStyle: resolvedDisplayBodyStyle || vehicle.bodyStyle,
+        })
+      : vehicle?.overview ?? "";
 
   useEffect(() => {
     if (!vehicle || !heroImageUri) {
@@ -2699,7 +2813,7 @@ export default function VehicleDetailScreen() {
               subtitle={trustedResult ? "High-confidence identification." : "Vehicle identification from your scan."}
             />
           ) : null}
-          <Text style={styles.body}>{vehicle.overview}</Text>
+          <Text style={styles.body}>{overviewCopy}</Text>
           <DetailRow
             label="Year"
             value={
@@ -2874,13 +2988,16 @@ export default function VehicleDetailScreen() {
           ) : (
             <>
               <ApproximateDataState
-                title="Market data is limited for this vehicle."
-                body="We're still showing the best available specs."
+                title={specialtyValueCopy?.title ?? "Market data is limited for this vehicle."}
+                body={specialtyValueCopy?.body ?? "We're still showing the best available specs."}
                 supportNote={
-                  trustedResult
+                  specialtyValueCopy?.supportNote ??
+                  (trustedResult
                     ? "This vehicle was identified with high confidence, so the specs shown here remain the strongest available details."
-                    : "The current result still includes the best available specs while local market coverage catches up."
+                    : "The current result still includes the best available specs while local market coverage catches up.")
                 }
+                actionLabel="Load live market value"
+                onAction={requestExplicitLiveValue}
                 badgeLabel={null}
               />
               {showQaDebugStrip ? <QaDebugStrip title="QA Value Debug" rows={valueQaRows} /> : null}
@@ -2933,7 +3050,22 @@ export default function VehicleDetailScreen() {
             </View>
             {valuationLoading ? <Text style={styles.valueLoading}>Updating live value…</Text> : null}
           </View>
-          {isLocked ? (
+          {resolveValueUsefulness(displayValuation) === "value_unavailable" ? (
+            <ApproximateDataState
+              title={specialtyValueCopy?.title ?? "Live market value unavailable"}
+              body={
+                specialtyValueCopy?.body ??
+                "We don't have a trusted market value for this vehicle yet."
+              }
+              supportNote={
+                specialtyValueCopy?.supportNote ??
+                "Load live market value when you're ready to check current pricing."
+              }
+              actionLabel="Load live market value"
+              onAction={requestExplicitLiveValue}
+              badgeLabel={null}
+            />
+          ) : isLocked ? (
             <LockedContentPreview
               locked
               title="Value preview"

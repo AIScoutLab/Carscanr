@@ -1,4 +1,5 @@
 import { formatCurrency } from "@/lib/utils";
+import { buildSpecialtyVehicleOverview, isSpecialtyExoticMake } from "@/lib/specialtyVehicles";
 import { resolveHorsepower } from "@/lib/vehicleData";
 import { getVehicleImage } from "@/constants/vehicleImages";
 import { apiRequest, apiRequestEnvelope } from "@/services/apiClient";
@@ -83,7 +84,7 @@ type BackendValuation = {
   generatedAt: string;
   sourceLabel?: string;
   confidenceLabel?: string;
-  modelType?: "provider_range" | "listing_derived" | "modeled";
+  modelType?: "provider_range" | "listing_derived" | "modeled" | "specialty_unavailable";
 };
 
 type BackendListing = {
@@ -112,11 +113,39 @@ export type ListingsResultEnvelope = {
   meta: ListingsDebugMeta | null;
 };
 
+type ValueRequestOptions = {
+  allowLive?: boolean;
+  fetchReason?: string;
+  sourceScreen?: string;
+};
+
 function defaultOverview(vehicle: BackendVehicle) {
+  if (isSpecialtyExoticMake(vehicle.make)) {
+    return buildSpecialtyVehicleOverview({
+      make: vehicle.make,
+      model: vehicle.model,
+      bodyStyle: vehicle.bodyStyle,
+    });
+  }
   return `${vehicle.year} ${vehicle.make} ${vehicle.model} ${vehicle.trim} with original powertrain, pricing, and specification data.`;
 }
 
 function mapValuation(valuation: BackendValuation): ValuationResult {
+  if (valuation.modelType === "specialty_unavailable") {
+    return {
+      tradeIn: "Unavailable",
+      tradeInRange: "Unavailable",
+      privateParty: "Unavailable",
+      privatePartyRange: "Unavailable",
+      dealerRetail: "Unavailable",
+      dealerRetailRange: "Unavailable",
+      confidenceLabel:
+        valuation.confidenceLabel ??
+        "Load live market value. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance.",
+      sourceLabel: valuation.sourceLabel ?? "Specialty market value unavailable",
+      modelType: "specialty_unavailable",
+    };
+  }
   const tradeInLow = valuation.tradeInLow ?? valuation.tradeIn;
   const tradeInHigh = valuation.tradeInHigh ?? valuation.tradeIn;
   const privateLow = valuation.privatePartyLow ?? valuation.privateParty;
@@ -395,17 +424,33 @@ export const vehicleService = {
     );
   },
 
-  async getValue(vehicleLookup: VehicleLookupInput, zip: string, mileage: string, condition: string): Promise<ValuationResult> {
+  async getValue(
+    vehicleLookup: VehicleLookupInput,
+    zip: string,
+    mileage: string,
+    condition: string,
+    options?: ValueRequestOptions,
+  ): Promise<ValuationResult> {
     const params = buildVehicleLookupParams(vehicleLookup);
     params.set("zip", zip);
     params.set("mileage", mileage);
     params.set("condition", condition);
+    if (typeof options?.allowLive === "boolean") {
+      params.set("allowLive", options.allowLive ? "true" : "false");
+    }
+    if (typeof options?.fetchReason === "string" && options.fetchReason.trim().length > 0) {
+      params.set("fetchReason", options.fetchReason.trim());
+    }
+    if (typeof options?.sourceScreen === "string" && options.sourceScreen.trim().length > 0) {
+      params.set("sourceScreen", options.sourceScreen.trim());
+    }
     const path = `/api/vehicle/value?${params.toString()}`;
     console.log("[vehicle-service] VALUE_REQUEST_PARAMS", {
       vehicleLookup,
       zip,
       mileage,
       condition,
+      options: options ?? null,
       path,
     });
     const response = await apiRequestEnvelope<BackendValuation>({

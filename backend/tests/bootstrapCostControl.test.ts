@@ -70,6 +70,60 @@ describe("bootstrap cost control", () => {
     assert.ok(result.data.privateParty > 0);
   });
 
+  test("Ferrari F430 without trusted market data suppresses generic fallback valuation", async () => {
+    const testRepositories = createTestRepositories({
+      vehicles: [
+        {
+          id: "2007-ferrari-f430",
+          year: 2007,
+          make: "Ferrari",
+          model: "F430",
+          trim: "Base",
+          bodyStyle: "Coupe",
+          vehicleType: "car",
+          msrp: 0,
+          engine: "4.3L V8",
+          horsepower: 483,
+          torque: "343 lb-ft",
+          transmission: "6-speed automated manual",
+          drivetrain: "RWD",
+          mpgOrRange: "11 city / 16 highway",
+          colors: ["Rosso Corsa"],
+        },
+      ],
+      valuations: [],
+      listings: [],
+    });
+    setRepositories(testRepositories.repositories);
+
+    let providerCalls = 0;
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          providerCalls += 1;
+          return null;
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2007-ferrari-f430",
+      zip: "60610",
+      mileage: 18400,
+      condition: "good",
+      allowLive: false,
+      fetchReason: "initial_load",
+    });
+
+    assert.equal(providerCalls, 0);
+    assert.equal(result.data.modelType, "specialty_unavailable");
+    assert.equal(result.data.sourceLabel, "Specialty market value unavailable");
+    assert.equal(result.data.privateParty, 0);
+  });
+
   test("initial listings load does not call live provider", async () => {
     let providerCalls = 0;
     const testProviders = createTestProviders();

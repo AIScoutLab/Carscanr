@@ -95,6 +95,60 @@ Product goal:
 
 ## Most Recent High-Signal Changes
 
+### Specialty / exotic valuation guardrail
+
+Generic fallback valuation is now disabled for specialty / exotic makes so the app does not show normal-car depreciation estimates for collector-market vehicles.
+
+Protected makes:
+
+- Ferrari
+- Lamborghini
+- McLaren
+- Aston Martin
+- Bentley
+- Rolls-Royce
+- Porsche
+- Maserati
+- Lotus
+- Maybach
+- Bugatti
+- Pagani
+- Koenigsegg
+
+Current valuation policy:
+
+- Scan flow and specs browsing still make `0` automatic MarketCheck calls by default
+- Opening vehicle detail or specs does not auto-trigger live MarketCheck value/spec fetches
+- MarketCheck live value should only happen on an explicit user-triggered value action
+- For specialty/exotic vehicles:
+  - do not use `estimated_depreciation`
+  - do not use `estimated_family_model`
+  - do not use generic MSRP/depreciation fallback pricing
+  - if no trusted live/stored/derived market value exists, return:
+    - `sourceLabel = Specialty market value unavailable`
+    - `modelType = specialty_unavailable`
+  - frontend should hide fake trade/private/retail numbers and show an explicit `Load live market value` CTA instead
+
+Trusted value sources for specialty vehicles:
+
+- `provider_range`
+- `listing_derived`
+- future curated specialty ranges if explicitly added later
+
+Why this guard exists:
+
+- Ferrari F430 and similar exotics were being valued like normal used cars when MarketCheck/live value was unavailable
+- that produced obviously false low ranges and misleading generic copy
+- the product now prefers `unavailable + explicit live CTA` over fabricated bargain pricing for specialty vehicles
+
+Copy guard:
+
+- specialty/exotic vehicles should not show generic lifestyle copy like `Practical vehicle with everyday usability.`
+- specialty overview copy should instead stay in the lane of:
+  - `High-performance specialty vehicle.`
+  - `Exotic sports car with collector-market pricing.`
+  - pricing variance by mileage, condition, options, service history, and provenance
+
 ### Result / detail pill cleanup
 
 Low-value chip and badge cleanup has been applied across the scan result and vehicle detail experience.
