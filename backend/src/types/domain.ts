@@ -142,19 +142,60 @@ export type ValuationRecord = {
   zip: string;
   mileage: number;
   condition: VehicleCondition;
-  tradeIn: number;
+  baseCondition?: "fair" | "good" | "excellent" | null;
+  status?:
+    | "loaded_condition_set"
+    | "loaded_value"
+    | "loaded_listing_range"
+    | "no_comps_found"
+    | "provider_error"
+    | "ready_to_load"
+    | "specialty_unavailable";
+  conditionValues?: {
+    fair: {
+      tradeIn: number | null;
+      privateParty: number | null;
+      dealerRetail: number | null;
+      low?: number | null;
+      median?: number | null;
+      high?: number | null;
+    };
+    good: {
+      tradeIn: number | null;
+      privateParty: number | null;
+      dealerRetail: number | null;
+      low?: number | null;
+      median?: number | null;
+      high?: number | null;
+    };
+    excellent: {
+      tradeIn: number | null;
+      privateParty: number | null;
+      dealerRetail: number | null;
+      low?: number | null;
+      median?: number | null;
+      high?: number | null;
+    };
+  } | null;
+  tradeIn: number | null;
   tradeInLow?: number;
   tradeInHigh?: number;
-  privateParty: number;
+  privateParty: number | null;
   privatePartyLow?: number;
   privatePartyHigh?: number;
-  dealerRetail: number;
+  dealerRetail: number | null;
   dealerRetailLow?: number;
   dealerRetailHigh?: number;
+  low?: number | null;
+  high?: number | null;
+  median?: number | null;
   currency: "USD";
   generatedAt: string;
   sourceLabel?: string;
   confidenceLabel?: string;
+  message?: string | null;
+  reason?: string | null;
+  sourceBasis?: "provider_direct" | "listing_median_adjusted" | "modeled_condition_adjusted" | null;
   modelType?: "provider_range" | "listing_derived" | "modeled" | "estimated_depreciation" | "estimated_family_model" | "specialty_unavailable";
   listingCount?: number | null;
 };

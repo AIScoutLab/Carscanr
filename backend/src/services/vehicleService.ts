@@ -26,6 +26,11 @@ import {
   isSpecialtyExoticMake,
   isTrustedSpecialtyValuationSource,
 } from "../lib/specialtyVehicles.js";
+import {
+  buildConditionSetValuation,
+  isConditionSetValuation,
+  normalizeSupportedValueCondition,
+} from "../lib/valueConditionSet.js";
 import { parseLiveVehicleId } from "../providers/marketcheck/vehicleId.js";
 import { MockVehicleValueProvider } from "../providers/mock/mockVehicleValueProvider.js";
 import { ListingRecord, PayloadEvaluation, ValuationRecord, VehicleLookupDescriptor, VehicleRecord, VehicleType } from "../types/domain.js";
@@ -71,6 +76,24 @@ function isExplicitUserRequestedValueRefresh(input: {
     action === "valueRefresh" ||
     (input.allowLive === true && fetchReason === "user_requested_value_refresh") ||
     (input.allowLive === true && sourceScreen === "valueScreen")
+  );
+}
+
+function isExplicitUserRequestedListingsRefresh(input: {
+  allowLive?: boolean;
+  fetchReason?: string | null;
+  sourceScreen?: string | null;
+  action?: string | null;
+  forceLive?: boolean | null;
+}) {
+  const sourceScreen = input.sourceScreen ?? "listingsScreen";
+  const action = input.action ?? null;
+  const fetchReason = input.fetchReason ?? null;
+  return (
+    input.forceLive === true ||
+    action === "listingsRefresh" ||
+    (input.allowLive === true && fetchReason === "user_requested_listings_refresh") ||
+    (input.allowLive === true && sourceScreen === "listingsScreen")
   );
 }
 
@@ -236,24 +259,38 @@ function isSpecsLiveFetchAllowed(allowLive: boolean, fetchReason: MarketFetchRea
   return fetchReason === "user_requested_specs_refresh" && isMarketCheckEnabled() && isMarketCheckAutoSpecsEnabled();
 }
 
-function isValueLiveFetchAllowed(allowLive: boolean, fetchReason: MarketFetchReason) {
-  if (!allowLive) {
+function isValueLiveFetchAllowed(input: {
+  allowLive: boolean;
+  fetchReason: MarketFetchReason;
+  sourceScreen?: string | null;
+  action?: string | null;
+  forceLive?: boolean | null;
+}) {
+  const explicitRefresh = isExplicitUserRequestedValueRefresh(input);
+  if (!explicitRefresh) {
     return false;
   }
   if (providers.valueProviderName !== "marketcheck") {
     return true;
   }
-  return fetchReason === "user_requested_value_refresh" && isMarketCheckEnabled();
+  return isMarketCheckEnabled();
 }
 
-function isListingsLiveFetchAllowed(allowLive: boolean, fetchReason: MarketFetchReason) {
-  if (!allowLive) {
+function isListingsLiveFetchAllowed(input: {
+  allowLive: boolean;
+  fetchReason: MarketFetchReason;
+  sourceScreen?: string | null;
+  action?: string | null;
+  forceLive?: boolean | null;
+}) {
+  const explicitRefresh = isExplicitUserRequestedListingsRefresh(input);
+  if (!explicitRefresh) {
     return false;
   }
   if (providers.listingsProviderName !== "marketcheck") {
     return true;
   }
-  return fetchReason === "user_requested_listings_refresh" && isMarketCheckEnabled();
+  return isMarketCheckEnabled();
 }
 
 function logMarketGateEvaluated(input: {
@@ -262,8 +299,13 @@ function logMarketGateEvaluated(input: {
   vehicleId: string;
   allowLive: boolean;
   fetchReason: MarketFetchReason;
+  sourceScreen?: string | null;
+  action?: string | null;
+  forceLive?: boolean | null;
+  zipSource?: string | null;
   cacheKey?: string | null;
   familyCacheKey?: string | null;
+  explicitRefresh: boolean;
 }) {
   logger.info(
     {
@@ -272,6 +314,11 @@ function logMarketGateEvaluated(input: {
       vehicleId: input.vehicleId,
       allowLive: input.allowLive,
       fetchReason: input.fetchReason,
+      sourceScreen: input.sourceScreen ?? null,
+      action: input.action ?? null,
+      forceLive: input.forceLive ?? null,
+      zipSource: input.zipSource ?? null,
+      explicitRefresh: input.explicitRefresh,
       cacheKey: input.cacheKey ?? null,
       familyCacheKey: input.familyCacheKey ?? null,
     },
@@ -327,6 +374,9 @@ function logMarketGateSkipped(input: {
       fetchReason: input.fetchReason,
       reason: input.reason,
       allowedCalls: 0,
+      budgetInputs: {
+        fetchReason: input.fetchReason,
+      },
     },
     "MARKETCHECK_ACTION_BUDGET_EXCEEDED",
   );
@@ -835,6 +885,7 @@ function buildEstimatedMarketRangeFromVehicle(input: {
     zip: input.zip,
     mileage: input.mileage,
     condition: normalizeCondition(input.condition),
+    status: "loaded_value",
     tradeIn: Math.round(anchor * 0.92),
     tradeInLow: tradeRange.low,
     tradeInHigh: tradeRange.high,
@@ -902,6 +953,7 @@ function buildDerivedValuationFromListings(input: {
     zip: input.zip,
     mileage: input.mileage,
     condition: normalizeCondition(input.condition),
+    status: "loaded_listing_range",
     tradeIn,
     tradeInLow: Math.round(adjustedLow * 0.92),
     tradeInHigh: Math.round(adjustedHigh * 0.92),
@@ -911,6 +963,9 @@ function buildDerivedValuationFromListings(input: {
     dealerRetail,
     dealerRetailLow: Math.round(adjustedLow * 1.08),
     dealerRetailHigh: Math.round(adjustedHigh * 1.08),
+    low: adjustedLow,
+    high: adjustedHigh,
+    median: adjustedMedian,
     currency: "USD",
     generatedAt: new Date().toISOString(),
     sourceLabel: "Estimated from similar vehicles",
@@ -964,6 +1019,27 @@ async function deriveValuationFromSimilarVehicles(input: {
     condition: input.condition,
     listings: collectedListings,
   });
+}
+
+function buildConditionAwareValuation(input: {
+  valuation: ValuationRecord;
+  vehicle: VehicleRecord | null;
+  selectedCondition: string;
+}) {
+  if (
+    input.valuation.status === "loaded_value" ||
+    input.valuation.status === "loaded_listing_range" ||
+    (input.valuation.status == null &&
+      (input.valuation.modelType === "provider_range" || input.valuation.modelType === "listing_derived"))
+  ) {
+    return buildConditionSetValuation({
+      valuation: input.valuation,
+      vehicle: input.vehicle,
+      selectedCondition: input.selectedCondition,
+    });
+  }
+
+  return input.valuation;
 }
 
 async function buildValueFallbackAttempts(vehicle: VehicleRecord): Promise<ValueLookupAttempt[]> {
@@ -1339,6 +1415,13 @@ function isMeaningfulCurrencyRange(value: string | null | undefined) {
 function hasMarketValue(valuation: ValuationRecord | null) {
   if (!valuation) {
     return false;
+  }
+  if (isConditionSetValuation(valuation)) {
+    return Object.values(valuation.conditionValues ?? {}).some((entry) =>
+      [entry.tradeIn, entry.privateParty, entry.dealerRetail, entry.low, entry.median, entry.high].some(
+        (value) => typeof value === "number" && Number.isFinite(value) && value > 0,
+      ),
+    );
   }
   return [valuation.tradeIn, valuation.privateParty, valuation.dealerRetail].some((value) => typeof value === "number" && Number.isFinite(value) && value > 0);
 }
@@ -1888,13 +1971,53 @@ function shapeValuationRecord(input: {
   source: "cache" | "provider" | "stored";
 }) {
   const valuation = { ...input.valuation };
-  if (valuation.modelType === "specialty_unavailable") {
-    valuation.sourceLabel = valuation.sourceLabel ?? "Specialty market value unavailable";
-    valuation.confidenceLabel =
-      valuation.confidenceLabel ??
-      "Load live market value. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance.";
+  if (valuation.status === "loaded_condition_set" && valuation.conditionValues) {
+    const selectedCondition = normalizeSupportedValueCondition(valuation.condition);
+    const selected = valuation.conditionValues[selectedCondition];
+    valuation.baseCondition = valuation.baseCondition ?? selectedCondition;
+    valuation.condition = selectedCondition;
+    valuation.tradeIn = selected.tradeIn;
+    valuation.privateParty = selected.privateParty;
+    valuation.dealerRetail = selected.dealerRetail;
+    valuation.low = selected.low ?? null;
+    valuation.median = selected.median ?? null;
+    valuation.high = selected.high ?? null;
+    valuation.sourceBasis = valuation.sourceBasis ?? (valuation.modelType === "listing_derived" ? "listing_median_adjusted" : "provider_direct");
     return valuation;
   }
+  if (
+    valuation.status === "specialty_unavailable" ||
+    valuation.status === "provider_error" ||
+    valuation.status === "no_comps_found" ||
+    valuation.status === "ready_to_load" ||
+    valuation.modelType === "specialty_unavailable"
+  ) {
+    valuation.status =
+      valuation.status ??
+      (valuation.modelType === "specialty_unavailable" ? "specialty_unavailable" : "ready_to_load");
+    valuation.tradeIn = null;
+    valuation.privateParty = null;
+    valuation.dealerRetail = null;
+    valuation.low = valuation.low ?? null;
+    valuation.high = valuation.high ?? null;
+    valuation.median = valuation.median ?? null;
+    valuation.sourceLabel =
+      valuation.sourceLabel ??
+      (valuation.status === "provider_error"
+        ? "Live market data could not be loaded"
+        : valuation.status === "no_comps_found"
+          ? "No live market comps found"
+          : "Specialty market value unavailable");
+    valuation.confidenceLabel =
+      valuation.confidenceLabel ??
+      (valuation.status === "provider_error"
+        ? "Live market data could not be loaded."
+        : valuation.status === "no_comps_found"
+          ? "No live market comps found for this ZIP, mileage, and condition."
+          : "Load live market value. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance.");
+    return valuation;
+  }
+  valuation.status = valuation.status ?? (valuation.modelType === "listing_derived" ? "loaded_listing_range" : "loaded_value");
   const providerRangeAvailable =
     typeof valuation.privatePartyLow === "number" &&
     typeof valuation.privatePartyHigh === "number" &&
@@ -1908,6 +2031,11 @@ function shapeValuationRecord(input: {
       : providerRangeAvailable
         ? "provider_range"
         : "estimated_depreciation";
+  if (valuation.status === "loaded_listing_range") {
+    valuation.low = valuation.low ?? valuation.privatePartyLow ?? valuation.tradeInLow ?? valuation.dealerRetailLow ?? null;
+    valuation.high = valuation.high ?? valuation.privatePartyHigh ?? valuation.tradeInHigh ?? valuation.dealerRetailHigh ?? null;
+    valuation.median = valuation.median ?? valuation.privateParty ?? null;
+  }
   logger.info(
     {
       label: "VALUE_MODEL_TYPE_SELECTED",
@@ -1930,12 +2058,15 @@ function shapeValuationRecord(input: {
       "VALUE_PROVIDER_RANGE_USED",
     );
   } else {
-    const privateWidth = getVehicleRangeProfile(input.vehicle, valuation.privateParty);
+    const tradeIn = valuation.tradeIn as number;
+    const privateParty = valuation.privateParty as number;
+    const dealerRetail = valuation.dealerRetail as number;
+    const privateWidth = getVehicleRangeProfile(input.vehicle, privateParty);
     const retailWidth = Math.min(0.18, privateWidth + 0.015);
     const tradeWidth = Math.max(0.04, privateWidth - 0.01);
-    const tradeRange = buildDynamicRange(valuation.tradeIn, tradeWidth);
-    const privateRange = buildDynamicRange(valuation.privateParty, privateWidth);
-    const retailRange = buildDynamicRange(valuation.dealerRetail, retailWidth);
+    const tradeRange = buildDynamicRange(tradeIn, tradeWidth);
+    const privateRange = buildDynamicRange(privateParty, privateWidth);
+    const retailRange = buildDynamicRange(dealerRetail, retailWidth);
     valuation.tradeInLow = tradeRange.low;
     valuation.tradeInHigh = tradeRange.high;
     valuation.privatePartyLow = privateRange.low;
@@ -2577,6 +2708,7 @@ export class VehicleService {
     vehicleId?: string | null;
     descriptor?: VehicleLookupDescriptor | null;
     zip: string;
+    zipSource?: string | null;
     mileage: number;
     condition: string;
     allowLive?: boolean;
@@ -2604,6 +2736,7 @@ export class VehicleService {
           trim: vehicle?.trim ?? descriptor?.trim ?? null,
           bodyStyle: vehicle?.bodyStyle ?? input.descriptor?.bodyStyle ?? null,
           zip: input.zip,
+          zipSource: input.zipSource ?? null,
           mileage: input.mileage,
           condition: input.condition,
         },
@@ -2641,10 +2774,11 @@ export class VehicleService {
         },
         "VALUE_RECALC_INPUTS",
       );
-      const cacheKey = descriptor ? getValuesCacheKey(descriptor, input) : null;
-      const familyCacheKey = descriptor ? getFamilyValuesCacheKey(descriptor, input) : null;
+      const cacheKey = descriptor ? getValuesCacheKey(descriptor, { zip: input.zip, mileage: input.mileage }) : null;
+      const familyCacheKey = descriptor ? getFamilyValuesCacheKey(descriptor, { zip: input.zip, mileage: input.mileage }) : null;
       const allowLive = input.allowLive ?? false;
       const fetchReason = normalizeMarketFetchReason(input.fetchReason);
+      const normalizedSelectedCondition = normalizeSupportedValueCondition(input.condition);
       const shouldDebugCrv =
         isCrvTraceTarget({ make: vehicle?.make ?? descriptor?.make ?? null, model: vehicle?.model ?? descriptor?.model ?? null }) ||
         (!vehicle && !descriptor && String(lookupVehicleId).includes("cr"));
@@ -2695,6 +2829,9 @@ export class VehicleService {
             zip: input.zip,
             mileage: input.mileage,
             condition: normalizeCondition(input.condition),
+            sourceLabel: "Live market data could not be loaded",
+            confidenceLabel:
+              "Live market data could not be loaded. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance.",
           });
           logger.info(
             {
@@ -2791,7 +2928,11 @@ export class VehicleService {
             });
             if (cached.responseJson.data) {
               const shaped = shapeValuationRecord({
-                valuation: cached.responseJson.data,
+                valuation: buildConditionAwareValuation({
+                  valuation: cached.responseJson.data,
+                  vehicle,
+                  selectedCondition: normalizedSelectedCondition,
+                }),
                 vehicle,
                 source: "cache",
               });
@@ -2931,10 +3072,14 @@ export class VehicleService {
         const familyCached = await repositories.valuesCache.findByCacheKey(familyCacheKey);
         if (familyCached && isFresh(familyCached.expiresAt, currentIso) && familyCached.responseJson.data) {
           const shapedFamilyValue = shapeValuationRecord({
-            valuation: {
-              ...familyCached.responseJson.data,
-              vehicleId: lookupVehicleId,
-            },
+            valuation: buildConditionAwareValuation({
+              valuation: {
+                ...familyCached.responseJson.data,
+                vehicleId: lookupVehicleId,
+              },
+              vehicle,
+              selectedCondition: normalizedSelectedCondition,
+            }),
             vehicle,
             source: "cache",
           });
@@ -3107,15 +3252,27 @@ export class VehicleService {
         vehicleId: lookupVehicleId,
         allowLive,
         fetchReason,
+        sourceScreen: input.sourceScreen ?? null,
+        action: input.action ?? null,
+        forceLive: input.forceLive ?? null,
+        zipSource: input.zipSource ?? null,
         cacheKey,
         familyCacheKey,
+        explicitRefresh: isExplicitValueRefresh,
       });
       let liveValue: ValuationRecord | null = null;
       let liveValueStrategy: ValueLookupAttempt["strategy"] | null = null;
       let valueWasSimulated = false;
+      let providerFailureReason: string | null = null;
       const providerValueAttempts =
         providers.valueProviderName === "marketcheck" ? valueAttempts.slice(0, 1) : valueAttempts;
-      const valueDecision = isValueLiveFetchAllowed(allowLive, fetchReason)
+      const valueDecision = isValueLiveFetchAllowed({
+        allowLive,
+        fetchReason,
+        sourceScreen: input.sourceScreen,
+        action: input.action,
+        forceLive: input.forceLive,
+      })
         ? providerBudgetService.evaluate({
             provider: providers.valueProviderName,
             operation: "value",
@@ -3129,10 +3286,8 @@ export class VehicleService {
             allowLiveProvider: false,
             reason: !isMarketCheckEnabled()
               ? "marketcheck-disabled"
-              : !allowLive
-                ? "live-fetch-disabled"
-                : fetchReason !== "user_requested_value_refresh"
-                  ? "live-fetch-requires-user-requested-value-refresh"
+              : !isExplicitValueRefresh
+                ? "live-fetch-requires-explicit-user-refresh"
                   : "live-fetch-disabled",
             cooldownActive: false,
             forcedMode: providerBudgetService.getForcedMode(),
@@ -3244,6 +3399,7 @@ export class VehicleService {
                   model: attempt.vehicle.model,
                   trim: attempt.vehicle.trim ?? null,
                   sourceScreen: input.sourceScreen ?? "valueScreen",
+                  route: "/api/vehicle/value",
                   caller: "VehicleService.getValue",
                   stackTag: "vehicle-value",
                 },
@@ -3276,14 +3432,17 @@ export class VehicleService {
                   model: attempt.vehicle.model,
                   trim: attempt.vehicle.trim ?? null,
                   zip: input.zip,
+                  zipSource: input.zipSource ?? null,
                   mileage: input.mileage,
                   condition: input.condition,
                   sourceScreen: input.sourceScreen ?? "valueScreen",
+                  route: "/api/vehicle/value",
                   caller: "VehicleService.getValue",
                   stackTag: "vehicle-value",
                 },
               }).catch((error) => {
                 if (error instanceof AppError && error.code === "MARKETCHECK_RATE_LIMITED") {
+                  providerFailureReason = "provider_rate_limited";
                   logger.warn(
                     {
                       label: "PROVIDER_QUOTA_EXHAUSTED",
@@ -3296,7 +3455,24 @@ export class VehicleService {
                   );
                   return null;
                 }
-                throw error;
+                providerFailureReason =
+                  error instanceof AppError
+                    ? String(error.code ?? "provider_error").toLowerCase()
+                    : error instanceof Error
+                      ? error.message
+                      : "provider_error";
+                logger.warn(
+                  {
+                    label: "VALUE_PROVIDER_ATTEMPT_FAILED",
+                    requestId: input.requestId,
+                    vehicleId: lookupVehicleId,
+                    strategy: attempt.strategy,
+                    reason: providerFailureReason,
+                    message: error instanceof Error ? error.message : String(error),
+                  },
+                  "VALUE_PROVIDER_ATTEMPT_FAILED",
+                );
+                return null;
               });
           if (liveValue && hasMarketValue(liveValue)) {
             liveValueStrategy = attempt.strategy;
@@ -3350,21 +3526,29 @@ export class VehicleService {
             mode: valueDecision.forcedMode,
             reason: valueDecision.reason,
             route: "vehicle-value",
+            explicitRefresh: isExplicitValueRefresh,
           },
           "FALLBACK_USED",
         );
       }
 
-      if (valueDecision.allowLiveProvider && descriptor && cacheKey && providers.valueProviderName === "marketcheck") {
+      const normalizedLiveValue = liveValue
+        ? buildConditionAwareValuation({
+            valuation: liveValue,
+            vehicle,
+            selectedCondition: normalizedSelectedCondition,
+          })
+        : null;
+
+      if (valueDecision.allowLiveProvider && descriptor && cacheKey && providers.valueProviderName === "marketcheck" && normalizedLiveValue) {
         await repositories.valuesCache.upsert(
           createValuesCacheRow({
             descriptor,
             cacheKey,
             provider: providers.valueProviderName,
-            payload: liveValue,
+            payload: normalizedLiveValue,
             zip: input.zip,
             mileage: input.mileage,
-            condition: input.condition,
           }),
         );
         if (familyCacheKey) {
@@ -3373,26 +3557,24 @@ export class VehicleService {
               descriptor: { ...descriptor, trim: "", normalizedTrim: "family" },
               cacheKey: familyCacheKey,
               provider: providers.valueProviderName,
-              payload: liveValue,
+              payload: normalizedLiveValue,
               zip: input.zip,
               mileage: input.mileage,
-              condition: input.condition,
             }),
           );
         }
         await fireAndForgetCleanup("values");
       }
 
-      if (liveValue) {
+      if (normalizedLiveValue) {
         const cacheRow = valueDecision.allowLiveProvider && descriptor && cacheKey && providers.valueProviderName === "marketcheck"
           ? createValuesCacheRow({
               descriptor,
               cacheKey,
               provider: providers.valueProviderName,
-              payload: liveValue,
+              payload: normalizedLiveValue,
               zip: input.zip,
               mileage: input.mileage,
-              condition: input.condition,
             })
           : null;
         logger.error(
@@ -3400,7 +3582,7 @@ export class VehicleService {
             label: "VALUE_FINAL_RESOLUTION",
             requestId: input.requestId,
             vehicleId: lookupVehicleId,
-            finalValueSource: liveValue.sourceLabel ?? liveValue.modelType ?? "provider",
+            finalValueSource: normalizedLiveValue.sourceLabel ?? normalizedLiveValue.modelType ?? "provider",
             familyCacheUsed: false,
             similarVehicleFallbackUsed: false,
             adjacentYearRescueUsed:
@@ -3417,8 +3599,8 @@ export class VehicleService {
             zip: input.zip,
             mileage: input.mileage,
             condition: input.condition,
-            returnedValue: liveValue,
-            finalRenderedValue: liveValue,
+            returnedValue: normalizedLiveValue,
+            finalRenderedValue: normalizedLiveValue,
             acceptedReason: "provider-match",
           },
           "VALUE_API_RESULT",
@@ -3428,7 +3610,7 @@ export class VehicleService {
             label: "VALUE_API_RESULT_USED_SOURCE",
             requestId: input.requestId,
             vehicleId: lookupVehicleId,
-            sourceLabel: liveValue.sourceLabel ?? liveValue.modelType ?? "provider",
+            sourceLabel: normalizedLiveValue.sourceLabel ?? normalizedLiveValue.modelType ?? "provider",
           },
           "VALUE_API_RESULT_USED_SOURCE",
         );
@@ -3441,7 +3623,7 @@ export class VehicleService {
             mileage: input.mileage,
             condition: input.condition,
             oldDisplayedValue: null,
-            newReturnedValue: liveValue,
+            newReturnedValue: normalizedLiveValue,
             acceptedReason: "provider-match",
           },
           "VALUE_RECALC_RESULT",
@@ -3455,11 +3637,11 @@ export class VehicleService {
           specsCandidateCount: 0,
           valueCandidateCount: valueAttempts.length,
           listingsCandidateCount: 0,
-          valuation: liveValue,
+          valuation: normalizedLiveValue,
         });
         return {
           data: shapeValuationRecord({
-            valuation: liveValue,
+            valuation: normalizedLiveValue,
             vehicle,
             source: "provider",
           }),
@@ -3471,7 +3653,7 @@ export class VehicleService {
       let fallbackValue: ValuationRecord | null = null;
       for (const attempt of valueAttempts) {
         const variantDescriptor = buildCacheDescriptor({ vehicle: attempt.vehicle });
-        const variantCacheKey = variantDescriptor ? getValuesCacheKey(variantDescriptor, input) : null;
+        const variantCacheKey = variantDescriptor ? getValuesCacheKey(variantDescriptor, { zip: input.zip, mileage: input.mileage }) : null;
         const cached = variantCacheKey ? await repositories.valuesCache.findByCacheKey(variantCacheKey) : null;
         if (cached?.responseJson.data) {
           const cachedValue = {
@@ -3582,7 +3764,7 @@ export class VehicleService {
         }
       }
 
-      if (!fallbackValue && valueDecision.allowLiveProvider && !isSpecialtyLookupVehicle) {
+      if (!fallbackValue && valueDecision.allowLiveProvider && !isSpecialtyLookupVehicle && !isExplicitValueRefresh) {
         const seededFallback = lookupBaseVehicle
           ? await mockValueProvider.getValuation({
               vehicleId: lookupVehicleId,
@@ -3603,7 +3785,7 @@ export class VehicleService {
           : null;
       }
 
-      if (!fallbackValue && lookupBaseVehicle && !isSpecialtyLookupVehicle) {
+      if (!fallbackValue && lookupBaseVehicle && !isSpecialtyLookupVehicle && !isExplicitValueRefresh) {
         fallbackValue = buildEstimatedMarketRangeFromVehicle({
           vehicle: lookupBaseVehicle,
           vehicleId: lookupVehicleId,
@@ -3624,6 +3806,13 @@ export class VehicleService {
         }
       }
 
+      const explicitLiveFailureReason =
+        isExplicitValueRefresh && !valueDecision.allowLiveProvider
+          ? env.MARKETCHECK_DISABLE_EXTERNAL_CALLS
+            ? "external_calls_disabled"
+            : valueDecision.reason ?? "live_fetch_blocked"
+          : providerFailureReason;
+
       if (!fallbackValue && lookupBaseVehicle && isSpecialtyLookupVehicle) {
         fallbackValue = buildSpecialtyUnavailableValuation({
           vehicle: lookupBaseVehicle,
@@ -3631,6 +3820,34 @@ export class VehicleService {
           zip: input.zip,
           mileage: input.mileage,
           condition: normalizeCondition(input.condition),
+          status:
+            isExplicitValueRefresh
+              ? explicitLiveFailureReason
+                ? "provider_error"
+                : "no_comps_found"
+              : "specialty_unavailable",
+          sourceLabel:
+            isExplicitValueRefresh
+              ? explicitLiveFailureReason
+                ? "Live market data could not be loaded"
+                : "No live market comps found"
+              : "Specialty market value unavailable",
+          confidenceLabel:
+            isExplicitValueRefresh
+              ? explicitLiveFailureReason
+                ? "Live market data could not be loaded. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance."
+                : "No live market comps found for this ZIP, mileage, and condition. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance."
+              : "Load live market value. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance.",
+          message:
+            isExplicitValueRefresh
+              ? explicitLiveFailureReason
+                ? "Live market data could not be loaded."
+                : "No live market comps found for this ZIP, mileage, and condition."
+              : null,
+          reason:
+            isExplicitValueRefresh
+              ? explicitLiveFailureReason ?? "no_comps_found"
+              : "specialty_unavailable",
         });
         logger.info(
           {
@@ -3641,25 +3858,68 @@ export class VehicleService {
             model: lookupBaseVehicle.model,
             fetchReason,
             reason:
-              isExplicitValueRefresh && valueDecision.allowLiveProvider
-                ? "live-provider-no-specialty-value"
+              isExplicitValueRefresh
+                ? explicitLiveFailureReason ?? "live-provider-no-specialty-value"
                 : "passive-specialty-value-unavailable",
           },
           "SPECIALTY_VALUE_UNAVAILABLE_RETURNED",
         );
       }
 
-      if (fallbackValue) {
-        if (descriptor && familyCacheKey && providers.valueProviderName === "marketcheck") {
+      if (!fallbackValue && isExplicitValueRefresh && lookupBaseVehicle && !isSpecialtyLookupVehicle) {
+        fallbackValue = {
+          id: `market-value-unavailable:${lookupVehicleId}:${input.zip}:${input.mileage}`,
+          vehicleId: lookupVehicleId,
+          zip: input.zip,
+          mileage: input.mileage,
+          condition: normalizeCondition(input.condition),
+          status: explicitLiveFailureReason ? "provider_error" : "no_comps_found",
+          tradeIn: null,
+          privateParty: null,
+          dealerRetail: null,
+          low: null,
+          high: null,
+          median: null,
+          currency: "USD",
+          generatedAt: new Date().toISOString(),
+          sourceLabel: explicitLiveFailureReason ? "Live market data could not be loaded" : "No live market comps found",
+          confidenceLabel: explicitLiveFailureReason
+            ? "Live market data could not be loaded."
+            : "No live market comps found for this ZIP, mileage, and condition.",
+          message: explicitLiveFailureReason
+            ? "Live market data could not be loaded."
+            : "No live market comps found for this ZIP, mileage, and condition.",
+          reason: explicitLiveFailureReason ?? "no_comps_found",
+          modelType: "modeled",
+          listingCount: 0,
+        };
+      }
+
+      const normalizedFallbackValue = fallbackValue
+        ? buildConditionAwareValuation({
+            valuation: fallbackValue,
+            vehicle: lookupBaseVehicle,
+            selectedCondition: normalizedSelectedCondition,
+          })
+        : null;
+
+      if (normalizedFallbackValue) {
+        if (
+          descriptor &&
+          familyCacheKey &&
+          providers.valueProviderName === "marketcheck" &&
+          (normalizedFallbackValue.status === "loaded_value" ||
+            normalizedFallbackValue.status === "loaded_listing_range" ||
+            normalizedFallbackValue.status === "loaded_condition_set")
+        ) {
           await repositories.valuesCache.upsert(
             createValuesCacheRow({
               descriptor: { ...descriptor, trim: "", normalizedTrim: "family" },
               cacheKey: familyCacheKey,
               provider: providers.valueProviderName,
-              payload: fallbackValue,
+              payload: normalizedFallbackValue,
               zip: input.zip,
               mileage: input.mileage,
-              condition: input.condition,
             }),
           );
         }
@@ -3668,16 +3928,16 @@ export class VehicleService {
             label: "VALUE_FINAL_RESOLUTION",
             requestId: input.requestId,
             vehicleId: lookupVehicleId,
-            finalValueSource: fallbackValue.sourceLabel ?? fallbackValue.modelType ?? "fallback",
+            finalValueSource: normalizedFallbackValue.sourceLabel ?? normalizedFallbackValue.modelType ?? "fallback",
             familyCacheUsed: false,
             similarVehicleFallbackUsed:
-              fallbackValue.sourceLabel === "Estimated from similar vehicles" ||
-              fallbackValue.modelType === "listing_derived",
+              normalizedFallbackValue.sourceLabel === "Estimated from similar vehicles" ||
+              normalizedFallbackValue.modelType === "listing_derived",
             adjacentYearRescueUsed: false,
             fallbackReason:
-              fallbackValue.sourceLabel === "Estimated from similar vehicles"
+              normalizedFallbackValue.sourceLabel === "Estimated from similar vehicles"
                 ? "similar-vehicle-derived-estimate"
-                : fallbackValue.sourceLabel === "Estimated from vehicle data" || fallbackValue.sourceLabel === "Estimated from vehicle family data"
+                : normalizedFallbackValue.sourceLabel === "Estimated from vehicle data" || normalizedFallbackValue.sourceLabel === "Estimated from vehicle family data"
                   ? "modeled-market-range"
                   : "fallback-value",
           },
@@ -3691,8 +3951,8 @@ export class VehicleService {
             zip: input.zip,
             mileage: input.mileage,
             condition: input.condition,
-            returnedValue: fallbackValue,
-            finalRenderedValue: fallbackValue,
+            returnedValue: normalizedFallbackValue,
+            finalRenderedValue: normalizedFallbackValue,
             acceptedReason: "fallback-value-resolved",
           },
           "VALUE_API_RESULT",
@@ -3702,7 +3962,7 @@ export class VehicleService {
             label: "VALUE_API_RESULT_USED_SOURCE",
             requestId: input.requestId,
             vehicleId: lookupVehicleId,
-            sourceLabel: fallbackValue.sourceLabel ?? fallbackValue.modelType ?? "fallback",
+            sourceLabel: normalizedFallbackValue.sourceLabel ?? normalizedFallbackValue.modelType ?? "fallback",
           },
           "VALUE_API_RESULT_USED_SOURCE",
         );
@@ -3715,7 +3975,7 @@ export class VehicleService {
             mileage: input.mileage,
             condition: input.condition,
             oldDisplayedValue: null,
-            newReturnedValue: fallbackValue,
+            newReturnedValue: normalizedFallbackValue,
             acceptedReason: "fallback-value-resolved",
           },
           "VALUE_RECALC_RESULT",
@@ -3729,12 +3989,12 @@ export class VehicleService {
           specsCandidateCount: 0,
           valueCandidateCount: valueAttempts.length,
           listingsCandidateCount: 0,
-          valuation: fallbackValue,
+          valuation: normalizedFallbackValue,
           thinReason: "fallback-value-resolved",
         });
         return {
           data: shapeValuationRecord({
-            valuation: fallbackValue,
+            valuation: normalizedFallbackValue,
             vehicle: lookupBaseVehicle,
             source: "stored",
           }),
@@ -3833,7 +4093,7 @@ export class VehicleService {
       const vehicle = lookup.vehicle;
       const descriptor = lookup.cacheDescriptor;
       const lookupVehicleId = lookup.lookupVehicleId;
-      const cacheKey = descriptor ? getValuesCacheKey(descriptor, input) : null;
+      const cacheKey = descriptor ? getValuesCacheKey(descriptor, { zip: input.zip, mileage: input.mileage }) : null;
       logger.error(
         {
           label: "VALUE_LOOKUP_FAILURE",
@@ -4269,16 +4529,33 @@ export class VehicleService {
                 fallbackAttempts[0],
             ].filter((attempt): attempt is ListingsLookupAttempt => Boolean(attempt))
           : fallbackAttempts;
+      const isExplicitListingsRefresh = isExplicitUserRequestedListingsRefresh({
+        allowLive,
+        fetchReason,
+        sourceScreen: input.sourceScreen,
+        action: input.action,
+        forceLive: null,
+      });
       logMarketGateEvaluated({
         label: "LISTINGS_LIVE_FETCH_GATE_EVALUATED",
         requestId: input.requestId,
         vehicleId: lookupVehicleId,
         allowLive,
         fetchReason,
+        sourceScreen: input.sourceScreen ?? null,
+        action: input.action ?? null,
+        forceLive: null,
         cacheKey,
         familyCacheKey,
+        explicitRefresh: isExplicitListingsRefresh,
       });
-      const listingsDecision = isListingsLiveFetchAllowed(allowLive, fetchReason)
+      const listingsDecision = isListingsLiveFetchAllowed({
+        allowLive,
+        fetchReason,
+        sourceScreen: input.sourceScreen,
+        action: input.action,
+        forceLive: null,
+      })
         ? providerBudgetService.evaluate({
             provider: providers.listingsProviderName,
             operation: "listings",
@@ -4292,10 +4569,8 @@ export class VehicleService {
             allowLiveProvider: false,
             reason: !isMarketCheckEnabled()
               ? "marketcheck-disabled"
-              : !allowLive
-                ? "live-fetch-disabled"
-                : fetchReason !== "user_requested_listings_refresh"
-                  ? "live-fetch-requires-user-requested-listings-refresh"
+              : !isExplicitListingsRefresh
+                ? "live-fetch-requires-explicit-user-refresh"
                   : "live-fetch-disabled",
             cooldownActive: false,
             forcedMode: providerBudgetService.getForcedMode(),

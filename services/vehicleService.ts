@@ -1,5 +1,6 @@
 import { formatCurrency } from "@/lib/utils";
 import { buildSpecialtyVehicleOverview, isSpecialtyExoticMake } from "@/lib/specialtyVehicles";
+import { resolveConditionValues } from "@/lib/valueConditionSet";
 import { resolveHorsepower } from "@/lib/vehicleData";
 import { getVehicleImage } from "@/constants/vehicleImages";
 import { apiRequest, apiRequestEnvelope } from "@/services/apiClient";
@@ -72,20 +73,62 @@ type BackendValuation = {
   zip: string;
   mileage: number;
   condition: string;
-  tradeIn: number;
+  status?:
+    | "loaded_condition_set"
+    | "loaded_value"
+    | "loaded_listing_range"
+    | "no_comps_found"
+    | "provider_error"
+    | "ready_to_load"
+    | "specialty_unavailable";
+  baseCondition?: "fair" | "good" | "excellent" | null;
+  conditionValues?: {
+    fair: {
+      tradeIn: number | null;
+      privateParty: number | null;
+      dealerRetail: number | null;
+      low?: number | null;
+      median?: number | null;
+      high?: number | null;
+    };
+    good: {
+      tradeIn: number | null;
+      privateParty: number | null;
+      dealerRetail: number | null;
+      low?: number | null;
+      median?: number | null;
+      high?: number | null;
+    };
+    excellent: {
+      tradeIn: number | null;
+      privateParty: number | null;
+      dealerRetail: number | null;
+      low?: number | null;
+      median?: number | null;
+      high?: number | null;
+    };
+  } | null;
+  tradeIn: number | null;
   tradeInLow?: number;
   tradeInHigh?: number;
-  privateParty: number;
+  privateParty: number | null;
   privatePartyLow?: number;
   privatePartyHigh?: number;
-  dealerRetail: number;
+  dealerRetail: number | null;
   dealerRetailLow?: number;
   dealerRetailHigh?: number;
+  low?: number | null;
+  high?: number | null;
+  median?: number | null;
   currency: "USD";
   generatedAt: string;
   sourceLabel?: string;
   confidenceLabel?: string;
+  message?: string | null;
+  reason?: string | null;
+  sourceBasis?: "provider_direct" | "listing_median_adjusted" | "modeled_condition_adjusted" | null;
   modelType?: "provider_range" | "listing_derived" | "modeled" | "specialty_unavailable";
+  listingCount?: number | null;
 };
 
 type BackendListing = {
@@ -143,39 +186,229 @@ function defaultOverview(vehicle: BackendVehicle) {
   return `${vehicle.year} ${vehicle.make} ${vehicle.model} ${vehicle.trim} with original powertrain, pricing, and specification data.`;
 }
 
+function isPositiveMarketNumber(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function formatOptionalCurrency(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? formatCurrency(value) : "Unavailable";
+}
+
+function formatOptionalComparableRange(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? formatCurrency(value) : null;
+}
+
+function mapConditionValues(conditionValues: BackendValuation["conditionValues"]) {
+  if (!conditionValues) {
+    return null;
+  }
+
+  return {
+    fair: {
+      tradeIn: formatOptionalCurrency(conditionValues.fair.tradeIn),
+      privateParty: formatOptionalCurrency(conditionValues.fair.privateParty),
+      dealerRetail: formatOptionalCurrency(conditionValues.fair.dealerRetail),
+      low: formatOptionalComparableRange(conditionValues.fair.low),
+      median: formatOptionalComparableRange(conditionValues.fair.median),
+      high: formatOptionalComparableRange(conditionValues.fair.high),
+    },
+    good: {
+      tradeIn: formatOptionalCurrency(conditionValues.good.tradeIn),
+      privateParty: formatOptionalCurrency(conditionValues.good.privateParty),
+      dealerRetail: formatOptionalCurrency(conditionValues.good.dealerRetail),
+      low: formatOptionalComparableRange(conditionValues.good.low),
+      median: formatOptionalComparableRange(conditionValues.good.median),
+      high: formatOptionalComparableRange(conditionValues.good.high),
+    },
+    excellent: {
+      tradeIn: formatOptionalCurrency(conditionValues.excellent.tradeIn),
+      privateParty: formatOptionalCurrency(conditionValues.excellent.privateParty),
+      dealerRetail: formatOptionalCurrency(conditionValues.excellent.dealerRetail),
+      low: formatOptionalComparableRange(conditionValues.excellent.low),
+      median: formatOptionalComparableRange(conditionValues.excellent.median),
+      high: formatOptionalComparableRange(conditionValues.excellent.high),
+    },
+  };
+}
+
 function mapValuation(valuation: BackendValuation): ValuationResult {
-  if (valuation.modelType === "specialty_unavailable") {
+  const status =
+    valuation.status ??
+    (valuation.modelType === "listing_derived"
+      ? "loaded_listing_range"
+      : valuation.modelType === "specialty_unavailable"
+        ? "specialty_unavailable"
+        : typeof valuation.tradeIn === "number" || typeof valuation.privateParty === "number" || typeof valuation.dealerRetail === "number"
+          ? "loaded_value"
+          : "ready_to_load");
+
+  if (status === "loaded_condition_set") {
+    const result: ValuationResult = {
+      status,
+      selectedCondition: valuation.baseCondition ?? "good",
+      baseCondition: valuation.baseCondition ?? "good",
+      conditionValues: mapConditionValues(valuation.conditionValues),
+      tradeIn: formatOptionalCurrency(valuation.tradeIn),
+      tradeInRange: "Condition-adjusted estimate",
+      privateParty: formatOptionalCurrency(valuation.privateParty),
+      privatePartyRange: "Condition-adjusted estimate",
+      dealerRetail: formatOptionalCurrency(valuation.dealerRetail),
+      dealerRetailRange: "Condition-adjusted estimate",
+      low: formatOptionalComparableRange(valuation.low),
+      high: formatOptionalComparableRange(valuation.high),
+      median: formatOptionalComparableRange(valuation.median),
+      confidenceLabel:
+        valuation.confidenceLabel ??
+        "Based on live MarketCheck listings. Condition-adjusted estimate.",
+      sourceLabel: valuation.sourceLabel ?? "MarketCheck live market value",
+      message: valuation.message ?? null,
+      reason: valuation.reason ?? null,
+      listingCount: valuation.listingCount ?? null,
+      sourceBasis: valuation.sourceBasis ?? null,
+      modelType: valuation.modelType ?? "modeled",
+    };
+    return resolveConditionValues(result, valuation.baseCondition ?? "good");
+  }
+
+  if (status === "loaded_listing_range") {
+    const low = valuation.low ?? valuation.privatePartyLow ?? valuation.tradeInLow ?? valuation.dealerRetailLow ?? null;
+    const high = valuation.high ?? valuation.privatePartyHigh ?? valuation.tradeInHigh ?? valuation.dealerRetailHigh ?? null;
+    const median = valuation.median ?? valuation.privateParty ?? null;
     return {
+      status,
       tradeIn: "Unavailable",
       tradeInRange: "Unavailable",
       privateParty: "Unavailable",
       privatePartyRange: "Unavailable",
       dealerRetail: "Unavailable",
       dealerRetailRange: "Unavailable",
-      confidenceLabel:
-        valuation.confidenceLabel ??
-        "Load live market value. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance.",
-      sourceLabel: valuation.sourceLabel ?? "Specialty market value unavailable",
-      modelType: "specialty_unavailable",
+      low: typeof low === "number" ? formatCurrency(low) : null,
+      high: typeof high === "number" ? formatCurrency(high) : null,
+      median: typeof median === "number" ? formatCurrency(median) : null,
+      confidenceLabel: valuation.confidenceLabel ?? "Comparable market listings found",
+      sourceLabel: valuation.sourceLabel ?? "Listing-derived market range",
+      message: valuation.message ?? null,
+      reason: valuation.reason ?? null,
+      listingCount: valuation.listingCount ?? null,
+      conditionValues: null,
+      selectedCondition: null,
+      baseCondition: null,
+      sourceBasis: valuation.sourceBasis ?? null,
+      modelType: "listing_derived",
     };
   }
+
+  if (status !== "loaded_value") {
+    return {
+      status,
+      tradeIn: "Unavailable",
+      tradeInRange: "Unavailable",
+      privateParty: "Unavailable",
+      privatePartyRange: "Unavailable",
+      dealerRetail: "Unavailable",
+      dealerRetailRange: "Unavailable",
+      low: null,
+      high: null,
+      median: null,
+      confidenceLabel:
+        valuation.confidenceLabel ??
+        (status === "provider_error"
+          ? "Live market data could not be loaded."
+          : status === "no_comps_found"
+            ? "No live market comps found for this ZIP, mileage, and condition."
+            : status === "specialty_unavailable"
+              ? "Load live market value. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance."
+              : "Load live market value when you want current local pricing."),
+      sourceLabel:
+        valuation.sourceLabel ??
+        (status === "provider_error"
+          ? "Live market data could not be loaded"
+          : status === "no_comps_found"
+            ? "No live market comps found"
+            : status === "specialty_unavailable"
+              ? "Specialty market value unavailable"
+              : "Live market value available on demand"),
+      message: valuation.message ?? null,
+      reason: valuation.reason ?? null,
+      listingCount: valuation.listingCount ?? null,
+      conditionValues: null,
+      selectedCondition: null,
+      baseCondition: null,
+      sourceBasis: valuation.sourceBasis ?? null,
+      modelType: status === "specialty_unavailable" ? "specialty_unavailable" : "modeled",
+    };
+  }
+
   const tradeInLow = valuation.tradeInLow ?? valuation.tradeIn;
   const tradeInHigh = valuation.tradeInHigh ?? valuation.tradeIn;
   const privateLow = valuation.privatePartyLow ?? valuation.privateParty;
   const privateHigh = valuation.privatePartyHigh ?? valuation.privateParty;
   const retailLow = valuation.dealerRetailLow ?? valuation.dealerRetail;
   const retailHigh = valuation.dealerRetailHigh ?? valuation.dealerRetail;
+  const hasPositiveLoadedValue =
+    isPositiveMarketNumber(valuation.tradeIn) ||
+    isPositiveMarketNumber(valuation.privateParty) ||
+    isPositiveMarketNumber(valuation.dealerRetail);
+
+  if (!hasPositiveLoadedValue) {
+    return {
+      status: valuation.reason === "provider_timeout" || valuation.reason === "provider_error" ? "provider_error" : "no_comps_found",
+      tradeIn: "Unavailable",
+      tradeInRange: "Unavailable",
+      privateParty: "Unavailable",
+      privatePartyRange: "Unavailable",
+      dealerRetail: "Unavailable",
+      dealerRetailRange: "Unavailable",
+      low: null,
+      high: null,
+      median: null,
+      confidenceLabel:
+        valuation.confidenceLabel ??
+        (valuation.reason === "provider_timeout" || valuation.reason === "provider_error"
+          ? "Live market data could not be loaded."
+          : "No live market comps found for this ZIP, mileage, and condition."),
+      sourceLabel:
+        valuation.sourceLabel ??
+        (valuation.reason === "provider_timeout" || valuation.reason === "provider_error"
+          ? "Live market data could not be loaded"
+          : "No live market comps found"),
+      message:
+        valuation.message ??
+        (valuation.reason === "provider_timeout" || valuation.reason === "provider_error"
+          ? "Live market data could not be loaded."
+          : "No live market comps found for this ZIP, mileage, and condition."),
+      reason: valuation.reason ?? null,
+      listingCount: valuation.listingCount ?? null,
+      conditionValues: null,
+      selectedCondition: null,
+      baseCondition: null,
+      sourceBasis: valuation.sourceBasis ?? null,
+      modelType: "modeled",
+    };
+  }
+
   return {
-    tradeIn: formatCurrency(valuation.tradeIn),
-    tradeInRange: `${formatCurrency(tradeInLow)} - ${formatCurrency(tradeInHigh)}`,
-    privateParty: formatCurrency(valuation.privateParty),
-    privatePartyRange: `${formatCurrency(privateLow)} - ${formatCurrency(privateHigh)}`,
-    dealerRetail: formatCurrency(valuation.dealerRetail),
-    dealerRetailRange: `${formatCurrency(retailLow)} - ${formatCurrency(retailHigh)}`,
+    status,
+    tradeIn: formatCurrency(valuation.tradeIn as number),
+    tradeInRange: `${formatCurrency(tradeInLow as number)} - ${formatCurrency(tradeInHigh as number)}`,
+    privateParty: formatCurrency(valuation.privateParty as number),
+    privatePartyRange: `${formatCurrency(privateLow as number)} - ${formatCurrency(privateHigh as number)}`,
+    dealerRetail: formatCurrency(valuation.dealerRetail as number),
+    dealerRetailRange: `${formatCurrency(retailLow as number)} - ${formatCurrency(retailHigh as number)}`,
+    low: null,
+    high: null,
+    median: null,
     confidenceLabel:
       valuation.confidenceLabel ??
       `Based on ${valuation.condition.replace("_", " ")} condition at ${valuation.mileage.toLocaleString("en-US")} miles`,
     sourceLabel: valuation.sourceLabel ?? "Modeled estimate",
+    message: valuation.message ?? null,
+    reason: valuation.reason ?? null,
+    listingCount: valuation.listingCount ?? null,
+    conditionValues: null,
+    selectedCondition: null,
+    baseCondition: null,
+    sourceBasis: valuation.sourceBasis ?? null,
     modelType: valuation.modelType ?? "modeled",
   };
 }
@@ -195,14 +428,25 @@ function mapListings(listings: BackendListing[]): ListingResult[] {
 
 function createEmptyValuation(): ValuationResult {
   return {
+    status: "ready_to_load",
+    selectedCondition: null,
+    baseCondition: null,
+    conditionValues: null,
     tradeIn: "Unavailable",
     tradeInRange: "Unavailable",
     privateParty: "Unavailable",
     privatePartyRange: "Unavailable",
     dealerRetail: "Unavailable",
     dealerRetailRange: "Unavailable",
-    confidenceLabel: "Live valuation unavailable",
-    sourceLabel: "No live value source",
+    low: null,
+    high: null,
+    median: null,
+    confidenceLabel: "Enter ZIP, mileage, and condition, then load live market value.",
+    sourceLabel: "Live market value available on demand",
+    message: null,
+    reason: null,
+    listingCount: null,
+    sourceBasis: null,
     modelType: "modeled",
   };
 }

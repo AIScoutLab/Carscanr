@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 import { normalizeMarketAreaZip, resolveMarketAreaZip } from "@/lib/marketAreaZip";
 import { buildVehicleValueRequestPath } from "@/lib/vehicleMarketRequest";
@@ -79,4 +80,20 @@ test("changing ZIP changes the value request cache identity inputs", () => {
   );
 
   assert.notEqual(firstPath, secondPath);
+});
+
+test("value screen no longer hardcodes 60610 or passive initial-load value refreshes", () => {
+  const screenSource = fs.readFileSync("/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx", "utf8");
+  const valueServiceSource = fs.readFileSync("/Users/mattbrillman/Car_Identifier/services/vehicleService.ts", "utf8");
+
+  assert.doesNotMatch(screenSource, /const defaultZip = "60610"/);
+  assert.doesNotMatch(screenSource, /fetchReason:\s*"initial_load"/);
+  assert.doesNotMatch(valueServiceSource, /zip=60610/);
+});
+
+test("condition chips remain local UI state and do not trigger live requests directly", () => {
+  const screenSource = fs.readFileSync("/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx", "utf8");
+
+  assert.match(screenSource, /onPress=\{\(\) => setCondition\(option\)\}/);
+  assert.doesNotMatch(screenSource, /onPress=\{\(\) => requestExplicitLiveValue/);
 });

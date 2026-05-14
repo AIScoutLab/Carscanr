@@ -60,7 +60,7 @@ export type VehicleValuesCacheRow = BaseCacheRow<ValuationRecord | null> & {
   normalizedTrim: string;
   zipPrefix: string;
   mileageBucket: string;
-  condition: VehicleCondition;
+  condition: VehicleCondition | null;
 };
 
 export type VehicleListingsCacheRow = BaseCacheRow<ListingRecord[]> & {
@@ -237,23 +237,23 @@ export function getSpecsCacheKey(descriptor: CacheDescriptor) {
 
 export function getValuesCacheKey(
   descriptor: CacheDescriptor,
-  input: { zip: string; mileage: number; condition: string },
+  input: { zip: string; mileage: number },
 ) {
   return createCacheKey([
     "values",
+    "condition-set",
     descriptor.year,
     descriptor.normalizedMake,
     descriptor.normalizedModel,
     descriptor.normalizedTrim,
     normalizeZip5(input.zip),
     getMileageResolutionKey(input.mileage),
-    normalizeCondition(input.condition),
   ]);
 }
 
 export function getFamilyValuesCacheKey(
   descriptor: CacheDescriptor,
-  input: { zip: string; mileage: number; condition: string },
+  input: { zip: string; mileage: number },
 ) {
   return getValuesCacheKey(buildFamilyCacheDescriptor(descriptor), input);
 }
@@ -334,7 +334,7 @@ export function createValuesCacheRow(input: {
   payload: ValuationRecord | null;
   zip: string;
   mileage: number;
-  condition: string;
+  condition?: string | null;
 }) {
   return {
     ...createBaseCacheRow({
@@ -350,7 +350,7 @@ export function createValuesCacheRow(input: {
     normalizedTrim: input.descriptor.normalizedTrim,
     zipPrefix: normalizeZip5(input.zip),
     mileageBucket: getMileageResolutionKey(input.mileage),
-    condition: normalizeCondition(input.condition),
+    condition: input.condition ? normalizeCondition(input.condition) : null,
   } satisfies VehicleValuesCacheRow;
 }
 

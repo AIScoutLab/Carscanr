@@ -10,19 +10,51 @@ export function ValueEstimateCard({
   result: ValuationResult;
   tone?: "strong" | "light";
 }) {
+  const conditionSetMode = result.status === "loaded_condition_set";
+  const listingRangeMode =
+    result.status === "loaded_listing_range" ||
+    (conditionSetMode &&
+      result.conditionValues != null &&
+      Boolean(result.low || result.median || result.high) &&
+      result.tradeIn === "Unavailable" &&
+      result.privateParty === "Unavailable");
+  const metrics = listingRangeMode
+    ? [
+        { label: "Low", value: result.low ?? "Unavailable", range: result.listingCount ? `${result.listingCount} comps` : "Comparable listings" },
+        { label: "Median", value: result.median ?? "Unavailable", range: result.sourceLabel },
+        { label: "High", value: result.high ?? "Unavailable", range: result.confidenceLabel },
+      ]
+    : [
+        { label: "Trade-in", value: result.tradeIn, range: result.tradeInRange },
+        { label: "Private", value: result.privateParty, range: result.privatePartyRange },
+        { label: "Retail", value: result.dealerRetail, range: result.dealerRetailRange },
+      ];
+
   return (
     <View style={styles.card}>
       <Text style={styles.kicker}>{tone === "light" ? "Nearby market view" : "Performance market"}</Text>
-      <Text style={styles.heading}>{tone === "light" ? "Comparable value snapshot" : "Estimated market value"}</Text>
+      <Text style={styles.heading}>
+        {listingRangeMode
+          ? "Comparable market range"
+          : conditionSetMode
+            ? `${capitalizeCondition(result.selectedCondition ?? result.baseCondition ?? "good")} market estimate`
+          : tone === "light"
+            ? "Comparable value snapshot"
+            : "Estimated market value"}
+      </Text>
       <View style={styles.row}>
-        <Metric label="Trade-in" value={result.tradeIn} range={result.tradeInRange} />
-        <Metric label="Private" value={result.privateParty} range={result.privatePartyRange} />
-        <Metric label="Retail" value={result.dealerRetail} range={result.dealerRetailRange} />
+        {metrics.map((metric) => (
+          <Metric key={metric.label} label={metric.label} value={metric.value} range={metric.range} />
+        ))}
       </View>
       <Text style={styles.source}>{result.sourceLabel}</Text>
       <Text style={[styles.caption, tone === "light" && styles.captionLight]}>{result.confidenceLabel}</Text>
     </View>
   );
+}
+
+function capitalizeCondition(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
 }
 
 function Metric({ label, value, range }: { label: string; value: string; range: string }) {

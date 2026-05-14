@@ -562,17 +562,14 @@ describe("VehicleService specs canonical layer", () => {
     const firstKey = getValuesCacheKey(descriptor, {
       zip: "60610",
       mileage: 18400,
-      condition: "good",
     });
     const zipChangedKey = getValuesCacheKey(descriptor, {
       zip: "60611",
       mileage: 18400,
-      condition: "good",
     });
     const mileageChangedKey = getValuesCacheKey(descriptor, {
       zip: "60610",
       mileage: 19600,
-      condition: "good",
     });
 
     assert.notEqual(firstKey, zipChangedKey);

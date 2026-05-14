@@ -121,9 +121,10 @@ describe("bootstrap cost control", () => {
     });
 
     assert.equal(providerCalls, 0);
+    assert.equal(result.data.status, "specialty_unavailable");
     assert.equal(result.data.modelType, "specialty_unavailable");
     assert.equal(result.data.sourceLabel, "Specialty market value unavailable");
-    assert.equal(result.data.privateParty, 0);
+    assert.equal(result.data.privateParty, null);
   });
 
   test("Ferrari F430 passive value open rejects generic family cached valuation and makes zero calls", async () => {
@@ -166,7 +167,6 @@ describe("bootstrap cost control", () => {
         cacheKey: getFamilyValuesCacheKey(ferrariDescriptor, {
           zip: "60610",
           mileage: 18400,
-          condition: "good",
         }),
         provider: "marketcheck",
         zip: "60610",
@@ -259,7 +259,6 @@ describe("bootstrap cost control", () => {
         cacheKey: getFamilyValuesCacheKey(ferrariDescriptor, {
           zip: "60610",
           mileage: 18400,
-          condition: "good",
         }),
         provider: "marketcheck",
         zip: "60610",
@@ -373,7 +372,6 @@ describe("bootstrap cost control", () => {
         cacheKey: getFamilyValuesCacheKey(ferrariDescriptor, {
           zip: "60610",
           mileage: 18400,
-          condition: "good",
         }),
         provider: "marketcheck",
         zip: "60610",
@@ -423,8 +421,10 @@ describe("bootstrap cost control", () => {
     });
 
     assert.equal(providerCalls, 1);
+    assert.equal(result.data.status, "no_comps_found");
     assert.equal(result.data.modelType, "specialty_unavailable");
-    assert.equal(result.data.sourceLabel, "Specialty market value unavailable");
+    assert.equal(result.data.sourceLabel, "No live market comps found");
+    assert.equal(result.data.privateParty, null);
   });
 
   test("Ferrari explicit refresh still attempts one live call when action is missing but fetch metadata is explicit", async () => {
@@ -477,7 +477,9 @@ describe("bootstrap cost control", () => {
     });
 
     assert.equal(providerCalls, 1);
+    assert.equal(result.data.status, "no_comps_found");
     assert.equal(result.data.modelType, "specialty_unavailable");
+    assert.equal(result.data.sourceLabel, "No live market comps found");
   });
 
   test("Ferrari explicit refresh is blocked when external MarketCheck calls are disabled", async () => {
@@ -533,7 +535,167 @@ describe("bootstrap cost control", () => {
     });
 
     assert.equal(providerCalls, 0);
+    assert.equal(result.data.status, "specialty_unavailable");
     assert.equal(result.data.modelType, "specialty_unavailable");
+    assert.equal(result.data.sourceLabel, "Live market data could not be loaded");
+  });
+
+  test("Ferrari 812 Superfast explicit refresh attempts one live MarketCheck valuation with resolved request params", async () => {
+    const testRepositories = createTestRepositories({
+      vehicles: [
+        {
+          id: "519f29ed-979c-44ee-b443-83b2ce480333",
+          year: 2021,
+          make: "Ferrari",
+          model: "812 Superfast",
+          trim: "Base",
+          bodyStyle: "Coupe",
+          vehicleType: "car",
+          msrp: 349000,
+          engine: "6.5L V12",
+          horsepower: 789,
+          torque: "530 lb-ft",
+          transmission: "7-speed dual-clutch automatic",
+          drivetrain: "RWD",
+          mpgOrRange: "12 city / 16 highway",
+          colors: ["Rosso Corsa"],
+        },
+      ],
+      valuations: [],
+      listings: [],
+    });
+    setRepositories(testRepositories.repositories);
+
+    let providerCalls = 0;
+    let providerRequest:
+      | {
+          vehicleId: string;
+          year: number;
+          make: string;
+          model: string;
+          trim: string | null;
+          zip: string;
+          mileage: number;
+          condition: string;
+          allowLive: boolean | undefined;
+          reason: string | undefined;
+          sourceScreen: string | undefined;
+          action: string | null | undefined;
+          forceLive: boolean | null | undefined;
+        }
+      | null = null;
+
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation(input) {
+          providerCalls += 1;
+          providerRequest = {
+            vehicleId: input.vehicleId,
+            year: input.vehicle.year,
+            make: input.vehicle.make,
+            model: input.vehicle.model,
+            trim: input.vehicle.trim ?? null,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition,
+            allowLive: input.requestMeta?.allowLive,
+            reason: input.requestMeta?.reason,
+            sourceScreen: input.requestMeta?.sourceScreen,
+            action: input.requestMeta?.action,
+            forceLive: input.requestMeta?.forceLive,
+          };
+          return null;
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "519f29ed-979c-44ee-b443-83b2ce480333",
+      zip: "60610",
+      mileage: 18400,
+      condition: "good",
+      allowLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      forceLive: true,
+    });
+
+    assert.equal(providerCalls, 1);
+    assert.equal(result.data.status, "no_comps_found");
+    assert.deepEqual(providerRequest, {
+      vehicleId: "519f29ed-979c-44ee-b443-83b2ce480333",
+      year: 2021,
+      make: "Ferrari",
+      model: "812 Superfast",
+      trim: "Base",
+      zip: "60610",
+      mileage: 18400,
+      condition: "good",
+      allowLive: true,
+      reason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+      forceLive: true,
+    });
+    assert.equal(result.data.modelType, "specialty_unavailable");
+    assert.equal(result.data.sourceLabel, "No live market comps found");
+  });
+
+  test("Ferrari explicit refresh provider failure returns provider_error instead of fake zero values", async () => {
+    const testRepositories = createTestRepositories({
+      vehicles: [
+        {
+          id: "2021-ferrari-812-superfast",
+          year: 2021,
+          make: "Ferrari",
+          model: "812 Superfast",
+          trim: "Base",
+          bodyStyle: "Coupe",
+          vehicleType: "car",
+          msrp: 349000,
+          engine: "6.5L V12",
+          horsepower: 789,
+          torque: "530 lb-ft",
+          transmission: "7-speed dual-clutch automatic",
+          drivetrain: "RWD",
+          mpgOrRange: "12 city / 16 highway",
+          colors: ["Rosso Corsa"],
+        },
+      ],
+      valuations: [],
+      listings: [],
+    });
+    setRepositories(testRepositories.repositories);
+
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          throw new Error("provider_timeout");
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2021-ferrari-812-superfast",
+      zip: "60563",
+      mileage: 18400,
+      condition: "good",
+      allowLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+      forceLive: true,
+    });
+
+    assert.equal(result.data.status, "provider_error");
+    assert.equal(result.data.sourceLabel, "Live market data could not be loaded");
+    assert.equal(result.data.privateParty, null);
   });
 
   test("normal family cached estimated valuation still works for common vehicles", async () => {
@@ -554,7 +716,6 @@ describe("bootstrap cost control", () => {
         cacheKey: getFamilyValuesCacheKey(civicDescriptor, {
           zip: "60610",
           mileage: 18400,
-          condition: "good",
         }),
         provider: "marketcheck",
         zip: "60610",
@@ -676,9 +837,25 @@ describe("bootstrap cost control", () => {
       valueProviderName: "marketcheck",
       listingsProviderName: "marketcheck",
       valueProvider: {
-        async getValuation() {
+        async getValuation(input) {
           valueProviderCalls += 1;
-          return null;
+          return {
+            id: "live-ct4",
+            vehicleId: input.vehicleId,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition,
+            status: "loaded_value",
+            tradeIn: 27000,
+            privateParty: 28900,
+            dealerRetail: 30900,
+            currency: "USD",
+            generatedAt: "2026-05-14T00:00:00.000Z",
+            sourceLabel: "MarketCheck live value",
+            confidenceLabel: "Provider direct",
+            modelType: "provider_range",
+            listingCount: 6,
+          };
         },
       },
       listingsProvider: {
@@ -690,7 +867,7 @@ describe("bootstrap cost control", () => {
     });
 
     const service = new VehicleService();
-    await service.getValue({
+    const first = await service.getValue({
       vehicleId: "2021-cadillac-ct4-premium-luxury",
       zip: "60610",
       mileage: 18400,
@@ -700,9 +877,23 @@ describe("bootstrap cost control", () => {
       sourceScreen: "valueScreen",
       action: "valueRefresh",
     });
+    const second = await service.getValue({
+      vehicleId: "2021-cadillac-ct4-premium-luxury",
+      zip: "60610",
+      mileage: 18400,
+      condition: "excellent",
+      allowLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
 
     assert.equal(valueProviderCalls, 1);
     assert.equal(listingsProviderCalls, 0);
+    assert.equal(first.data.status, "loaded_condition_set");
+    assert.equal(first.data.conditionValues?.good.privateParty != null, true);
+    assert.equal(second.data.status, "loaded_condition_set");
+    assert.equal(second.data.conditionValues?.excellent.privateParty != null, true);
   });
 
   test("user requested listings refresh calls MarketCheck listings at most once", async () => {

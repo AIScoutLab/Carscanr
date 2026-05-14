@@ -16,6 +16,7 @@ import { ValueEstimateCard } from "@/components/ValueEstimateCard";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
 import { useSubscription } from "@/hooks/useSubscription";
+import { getConditionSourceLabel, normalizeSupportedValueCondition, resolveConditionValues } from "@/lib/valueConditionSet";
 import { formatHorsepowerLabel } from "@/lib/vehicleData";
 import { mobileEnv } from "@/lib/env";
 import { buildSpecialtyVehicleOverview, isSpecialtyExoticMake } from "@/lib/specialtyVehicles";
@@ -31,8 +32,8 @@ import { formatCurrency } from "@/lib/utils";
 const tabs = ["Overview", "Specs", "Value", "For Sale", "Photos"];
 const defaultZip = "";
 const defaultMileage = "18400";
-const defaultCondition = "Excellent";
-const conditionOptions = ["Poor", "Fair", "Good", "Very Good", "Excellent"];
+const defaultCondition = "Good";
+const conditionOptions = ["Fair", "Good", "Excellent"];
 
 type EstimateSupport = {
   groundedVehicleId: string | null;
@@ -136,14 +137,25 @@ function resetMainstreamGroundingCoverageAggregate() {
 
 function createEmptyValuation(): ValuationResult {
   return {
+    status: "ready_to_load",
+    selectedCondition: null,
+    baseCondition: null,
+    conditionValues: null,
     tradeIn: "Unavailable",
     tradeInRange: "Unavailable",
     privateParty: "Unavailable",
     privatePartyRange: "Unavailable",
     dealerRetail: "Unavailable",
     dealerRetailRange: "Unavailable",
-    confidenceLabel: "Live valuation unavailable",
-    sourceLabel: "No live value source",
+    low: null,
+    high: null,
+    median: null,
+    confidenceLabel: "Enter ZIP, mileage, and condition, then load live market value.",
+    sourceLabel: "Live market value available on demand",
+    message: null,
+    reason: null,
+    listingCount: null,
+    sourceBasis: null,
     modelType: "modeled" as const,
   };
 }
@@ -152,8 +164,27 @@ function hasStructuredValueEvidence(result: ValuationResult | null | undefined) 
   if (!result) {
     return false;
   }
-  if (result.modelType === "specialty_unavailable") {
+  if (
+    result.status === "loaded_condition_set"
+  ) {
+    return Boolean(
+      result.conditionValues &&
+        Object.values(result.conditionValues).some((entry) =>
+          [entry.tradeIn, entry.privateParty, entry.dealerRetail, entry.low, entry.median, entry.high].some((value) => !isUnavailableValue(value)),
+        ),
+    );
+  }
+  if (
+    result.status === "specialty_unavailable" ||
+    result.status === "provider_error" ||
+    result.status === "no_comps_found" ||
+    result.status === "ready_to_load" ||
+    result.status === "stale_after_input_change"
+  ) {
     return false;
+  }
+  if (result.status === "loaded_listing_range") {
+    return Boolean(result.low || result.high || result.median);
   }
   const rangeFields = [
     result.tradeInRange,
@@ -166,12 +197,38 @@ function hasStructuredValueEvidence(result: ValuationResult | null | undefined) 
   const hasSourceLabel =
     typeof result.sourceLabel === "string" &&
     result.sourceLabel.trim().length > 0 &&
-    result.sourceLabel !== "No live value source";
+    result.sourceLabel !== "No live value source" &&
+    result.sourceLabel !== "Live market value available on demand";
   return hasRange || hasMidpoint || hasSourceLabel;
 }
 
 function hasResolvedValueState(result: ValuationResult | null | undefined) {
-  return hasStructuredValueEvidence(result) || result?.modelType === "specialty_unavailable";
+  return (
+    hasStructuredValueEvidence(result) ||
+    result?.status === "specialty_unavailable" ||
+    result?.status === "provider_error" ||
+    result?.status === "no_comps_found" ||
+    result?.status === "ready_to_load" ||
+    result?.status === "stale_after_input_change"
+  );
+}
+
+function canRenderValueEstimateCard(result: ValuationResult | null | undefined) {
+  return Boolean(result && (result.status === "loaded_value" || result.status === "loaded_listing_range" || result.status === "loaded_condition_set"));
+}
+
+function shouldDisplayCurrentValuationState(result: ValuationResult | null | undefined) {
+  if (!result) {
+    return false;
+  }
+  return (
+    hasStructuredValueEvidence(result) ||
+    result.status === "specialty_unavailable" ||
+    result.status === "provider_error" ||
+    result.status === "no_comps_found" ||
+    result.status === "ready_to_load" ||
+    result.status === "stale_after_input_change"
+  );
 }
 
 function choosePreferredValuation(
@@ -185,7 +242,7 @@ function choosePreferredValuation(
   const nextHasEvidence = hasStructuredValueEvidence(next);
 
   if (options?.allowReplacement) {
-    if (nextHasEvidence) {
+    if (nextHasEvidence || hasResolvedValueState(next)) {
       return next;
     }
     return current;
@@ -199,14 +256,13 @@ function choosePreferredValuation(
 }
 
 function normalizeCondition(value: string) {
-  return value.trim().toLowerCase().replace(/\s+/g, "_");
+  return normalizeSupportedValueCondition(value);
 }
 
 function buildValueRequestKey(
   valueLookupInput: string | { vehicleId?: string | null; descriptor?: VehicleLookupDescriptor | null } | null,
   zip: string,
   mileage: string,
-  condition: string,
 ) {
   if (!valueLookupInput) {
     return null;
@@ -216,7 +272,6 @@ function buildValueRequestKey(
     typeof valueLookupInput === "string" ? valueLookupInput : valueLookupInput.vehicleId ?? "descriptor",
     zip.trim(),
     mileage.trim(),
-    normalizeCondition(condition),
   ].join("|");
 }
 
@@ -322,6 +377,29 @@ function countBelievableValuePairs(result: ValuationResult) {
 }
 
 function resolveValueUsefulness(result: ValuationResult) {
+  if (result.status === "loaded_condition_set") {
+    const selectedCondition = result.selectedCondition ?? result.baseCondition ?? "good";
+    const selected = result.conditionValues?.[selectedCondition];
+    const hasListingRange = Boolean(selected?.low || selected?.median || selected?.high);
+    const populatedPrimaryValues = [selected?.tradeIn, selected?.privateParty, selected?.dealerRetail].filter((value) => !isUnavailableValue(value)).length;
+    if (hasListingRange || populatedPrimaryValues >= 2) {
+      return "value_available_strong" as const;
+    }
+    if (populatedPrimaryValues >= 1) {
+      return "value_available_light" as const;
+    }
+    return "value_unavailable" as const;
+  }
+  if (result.status === "loaded_listing_range") {
+    const listingRangeValues = [result.low, result.median, result.high].filter((value) => !isUnavailableValue(value));
+    if (listingRangeValues.length >= 2) {
+      return "value_available_strong" as const;
+    }
+    if (listingRangeValues.length >= 1) {
+      return "value_available_light" as const;
+    }
+    return "value_unavailable" as const;
+  }
   const populatedPrimaryValues = [result.tradeIn, result.privateParty, result.dealerRetail].filter((value) => !isUnavailableValue(value)).length;
   const populatedRanges = [result.tradeInRange, result.privatePartyRange, result.dealerRetailRange].filter((value) => !isUnavailableValue(value)).length;
   const richModel = result.modelType === "provider_range" || result.modelType === "listing_derived";
@@ -401,6 +479,61 @@ function buildSpecialtyValueStateCopy(input: {
   };
 }
 
+function buildValueStatusCardCopy(input: {
+  valuation: ValuationResult;
+  specialtyValueCopy: ReturnType<typeof buildSpecialtyValueStateCopy> | null;
+  zipCode: string;
+}) {
+  if (!input.zipCode) {
+    return {
+      title: "Enter a market area ZIP",
+      body: "Enter ZIP code for local market pricing before loading live market value.",
+      supportNote: "Local market pricing depends on ZIP.",
+    };
+  }
+
+  switch (input.valuation.status) {
+    case "stale_after_input_change":
+      return {
+        title: "Live market value needs refresh",
+        body: input.valuation.message ?? "ZIP or mileage changed since the last live value load.",
+        supportNote: input.valuation.confidenceLabel,
+      };
+    case "provider_error":
+      return {
+        title: "Live market data could not be loaded",
+        body: input.valuation.message ?? "We couldn't load live market data for this request.",
+        supportNote: "Try the live market lookup again in a moment.",
+      };
+    case "no_comps_found":
+      return {
+        title: "No live market comps found",
+        body: input.valuation.message ?? "No live market comps found for this ZIP, mileage, and condition.",
+        supportNote: "Try a nearby ZIP, broader condition, or check again later when more listings are available.",
+      };
+    case "specialty_unavailable":
+      return (
+        input.specialtyValueCopy ?? {
+          title: "Specialty market value unavailable",
+          body: "We won't show a generic depreciation estimate for this vehicle.",
+          supportNote: "Load live market value when you want current collector-market pricing.",
+        }
+      );
+    case "ready_to_load":
+      return {
+        title: "Live market value ready",
+        body: "Live market pricing is available on demand for this ZIP, mileage, and condition.",
+        supportNote: "Press Load live market value when you're ready to check current pricing.",
+      };
+    default:
+      return {
+        title: "Live market value unavailable",
+        body: input.valuation.message ?? "We don't have a trusted market value for this vehicle yet.",
+        supportNote: input.valuation.confidenceLabel,
+      };
+  }
+}
+
 function ApproximateDataState({
   title,
   body,
@@ -409,6 +542,7 @@ function ApproximateDataState({
   onAction,
   badgeLabel = "Availability",
   secondaryAction = true,
+  actionDisabled = false,
 }: {
   title: string;
   body: string;
@@ -417,6 +551,7 @@ function ApproximateDataState({
   onAction?: () => void;
   badgeLabel?: string | null;
   secondaryAction?: boolean;
+  actionDisabled?: boolean;
 }) {
   return (
     <View style={styles.approximateStateCard}>
@@ -428,7 +563,7 @@ function ApproximateDataState({
       <Text style={styles.approximateStateTitle}>{title}</Text>
       <Text style={styles.approximateStateBody}>{body}</Text>
       {supportNote ? <Text style={styles.approximateStateSupport}>{supportNote}</Text> : null}
-      {actionLabel && onAction ? <PrimaryButton label={actionLabel} secondary={secondaryAction} onPress={onAction} /> : null}
+      {actionLabel && onAction ? <PrimaryButton label={actionLabel} secondary={secondaryAction} onPress={onAction} disabled={actionDisabled} /> : null}
     </View>
   );
 }
@@ -970,14 +1105,29 @@ export default function VehicleDetailScreen() {
     },
     [id, scanId],
   );
-  const displayValuation = hasStructuredValueEvidence(valuation) ? valuation : strongestValuationRef.current;
+  const baseDisplayValuation = shouldDisplayCurrentValuationState(valuation) ? valuation : strongestValuationRef.current;
+  const conditionAwareDisplayValuation = useMemo(() => {
+    const resolved = resolveConditionValues(baseDisplayValuation, condition);
+    if (resolved.status === "loaded_condition_set") {
+      return {
+        ...resolved,
+        sourceLabel: getConditionSourceLabel({
+          result: resolved,
+          make: vehicle?.make ?? null,
+          model: vehicle?.model ?? null,
+        }),
+      };
+    }
+    return resolved;
+  }, [baseDisplayValuation, condition, vehicle?.make, vehicle?.model]);
+  const displayValuation = conditionAwareDisplayValuation;
   const displayedValueOrigin: ValueDebugOrigin =
-    !hasStructuredValueEvidence(valuation) && hasStructuredValueEvidence(strongestValuationRef.current)
+    !shouldDisplayCurrentValuationState(valuation) && hasStructuredValueEvidence(strongestValuationRef.current)
       ? "sticky_fallback"
       : valueDebugOrigin;
   const hasApproximateValue = hasStructuredValueEvidence(displayValuation);
   const hasResolvedValue = hasResolvedValueState(displayValuation);
-  const specialtyValueUnavailable = displayValuation.modelType === "specialty_unavailable";
+  const specialtyValueUnavailable = displayValuation.status === "specialty_unavailable" || displayValuation.modelType === "specialty_unavailable";
   const hasBelievableListings = (vehicle?.listings ?? []).some(isBelievableListing);
   const trustedUnlockedConfidence = Number.parseFloat(typeof confidence === "string" ? confidence : "");
   const unlockConfirmationRequired =
@@ -1072,13 +1222,19 @@ export default function VehicleDetailScreen() {
   const marketAreaZipHint = zipCode
     ? "Local market pricing depends on ZIP."
     : "Enter ZIP code for local market pricing.";
+  const canRequestLiveValue = isValidMarketAreaZip(normalizeMarketAreaZip(zipCode)) && mileage.trim().length > 0 && normalizeCondition(condition).length > 0;
+  const valueStatusCardCopy = buildValueStatusCardCopy({
+    valuation: displayValuation,
+    specialtyValueCopy,
+    zipCode,
+  });
   const handleZipCodeChange = useCallback((nextValue: string) => {
     const normalizedZip = normalizeMarketAreaZip(nextValue);
     setZipCode(normalizedZip);
     setZipSource(normalizedZip.length > 0 ? "user_input" : "blank");
   }, []);
   const requestExplicitLiveValue = useCallback(() => {
-    if (!vehicle || !valueLookupInput) {
+    if (!vehicle || !valueLookupInput || valuationLoading) {
       return;
     }
 
@@ -1090,7 +1246,7 @@ export default function VehicleDetailScreen() {
       return;
     }
 
-    const requestKey = buildValueRequestKey(valueLookupInput, normalizedZip, normalizedMileage, normalizedCondition) ?? "";
+    const requestKey = buildValueRequestKey(valueLookupInput, normalizedZip, normalizedMileage) ?? "";
     pendingValueRequestKeyRef.current = requestKey;
     setValueDebugStatus("requested");
     setValuationLoading(true);
@@ -1149,6 +1305,7 @@ export default function VehicleDetailScreen() {
     vehicle,
     zipCode,
     zipSource,
+    valuationLoading,
   ]);
   const requestExplicitLiveListings = useCallback(() => {
     if (!vehicle || !valueLookupInput) {
@@ -1998,7 +2155,7 @@ export default function VehicleDetailScreen() {
     const normalizedZip = normalizeMarketAreaZip(zipCode);
     const normalizedMileage = mileage.trim();
     const normalizedCondition = normalizeCondition(condition);
-    const requestKey = buildValueRequestKey(valueLookupInput, normalizedZip, normalizedMileage, normalizedCondition) ?? "";
+    const requestKey = buildValueRequestKey(valueLookupInput, normalizedZip, normalizedMileage) ?? "";
     const userAdjustedInputs = lastValueRequestKeyRef.current !== null && lastValueRequestKeyRef.current !== requestKey;
     console.log("[vehicle-detail] VALUE_INPUT_CHANGED", {
       vehicleId: vehicle.id,
@@ -2039,6 +2196,7 @@ export default function VehicleDetailScreen() {
           reason: "invalid-value-inputs",
         });
       }
+      setValueDebugStatus("idle");
       return;
     }
 
@@ -2057,10 +2215,7 @@ export default function VehicleDetailScreen() {
       return;
     }
 
-    if (
-      lastValueRequestKeyRef.current === requestKey &&
-      (hasStructuredValueEvidence(displayValuation) || displayValuation.modelType === "specialty_unavailable")
-    ) {
+    if (lastValueRequestKeyRef.current === requestKey && hasResolvedValueState(displayValuation)) {
       if (__DEV__) {
         console.log("[vehicle-detail] VEHICLE_VALUE_RECALC_SKIPPED", {
           routeId: id,
@@ -2075,229 +2230,39 @@ export default function VehicleDetailScreen() {
       return;
     }
 
-    const timeout = setTimeout(() => {
-      pendingValueRequestKeyRef.current = requestKey;
-      setValueDebugStatus("requested");
-      console.log("[vehicle-detail] VALUE_REQUEST_TRIGGERED", {
-        vehicleId: typeof valueLookupInput === "string" ? valueLookupInput : null,
-        descriptor: typeof valueLookupInput === "string" ? null : valueLookupInput.descriptor,
-        resolutionMode:
-          typeof valueLookupInput === "string"
-            ? "real-id"
-            : valueLookupInput?.descriptor
-              ? "descriptor"
-              : "real-id",
-        previousCondition: previousConditionRef.current,
-        newCondition: normalizedCondition,
-        estimateMode: isEstimateMode,
-      });
+    if (userAdjustedInputs) {
+      setValueDebugStatus("idle");
+      setValuation((current) => ({
+        ...current,
+        status: "stale_after_input_change",
+        tradeIn: "Unavailable",
+        tradeInRange: "Unavailable",
+        privateParty: "Unavailable",
+        privatePartyRange: "Unavailable",
+        dealerRetail: "Unavailable",
+        dealerRetailRange: "Unavailable",
+        low: null,
+        high: null,
+        median: null,
+        sourceLabel: "Live market inputs changed",
+        confidenceLabel: "Press Load live market value to refresh pricing for the current ZIP and mileage.",
+        message: "Live market inputs changed since the last value load.",
+        reason: "inputs_changed",
+      }));
       if (__DEV__) {
-        console.log("[vehicle-detail] VALUE_UI_REQUEST_SENT", {
+        console.log("[vehicle-detail] VALUE_AUTO_REFRESH_SKIPPED", {
           routeId: id,
           scanId: typeof scanId === "string" ? scanId : null,
           zip: normalizedZip,
           mileage: normalizedMileage,
           condition: normalizedCondition,
-          previousDisplayedValue: displayValuation,
-        });
-        console.log("[vehicle-detail] VEHICLE_VALUE_RECALC_REQUESTED", {
-          routeId: id,
-          scanId: typeof scanId === "string" ? scanId : null,
-          previousDisplayedValue: displayValuation,
-          zip: normalizedZip,
-          mileage: normalizedMileage,
-          condition: normalizedCondition,
-          userAdjustedInputs,
+          previousRequestKey: lastValueRequestKeyRef.current,
+          nextRequestKey: requestKey,
+          reason: "inputs-changed-requires-explicit-refresh",
         });
       }
-      setValuationLoading(true);
-      vehicleService
-        .getValue(valueLookupInput, normalizedZip, normalizedMileage, normalizedCondition, {
-          allowLive: false,
-          fetchReason: "initial_load",
-          sourceScreen: "valueScreen",
-          zipSource,
-        })
-        .then((result) => {
-          const nextResult =
-            isEstimateMode && estimateSupport?.familyLabel
-              ? buildApproximateValuation(result, estimateSupport.familyLabel, estimateSupport.yearRangeLabel)
-              : result;
-          const predictedRenderedValue = choosePreferredValuation(displayValuation, nextResult, {
-            allowReplacement: userAdjustedInputs,
-          });
-          const nextResultHasEvidence = hasStructuredValueEvidence(nextResult);
-          const acceptedForDisplay =
-            userAdjustedInputs
-              ? nextResultHasEvidence
-              : JSON.stringify(predictedRenderedValue) !== JSON.stringify(displayValuation);
-          const rejectionReason = acceptedForDisplay
-            ? null
-            : userAdjustedInputs
-              ? nextResultHasEvidence
-                ? "guard-logic-blocked-valid-user-value"
-                : "empty-or-invalid-user-value"
-              : hasStructuredValueEvidence(displayValuation) && JSON.stringify(predictedRenderedValue) === JSON.stringify(displayValuation)
-                ? "identical-or-weaker-passive-result"
-                : "passive-refresh-no-visible-change";
-          const nextValue = JSON.stringify(result);
-          console.log("[vehicle-detail] VALUE_CONDITION_COMPARISON", {
-            vehicleId: typeof valueLookupInput === "string" ? valueLookupInput : null,
-            previousCondition: previousConditionRef.current,
-            newCondition: normalizedCondition,
-            previousValue: previousValueRef.current,
-            newValue: nextValue,
-            changed: previousValueRef.current !== nextValue,
-          });
-          if (__DEV__) {
-            console.log("[vehicle-detail] VALUE_UI_RESPONSE_RECEIVED", {
-              routeId: id,
-              scanId: typeof scanId === "string" ? scanId : null,
-              zip: normalizedZip,
-              mileage: normalizedMileage,
-              condition: normalizedCondition,
-              previousDisplayedValue: displayValuation,
-              returnedValue: nextResult,
-              finalRenderedValue: predictedRenderedValue,
-            });
-            console.log("[vehicle-detail] VEHICLE_VALUE_RECALC_RESPONSE", {
-              routeId: id,
-              scanId: typeof scanId === "string" ? scanId : null,
-              zip: normalizedZip,
-              mileage: normalizedMileage,
-              condition: normalizedCondition,
-              oldDisplayedValue: displayValuation,
-              newReturnedValue: nextResult,
-              accepted: acceptedForDisplay,
-              acceptedReason: acceptedForDisplay
-                ? userAdjustedInputs
-                  ? "user-adjusted-valid-value"
-                  : "passive-refresh-improved-or-initial"
-                : rejectionReason,
-            });
-            console.log("[vehicle-detail] VEHICLE_VALUE_RECALC_RESOLVED", {
-              routeId: id,
-              scanId: typeof scanId === "string" ? scanId : null,
-              previousDisplayedValue: displayValuation,
-              returnedRecalculatedValue: nextResult,
-              zip: normalizedZip,
-              mileage: normalizedMileage,
-              condition: normalizedCondition,
-              userAdjustedInputs,
-              uiUpdated: hasStructuredValueEvidence(nextResult),
-            });
-          }
-          if (__DEV__) {
-            console.log(
-              acceptedForDisplay
-                ? "[vehicle-detail] VALUE_UI_UPDATE_ACCEPTED"
-                : "[vehicle-detail] VALUE_UI_UPDATE_REJECTED",
-              {
-                routeId: id,
-                scanId: typeof scanId === "string" ? scanId : null,
-                zip: normalizedZip,
-                mileage: normalizedMileage,
-                condition: normalizedCondition,
-                previousDisplayedValue: displayValuation,
-                returnedValue: nextResult,
-                finalRenderedValue: predictedRenderedValue,
-                rangesExist: countBelievableValuePairs(nextResult) > 0,
-                sourceLabelExists: Boolean(nextResult.sourceLabel && nextResult.sourceLabel !== "No live value source"),
-                reason: acceptedForDisplay
-                  ? userAdjustedInputs
-                    ? "valid-different-user-driven-value"
-                    : "valid-refresh-value"
-                  : rejectionReason,
-              },
-            );
-            console.log(
-              acceptedForDisplay
-                ? "[vehicle-detail] VEHICLE_VALUE_RECALC_ACCEPTED"
-                : "[vehicle-detail] VEHICLE_VALUE_RECALC_REJECTED",
-              {
-                routeId: id,
-                scanId: typeof scanId === "string" ? scanId : null,
-                zip: normalizedZip,
-                mileage: normalizedMileage,
-                condition: normalizedCondition,
-                oldDisplayedValue: displayValuation,
-                newReturnedValue: nextResult,
-                rangesExist: countBelievableValuePairs(nextResult) > 0,
-                sourceLabelExists: Boolean(nextResult.sourceLabel && nextResult.sourceLabel !== "No live value source"),
-                reason: acceptedForDisplay
-                  ? userAdjustedInputs
-                    ? "valid-user-adjusted-recalculation"
-                    : "accepted-refresh-value"
-                  : rejectionReason,
-              },
-            );
-          }
-          setValueDebugStatus(acceptedForDisplay ? "accepted" : "rejected");
-          if (hasResolvedValueState(nextResult)) {
-            lastValueRequestKeyRef.current = requestKey;
-          }
-          applyValuationUpdate(nextResult, "value-refresh-success", {
-            allowReplacement: userAdjustedInputs,
-          });
-          if (zipSource === "user_input") {
-            void marketAreaZipService.saveLastUsedZip(normalizedZip);
-          }
-          setVehicle((current) =>
-            current
-              ? {
-                  ...current,
-                  valuation: nextResult,
-                }
-              : current,
-          );
-          previousConditionRef.current = normalizedCondition;
-          previousValueRef.current = nextValue;
-        })
-        .catch(() => {
-          setValueDebugStatus("rejected");
-          if (__DEV__) {
-            console.log("[vehicle-detail] VALUE_UI_UPDATE_REJECTED", {
-              routeId: id,
-              scanId: typeof scanId === "string" ? scanId : null,
-              zip: normalizedZip,
-              mileage: normalizedMileage,
-              condition: normalizedCondition,
-              previousDisplayedValue: displayValuation,
-              returnedValue: null,
-              finalRenderedValue: displayValuation,
-              reason: "request-failed-previous-value-kept",
-            });
-            console.log("[vehicle-detail] VEHICLE_VALUE_RECALC_SKIPPED", {
-              routeId: id,
-              scanId: typeof scanId === "string" ? scanId : null,
-              previousDisplayedValue: displayValuation,
-              zip: normalizedZip,
-              mileage: normalizedMileage,
-              condition: normalizedCondition,
-              reason: "value-request-failed",
-            });
-            console.log("[vehicle-detail] VEHICLE_VALUE_RECALC_REJECTED", {
-              routeId: id,
-              scanId: typeof scanId === "string" ? scanId : null,
-              zip: normalizedZip,
-              mileage: normalizedMileage,
-              condition: normalizedCondition,
-              oldDisplayedValue: displayValuation,
-              newReturnedValue: null,
-              reason: "request-failed-previous-value-kept",
-            });
-          }
-        })
-        .finally(() => {
-          if (pendingValueRequestKeyRef.current === requestKey) {
-            pendingValueRequestKeyRef.current = null;
-          }
-          setValuationLoading(false);
-        });
-    }, 250);
-
-    return () => clearTimeout(timeout);
-  }, [applyValuationUpdate, condition, displayValuation, estimateSupport, id, isEstimateMode, mileage, scanId, tab, vehicle, zipCode, zipSource]);
+    }
+  }, [condition, displayValuation, id, mileage, scanId, tab, valueLookupInput, vehicle, zipCode, zipSource]);
 
   useEffect(() => {
     if (!vehicle || tab !== "Value") {
@@ -3142,19 +3107,13 @@ export default function VehicleDetailScreen() {
                 {valuationLoading ? <Text style={styles.valueLoading}>Updating live value…</Text> : null}
               </View>
               <ApproximateDataState
-                title={specialtyValueCopy?.title ?? "Market data is limited for this vehicle."}
-                body={specialtyValueCopy?.body ?? "We're still showing the best available specs."}
-                supportNote={
-                  !zipCode
-                    ? "Enter ZIP code for local market pricing."
-                    : specialtyValueCopy?.supportNote ??
-                      (trustedResult
-                        ? "This vehicle was identified with high confidence, so the specs shown here remain the strongest available details."
-                        : "The current result still includes the best available specs while local market coverage catches up.")
-                }
-                actionLabel="Load live market value"
+                title={valueStatusCardCopy.title}
+                body={valueStatusCardCopy.body}
+                supportNote={valueStatusCardCopy.supportNote}
+                actionLabel={valuationLoading ? "Loading live market value..." : "Load live market value"}
                 onAction={requestExplicitLiveValue}
                 badgeLabel={null}
+                actionDisabled={!canRequestLiveValue || valuationLoading}
               />
               {showQaDebugStrip ? <QaDebugStrip title="QA Value Debug" rows={valueQaRows} /> : null}
             </>
@@ -3207,22 +3166,15 @@ export default function VehicleDetailScreen() {
             </View>
             {valuationLoading ? <Text style={styles.valueLoading}>Updating live value…</Text> : null}
           </View>
-          {resolveValueUsefulness(displayValuation) === "value_unavailable" ? (
+          {!canRenderValueEstimateCard(displayValuation) ? (
             <ApproximateDataState
-              title={specialtyValueCopy?.title ?? "Live market value unavailable"}
-              body={
-                specialtyValueCopy?.body ??
-                "We don't have a trusted market value for this vehicle yet."
-              }
-              supportNote={
-                !zipCode
-                  ? "Enter ZIP code for local market pricing."
-                  : specialtyValueCopy?.supportNote ??
-                    "Load live market value when you're ready to check current pricing."
-              }
-              actionLabel="Load live market value"
+              title={valueStatusCardCopy.title}
+              body={valueStatusCardCopy.body}
+              supportNote={valueStatusCardCopy.supportNote}
+              actionLabel={valuationLoading ? "Loading live market value..." : "Load live market value"}
               onAction={requestExplicitLiveValue}
               badgeLabel={null}
+              actionDisabled={!canRequestLiveValue || valuationLoading}
             />
           ) : isLocked ? (
             <LockedContentPreview

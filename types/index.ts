@@ -24,14 +24,58 @@ export type VehicleSpecs = {
 };
 
 export type ValuationResult = {
+  status:
+    | "ready_to_load"
+    | "loaded_condition_set"
+    | "loaded_value"
+    | "loaded_listing_range"
+    | "no_comps_found"
+    | "provider_error"
+    | "specialty_unavailable"
+    | "stale_after_input_change";
+  selectedCondition?: "fair" | "good" | "excellent" | null;
+  baseCondition?: "fair" | "good" | "excellent" | null;
+  conditionValues?: {
+    fair: {
+      tradeIn: string;
+      privateParty: string;
+      dealerRetail: string;
+      low?: string | null;
+      median?: string | null;
+      high?: string | null;
+    };
+    good: {
+      tradeIn: string;
+      privateParty: string;
+      dealerRetail: string;
+      low?: string | null;
+      median?: string | null;
+      high?: string | null;
+    };
+    excellent: {
+      tradeIn: string;
+      privateParty: string;
+      dealerRetail: string;
+      low?: string | null;
+      median?: string | null;
+      high?: string | null;
+    };
+  } | null;
   tradeIn: string;
   tradeInRange: string;
   privateParty: string;
   privatePartyRange: string;
   dealerRetail: string;
   dealerRetailRange: string;
+  low?: string | null;
+  high?: string | null;
+  median?: string | null;
   confidenceLabel: string;
   sourceLabel: string;
+  message?: string | null;
+  reason?: string | null;
+  listingCount?: number | null;
+  sourceBasis?: "provider_direct" | "listing_median_adjusted" | "modeled_condition_adjusted" | null;
   modelType: "provider_range" | "listing_derived" | "modeled" | "specialty_unavailable";
 };
 
