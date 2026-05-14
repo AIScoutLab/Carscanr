@@ -4,6 +4,7 @@ import { resolveHorsepower } from "@/lib/vehicleData";
 import { getVehicleImage } from "@/constants/vehicleImages";
 import { apiRequest, apiRequestEnvelope } from "@/services/apiClient";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
+import { MarketAreaZipSource } from "@/lib/marketAreaZip";
 import { ListingResult, ValuationResult, VehicleRecord, VehicleSearchQuery } from "@/types";
 
 export type VehicleLookupDescriptor = {
@@ -119,6 +120,7 @@ type ValueRequestOptions = {
   sourceScreen?: string;
   action?: string;
   forceLive?: boolean;
+  zipSource?: MarketAreaZipSource;
 };
 
 type ListingsRequestOptions = {
@@ -127,6 +129,7 @@ type ListingsRequestOptions = {
   sourceScreen?: string;
   action?: string;
   radiusMiles?: number;
+  zipSource?: MarketAreaZipSource;
 };
 
 function defaultOverview(vehicle: BackendVehicle) {
@@ -382,18 +385,7 @@ export const vehicleService = {
         authRequired: false,
       });
       const exactFallbackRecord = await resolveExactFallbackRecord(vehicle, offlineVehicleById ?? null);
-      const [valuation, listings] = await Promise.all([
-        apiRequest<BackendValuation>({
-          path: `/api/vehicle/value?vehicleId=${encodeURIComponent(id)}&zip=60610&mileage=25000&condition=good`,
-          authRequired: false,
-        }).catch(() => null),
-        apiRequest<BackendListing[]>({
-          path: `/api/vehicle/listings?vehicleId=${encodeURIComponent(id)}&zip=60610&radiusMiles=50`,
-          authRequired: false,
-        }).catch(() => []),
-      ]);
-
-      return mapVehicle(vehicle, valuation, listings, exactFallbackRecord ?? null);
+      return mapVehicle(vehicle, null, [], exactFallbackRecord ?? null);
     } catch (error) {
       if (offlineVehicleById) {
         console.warn("[vehicle-service] exact-hit detail falling back to offline canonical record", {
@@ -441,26 +433,7 @@ export const vehicleService = {
     condition: string,
     options?: ValueRequestOptions,
   ): Promise<ValuationResult> {
-    const params = buildVehicleLookupParams(vehicleLookup);
-    params.set("zip", zip);
-    params.set("mileage", mileage);
-    params.set("condition", condition);
-    if (typeof options?.allowLive === "boolean") {
-      params.set("allowLive", options.allowLive ? "true" : "false");
-    }
-    if (typeof options?.fetchReason === "string" && options.fetchReason.trim().length > 0) {
-      params.set("fetchReason", options.fetchReason.trim());
-    }
-    if (typeof options?.sourceScreen === "string" && options.sourceScreen.trim().length > 0) {
-      params.set("sourceScreen", options.sourceScreen.trim());
-    }
-    if (typeof options?.action === "string" && options.action.trim().length > 0) {
-      params.set("action", options.action.trim());
-    }
-    if (typeof options?.forceLive === "boolean") {
-      params.set("forceLive", options.forceLive ? "true" : "false");
-    }
-    const path = `/api/vehicle/value?${params.toString()}`;
+    const path = buildVehicleValueRequestPath(vehicleLookup, zip, mileage, condition, options);
     console.log("[vehicle-service] VALUE_REQUEST_PARAMS", {
       vehicleLookup,
       zip,
@@ -476,6 +449,7 @@ export const vehicleService = {
       sourceScreen: options?.sourceScreen ?? null,
       action: options?.action ?? null,
       forceLive: options?.forceLive ?? null,
+      zipSource: options?.zipSource ?? null,
       path,
     });
     const response = await apiRequestEnvelope<BackendValuation>({
@@ -517,22 +491,7 @@ export const vehicleService = {
     zip: string,
     options?: ListingsRequestOptions,
   ): Promise<ListingsResultEnvelope> {
-    const params = buildVehicleLookupParams(vehicleLookup);
-    params.set("zip", zip);
-    params.set("radiusMiles", String(options?.radiusMiles ?? 50));
-    if (typeof options?.allowLive === "boolean") {
-      params.set("allowLive", options.allowLive ? "true" : "false");
-    }
-    if (typeof options?.fetchReason === "string" && options.fetchReason.trim().length > 0) {
-      params.set("fetchReason", options.fetchReason.trim());
-    }
-    if (typeof options?.sourceScreen === "string" && options.sourceScreen.trim().length > 0) {
-      params.set("sourceScreen", options.sourceScreen.trim());
-    }
-    if (typeof options?.action === "string" && options.action.trim().length > 0) {
-      params.set("action", options.action.trim());
-    }
-    const path = `/api/vehicle/listings?${params.toString()}`;
+    const path = buildVehicleListingsRequestPath(vehicleLookup, zip, options);
     console.log("[vehicle-service] LISTINGS_REQUEST_PARAMS", {
       vehicleLookup,
       zip,
@@ -557,3 +516,61 @@ export const vehicleService = {
     };
   },
 };
+
+export function buildVehicleValueRequestPath(
+  vehicleLookup: VehicleLookupInput,
+  zip: string,
+  mileage: string,
+  condition: string,
+  options?: ValueRequestOptions,
+) {
+  const params = buildVehicleLookupParams(vehicleLookup);
+  params.set("zip", zip);
+  params.set("mileage", mileage);
+  params.set("condition", condition);
+  if (typeof options?.allowLive === "boolean") {
+    params.set("allowLive", options.allowLive ? "true" : "false");
+  }
+  if (typeof options?.fetchReason === "string" && options.fetchReason.trim().length > 0) {
+    params.set("fetchReason", options.fetchReason.trim());
+  }
+  if (typeof options?.sourceScreen === "string" && options.sourceScreen.trim().length > 0) {
+    params.set("sourceScreen", options.sourceScreen.trim());
+  }
+  if (typeof options?.action === "string" && options.action.trim().length > 0) {
+    params.set("action", options.action.trim());
+  }
+  if (typeof options?.forceLive === "boolean") {
+    params.set("forceLive", options.forceLive ? "true" : "false");
+  }
+  if (typeof options?.zipSource === "string" && options.zipSource.length > 0) {
+    params.set("zipSource", options.zipSource);
+  }
+  return `/api/vehicle/value?${params.toString()}`;
+}
+
+export function buildVehicleListingsRequestPath(
+  vehicleLookup: VehicleLookupInput,
+  zip: string,
+  options?: ListingsRequestOptions,
+) {
+  const params = buildVehicleLookupParams(vehicleLookup);
+  params.set("zip", zip);
+  params.set("radiusMiles", String(options?.radiusMiles ?? 50));
+  if (typeof options?.allowLive === "boolean") {
+    params.set("allowLive", options.allowLive ? "true" : "false");
+  }
+  if (typeof options?.fetchReason === "string" && options.fetchReason.trim().length > 0) {
+    params.set("fetchReason", options.fetchReason.trim());
+  }
+  if (typeof options?.sourceScreen === "string" && options.sourceScreen.trim().length > 0) {
+    params.set("sourceScreen", options.sourceScreen.trim());
+  }
+  if (typeof options?.action === "string" && options.action.trim().length > 0) {
+    params.set("action", options.action.trim());
+  }
+  if (typeof options?.zipSource === "string" && options.zipSource.length > 0) {
+    params.set("zipSource", options.zipSource);
+  }
+  return `/api/vehicle/listings?${params.toString()}`;
+}

@@ -61,6 +61,36 @@ const vehicleLookupDescriptorFields = {
   }, z.string().min(1)).optional(),
 } as const;
 
+const optionalBooleanQuery = z.preprocess((value) => {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return value;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "y", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no", "n", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+  return value;
+}, z.boolean()).optional();
+
+const marketRefreshQueryFields = {
+  allowLive: optionalBooleanQuery,
+  forceLive: optionalBooleanQuery,
+  fetchReason: z.preprocess((value) => (typeof value === "string" ? value.trim() : value), z.string().min(1)).optional(),
+  sourceScreen: z.preprocess((value) => (typeof value === "string" ? value.trim() : value), z.string().min(1)).optional(),
+  action: z.preprocess((value) => (typeof value === "string" ? value.trim() : value), z.string().min(1)).optional(),
+  zipSource: z.preprocess((value) => (typeof value === "string" ? value.trim() : value), z.string().min(1)).optional(),
+} as const;
+
 function requireVehicleLookup<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
   return schema.superRefine((value, ctx) => {
     const hasVehicleId = typeof value.vehicleId === "string" && value.vehicleId.trim().length > 0;
@@ -79,6 +109,7 @@ function requireVehicleLookup<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
 export const vehicleSpecsQuerySchema = requireVehicleLookup(
   z.object({
     ...vehicleLookupDescriptorFields,
+    ...marketRefreshQueryFields,
   }),
 );
 
@@ -91,6 +122,7 @@ export const vehicleSearchQuerySchema = z.object({
 export const vehicleValueQuerySchema = requireVehicleLookup(
   z.object({
     ...vehicleLookupDescriptorFields,
+    ...marketRefreshQueryFields,
     zip: z.preprocess((value) => (typeof value === "string" ? value.trim() : value), z.string().min(3).max(10)),
     mileage: z.coerce.number().min(0).max(500000),
     condition: z.preprocess((value) => {
@@ -106,6 +138,7 @@ export const vehicleValueQuerySchema = requireVehicleLookup(
 export const vehicleListingsQuerySchema = requireVehicleLookup(
   z.object({
     ...vehicleLookupDescriptorFields,
+    ...marketRefreshQueryFields,
     zip: z.preprocess((value) => (typeof value === "string" ? value.trim() : value), z.string().min(3).max(10)),
     radiusMiles: z.coerce.number().min(1).max(250).default(50),
   }),

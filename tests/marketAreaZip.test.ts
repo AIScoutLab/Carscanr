@@ -1,0 +1,82 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { normalizeMarketAreaZip, resolveMarketAreaZip } from "@/lib/marketAreaZip";
+import { buildVehicleValueRequestPath } from "@/lib/vehicleMarketRequest";
+
+test("blank users do not silently get a fake ZIP", () => {
+  const resolved = resolveMarketAreaZip({});
+
+  assert.equal(resolved.zip, "");
+  assert.equal(resolved.zipSource, "blank");
+});
+
+test("ZIP priority prefers current user input over persisted values", () => {
+  const resolved = resolveMarketAreaZip({
+    currentUserInputZip: "60502",
+    persistedRecentZip: "60610",
+  });
+
+  assert.equal(resolved.zip, "60502");
+  assert.equal(resolved.zipSource, "user_input");
+});
+
+test("persisted recent ZIP is used when no current input exists", () => {
+  const resolved = resolveMarketAreaZip({
+    persistedRecentZip: "60502",
+  });
+
+  assert.equal(resolved.zip, "60502");
+  assert.equal(resolved.zipSource, "persisted_recent");
+});
+
+test("ZIP normalization strips non-digits instead of using a hardcoded fallback", () => {
+  assert.equal(normalizeMarketAreaZip("60502-1234"), "60502");
+  assert.equal(normalizeMarketAreaZip("(605) 02"), "60502");
+  assert.equal(normalizeMarketAreaZip(""), "");
+});
+
+test("vehicle value request path uses the same ZIP and zipSource shown in the UI", () => {
+  const path = buildVehicleValueRequestPath(
+    "519f29ed-979c-44ee-b443-83b2ce480333",
+    "60502",
+    "18400",
+    "good",
+    {
+      allowLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+      forceLive: true,
+      zipSource: "user_input",
+    },
+  );
+
+  assert.match(path, /zip=60502/);
+  assert.match(path, /zipSource=user_input/);
+  assert.doesNotMatch(path, /zip=60610/);
+});
+
+test("changing ZIP changes the value request cache identity inputs", () => {
+  const firstPath = buildVehicleValueRequestPath(
+    "519f29ed-979c-44ee-b443-83b2ce480333",
+    "60502",
+    "18400",
+    "good",
+    {
+      sourceScreen: "valueScreen",
+      zipSource: "user_input",
+    },
+  );
+  const secondPath = buildVehicleValueRequestPath(
+    "519f29ed-979c-44ee-b443-83b2ce480333",
+    "60610",
+    "18400",
+    "good",
+    {
+      sourceScreen: "valueScreen",
+      zipSource: "user_input",
+    },
+  );
+
+  assert.notEqual(firstPath, secondPath);
+});

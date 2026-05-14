@@ -19,7 +19,9 @@ import { useSubscription } from "@/hooks/useSubscription";
 import { formatHorsepowerLabel } from "@/lib/vehicleData";
 import { mobileEnv } from "@/lib/env";
 import { buildSpecialtyVehicleOverview, isSpecialtyExoticMake } from "@/lib/specialtyVehicles";
+import { MarketAreaZipSource, isValidMarketAreaZip, normalizeMarketAreaZip } from "@/lib/marketAreaZip";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
+import { marketAreaZipService } from "@/services/marketAreaZipService";
 import { scanService } from "@/services/scanService";
 import { buildVehicleSoftUnlockId, buildVehicleUnlockId } from "@/services/subscriptionService";
 import { ListingsDebugMeta, VehicleLookupDescriptor, vehicleService } from "@/services/vehicleService";
@@ -27,7 +29,7 @@ import { ValuationResult, VehicleRecord } from "@/types";
 import { formatCurrency } from "@/lib/utils";
 
 const tabs = ["Overview", "Specs", "Value", "For Sale", "Photos"];
-const defaultZip = "60610";
+const defaultZip = "";
 const defaultMileage = "18400";
 const defaultCondition = "Excellent";
 const conditionOptions = ["Poor", "Fair", "Good", "Very Good", "Excellent"];
@@ -772,6 +774,7 @@ export default function VehicleDetailScreen() {
   const [vehicle, setVehicle] = useState<VehicleRecord | null>(null);
   const [valuation, setValuation] = useState<ValuationResult>(createEmptyValuation());
   const [zipCode, setZipCode] = useState(defaultZip);
+  const [zipSource, setZipSource] = useState<MarketAreaZipSource>("blank");
   const [mileage, setMileage] = useState(defaultMileage);
   const [condition, setCondition] = useState(defaultCondition);
   const [valuationLoading, setValuationLoading] = useState(false);
@@ -1043,7 +1046,8 @@ export default function VehicleDetailScreen() {
   const believableListingsCount = (vehicle?.listings ?? []).filter(isBelievableListing).length;
   const valueQaRows = [
     { label: "Value source", value: displayValuation.sourceLabel ?? "none" },
-    { label: "ZIP", value: zipCode || "unset" },
+    { label: "Market ZIP", value: zipCode || "unset" },
+    { label: "ZIP source", value: zipSource },
     { label: "Mileage", value: mileage || "unset" },
     { label: "Condition", value: condition || "unset" },
     { label: "Recalc status", value: valueDebugStatus },
@@ -1065,15 +1069,24 @@ export default function VehicleDetailScreen() {
           trustedResult,
         })
       : null;
+  const marketAreaZipHint = zipCode
+    ? "Local market pricing depends on ZIP."
+    : "Enter ZIP code for local market pricing.";
+  const handleZipCodeChange = useCallback((nextValue: string) => {
+    const normalizedZip = normalizeMarketAreaZip(nextValue);
+    setZipCode(normalizedZip);
+    setZipSource(normalizedZip.length > 0 ? "user_input" : "blank");
+  }, []);
   const requestExplicitLiveValue = useCallback(() => {
     if (!vehicle || !valueLookupInput) {
       return;
     }
 
-    const normalizedZip = zipCode.trim();
+    const normalizedZip = normalizeMarketAreaZip(zipCode);
     const normalizedMileage = mileage.trim();
     const normalizedCondition = normalizeCondition(condition);
-    if (!normalizedZip || !normalizedMileage || !normalizedCondition) {
+    if (!isValidMarketAreaZip(normalizedZip) || !normalizedMileage || !normalizedCondition) {
+      setValueDebugStatus("rejected");
       return;
     }
 
@@ -1087,6 +1100,7 @@ export default function VehicleDetailScreen() {
       sourceScreen: "valueScreen",
       action: "valueRefresh",
       zip: normalizedZip,
+      zipSource,
       mileage: normalizedMileage,
       condition: normalizedCondition,
     });
@@ -1098,6 +1112,7 @@ export default function VehicleDetailScreen() {
         sourceScreen: "valueScreen",
         action: "valueRefresh",
         forceLive: true,
+        zipSource,
       })
       .then((result) => {
         const nextResult =
@@ -1112,6 +1127,7 @@ export default function VehicleDetailScreen() {
         setVehicle((current) => (current ? { ...current, valuation: nextResult } : current));
         previousConditionRef.current = normalizedCondition;
         previousValueRef.current = JSON.stringify(result);
+        void marketAreaZipService.saveLastUsedZip(normalizedZip);
       })
       .catch(() => {
         setValueDebugStatus("rejected");
@@ -1132,14 +1148,15 @@ export default function VehicleDetailScreen() {
     valueLookupInput,
     vehicle,
     zipCode,
+    zipSource,
   ]);
   const requestExplicitLiveListings = useCallback(() => {
     if (!vehicle || !valueLookupInput) {
       return;
     }
 
-    const normalizedZip = zipCode.trim();
-    if (!normalizedZip) {
+    const normalizedZip = normalizeMarketAreaZip(zipCode);
+    if (!isValidMarketAreaZip(normalizedZip)) {
       return;
     }
 
@@ -1150,6 +1167,7 @@ export default function VehicleDetailScreen() {
       sourceScreen: "listingsScreen",
       action: "listingsRefresh",
       zip: normalizedZip,
+      zipSource,
     });
 
     vehicleService
@@ -1159,6 +1177,7 @@ export default function VehicleDetailScreen() {
         sourceScreen: "listingsScreen",
         action: "listingsRefresh",
         radiusMiles: 50,
+        zipSource,
       })
       .then((result) => {
         setListingsDebugMeta(result.meta);
@@ -1170,11 +1189,12 @@ export default function VehicleDetailScreen() {
               }
             : current,
         );
+        void marketAreaZipService.saveLastUsedZip(normalizedZip);
       })
       .finally(() => {
         setListingsRefreshLoading(false);
       });
-  }, [id, scanId, valueLookupInput, vehicle, zipCode]);
+  }, [id, scanId, valueLookupInput, vehicle, zipCode, zipSource]);
 
   useEffect(() => {
     if (__DEV__) {
@@ -1201,6 +1221,35 @@ export default function VehicleDetailScreen() {
     setValueDebugUpdateCount(0);
     setValueDebugUpdatedAt(null);
     setListingsDebugMeta(null);
+    setZipCode("");
+    setZipSource("blank");
+  }, [id, scanId]);
+
+  useEffect(() => {
+    let active = true;
+
+    marketAreaZipService
+      .getInitialMarketAreaZip()
+      .then((result) => {
+        if (!active) {
+          return;
+        }
+        setZipCode(result.zip);
+        setZipSource(result.zipSource);
+        if (__DEV__) {
+          console.log("[vehicle-detail] MARKET_AREA_ZIP_HYDRATED", {
+            routeId: id,
+            scanId: typeof scanId === "string" ? scanId : null,
+            zip: result.zip,
+            zipSource: result.zipSource,
+          });
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+    };
   }, [id, scanId]);
 
   useEffect(() => {
@@ -1602,18 +1651,9 @@ export default function VehicleDetailScreen() {
         setVehicle(estimatedVehicle);
         applyValuationUpdate(estimatedVehicle.valuation, "estimate-initial");
         setValueDebugStatus(hasStructuredValueEvidence(estimatedVehicle.valuation) ? "accepted" : "idle");
-        setZipCode(defaultZip);
         setMileage(defaultMileage);
         setCondition(defaultCondition);
-        lastValueRequestKeyRef.current = buildValueRequestKey(
-          {
-            vehicleId: groundedVehicleIdForDetail,
-            descriptor: detailLookupDescriptor,
-          },
-          defaultZip,
-          defaultMileage,
-          defaultCondition,
-        );
+        lastValueRequestKeyRef.current = null;
         previousConditionRef.current = normalizeCondition(defaultCondition);
         previousValueRef.current = JSON.stringify(estimatedVehicle.valuation);
         setEstimateSupport({
@@ -1666,12 +1706,8 @@ export default function VehicleDetailScreen() {
           strongFamilyFallback
             ? vehicleService.getSpecsByLookup(estimateDetailLookupInput)
             : Promise.resolve(null),
-          strongMarketFallback
-            ? vehicleService.getValue(estimateDetailLookupInput, defaultZip, defaultMileage, normalizeCondition(defaultCondition))
-            : Promise.resolve(null),
-          strongListingsFallback
-            ? vehicleService.getListings(estimateDetailLookupInput, defaultZip)
-            : Promise.resolve({ listings: [], meta: null }),
+          Promise.resolve(null),
+          Promise.resolve({ listings: [], meta: null }),
         ]);
 
         if (!active) {
@@ -1679,6 +1715,11 @@ export default function VehicleDetailScreen() {
         }
 
         const resolvedSpecsVehicle = specsResult.status === "fulfilled" ? specsResult.value : null;
+        const resolvedValueResult = valueResult.status === "fulfilled" ? (valueResult.value as ValuationResult | null) : null;
+        const resolvedListingsResult =
+          listingsResult.status === "fulfilled"
+            ? (listingsResult.value as { listings: VehicleRecord["listings"]; meta: ListingsDebugMeta | null })
+            : null;
 
         if (strongFamilyFallback && resolvedSpecsVehicle) {
           setVehicle((current) =>
@@ -1693,9 +1734,9 @@ export default function VehicleDetailScreen() {
           );
         }
 
-        if (strongMarketFallback && valueResult.status === "fulfilled" && valueResult.value) {
+        if (strongMarketFallback && resolvedValueResult) {
           const nextValuation = buildApproximateValuation(
-            valueResult.value,
+            resolvedValueResult,
             displayFamilyLabel,
             displayYearLabel,
           );
@@ -1703,25 +1744,25 @@ export default function VehicleDetailScreen() {
           setVehicle((current) => (current ? { ...current, valuation: nextValuation } : current));
         }
 
-        if (strongListingsFallback && listingsResult.status === "fulfilled") {
-          setListingsDebugMeta(listingsResult.value.meta);
+        if (strongListingsFallback && resolvedListingsResult) {
+          setListingsDebugMeta(resolvedListingsResult.meta);
           setVehicle((current) =>
             current
               ? {
                   ...current,
-                  listings: listingsResult.value.listings.slice(0, 2),
+                  listings: resolvedListingsResult.listings.slice(0, 2),
                 }
               : current,
           );
         }
 
         const finalValuation =
-          strongMarketFallback && valueResult.status === "fulfilled" && valueResult.value
-            ? buildApproximateValuation(valueResult.value, displayFamilyLabel, displayYearLabel)
+          strongMarketFallback && resolvedValueResult
+            ? buildApproximateValuation(resolvedValueResult, displayFamilyLabel, displayYearLabel)
             : estimatedVehicle.valuation;
         const finalListings =
-          strongListingsFallback && listingsResult.status === "fulfilled"
-            ? listingsResult.value.listings.slice(0, 2)
+          strongListingsFallback && resolvedListingsResult
+            ? resolvedListingsResult.listings.slice(0, 2)
             : [];
         if (shouldDebugCrv) {
           console.log("[vehicle-detail] DEBUG_CRV_TRACE", {
@@ -1735,15 +1776,15 @@ export default function VehicleDetailScreen() {
             valuePipeline: {
               attempted: strongMarketFallback,
               status: valueResult.status,
-              returned: valueResult.status === "fulfilled" ? Boolean(valueResult.value) : false,
-              sourceLabel: valueResult.status === "fulfilled" && valueResult.value ? valueResult.value.sourceLabel ?? null : null,
-              modelType: valueResult.status === "fulfilled" && valueResult.value ? valueResult.value.modelType ?? null : null,
+              returned: Boolean(resolvedValueResult),
+              sourceLabel: resolvedValueResult?.sourceLabel ?? null,
+              modelType: resolvedValueResult?.modelType ?? null,
             },
             listingsPipeline: {
               attempted: strongListingsFallback,
               status: listingsResult.status,
-              returnedCount: listingsResult.status === "fulfilled" ? listingsResult.value.listings.length : 0,
-              believableCount: listingsResult.status === "fulfilled" ? listingsResult.value.meta?.believableCount ?? listingsResult.value.listings.length : 0,
+              returnedCount: resolvedListingsResult?.listings.length ?? 0,
+              believableCount: resolvedListingsResult?.meta?.believableCount ?? resolvedListingsResult?.listings.length ?? 0,
             },
             final: {
               horsepowerPopulated: Boolean(initialHorsepowerValue),
@@ -1809,12 +1850,11 @@ export default function VehicleDetailScreen() {
         setVehicle(offlineResult);
         applyValuationUpdate(offlineResult.valuation ?? createEmptyValuation(), "offline-result");
         setValueDebugStatus(hasStructuredValueEvidence(offlineResult.valuation) ? "accepted" : "idle");
-        setZipCode(defaultZip);
         const initialMileage = getInitialMileage(offlineResult);
         const initialCondition = getInitialCondition(offlineResult);
         setMileage(initialMileage);
         setCondition(initialCondition);
-        lastValueRequestKeyRef.current = buildValueRequestKey(offlineResult.id, defaultZip, initialMileage, initialCondition);
+        lastValueRequestKeyRef.current = null;
         previousConditionRef.current = normalizeCondition(initialCondition);
         previousValueRef.current = JSON.stringify(offlineResult.valuation ?? createEmptyValuation());
         setError(null);
@@ -1832,12 +1872,11 @@ export default function VehicleDetailScreen() {
         applyValuationUpdate(result?.valuation ?? createEmptyValuation(), "backend-vehicle-load");
         setValueDebugStatus(hasStructuredValueEvidence(result?.valuation) ? "accepted" : "idle");
         if (result) {
-          setZipCode(defaultZip);
           const initialMileage = getInitialMileage(result);
           const initialCondition = getInitialCondition(result);
           setMileage(initialMileage);
           setCondition(initialCondition);
-          lastValueRequestKeyRef.current = buildValueRequestKey(result.id, defaultZip, initialMileage, initialCondition);
+          lastValueRequestKeyRef.current = null;
           previousConditionRef.current = normalizeCondition(initialCondition);
           previousValueRef.current = JSON.stringify(result.valuation ?? createEmptyValuation());
           console.log("[vehicle-detail] OFFLINE_RESULT_ENHANCED", {
@@ -1935,7 +1974,8 @@ export default function VehicleDetailScreen() {
       console.log("[vehicle-detail] VALUE_UI_INPUT_CHANGED", {
         routeId: id,
         scanId: typeof scanId === "string" ? scanId : null,
-        zip: zipCode.trim(),
+        zip: normalizeMarketAreaZip(zipCode),
+        zipSource,
         mileage: mileage.trim(),
         condition: normalizeCondition(condition),
         previousDisplayedValue: displayValuation,
@@ -1943,7 +1983,8 @@ export default function VehicleDetailScreen() {
       console.log("[vehicle-detail] VEHICLE_VALUE_INPUT_STATE", {
         routeId: id,
         scanId: typeof scanId === "string" ? scanId : null,
-        zip: zipCode.trim(),
+        zip: normalizeMarketAreaZip(zipCode),
+        zipSource,
         mileage: mileage.trim(),
         condition: normalizeCondition(condition),
         oldDisplayedValue: displayValuation,
@@ -1954,7 +1995,7 @@ export default function VehicleDetailScreen() {
       return;
     }
 
-    const normalizedZip = zipCode.trim();
+    const normalizedZip = normalizeMarketAreaZip(zipCode);
     const normalizedMileage = mileage.trim();
     const normalizedCondition = normalizeCondition(condition);
     const requestKey = buildValueRequestKey(valueLookupInput, normalizedZip, normalizedMileage, normalizedCondition) ?? "";
@@ -2071,7 +2112,12 @@ export default function VehicleDetailScreen() {
       }
       setValuationLoading(true);
       vehicleService
-        .getValue(valueLookupInput, normalizedZip, normalizedMileage, normalizedCondition)
+        .getValue(valueLookupInput, normalizedZip, normalizedMileage, normalizedCondition, {
+          allowLive: false,
+          fetchReason: "initial_load",
+          sourceScreen: "valueScreen",
+          zipSource,
+        })
         .then((result) => {
           const nextResult =
             isEstimateMode && estimateSupport?.familyLabel
@@ -2193,6 +2239,9 @@ export default function VehicleDetailScreen() {
           applyValuationUpdate(nextResult, "value-refresh-success", {
             allowReplacement: userAdjustedInputs,
           });
+          if (zipSource === "user_input") {
+            void marketAreaZipService.saveLastUsedZip(normalizedZip);
+          }
           setVehicle((current) =>
             current
               ? {
@@ -2248,7 +2297,7 @@ export default function VehicleDetailScreen() {
     }, 250);
 
     return () => clearTimeout(timeout);
-  }, [applyValuationUpdate, condition, displayValuation, estimateSupport, id, isEstimateMode, mileage, scanId, tab, vehicle, zipCode]);
+  }, [applyValuationUpdate, condition, displayValuation, estimateSupport, id, isEstimateMode, mileage, scanId, tab, vehicle, zipCode, zipSource]);
 
   useEffect(() => {
     if (!vehicle || tab !== "Value") {
@@ -2258,7 +2307,8 @@ export default function VehicleDetailScreen() {
       console.log("[vehicle-detail] VALUE_UI_RENDER_BRANCH", {
         routeId: id,
         scanId: typeof scanId === "string" ? scanId : null,
-        zip: zipCode.trim(),
+        zip: normalizeMarketAreaZip(zipCode),
+        zipSource,
         mileage: mileage.trim(),
         condition: normalizeCondition(condition),
         previousDisplayedValue: null,
@@ -2274,7 +2324,7 @@ export default function VehicleDetailScreen() {
       sourceLabel: displayValuation.sourceLabel ?? null,
       fallbackUiChosen: valueTabFinalState === "value_unavailable",
     });
-  }, [condition, displayValuation, id, mileage, scanId, tab, valuation, valueTabFinalState, vehicle, zipCode]);
+  }, [condition, displayValuation, id, mileage, scanId, tab, valuation, valueTabFinalState, vehicle, zipCode, zipSource]);
 
   useEffect(() => {
     if (!vehicle) {
@@ -2994,17 +3044,18 @@ export default function VehicleDetailScreen() {
                   {estimateSupport?.marketSourceLabel ?? "Nearby pricing support is shown here when available for this vehicle."}
                 </Text>
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>ZIP code</Text>
+                  <Text style={styles.inputLabel}>Market area ZIP</Text>
                   <TextInput
                     style={styles.input}
                     value={zipCode}
-                    onChangeText={setZipCode}
+                    onChangeText={handleZipCodeChange}
                     autoCapitalize="characters"
                     keyboardType="number-pad"
                     maxLength={5}
-                    placeholder="ZIP code"
+                    placeholder="Enter ZIP code"
                     placeholderTextColor={Colors.textMuted}
                   />
+                  <Text style={styles.inputHint}>{marketAreaZipHint}</Text>
                 </View>
                 <View style={styles.inputGroup}>
                   <Text style={styles.inputLabel}>Mileage</Text>
@@ -3041,14 +3092,65 @@ export default function VehicleDetailScreen() {
             </>
           ) : (
             <>
+              <View style={styles.sectionCard}>
+                <SectionHeader
+                  title="Value inputs"
+                  subtitle="Enter a market area ZIP, mileage, and condition before loading live pricing."
+                />
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Market area ZIP</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={zipCode}
+                    onChangeText={handleZipCodeChange}
+                    autoCapitalize="characters"
+                    keyboardType="number-pad"
+                    maxLength={5}
+                    placeholder="Enter ZIP code"
+                    placeholderTextColor={Colors.textMuted}
+                  />
+                  <Text style={styles.inputHint}>{marketAreaZipHint}</Text>
+                </View>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Mileage</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={mileage}
+                    onChangeText={setMileage}
+                    keyboardType="number-pad"
+                    placeholder="Mileage"
+                    placeholderTextColor={Colors.textMuted}
+                  />
+                </View>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Condition</Text>
+                  <View style={styles.conditionGrid}>
+                    {conditionOptions.map((option) => {
+                      const active = option === condition;
+                      return (
+                        <Pressable
+                          key={option}
+                          style={[styles.conditionChip, active && styles.conditionChipActive]}
+                          onPress={() => setCondition(option)}
+                        >
+                          <Text style={[styles.conditionChipLabel, active && styles.conditionChipLabelActive]}>{option}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
+                {valuationLoading ? <Text style={styles.valueLoading}>Updating live value…</Text> : null}
+              </View>
               <ApproximateDataState
                 title={specialtyValueCopy?.title ?? "Market data is limited for this vehicle."}
                 body={specialtyValueCopy?.body ?? "We're still showing the best available specs."}
                 supportNote={
-                  specialtyValueCopy?.supportNote ??
-                  (trustedResult
-                    ? "This vehicle was identified with high confidence, so the specs shown here remain the strongest available details."
-                    : "The current result still includes the best available specs while local market coverage catches up.")
+                  !zipCode
+                    ? "Enter ZIP code for local market pricing."
+                    : specialtyValueCopy?.supportNote ??
+                      (trustedResult
+                        ? "This vehicle was identified with high confidence, so the specs shown here remain the strongest available details."
+                        : "The current result still includes the best available specs while local market coverage catches up.")
                 }
                 actionLabel="Load live market value"
                 onAction={requestExplicitLiveValue}
@@ -3060,19 +3162,20 @@ export default function VehicleDetailScreen() {
         ) : (
         <>
           <View style={styles.sectionCard}>
-            <SectionHeader title="Value inputs" subtitle="Tune the estimate to your market and condition." />
+            <SectionHeader title="Value inputs" subtitle="Tune the estimate to your market and condition. Local market pricing depends on ZIP." />
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>ZIP code</Text>
+              <Text style={styles.inputLabel}>Market area ZIP</Text>
               <TextInput
                 style={styles.input}
                 value={zipCode}
-                onChangeText={setZipCode}
+                onChangeText={handleZipCodeChange}
                 autoCapitalize="characters"
                 keyboardType="number-pad"
                 maxLength={5}
-                placeholder="ZIP code"
+                placeholder="Enter ZIP code"
                 placeholderTextColor={Colors.textMuted}
               />
+              <Text style={styles.inputHint}>{marketAreaZipHint}</Text>
             </View>
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>Mileage</Text>
@@ -3112,8 +3215,10 @@ export default function VehicleDetailScreen() {
                 "We don't have a trusted market value for this vehicle yet."
               }
               supportNote={
-                specialtyValueCopy?.supportNote ??
-                "Load live market value when you're ready to check current pricing."
+                !zipCode
+                  ? "Enter ZIP code for local market pricing."
+                  : specialtyValueCopy?.supportNote ??
+                    "Load live market value when you're ready to check current pricing."
               }
               actionLabel="Load live market value"
               onAction={requestExplicitLiveValue}
@@ -3604,6 +3709,7 @@ const styles = StyleSheet.create({
   inputGroup: { gap: 8 },
   inputLabel: { ...Typography.caption, color: Colors.textMuted },
   input: { backgroundColor: Colors.cardAlt, borderRadius: Radius.md, padding: 14, color: Colors.text, ...Typography.body },
+  inputHint: { ...Typography.caption, color: Colors.textMuted, lineHeight: 18 },
   conditionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   conditionChip: {
     backgroundColor: Colors.cardAlt,

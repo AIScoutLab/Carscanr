@@ -52,6 +52,14 @@ function readLookupDescriptor(query: Request["query"]): VehicleLookupDescriptor 
 }
 
 function readOptionalBoolean(queryValue: unknown): boolean | undefined {
+  if (typeof queryValue === "boolean") {
+    return queryValue;
+  }
+  if (typeof queryValue === "number") {
+    if (queryValue === 1) return true;
+    if (queryValue === 0) return false;
+    return undefined;
+  }
   if (typeof queryValue !== "string") {
     return undefined;
   }
@@ -209,6 +217,7 @@ export class VehicleController {
         {
           label: "VALUE_API_REQUEST_RECEIVED",
           requestId: res.locals.requestId,
+          rawQuery: req.query,
           vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
           year: req.query.year ?? null,
           make: req.query.make ?? null,
@@ -238,31 +247,36 @@ export class VehicleController {
       const fetchReason = typeof req.query.fetchReason === "string" ? req.query.fetchReason : undefined;
       const sourceScreen = typeof req.query.sourceScreen === "string" ? req.query.sourceScreen : undefined;
       const action = typeof req.query.action === "string" ? req.query.action : undefined;
+      const zipSource = typeof req.query.zipSource === "string" ? req.query.zipSource : undefined;
       logger.info(
         {
           label: "VALUE_REFRESH_ACTION_METADATA",
           requestId: res.locals.requestId,
+          rawQuery: req.query,
           vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
           allowLive: allowLive ?? null,
           fetchReason: fetchReason ?? null,
           sourceScreen: sourceScreen ?? null,
           action: action ?? null,
           forceLive: forceLive ?? null,
+          zipSource: zipSource ?? null,
           parsedDescriptor: descriptor,
         },
         "VALUE_REFRESH_ACTION_METADATA",
       );
       if (allowLive || forceLive || fetchReason === "user_requested_value_refresh" || sourceScreen === "valueScreen") {
         logger.info(
-          {
-            label: "VALUE_LIVE_REFRESH_REQUESTED",
-            requestId: res.locals.requestId,
-            vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
+        {
+          label: "VALUE_LIVE_REFRESH_REQUESTED",
+          requestId: res.locals.requestId,
+          rawQuery: req.query,
+          vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
             allowLive: allowLive ?? null,
-            fetchReason: fetchReason ?? null,
-            sourceScreen: sourceScreen ?? null,
-            action: action ?? null,
-            forceLive: forceLive ?? null,
+          fetchReason: fetchReason ?? null,
+          sourceScreen: sourceScreen ?? null,
+          action: action ?? null,
+          forceLive: forceLive ?? null,
+          zipSource: zipSource ?? null,
           },
           "VALUE_LIVE_REFRESH_REQUESTED",
         );
