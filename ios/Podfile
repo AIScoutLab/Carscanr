@@ -12,6 +12,7 @@ install! 'cocoapods',
   :deterministic_uuids => false
 
 prepare_react_native_project!
+project 'CarIdentifier.xcodeproj'
 
 target 'CarIdentifier' do
   use_expo_modules!
