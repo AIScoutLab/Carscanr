@@ -81,6 +81,17 @@ function requireData<T>(value: T | null, message: string): T {
   return value;
 }
 
+function isMissingUnlockBalanceColumnError(error: any, table: string, column: string) {
+  if (!error) return false;
+  const code = String(error.code ?? "");
+  const message = String(error.message ?? "");
+  return (
+    code === "PGRST204" &&
+    message.includes(`'${column}'`) &&
+    message.includes(`'${table}'`)
+  );
+}
+
 function mapVehicleRow(row: any): VehicleRecord {
   const parsedHorsepower = resolveHorsepower(row.horsepower, row.hp, row.engine_hp);
   return {
@@ -2448,21 +2459,69 @@ export class SupabaseUnlockBalanceRepository implements UnlockBalanceRepository 
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    const { data, error } = await this.client
+    let { data, error } = await this.client
       .from("user_unlock_balances")
       .upsert(unlockBalanceToRow(record), { onConflict: "user_id" })
       .select("*")
       .single();
+    if (isMissingUnlockBalanceColumnError(error, "user_unlock_balances", "unlock_credits")) {
+      logger.warn(
+        {
+          label: "UNLOCK_BALANCE_LEGACY_SCHEMA_FALLBACK",
+          operation: "getOrCreate",
+          userId,
+        },
+        "UNLOCK_BALANCE_LEGACY_SCHEMA_FALLBACK",
+      );
+      ({ data, error } = await this.client
+        .from("user_unlock_balances")
+        .upsert(
+          {
+            user_id: record.userId,
+            free_unlocks_total: record.freeUnlocksTotal,
+            free_unlocks_used: record.freeUnlocksUsed,
+            created_at: record.createdAt,
+            updated_at: record.updatedAt,
+          },
+          { onConflict: "user_id" },
+        )
+        .select("*")
+        .single());
+    }
     if (error) throw new AppError(500, "SUPABASE_UPSERT_FAILED", "Failed to upsert unlock balance.", error);
     return mapUnlockBalanceRow(requireData(data, "Unlock balance upsert returned no row."));
   }
 
   async update(record: UnlockBalanceRecord): Promise<UnlockBalanceRecord> {
-    const { data, error } = await this.client
+    let { data, error } = await this.client
       .from("user_unlock_balances")
       .upsert(unlockBalanceToRow(record), { onConflict: "user_id" })
       .select("*")
       .single();
+    if (isMissingUnlockBalanceColumnError(error, "user_unlock_balances", "unlock_credits")) {
+      logger.warn(
+        {
+          label: "UNLOCK_BALANCE_LEGACY_SCHEMA_FALLBACK",
+          operation: "update",
+          userId: record.userId,
+        },
+        "UNLOCK_BALANCE_LEGACY_SCHEMA_FALLBACK",
+      );
+      ({ data, error } = await this.client
+        .from("user_unlock_balances")
+        .upsert(
+          {
+            user_id: record.userId,
+            free_unlocks_total: record.freeUnlocksTotal,
+            free_unlocks_used: record.freeUnlocksUsed,
+            created_at: record.createdAt,
+            updated_at: record.updatedAt,
+          },
+          { onConflict: "user_id" },
+        )
+        .select("*")
+        .single());
+    }
     if (error) throw new AppError(500, "SUPABASE_UPSERT_FAILED", "Failed to update unlock balance.", error);
     return mapUnlockBalanceRow(requireData(data, "Unlock balance update returned no row."));
   }
