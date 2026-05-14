@@ -60,7 +60,7 @@ describe("bootstrap cost control", () => {
     const service = new VehicleService();
     const result = await service.getValue({
       vehicleId: "2021-cadillac-ct4-premium-luxury",
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
       condition: "good",
       allowLive: false,
@@ -68,7 +68,7 @@ describe("bootstrap cost control", () => {
     });
 
     assert.equal(providerCalls, 0);
-    assert.equal(result.data.sourceLabel, "Estimated from vehicle data");
+    assert.match(result.data.sourceLabel ?? "", /Estimated from similar vehicles|Estimated from vehicle data/);
     assert.ok(result.data.privateParty > 0);
   });
 
@@ -113,7 +113,7 @@ describe("bootstrap cost control", () => {
     const service = new VehicleService();
     const result = await service.getValue({
       vehicleId: "2007-ferrari-f430",
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
       condition: "good",
       allowLive: false,
@@ -165,17 +165,17 @@ describe("bootstrap cost control", () => {
       createValuesCacheRow({
         descriptor: buildFamilyCacheDescriptor(ferrariDescriptor),
         cacheKey: getFamilyValuesCacheKey(ferrariDescriptor, {
-          zip: "60610",
+          zip: "60502",
           mileage: 18400,
         }),
         provider: "marketcheck",
-        zip: "60610",
+        zip: "60502",
         mileage: 18400,
         condition: "good",
         payload: {
           id: "cached-ferrari-family",
           vehicleId: "2006-ferrari-f430",
-          zip: "60610",
+          zip: "60502",
           mileage: 18400,
           condition: "good",
           tradeIn: 27822,
@@ -206,7 +206,7 @@ describe("bootstrap cost control", () => {
     const service = new VehicleService();
     const result = await service.getValue({
       vehicleId: "2006-ferrari-f430",
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
       condition: "good",
       allowLive: false,
@@ -257,17 +257,17 @@ describe("bootstrap cost control", () => {
       createValuesCacheRow({
         descriptor: buildFamilyCacheDescriptor(ferrariDescriptor),
         cacheKey: getFamilyValuesCacheKey(ferrariDescriptor, {
-          zip: "60610",
+          zip: "60502",
           mileage: 18400,
         }),
         provider: "marketcheck",
-        zip: "60610",
+        zip: "60502",
         mileage: 18400,
         condition: "good",
         payload: {
           id: "cached-ferrari-family",
           vehicleId: "2006-ferrari-f430",
-          zip: "60610",
+          zip: "60502",
           mileage: 18400,
           condition: "good",
           tradeIn: 27822,
@@ -293,7 +293,7 @@ describe("bootstrap cost control", () => {
           return {
             id: "live-f430-value",
             vehicleId: "2006-ferrari-f430",
-            zip: "60610",
+            zip: "60502",
             mileage: 18400,
             condition: "good",
             tradeIn: 142000,
@@ -318,7 +318,7 @@ describe("bootstrap cost control", () => {
     const service = new VehicleService();
     const result = await service.getValue({
       vehicleId: "2006-ferrari-f430",
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
       condition: "good",
       allowLive: true,
@@ -370,17 +370,17 @@ describe("bootstrap cost control", () => {
       createValuesCacheRow({
         descriptor: buildFamilyCacheDescriptor(ferrariDescriptor),
         cacheKey: getFamilyValuesCacheKey(ferrariDescriptor, {
-          zip: "60610",
+          zip: "60502",
           mileage: 18400,
         }),
         provider: "marketcheck",
-        zip: "60610",
+        zip: "60502",
         mileage: 18400,
         condition: "good",
         payload: {
           id: "cached-ferrari-family",
           vehicleId: "2006-ferrari-f430",
-          zip: "60610",
+          zip: "60502",
           mileage: 18400,
           condition: "good",
           tradeIn: 27822,
@@ -411,7 +411,7 @@ describe("bootstrap cost control", () => {
     const service = new VehicleService();
     const result = await service.getValue({
       vehicleId: "2006-ferrari-f430",
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
       condition: "good",
       allowLive: true,
@@ -468,7 +468,7 @@ describe("bootstrap cost control", () => {
     const service = new VehicleService();
     const result = await service.getValue({
       vehicleId: "2006-ferrari-f430",
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
       condition: "good",
       allowLive: true,
@@ -524,7 +524,7 @@ describe("bootstrap cost control", () => {
     const service = new VehicleService();
     const result = await service.getValue({
       vehicleId: "2006-ferrari-f430",
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
       condition: "good",
       allowLive: true,
@@ -612,7 +612,7 @@ describe("bootstrap cost control", () => {
     const service = new VehicleService();
     const result = await service.getValue({
       vehicleId: "519f29ed-979c-44ee-b443-83b2ce480333",
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
       condition: "good",
       allowLive: true,
@@ -630,7 +630,7 @@ describe("bootstrap cost control", () => {
         request.make === "Ferrari" &&
         request.model === "812 Superfast" &&
         request.trim === "Base" &&
-        request.zip === "60610" &&
+        request.zip === "60502" &&
         request.mileage === 18400 &&
         request.condition === "good" &&
         request.allowLive === true &&
@@ -1058,6 +1058,160 @@ describe("bootstrap cost control", () => {
     assert.equal(value.data.status, "loaded_condition_set");
   });
 
+  test("Portofino cached listing at 100 miles produces a listing-derived value instead of unavailable", async () => {
+    setRepositories(
+      createTestRepositories({
+        vehicles: [
+          {
+            id: "2020-ferrari-portofino",
+            year: 2020,
+            make: "Ferrari",
+            model: "Portofino",
+            trim: "Base",
+            bodyStyle: "Coupe",
+            vehicleType: "car",
+            msrp: 215000,
+            engine: "3.9L twin-turbo V8",
+            horsepower: 591,
+            torque: "561 lb-ft",
+            transmission: "7-speed dual-clutch automatic",
+            drivetrain: "RWD",
+            mpgOrRange: "16 city / 22 highway",
+            colors: ["Blu Tour De France"],
+          },
+        ],
+        listings: [
+          {
+            id: "listing-portofino",
+            vehicleId: "2020-ferrari-portofino",
+            year: 2020,
+            make: "Ferrari",
+            model: "Portofino",
+            trim: "Base",
+            title: "2020 Ferrari Portofino",
+            price: 209995,
+            mileage: 8800,
+            dealer: "Motor Cars Of Chicago",
+            distanceMiles: 35,
+            location: "Chicago, IL",
+            imageUrl: "https://dealer.example.test/portofino.jpg",
+            listingUrl: "https://dealer.example.test/portofino",
+            listedAt: "2026-05-14T00:00:00.000Z",
+          },
+        ],
+      }).repositories,
+    );
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2020-ferrari-portofino",
+      zip: "60563",
+      mileage: 18400,
+      condition: "good",
+      allowLive: false,
+      fetchReason: "cached_listings_value_sync",
+      sourceScreen: "valueScreen",
+    });
+
+    assert.equal(result.data.status, "loaded_condition_set");
+    assert.equal(result.data.listingCount, 1);
+    assert.equal(result.data.sourceBasis, "listing_median_adjusted");
+    assert.equal(result.data.low, 209995);
+    assert.equal(result.data.median, 209995);
+    assert.equal(result.data.high, 209995);
+    assert.notEqual(result.data.status, "specialty_unavailable");
+  });
+
+  test("explicit listings refresh cache can populate Portofino value without a second provider call", async () => {
+    setRepositories(
+      createTestRepositories({
+        vehicles: [
+          {
+            id: "2020-ferrari-portofino",
+            year: 2020,
+            make: "Ferrari",
+            model: "Portofino",
+            trim: "Base",
+            bodyStyle: "Coupe",
+            vehicleType: "car",
+            msrp: 215000,
+            engine: "3.9L twin-turbo V8",
+            horsepower: 591,
+            torque: "561 lb-ft",
+            transmission: "7-speed dual-clutch automatic",
+            drivetrain: "RWD",
+            mpgOrRange: "16 city / 22 highway",
+            colors: ["Blu Tour De France"],
+          },
+        ],
+      }).repositories,
+    );
+    let listingsProviderCalls = 0;
+    let valueProviderCalls = 0;
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      valueProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          listingsProviderCalls += 1;
+          return [
+            {
+              id: "listing-portofino",
+              vehicleId: input.vehicleId,
+              year: 2020,
+              make: "Ferrari",
+              model: "Portofino",
+              trim: "Base",
+              title: "2020 Ferrari Portofino",
+              price: 209995,
+              mileage: 8800,
+              dealer: "Motor Cars Of Chicago",
+              distanceMiles: 35,
+              location: "Chicago, IL",
+              imageUrl: "https://dealer.example.test/portofino.jpg",
+              listingUrl: "https://dealer.example.test/portofino",
+              listedAt: "2026-05-14T00:00:00.000Z",
+            },
+          ];
+        },
+      },
+      valueProvider: {
+        async getValuation() {
+          valueProviderCalls += 1;
+          return null;
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const listings = await service.getListings({
+      vehicleId: "2020-ferrari-portofino",
+      zip: "60563",
+      radiusMiles: 100,
+      mileage: 18400,
+      allowLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+    });
+    const value = await service.getValue({
+      vehicleId: "2020-ferrari-portofino",
+      zip: "60563",
+      mileage: 18400,
+      condition: "good",
+      allowLive: false,
+      fetchReason: "cached_listings_value_sync",
+      sourceScreen: "valueScreen",
+    });
+
+    assert.equal(listingsProviderCalls, 1);
+    assert.equal(valueProviderCalls, 0);
+    assert.equal(listings.data.length, 1);
+    assert.equal(value.data.status, "loaded_condition_set");
+    assert.equal(value.data.median, 209995);
+  });
+
   test("normal family cached estimated valuation still works for common vehicles", async () => {
     const civicDescriptor = {
       year: 2020,
@@ -1074,17 +1228,17 @@ describe("bootstrap cost control", () => {
       createValuesCacheRow({
         descriptor: buildFamilyCacheDescriptor(civicDescriptor),
         cacheKey: getFamilyValuesCacheKey(civicDescriptor, {
-          zip: "60610",
+          zip: "60502",
           mileage: 18400,
         }),
         provider: "marketcheck",
-        zip: "60610",
+        zip: "60502",
         mileage: 18400,
         condition: "good",
         payload: {
           id: "cached-civic-family",
           vehicleId: "2020-honda-civic-ex",
-          zip: "60610",
+          zip: "60502",
           mileage: 18400,
           condition: "good",
           tradeIn: 19200,
@@ -1115,7 +1269,7 @@ describe("bootstrap cost control", () => {
     const service = new VehicleService();
     const result = await service.getValue({
       vehicleId: "2020-honda-civic-ex",
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
       condition: "good",
       allowLive: false,
@@ -1145,7 +1299,7 @@ describe("bootstrap cost control", () => {
     const service = new VehicleService();
     await service.getListings({
       vehicleId: "2021-cadillac-ct4-premium-luxury",
-      zip: "60610",
+      zip: "60502",
       radiusMiles: 50,
       allowLive: false,
       fetchReason: "initial_load",
@@ -1229,7 +1383,7 @@ describe("bootstrap cost control", () => {
     const service = new VehicleService();
     const first = await service.getValue({
       vehicleId: "2021-cadillac-ct4-premium-luxury",
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
       condition: "good",
       allowLive: true,
@@ -1239,7 +1393,7 @@ describe("bootstrap cost control", () => {
     });
     const second = await service.getValue({
       vehicleId: "2021-cadillac-ct4-premium-luxury",
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
       condition: "excellent",
       allowLive: true,
@@ -1309,7 +1463,7 @@ describe("bootstrap cost control", () => {
         bodyStyle: "SUV",
         normalizedModel: "crv",
       },
-      zip: "60610",
+      zip: "60502",
       radiusMiles: 50,
       allowLive: true,
       fetchReason: "user_requested_listings_refresh",
@@ -1419,11 +1573,11 @@ describe("bootstrap cost control", () => {
       createListingsCacheRow({
         descriptor: buildFamilyCacheDescriptor(descriptor),
         cacheKey: getFamilyListingsCacheKey(descriptor, {
-          zip: "60610",
+          zip: "60502",
           radiusMiles: 50,
         }),
         provider: "marketcheck",
-        zip: "60610",
+        zip: "60502",
         radiusMiles: 50,
         payload: [
           {
@@ -1473,7 +1627,7 @@ describe("bootstrap cost control", () => {
         bodyStyle: "SUV",
         normalizedModel: "crv",
       },
-      zip: "60610",
+      zip: "60502",
       radiusMiles: 50,
     });
 

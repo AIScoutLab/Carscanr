@@ -70,12 +70,12 @@ describe("MarketCheck provider request guards", () => {
         mpgOrRange: "",
         colors: [],
       },
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
       condition: "good",
       requestMeta: {
         requestId: "req-value-1",
-        cacheKey: "value:2023:volvo:xc40:core:60610:18400:good",
+        cacheKey: "value:2023:volvo:xc40:core:60502:18400:good",
         sourceScreen: "valueScreen",
       },
     };
@@ -134,10 +134,10 @@ describe("MarketCheck provider request guards", () => {
         mpgOrRange: "",
         colors: [],
       },
-      zip: "60610",
+      zip: "60502",
       radiusMiles: 50,
       requestMeta: {
-        cacheKey: "listings:2023:volvo:xc40:core:60610:50",
+        cacheKey: "listings:2023:volvo:xc40:core:60502:50",
         sourceScreen: "listingsScreen",
       },
     };
@@ -211,7 +211,7 @@ describe("MarketCheck provider request guards", () => {
     await provider.getValuation({
       vehicleId: vehicle.id,
       vehicle,
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
       condition: "good",
       requestMeta: { requestId: "req-value", cacheKey: "value-key", sourceScreen: "valueScreen" },
@@ -220,7 +220,7 @@ describe("MarketCheck provider request guards", () => {
     await provider.getListings({
       vehicleId: vehicle.id,
       vehicle,
-      zip: "60610",
+      zip: "60502",
       radiusMiles: 50,
       requestMeta: { requestId: "req-listings", cacheKey: "listings-key", sourceScreen: "listingsScreen" },
     });
@@ -257,7 +257,7 @@ describe("MarketCheck provider request guards", () => {
         mpgOrRange: "",
         colors: [],
       },
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
       condition: "good",
       requestMeta: {
@@ -287,7 +287,7 @@ describe("MarketCheck provider request guards", () => {
         mpgOrRange: "",
         colors: [],
       },
-      zip: "60610",
+      zip: "60502",
       radiusMiles: 50,
       requestMeta: {
         requestId: "req-guard-listings",
@@ -365,7 +365,7 @@ describe("MarketCheck provider request guards", () => {
         mpgOrRange: "",
         colors: [],
       },
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
       condition: "good",
       requestMeta: {

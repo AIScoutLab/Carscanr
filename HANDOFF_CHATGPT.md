@@ -133,7 +133,7 @@ Current valuation policy:
 Specialty explicit refresh cache rule:
 
 - Production logs showed `2006 Ferrari F430` explicit refresh hitting:
-  - `cacheKey = values:2006:ferrari:f430:family:60610:18400:good`
+  - `cacheKey = values:2006:ferrari:f430:family:<zip>:18400:good`
   - `modelType = estimated_depreciation`
   - `sourceLabel = Estimated from vehicle data`
 - That generic family cache must be rejected for specialty vehicles

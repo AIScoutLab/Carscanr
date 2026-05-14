@@ -127,7 +127,7 @@ export const seedValuations: ValuationRecord[] = [
   {
     id: "val-ct4",
     vehicleId: "2021-cadillac-ct4-premium-luxury",
-    zip: "60610",
+    zip: "60502",
     mileage: 28000,
     condition: "very_good",
     tradeIn: 25600,
@@ -139,7 +139,7 @@ export const seedValuations: ValuationRecord[] = [
   {
     id: "val-civic",
     vehicleId: "2020-honda-civic-ex",
-    zip: "60610",
+    zip: "60502",
     mileage: 36000,
     condition: "good",
     tradeIn: 17900,
@@ -151,7 +151,7 @@ export const seedValuations: ValuationRecord[] = [
   {
     id: "val-optima",
     vehicleId: "2018-kia-optima-ex",
-    zip: "60610",
+    zip: "60502",
     mileage: 52000,
     condition: "good",
     tradeIn: 12500,
@@ -163,7 +163,7 @@ export const seedValuations: ValuationRecord[] = [
   {
     id: "val-model3",
     vehicleId: "2022-tesla-model-3-long-range",
-    zip: "60610",
+    zip: "60502",
     mileage: 18400,
     condition: "excellent",
     tradeIn: 33200,
@@ -175,7 +175,7 @@ export const seedValuations: ValuationRecord[] = [
   {
     id: "val-mustang",
     vehicleId: "2019-ford-mustang-gt",
-    zip: "60610",
+    zip: "60502",
     mileage: 30118,
     condition: "very_good",
     tradeIn: 31600,
@@ -187,7 +187,7 @@ export const seedValuations: ValuationRecord[] = [
   {
     id: "val-street-glide",
     vehicleId: "2023-harley-davidson-street-glide-special",
-    zip: "60610",
+    zip: "60502",
     mileage: 4188,
     condition: "excellent",
     tradeIn: 26950,

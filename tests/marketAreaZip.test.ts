@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import { normalizeMarketAreaZip, resolveMarketAreaZip } from "@/lib/marketAreaZip";
-import { buildVehicleValueRequestPath } from "@/lib/vehicleMarketRequest";
+import { buildVehicleListingsRequestPath, buildVehicleValueRequestPath } from "@/lib/vehicleMarketRequest";
 
 test("blank users do not silently get a fake ZIP", () => {
   const resolved = resolveMarketAreaZip({});
@@ -28,6 +28,18 @@ test("persisted recent ZIP is used when no current input exists", () => {
 
   assert.equal(resolved.zip, "60502");
   assert.equal(resolved.zipSource, "persisted_recent");
+});
+
+test("fresh sessions stay blank and do not inject legacy Chicago ZIP defaults", () => {
+  const resolved = resolveMarketAreaZip({
+    currentUserInputZip: "",
+    persistedRecentZip: "",
+    profileZip: "",
+    deviceLocationZip: "",
+  });
+
+  assert.equal(resolved.zip, "");
+  assert.equal(resolved.zipSource, "blank");
 });
 
 test("ZIP normalization strips non-digits instead of using a hardcoded fallback", () => {
@@ -80,6 +92,26 @@ test("changing ZIP changes the value request cache identity inputs", () => {
   );
 
   assert.notEqual(firstPath, secondPath);
+});
+
+test("vehicle listings request path uses the same ZIP and mileage shown in the UI", () => {
+  const path = buildVehicleListingsRequestPath(
+    "519f29ed-979c-44ee-b443-83b2ce480333",
+    "60563",
+    {
+      allowLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+      radiusMiles: 100,
+      mileage: "18400",
+      zipSource: "user_input",
+    },
+  );
+
+  assert.match(path, /zip=60563/);
+  assert.match(path, /mileage=18400/);
+  assert.doesNotMatch(path, /zip=60610/);
 });
 
 test("value screen no longer hardcodes 60610 or passive initial-load value refreshes", () => {

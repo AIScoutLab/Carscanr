@@ -138,13 +138,13 @@ curl "http://localhost:4000/api/vehicle/specs?vehicleId=2022-tesla-model-3-long-
 Get value:
 
 ```bash
-curl "http://localhost:4000/api/vehicle/value?vehicleId=2020-honda-civic-ex&zip=60610&mileage=42000&condition=good"
+curl "http://localhost:4000/api/vehicle/value?vehicleId=2020-honda-civic-ex&zip=60502&mileage=42000&condition=good"
 ```
 
 Get listings:
 
 ```bash
-curl "http://localhost:4000/api/vehicle/listings?vehicleId=2019-ford-mustang-gt&zip=60610&radiusMiles=50"
+curl "http://localhost:4000/api/vehicle/listings?vehicleId=2019-ford-mustang-gt&zip=60502&radiusMiles=50"
 ```
 
 Save garage item:

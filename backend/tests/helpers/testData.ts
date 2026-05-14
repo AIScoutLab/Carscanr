@@ -97,7 +97,7 @@ export function createTestRepositories(seed?: {
         {
           id: "val-ct4",
           vehicleId: "2021-cadillac-ct4-premium-luxury",
-          zip: "60610",
+          zip: "60502",
           mileage: 12000,
           condition: "good",
           tradeIn: 27000,

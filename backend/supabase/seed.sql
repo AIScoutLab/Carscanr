@@ -150,7 +150,7 @@ values
   (
     'val-ct4',
     '2021-cadillac-ct4-premium-luxury',
-    '60610',
+    '60502',
     28000,
     'very_good',
     25600,
@@ -162,7 +162,7 @@ values
   (
     'val-civic',
     '2020-honda-civic-ex',
-    '60610',
+    '60502',
     36000,
     'good',
     17900,
@@ -174,7 +174,7 @@ values
   (
     'val-model3',
     '2022-tesla-model-3-long-range',
-    '60610',
+    '60502',
     18400,
     'excellent',
     33200,
@@ -186,7 +186,7 @@ values
   (
     'val-mustang',
     '2019-ford-mustang-gt',
-    '60610',
+    '60502',
     30118,
     'very_good',
     31600,
@@ -198,7 +198,7 @@ values
   (
     'val-street-glide',
     '2023-harley-davidson-street-glide-special',
-    '60610',
+    '60502',
     4188,
     'excellent',
     26950,

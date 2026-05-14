@@ -1314,6 +1314,7 @@ export default function VehicleDetailScreen() {
 
     const normalizedZip = normalizeMarketAreaZip(zipCode);
     const normalizedMileage = mileage.trim();
+    const normalizedCondition = normalizeCondition(condition);
     if (!isValidMarketAreaZip(normalizedZip)) {
       return;
     }
@@ -1338,7 +1339,7 @@ export default function VehicleDetailScreen() {
         mileage: normalizedMileage,
         zipSource,
       })
-      .then((result) => {
+      .then(async (result) => {
         setListingsDebugMeta(result.meta);
         setVehicle((current) =>
           current
@@ -1348,12 +1349,27 @@ export default function VehicleDetailScreen() {
               }
             : current,
         );
+        if (result.listings.length > 0 && normalizedMileage && normalizedCondition) {
+          const derivedValue = await vehicleService.getValue(valueLookupInput, normalizedZip, normalizedMileage, normalizedCondition, {
+            allowLive: false,
+            fetchReason: "cached_listings_value_sync",
+            sourceScreen: "valueScreen",
+            action: "cachedValueSync",
+            forceLive: false,
+            zipSource,
+          });
+          applyValuationUpdate(derivedValue, "listings-cache-sync", {
+            allowReplacement: true,
+          });
+          setVehicle((current) => (current ? { ...current, valuation: derivedValue } : current));
+          setValueDebugStatus(hasResolvedValueState(derivedValue) ? "accepted" : "idle");
+        }
         void marketAreaZipService.saveLastUsedZip(normalizedZip);
       })
       .finally(() => {
         setListingsRefreshLoading(false);
       });
-  }, [id, mileage, scanId, valueLookupInput, vehicle, zipCode, zipSource]);
+  }, [applyValuationUpdate, condition, id, mileage, scanId, valueLookupInput, vehicle, zipCode, zipSource]);
 
   useEffect(() => {
     if (__DEV__) {

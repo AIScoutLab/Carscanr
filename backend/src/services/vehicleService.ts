@@ -42,10 +42,11 @@ import { normalizeVehicleBadgeAlias } from "../lib/vehicleAliases.js";
 
 const mockValueProvider = new MockVehicleValueProvider();
 const USAGE_LOG_RETENTION_DAYS = 60;
-const DEFAULT_UNLOCK_EVALUATION_ZIP = "60610";
+const DEFAULT_UNLOCK_EVALUATION_ZIP = "";
 const DEFAULT_UNLOCK_EVALUATION_MILEAGE = 25000;
 const DEFAULT_UNLOCK_EVALUATION_CONDITION = "good";
 const DEFAULT_UNLOCK_EVALUATION_RADIUS_MILES = 50;
+const LISTING_DERIVATION_RADIUS_MILES = [50, 100, 250, 500];
 
 function nowIso() {
   return new Date().toISOString();
@@ -237,6 +238,7 @@ type MarketFetchReason =
   | "user_requested_specs_refresh"
   | "user_requested_value_refresh"
   | "user_requested_listings_refresh"
+  | "cached_listings_value_sync"
   | "locked_preview"
   | "estimate_guard"
   | "unknown";
@@ -247,6 +249,7 @@ function normalizeMarketFetchReason(reason: string | null | undefined): MarketFe
     reason === "user_requested_specs_refresh" ||
     reason === "user_requested_value_refresh" ||
     reason === "user_requested_listings_refresh" ||
+    reason === "cached_listings_value_sync" ||
     reason === "locked_preview" ||
     reason === "estimate_guard"
   ) {
@@ -1003,40 +1006,42 @@ async function deriveValuationFromSimilarVehicles(input: {
   const seenListingIds = new Set<string>();
 
   for (const attempt of listingAttempts) {
-    const cachedDescriptor = buildCacheDescriptor({ vehicle: attempt.vehicle });
-    const cachedListingsKey = cachedDescriptor
-      ? getListingsCacheKey(cachedDescriptor, { zip: input.zip, radiusMiles: attempt.radiusMiles })
-      : null;
-    const familyCachedListingsKey = cachedDescriptor
-      ? getFamilyListingsCacheKey(cachedDescriptor, { zip: input.zip, radiusMiles: attempt.radiusMiles })
-      : null;
-    const cachedListingsRows = [
-      cachedListingsKey ? await repositories.listingsCache.findByCacheKey(cachedListingsKey).catch(() => null) : null,
-      familyCachedListingsKey ? await repositories.listingsCache.findByCacheKey(familyCachedListingsKey).catch(() => null) : null,
-    ].filter((row): row is NonNullable<typeof row> => Boolean(row));
+    for (const radiusMiles of LISTING_DERIVATION_RADIUS_MILES) {
+      const cachedDescriptor = buildCacheDescriptor({ vehicle: attempt.vehicle });
+      const cachedListingsKey = cachedDescriptor
+        ? getListingsCacheKey(cachedDescriptor, { zip: input.zip, radiusMiles })
+        : null;
+      const familyCachedListingsKey = cachedDescriptor
+        ? getFamilyListingsCacheKey(cachedDescriptor, { zip: input.zip, radiusMiles })
+        : null;
+      const cachedListingsRows = [
+        cachedListingsKey ? await repositories.listingsCache.findByCacheKey(cachedListingsKey).catch(() => null) : null,
+        familyCachedListingsKey ? await repositories.listingsCache.findByCacheKey(familyCachedListingsKey).catch(() => null) : null,
+      ].filter((row): row is NonNullable<typeof row> => Boolean(row));
 
-    for (const cachedRow of cachedListingsRows) {
-      for (const listing of cachedRow.responseJson.data ?? []) {
+      for (const cachedRow of cachedListingsRows) {
+        for (const listing of cachedRow.responseJson.data ?? []) {
+          if (seenListingIds.has(listing.id) || !isBelievableListing(listing)) {
+            continue;
+          }
+          seenListingIds.add(listing.id);
+          collectedListings.push(listing);
+        }
+      }
+
+      const listings = await repositories.listingResults.listByVehicle({
+        vehicleId: attempt.vehicle.id,
+        zip: input.zip,
+        radiusMiles,
+      }).catch(() => []);
+
+      for (const listing of listings) {
         if (seenListingIds.has(listing.id) || !isBelievableListing(listing)) {
           continue;
         }
         seenListingIds.add(listing.id);
         collectedListings.push(listing);
       }
-    }
-
-    const listings = await repositories.listingResults.listByVehicle({
-      vehicleId: attempt.vehicle.id,
-      zip: input.zip,
-      radiusMiles: attempt.radiusMiles,
-    }).catch(() => []);
-
-    for (const listing of listings) {
-      if (seenListingIds.has(listing.id) || !isBelievableListing(listing)) {
-        continue;
-      }
-      seenListingIds.add(listing.id);
-      collectedListings.push(listing);
     }
 
     if (collectedListings.length >= 1 && attempt.strategy.startsWith("adjacent-year")) {
@@ -2998,6 +3003,8 @@ export class VehicleService {
         action: input.action,
         forceLive: input.forceLive,
       });
+      const shouldBypassNegativeValueCache =
+        isExplicitValueRefresh || fetchReason === "cached_listings_value_sync";
       if (isSpecialtyLookupVehicle && isExplicitValueRefresh) {
         logger.info(
           {
@@ -3143,7 +3150,7 @@ export class VehicleService {
                 vehicle,
                 source: "cache",
               });
-              if (isExplicitValueRefresh && isRetryableUnavailableValuation(shaped)) {
+              if (shouldBypassNegativeValueCache && isRetryableUnavailableValuation(shaped)) {
                 logger.info(
                   {
                     label: "VALUE_EXPLICIT_REFRESH_BYPASSING_NEGATIVE_CACHE",
@@ -3153,6 +3160,7 @@ export class VehicleService {
                     cacheLevel: "exact",
                     status: shaped.status ?? null,
                     reason: shaped.reason ?? null,
+                    fetchReason,
                   },
                   "VALUE_EXPLICIT_REFRESH_BYPASSING_NEGATIVE_CACHE",
                 );
@@ -3303,7 +3311,7 @@ export class VehicleService {
             vehicle,
             source: "cache",
           });
-          if (isExplicitValueRefresh && isRetryableUnavailableValuation(shapedFamilyValue)) {
+          if (shouldBypassNegativeValueCache && isRetryableUnavailableValuation(shapedFamilyValue)) {
             logger.info(
               {
                 label: "VALUE_EXPLICIT_REFRESH_BYPASSING_NEGATIVE_CACHE",
@@ -3313,6 +3321,7 @@ export class VehicleService {
                 cacheLevel: "family",
                 status: shapedFamilyValue.status ?? null,
                 reason: shapedFamilyValue.reason ?? null,
+                fetchReason,
               },
               "VALUE_EXPLICIT_REFRESH_BYPASSING_NEGATIVE_CACHE",
             );
@@ -4005,7 +4014,7 @@ export class VehicleService {
         }
       }
 
-      if (!fallbackValue && valueDecision.allowLiveProvider && lookupBaseVehicle) {
+      if (!fallbackValue && lookupBaseVehicle) {
         const derivedFromListings = await deriveValuationFromSimilarVehicles({
           vehicle: lookupBaseVehicle,
           vehicleId: lookupVehicleId,
@@ -5653,6 +5662,13 @@ export class VehicleService {
   }
 
   async evaluateUnlockPayloadForVehicle(vehicle: VehicleRecord): Promise<PayloadEvaluation> {
+    if (!DEFAULT_UNLOCK_EVALUATION_ZIP) {
+      return evaluateVehiclePayloadStrength({
+        vehicle,
+        valuation: null,
+        listings: [],
+      });
+    }
     const valuation = await this.getValue({
       vehicleId: vehicle.id,
       zip: DEFAULT_UNLOCK_EVALUATION_ZIP,

@@ -473,7 +473,7 @@ describe("VehicleService specs canonical layer", () => {
       valuation: {
         id: "ranger-value",
         vehicleId: ranger.id,
-        zip: "60610",
+        zip: "60502",
         mileage: 25000,
         condition: "good",
         tradeIn: 28750,
@@ -538,7 +538,7 @@ describe("VehicleService specs canonical layer", () => {
     const service = new VehicleService();
     const result = await service.getValue({
       vehicleId: ranger.id,
-      zip: "60610",
+      zip: "60502",
       mileage: 25000,
       condition: "good",
     });
@@ -560,7 +560,7 @@ describe("VehicleService specs canonical layer", () => {
     };
 
     const firstKey = getValuesCacheKey(descriptor, {
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
     });
     const zipChangedKey = getValuesCacheKey(descriptor, {
@@ -568,7 +568,7 @@ describe("VehicleService specs canonical layer", () => {
       mileage: 18400,
     });
     const mileageChangedKey = getValuesCacheKey(descriptor, {
-      zip: "60610",
+      zip: "60502",
       mileage: 19600,
     });
 
@@ -626,14 +626,14 @@ describe("VehicleService specs canonical layer", () => {
     const value = await service.getValue({
       vehicleId: "95c64a97-ccee-4756-940d-9d68448f79f7",
       descriptor,
-      zip: "60610",
+      zip: "60502",
       mileage: 12000,
       condition: "good",
     });
     const listings = await service.getListings({
       vehicleId: "95c64a97-ccee-4756-940d-9d68448f79f7",
       descriptor,
-      zip: "60610",
+      zip: "60502",
       radiusMiles: 50,
     });
 
@@ -684,7 +684,7 @@ describe("VehicleService specs canonical layer", () => {
     const value = await service.getValue({
       vehicleId: "client-only-crv-id",
       descriptor,
-      zip: "60610",
+      zip: "60502",
       mileage: 18000,
       condition: "good",
     });
@@ -735,7 +735,7 @@ describe("VehicleService specs canonical layer", () => {
     const listings = await service.getListings({
       vehicleId: "client-only-crv-id",
       descriptor,
-      zip: "60610",
+      zip: "60502",
       radiusMiles: 50,
     });
 
@@ -891,7 +891,7 @@ describe("VehicleService cache-first provider gating", () => {
       model: "CR-V",
       trim: "EX-L",
       bodyStyle: "SUV",
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
       condition: "good",
     });
@@ -904,13 +904,13 @@ describe("VehicleService cache-first provider gating", () => {
         model: "CR-V",
         trim: "EX-L",
         bodyStyle: "SUV",
-        zip: "60610",
+        zip: "60502",
         mileage: 18400,
         condition: "good",
         valuation: {
           id: "cached-crv-value",
           vehicleId: "cached-crv",
-          zip: "60610",
+          zip: "60502",
           mileage: 18400,
           condition: "good",
           tradeIn: 24600,
@@ -947,7 +947,7 @@ describe("VehicleService cache-first provider gating", () => {
     const result = await service.getValue({
       vehicleId: "client-only-crv-id",
       descriptor,
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
       condition: "good",
     });
@@ -977,7 +977,7 @@ describe("VehicleService cache-first provider gating", () => {
         model: "CR-V",
         trim: "",
         bodyStyle: "SUV",
-        zip: "60610",
+        zip: "60502",
         listings: [
           {
             id: "cached-crv-listing",
@@ -1013,7 +1013,7 @@ describe("VehicleService cache-first provider gating", () => {
     const result = await service.getListings({
       vehicleId: "client-only-crv-id",
       descriptor,
-      zip: "60610",
+      zip: "60502",
       radiusMiles: 50,
     });
 
@@ -1049,7 +1049,7 @@ describe("VehicleService cache-first provider gating", () => {
     const result = await service.getValue({
       vehicleId: "client-only-crv-id",
       descriptor,
-      zip: "60610",
+      zip: "60502",
       mileage: 18400,
       condition: "good",
     });
@@ -1099,7 +1099,7 @@ describe("VehicleService cache-first provider gating", () => {
     const result = await service.getListings({
       vehicleId: "client-only-crv-id",
       descriptor,
-      zip: "60610",
+      zip: "60502",
       radiusMiles: 50,
     });
 

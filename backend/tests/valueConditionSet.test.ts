@@ -43,7 +43,7 @@ test("condition-set cache key ignores condition but changes for zip and mileage"
     mileage: 18400,
   });
   const changedZipKey = getValuesCacheKey(descriptor, {
-    zip: "60610",
+    zip: "60502",
     mileage: 18400,
   });
   const changedMileageKey = getValuesCacheKey(descriptor, {

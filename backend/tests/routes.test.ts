@@ -209,7 +209,7 @@ describe("API routes", () => {
   test("GET /api/vehicle/value returns valuation data", async () => {
     const response = await requestApp({
       method: "GET",
-      url: "/api/vehicle/value?vehicleId=2021-cadillac-ct4-premium-luxury&zip=60610&mileage=12000&condition=good",
+      url: "/api/vehicle/value?vehicleId=2021-cadillac-ct4-premium-luxury&zip=60502&mileage=12000&condition=good",
       headers: authHeaders(),
     });
     const body = parseJson<any>(response);
@@ -225,7 +225,7 @@ describe("API routes", () => {
   test("GET /api/vehicle/listings returns nearby listings", async () => {
     const response = await requestApp({
       method: "GET",
-      url: "/api/vehicle/listings?vehicleId=2021-cadillac-ct4-premium-luxury&zip=60610&radiusMiles=50",
+      url: "/api/vehicle/listings?vehicleId=2021-cadillac-ct4-premium-luxury&zip=60502&radiusMiles=50",
       headers: authHeaders(),
     });
     const body = parseJson<any>(response);
@@ -342,7 +342,7 @@ describe("API routes", () => {
   test("GET /api/vehicle/value resolves descriptor-backed estimates even with a client-only id", async () => {
     const response = await requestApp({
       method: "GET",
-      url: "/api/vehicle/value?vehicleId=95c64a97-ccee-4756-940d-9d68448f79f7&year=2020&make=Honda&model=CR-V&trim=LX&vehicleType=car&bodyStyle=SUV&normalizedModel=cr-v&zip=60610&mileage=12000&condition=good",
+      url: "/api/vehicle/value?vehicleId=95c64a97-ccee-4756-940d-9d68448f79f7&year=2020&make=Honda&model=CR-V&trim=LX&vehicleType=car&bodyStyle=SUV&normalizedModel=cr-v&zip=60502&mileage=12000&condition=good",
       headers: authHeaders(),
     });
     const body = parseJson<any>(response);
@@ -407,7 +407,7 @@ describe("API routes", () => {
   test("GET /api/vehicle/listings resolves descriptor-backed estimates even with a client-only id", async () => {
     const response = await requestApp({
       method: "GET",
-      url: "/api/vehicle/listings?vehicleId=95c64a97-ccee-4756-940d-9d68448f79f7&year=2020&make=Honda&model=CR-V&trim=LX&vehicleType=car&bodyStyle=SUV&normalizedModel=cr-v&zip=60610&radiusMiles=50",
+      url: "/api/vehicle/listings?vehicleId=95c64a97-ccee-4756-940d-9d68448f79f7&year=2020&make=Honda&model=CR-V&trim=LX&vehicleType=car&bodyStyle=SUV&normalizedModel=cr-v&zip=60502&radiusMiles=50",
       headers: authHeaders(),
     });
     const body = parseJson<any>(response);
@@ -428,7 +428,7 @@ describe("API routes", () => {
           assert.equal(input.vehicle?.year, 2026);
           assert.equal(input.vehicle?.make, "Honda");
           assert.equal(input.vehicle?.model, "Cr-v");
-          assert.equal(input.zip, "60610");
+          assert.equal(input.zip, "60502");
           assert.equal(input.radiusMiles, 50);
           return [
             {
@@ -449,7 +449,7 @@ describe("API routes", () => {
 
     const response = await requestApp({
       method: "GET",
-      url: "/api/vehicle/listings?year=2026&make=Honda&model=Cr-v&trim=LX&vehicleType=car&bodyStyle=SUV&normalizedModel=cr+v&zip=60610&radiusMiles=50",
+      url: "/api/vehicle/listings?year=2026&make=Honda&model=Cr-v&trim=LX&vehicleType=car&bodyStyle=SUV&normalizedModel=cr+v&zip=60502&radiusMiles=50",
       headers: authHeaders(),
     });
     const body = parseJson<any>(response);

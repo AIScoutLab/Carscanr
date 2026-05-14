@@ -32,6 +32,7 @@ export type ListingsRequestOptions = {
   sourceScreen?: string;
   action?: string;
   radiusMiles?: number;
+  mileage?: string | number;
   zipSource?: MarketAreaZipSource;
 };
 
@@ -113,6 +114,9 @@ export function buildVehicleListingsRequestPath(
   }
   if (typeof options?.zipSource === "string" && options.zipSource.length > 0) {
     params.set("zipSource", options.zipSource);
+  }
+  if (options?.mileage != null && String(options.mileage).trim().length > 0) {
+    params.set("mileage", String(options.mileage).trim());
   }
   return `/api/vehicle/listings?${params.toString()}`;
 }

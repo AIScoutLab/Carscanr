@@ -20,8 +20,8 @@ export function isValidMarketAreaZip(value: string | null | undefined) {
 
 export function resolveMarketAreaZip(input: {
   currentUserInputZip?: string | null;
-  profileZip?: string | null;
   persistedRecentZip?: string | null;
+  profileZip?: string | null;
   deviceLocationZip?: string | null;
 }) {
   const normalizedUserInputZip = normalizeMarketAreaZip(input.currentUserInputZip);
@@ -32,19 +32,19 @@ export function resolveMarketAreaZip(input: {
     };
   }
 
-  const normalizedProfileZip = normalizeMarketAreaZip(input.profileZip);
-  if (normalizedProfileZip.length === 5) {
-    return {
-      zip: normalizedProfileZip,
-      zipSource: "profile" as const,
-    };
-  }
-
   const normalizedPersistedRecentZip = normalizeMarketAreaZip(input.persistedRecentZip);
   if (normalizedPersistedRecentZip.length === 5) {
     return {
       zip: normalizedPersistedRecentZip,
       zipSource: "persisted_recent" as const,
+    };
+  }
+
+  const normalizedProfileZip = normalizeMarketAreaZip(input.profileZip);
+  if (normalizedProfileZip.length === 5) {
+    return {
+      zip: normalizedProfileZip,
+      zipSource: "profile" as const,
     };
   }
 
