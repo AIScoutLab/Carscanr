@@ -23,6 +23,9 @@
       "environment": "production",
       "autoIncrement": true,
       "channel": "production",
+      "ios": {
+        "image": "latest"
+      },
       "env": {
         "EXPO_PUBLIC_APP_ENV": "production",
         "EXPO_PUBLIC_SHOW_QA_DEBUG": "1"
