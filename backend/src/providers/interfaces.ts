@@ -37,6 +37,7 @@ export type MarketCheckRequestMeta = {
   yearRangeStart?: number | null;
   yearRangeEnd?: number | null;
   zip?: string | null;
+  zipSource?: string | null;
   radiusMiles?: number | null;
   mileage?: number | null;
   condition?: string | null;

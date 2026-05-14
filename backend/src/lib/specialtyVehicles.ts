@@ -89,6 +89,11 @@ export function buildSpecialtyUnavailableValuation(input: {
   mileage: number;
   condition: ValuationRecord["condition"];
   vehicle: VehicleRecord;
+  status?: ValuationRecord["status"];
+  sourceLabel?: string | null;
+  confidenceLabel?: string | null;
+  message?: string | null;
+  reason?: string | null;
 }): ValuationRecord {
   return {
     id: `specialty-market-unavailable:${input.vehicleId}:${input.zip}:${input.mileage}`,
@@ -96,13 +101,21 @@ export function buildSpecialtyUnavailableValuation(input: {
     zip: input.zip,
     mileage: input.mileage,
     condition: input.condition,
-    tradeIn: 0,
-    privateParty: 0,
-    dealerRetail: 0,
+    status: input.status ?? "specialty_unavailable",
+    tradeIn: null,
+    privateParty: null,
+    dealerRetail: null,
+    low: null,
+    high: null,
+    median: null,
     currency: "USD",
     generatedAt: new Date().toISOString(),
-    sourceLabel: "Specialty market value unavailable",
-    confidenceLabel: "Load live market value. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance.",
+    sourceLabel: input.sourceLabel ?? "Specialty market value unavailable",
+    confidenceLabel:
+      input.confidenceLabel ??
+      "Load live market value. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance.",
+    message: input.message ?? null,
+    reason: input.reason ?? null,
     modelType: "specialty_unavailable",
     listingCount: null,
   };

@@ -302,6 +302,7 @@ export class VehicleController {
         vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
         descriptor,
         zip: req.query.zip as string,
+        zipSource,
         mileage: Number(req.query.mileage),
         condition: normalizedCondition as string,
         allowLive,

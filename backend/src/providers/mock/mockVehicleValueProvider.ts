@@ -37,7 +37,7 @@ export class MockVehicleValueProvider implements VehicleValueProvider {
   }): Promise<ValuationRecord | null> {
     const normalizedCondition = normalizeCondition(input.condition);
     const base = seedValuations.find((valuation) => valuation.vehicleId === input.vehicleId);
-    if (base) {
+    if (base && typeof base.tradeIn === "number" && typeof base.privateParty === "number" && typeof base.dealerRetail === "number") {
       const mileageDelta = input.mileage - base.mileage;
       const tradeIn = adjustFromBaseline(base.tradeIn, mileageDelta, normalizedCondition);
       const privateParty = adjustFromBaseline(base.privateParty, mileageDelta, normalizedCondition);
