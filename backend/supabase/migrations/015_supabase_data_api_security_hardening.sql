@@ -9,15 +9,17 @@
 -- the stricter posture now by revoking default automatic exposure and then
 -- explicitly granting only the roles we want to expose.
 --
+-- Table classes in this project:
+-- - public_read: `vehicles`, `canonical_vehicles`
+-- - user_owned: `scans`, `garage_items`, `subscriptions`, `usage_counters`,
+--   `vision_debug_logs`, `user_unlock_balances`, `user_vehicle_unlocks`
+-- - internal/service_role_only: everything else created in `public`
+--
 -- NOTE:
--- - `service_role` bypasses RLS and remains the trusted backend role.
--- - The anon/authenticated grants below keep Data API reachability explicit,
---   while the RLS policies determine whether any rows are actually visible or
---   writable.
--- - Internal/cache tables intentionally receive deny-all anon/authenticated
---   policies even though they are explicitly granted here. This preserves a
---   locked-down client posture while keeping the privilege model explicit and
---   future-proof for new Supabase projects.
+-- - `service_role` remains the trusted backend role.
+-- - Internal/cache tables should not be exposed to `anon` or
+--   `authenticated`; grants are revoked instead of relying on RLS denial.
+-- - RLS stays enabled everywhere as defense in depth.
 
 alter default privileges for role postgres in schema public
   revoke select, insert, update, delete on tables from anon, authenticated, service_role;
@@ -31,92 +33,84 @@ alter default privileges for role postgres in schema public
 alter default privileges for role postgres in schema public
   revoke execute on functions from public;
 
+-- Public-read tables
+revoke all on table public.vehicles from anon, authenticated, service_role;
 grant select on table public.vehicles to anon;
-grant select, insert, update, delete on table public.vehicles to authenticated;
+grant select on table public.vehicles to authenticated;
 grant select, insert, update, delete on table public.vehicles to service_role;
 
-grant select on table public.scans to anon;
+revoke all on table public.canonical_vehicles from anon, authenticated, service_role;
+grant select on table public.canonical_vehicles to anon;
+grant select on table public.canonical_vehicles to authenticated;
+grant select, insert, update, delete on table public.canonical_vehicles to service_role;
+
+-- User-owned tables
+revoke all on table public.scans from anon, authenticated, service_role;
 grant select, insert, update, delete on table public.scans to authenticated;
 grant select, insert, update, delete on table public.scans to service_role;
 
-grant select on table public.garage_items to anon;
+revoke all on table public.garage_items from anon, authenticated, service_role;
 grant select, insert, update, delete on table public.garage_items to authenticated;
 grant select, insert, update, delete on table public.garage_items to service_role;
 
-grant select on table public.valuations to anon;
-grant select, insert, update, delete on table public.valuations to authenticated;
-grant select, insert, update, delete on table public.valuations to service_role;
-
-grant select on table public.listing_results to anon;
-grant select, insert, update, delete on table public.listing_results to authenticated;
-grant select, insert, update, delete on table public.listing_results to service_role;
-
-grant select on table public.subscriptions to anon;
+revoke all on table public.subscriptions from anon, authenticated, service_role;
 grant select, insert, update, delete on table public.subscriptions to authenticated;
 grant select, insert, update, delete on table public.subscriptions to service_role;
 
-grant select on table public.usage_counters to anon;
+revoke all on table public.usage_counters from anon, authenticated, service_role;
 grant select, insert, update, delete on table public.usage_counters to authenticated;
 grant select, insert, update, delete on table public.usage_counters to service_role;
 
-grant select on table public.vision_debug_logs to anon;
+revoke all on table public.vision_debug_logs from anon, authenticated, service_role;
 grant select, insert, update, delete on table public.vision_debug_logs to authenticated;
 grant select, insert, update, delete on table public.vision_debug_logs to service_role;
 
-grant select on table public.provider_specs_cache to anon;
-grant select, insert, update, delete on table public.provider_specs_cache to authenticated;
-grant select, insert, update, delete on table public.provider_specs_cache to service_role;
-
-grant select on table public.provider_values_cache to anon;
-grant select, insert, update, delete on table public.provider_values_cache to authenticated;
-grant select, insert, update, delete on table public.provider_values_cache to service_role;
-
-grant select on table public.provider_listings_cache to anon;
-grant select, insert, update, delete on table public.provider_listings_cache to authenticated;
-grant select, insert, update, delete on table public.provider_listings_cache to service_role;
-
-grant select on table public.provider_vehicle_specs_cache to anon;
-grant select, insert, update, delete on table public.provider_vehicle_specs_cache to authenticated;
-grant select, insert, update, delete on table public.provider_vehicle_specs_cache to service_role;
-
-grant select on table public.provider_vehicle_values_cache to anon;
-grant select, insert, update, delete on table public.provider_vehicle_values_cache to authenticated;
-grant select, insert, update, delete on table public.provider_vehicle_values_cache to service_role;
-
-grant select on table public.provider_vehicle_listings_cache to anon;
-grant select, insert, update, delete on table public.provider_vehicle_listings_cache to authenticated;
-grant select, insert, update, delete on table public.provider_vehicle_listings_cache to service_role;
-
-grant select on table public.provider_api_usage_logs to anon;
-grant select, insert, update, delete on table public.provider_api_usage_logs to authenticated;
-grant select, insert, update, delete on table public.provider_api_usage_logs to service_role;
-
-grant select on table public.canonical_vehicles to anon;
-grant select, insert, update, delete on table public.canonical_vehicles to authenticated;
-grant select, insert, update, delete on table public.canonical_vehicles to service_role;
-
-grant select on table public.cached_analysis to anon;
-grant select, insert, update, delete on table public.cached_analysis to authenticated;
-grant select, insert, update, delete on table public.cached_analysis to service_role;
-
-grant select on table public.image_cache to anon;
-grant select, insert, update, delete on table public.image_cache to authenticated;
-grant select, insert, update, delete on table public.image_cache to service_role;
-
-grant select on table public.user_unlock_balances to anon;
+revoke all on table public.user_unlock_balances from anon, authenticated, service_role;
 grant select, insert, update, delete on table public.user_unlock_balances to authenticated;
 grant select, insert, update, delete on table public.user_unlock_balances to service_role;
 
-grant select on table public.user_vehicle_unlocks to anon;
+revoke all on table public.user_vehicle_unlocks from anon, authenticated, service_role;
 grant select, insert, update, delete on table public.user_vehicle_unlocks to authenticated;
 grant select, insert, update, delete on table public.user_vehicle_unlocks to service_role;
 
-grant select on table public.vehicle_scan_popularity to anon;
-grant select, insert, update, delete on table public.vehicle_scan_popularity to authenticated;
+-- Internal/cache/system tables
+revoke all on table public.valuations from anon, authenticated, service_role;
+grant select, insert, update, delete on table public.valuations to service_role;
+
+revoke all on table public.listing_results from anon, authenticated, service_role;
+grant select, insert, update, delete on table public.listing_results to service_role;
+
+revoke all on table public.provider_specs_cache from anon, authenticated, service_role;
+grant select, insert, update, delete on table public.provider_specs_cache to service_role;
+
+revoke all on table public.provider_values_cache from anon, authenticated, service_role;
+grant select, insert, update, delete on table public.provider_values_cache to service_role;
+
+revoke all on table public.provider_listings_cache from anon, authenticated, service_role;
+grant select, insert, update, delete on table public.provider_listings_cache to service_role;
+
+revoke all on table public.provider_vehicle_specs_cache from anon, authenticated, service_role;
+grant select, insert, update, delete on table public.provider_vehicle_specs_cache to service_role;
+
+revoke all on table public.provider_vehicle_values_cache from anon, authenticated, service_role;
+grant select, insert, update, delete on table public.provider_vehicle_values_cache to service_role;
+
+revoke all on table public.provider_vehicle_listings_cache from anon, authenticated, service_role;
+grant select, insert, update, delete on table public.provider_vehicle_listings_cache to service_role;
+
+revoke all on table public.provider_api_usage_logs from anon, authenticated, service_role;
+grant select, insert, update, delete on table public.provider_api_usage_logs to service_role;
+
+revoke all on table public.cached_analysis from anon, authenticated, service_role;
+grant select, insert, update, delete on table public.cached_analysis to service_role;
+
+revoke all on table public.image_cache from anon, authenticated, service_role;
+grant select, insert, update, delete on table public.image_cache to service_role;
+
+revoke all on table public.vehicle_scan_popularity from anon, authenticated, service_role;
 grant select, insert, update, delete on table public.vehicle_scan_popularity to service_role;
 
-grant select on table public.vehicle_global_trending to anon;
-grant select, insert, update, delete on table public.vehicle_global_trending to authenticated;
+revoke all on table public.vehicle_global_trending from anon, authenticated, service_role;
 grant select, insert, update, delete on table public.vehicle_global_trending to service_role;
 
 alter table public.vehicles enable row level security;
@@ -452,6 +446,7 @@ for select
 to anon
 using (false);
 
+-- Internal tables keep explicit deny policies as defense in depth.
 drop policy if exists valuations_select_none on public.valuations;
 create policy valuations_select_none
 on public.valuations
@@ -828,3 +823,48 @@ on public.vehicle_global_trending
 for delete
 to authenticated
 using (false);
+
+-- Function permissions
+-- Trigger helper: not Data API callable.
+revoke execute on function public.set_updated_at() from public, anon, authenticated, service_role;
+
+-- Service-role-only RPC helpers used by the backend.
+revoke execute on function public.grant_user_vehicle_unlock(text, text, text, text, text, text, text, text, uuid)
+  from public, anon, authenticated, service_role;
+grant execute on function public.grant_user_vehicle_unlock(text, text, text, text, text, text, text, text, uuid)
+  to service_role;
+
+revoke execute on function public.increment_cached_analysis_hit(text, timestamptz)
+  from public, anon, authenticated, service_role;
+grant execute on function public.increment_cached_analysis_hit(text, timestamptz)
+  to service_role;
+
+revoke execute on function public.increment_image_cache_hit(text, timestamptz)
+  from public, anon, authenticated, service_role;
+grant execute on function public.increment_image_cache_hit(text, timestamptz)
+  to service_role;
+
+revoke execute on function public.increment_canonical_vehicle_popularity(text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.increment_canonical_vehicle_popularity(text)
+  to service_role;
+
+revoke execute on function public.promote_canonical_vehicle(text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.promote_canonical_vehicle(text)
+  to service_role;
+
+revoke execute on function public.increment_provider_vehicle_specs_cache_hit(text, timestamptz)
+  from public, anon, authenticated, service_role;
+grant execute on function public.increment_provider_vehicle_specs_cache_hit(text, timestamptz)
+  to service_role;
+
+revoke execute on function public.increment_provider_vehicle_values_cache_hit(text, timestamptz)
+  from public, anon, authenticated, service_role;
+grant execute on function public.increment_provider_vehicle_values_cache_hit(text, timestamptz)
+  to service_role;
+
+revoke execute on function public.increment_provider_vehicle_listings_cache_hit(text, timestamptz)
+  from public, anon, authenticated, service_role;
+grant execute on function public.increment_provider_vehicle_listings_cache_hit(text, timestamptz)
+  to service_role;
