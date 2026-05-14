@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import type { ExpoConfig } from "expo/config";
 
 const easProjectId = process.env.EXPO_PUBLIC_EAS_PROJECT_ID || "6e7cd5a8-7f65-44ce-88a8-3d1a3f589cc6";
@@ -11,6 +12,16 @@ const appName = process.env.EXPO_PUBLIC_APP_NAME || (isPreview ? "CarScanr Previ
 const bundleIdentifier =
   process.env.EXPO_PUBLIC_IOS_BUNDLE_ID || (isPreview ? "com.mattbrillman.carscanr.preview" : "com.mattbrillman.carscanr");
 const localIosBuildNumber = process.env.EXPO_PUBLIC_IOS_BUILD_NUMBER || "1";
+const gitCommit = process.env.EXPO_PUBLIC_GIT_COMMIT || safeReadGitCommit();
+const buildTimestamp = process.env.EXPO_PUBLIC_BUILD_TIMESTAMP || new Date().toISOString();
+
+function safeReadGitCommit() {
+  try {
+    return execSync("git rev-parse --short=12 HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch {
+    return "unknown";
+  }
+}
 
 const config: ExpoConfig = {
   name: appName,
@@ -40,6 +51,12 @@ const config: ExpoConfig = {
   },
   extra: {
     appEnv,
+    buildInfo: {
+      gitCommit,
+      buildTimestamp,
+      version: "1.0.2",
+      iosBuildNumber: isProduction ? null : localIosBuildNumber,
+    },
     publicEnv: {
       apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL || "",
       supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL || "",

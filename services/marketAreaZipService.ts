@@ -62,8 +62,21 @@ async function loadRawPersistedZip() {
   return null;
 }
 
+async function clearLegacyStorageArtifacts() {
+  const user = await authService.getCurrentUser().catch(() => null);
+  await AsyncStorage.removeItem(buildLegacyStorageKey(user?.id ?? null));
+  if (user?.id) {
+    await AsyncStorage.removeItem(buildLegacyStorageKey(null));
+  }
+}
+
 export const marketAreaZipService = {
+  async ensureStorageReady() {
+    await clearLegacyStorageArtifacts();
+  },
+
   async getInitialMarketAreaZip(): Promise<{ zip: string; zipSource: MarketAreaZipSource }> {
+    await clearLegacyStorageArtifacts();
     const persistedRecentZip = await loadRawPersistedZip();
     return resolveMarketAreaZip({
       persistedRecentZip: persistedRecentZip?.zip ?? "",

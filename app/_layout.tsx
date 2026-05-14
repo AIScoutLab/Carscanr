@@ -6,8 +6,9 @@ import { Linking, StyleSheet, Text, View } from "react-native";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Colors, Typography } from "@/constants/theme";
 import { SubscriptionProvider } from "@/features/subscription/SubscriptionProvider";
-import { assertMobileStartupConfig, getMobileEnvDiagnostics, getMobileStartupConfigError, requiredExpoPublicEnvKeys } from "@/lib/env";
+import { assertMobileStartupConfig, getMobileEnvDiagnostics, getMobileStartupConfigError, mobileBuildInfo, requiredExpoPublicEnvKeys } from "@/lib/env";
 import { supabase } from "@/lib/supabase";
+import { marketAreaZipService } from "@/services/marketAreaZipService";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 
 function extractDeepLinkTokens(url: string) {
@@ -37,6 +38,12 @@ export default function RootLayout() {
   useEffect(() => {
     const diagnostics = getMobileEnvDiagnostics();
     console.log("[startup-config] EXPO_PUBLIC env diagnostics", diagnostics);
+    console.log("[app-build] MOBILE_CLIENT_BUILD", {
+      gitCommit: mobileBuildInfo.gitCommit || "unknown",
+      buildTimestamp: mobileBuildInfo.buildTimestamp || "unknown",
+      version: mobileBuildInfo.version || "unknown",
+      iosBuildNumber: mobileBuildInfo.iosBuildNumber || "unknown",
+    });
 
     try {
       const configError = getMobileStartupConfigError();
@@ -50,6 +57,7 @@ export default function RootLayout() {
       }
 
       assertMobileStartupConfig();
+      void marketAreaZipService.ensureStorageReady();
       void offlineCanonicalService.preload();
       setStartupError(null);
     } catch (error) {

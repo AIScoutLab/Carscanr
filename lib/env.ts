@@ -15,14 +15,46 @@ type ExpoExtraPublicEnv = {
 
 type ExpoExtraShape = {
   appEnv?: string;
+  buildInfo?: {
+    gitCommit?: string;
+    buildTimestamp?: string;
+    version?: string;
+    iosBuildNumber?: string | null;
+  };
   publicEnv?: ExpoExtraPublicEnv;
   expoClient?: {
     extra?: {
       appEnv?: string;
+      buildInfo?: {
+        gitCommit?: string;
+        buildTimestamp?: string;
+        version?: string;
+        iosBuildNumber?: string | null;
+      };
       publicEnv?: ExpoExtraPublicEnv;
     };
   };
 };
+
+function getExpoBuildInfoCandidate() {
+  const updatesManifestExtra = (Updates.manifest && "extra" in Updates.manifest ? Updates.manifest.extra : undefined) as ExpoExtraShape | undefined;
+  const manifest2Extra = Constants.manifest2?.extra as ExpoExtraShape | undefined;
+  const manifestValue = Constants.manifest as (ExpoExtraShape & { extra?: ExpoExtraShape }) | null;
+  const manifestExtra = (manifestValue?.extra ?? manifestValue) as ExpoExtraShape | undefined;
+  const expoConfigExtra = Constants.expoConfig?.extra as ExpoExtraShape | undefined;
+
+  return (
+    expoConfigExtra?.buildInfo ??
+    expoConfigExtra?.expoClient?.extra?.buildInfo ??
+    updatesManifestExtra?.buildInfo ??
+    updatesManifestExtra?.expoClient?.extra?.buildInfo ??
+    manifest2Extra?.buildInfo ??
+    manifest2Extra?.expoClient?.extra?.buildInfo ??
+    manifestExtra?.buildInfo ??
+    manifestExtra?.expoClient?.extra?.buildInfo ??
+    null
+  );
+}
 
 function mergePublicEnv(target: ExpoExtraPublicEnv, source?: ExpoExtraPublicEnv | null) {
   if (!source) {
@@ -131,6 +163,7 @@ function isValidHttpUrl(value: string) {
 }
 
 const expoExtraPublicEnv = getExpoExtraPublicEnv();
+const expoBuildInfo = getExpoBuildInfoCandidate();
 
 export const mobileAppEnv = normalizeEnvName(getExpoAppEnvCandidate());
 
@@ -143,6 +176,16 @@ export const mobileEnv = {
   revenueCatIosApiKey: normalizeString(expoExtraPublicEnv.values.revenueCatIosApiKey || process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY),
   revenueCatEntitlementId: normalizeString(expoExtraPublicEnv.values.revenueCatEntitlementId || process.env.EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID),
   showQaDebug: normalizeString(expoExtraPublicEnv.values.showQaDebug || process.env.EXPO_PUBLIC_SHOW_QA_DEBUG),
+};
+
+export const mobileBuildInfo = {
+  gitCommit: normalizeString(expoBuildInfo?.gitCommit),
+  buildTimestamp: normalizeString(expoBuildInfo?.buildTimestamp),
+  version: normalizeString(expoBuildInfo?.version || Constants.expoConfig?.version),
+  iosBuildNumber:
+    typeof expoBuildInfo?.iosBuildNumber === "string" && expoBuildInfo.iosBuildNumber.trim().length > 0
+      ? expoBuildInfo.iosBuildNumber.trim()
+      : "",
 };
 
 export const requiredExpoPublicEnvKeys = [
