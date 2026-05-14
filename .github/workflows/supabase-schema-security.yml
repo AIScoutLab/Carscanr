@@ -1,0 +1,33 @@
+name: Supabase Schema Security
+
+on:
+  pull_request:
+    paths:
+      - "backend/supabase/**"
+      - "backend/scripts/validateSupabaseSecurity.ts"
+      - "backend/package.json"
+      - ".github/workflows/supabase-schema-security.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/supabase/**"
+      - "backend/scripts/validateSupabaseSecurity.ts"
+      - "backend/package.json"
+      - ".github/workflows/supabase-schema-security.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm run validate:supabase-security
