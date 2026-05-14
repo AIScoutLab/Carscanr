@@ -3,6 +3,7 @@ import { AppError } from "../../errors/appError.js";
 import { createProviderApiUsageLog, normalizeCondition } from "../../lib/providerCache.js";
 import { logger } from "../../lib/logger.js";
 import { repositories } from "../../lib/repositoryRegistry.js";
+import { isSpecialtyExoticMake, isSpecialtyModelFamilyMatch } from "../../lib/specialtyVehicles.js";
 import { resolveHorsepower } from "../../lib/vehicleData.js";
 import { ListingRecord, ValuationRecord, VehicleRecord } from "../../types/domain.js";
 import { MarketCheckRequestMeta, VehicleListingsProvider, VehicleSpecsProvider, VehicleValueProvider } from "../interfaces.js";
@@ -269,7 +270,7 @@ function isCrvLikeModel(value: string) {
   return value === "crv" || value === "cr-v" || value === "cr v";
 }
 
-function listingModelMatchesRequestedModel(requestedModel: string, listingModel: string) {
+function listingModelMatchesRequestedModel(requestedMake: string, requestedModel: string, listingModel: string) {
   if (!requestedModel || !listingModel) {
     return false;
   }
@@ -284,6 +285,10 @@ function listingModelMatchesRequestedModel(requestedModel: string, listingModel:
 
   if (isCrvLikeModel(requestedModel)) {
     return isCrvLikeModel(listingModel);
+  }
+
+  if (isSpecialtyModelFamilyMatch(requestedMake, requestedModel, listingModel)) {
+    return true;
   }
 
   return false;
@@ -350,6 +355,142 @@ function getConditionMultiplier(condition: string) {
     default:
       return 1;
   }
+}
+
+function normalizeInventoryListings(input: {
+  descriptor: SearchDescriptor;
+  vehicleId: string;
+  rawListings: MarketCheckListing[];
+  radiusMiles: number;
+  yearRangeStart?: number | null;
+  yearRangeEnd?: number | null;
+  traceLabel: "LISTINGS_PROVIDER_FILTER_TRACE" | "VALUE_PROVIDER_FILTER_TRACE";
+  zip: string;
+}) {
+  const requestedMake = normalizeListingMatchText(input.descriptor.make);
+  const requestedModel = normalizeListingMatchText(input.descriptor.model);
+  const effectiveYearMin =
+    input.yearRangeStart != null && input.yearRangeEnd != null
+      ? Math.min(input.yearRangeStart, input.yearRangeEnd) - 1
+      : input.descriptor.year - 2;
+  const effectiveYearMax =
+    input.yearRangeStart != null && input.yearRangeEnd != null
+      ? Math.max(input.yearRangeStart, input.yearRangeEnd) + 1
+      : input.descriptor.year + 2;
+
+  const baseListings = input.rawListings.flatMap((listing) => {
+    const year = listing.year ?? listing.build?.year;
+    const make = listing.make ?? listing.build?.make;
+    const model = listing.model ?? listing.build?.model;
+    if (!year || !make || !model || !listing.price) {
+      return [];
+    }
+    return [{
+      raw: listing,
+      year,
+      make,
+      model,
+      listingUrl: getListingUrl(listing),
+    }];
+  });
+
+  const sampleRejectedInvalidUrl =
+    baseListings.find((entry) => !entry.listingUrl)
+      ? {
+          title: baseListings.find((entry) => !entry.listingUrl)?.raw.heading ?? null,
+          make: baseListings.find((entry) => !entry.listingUrl)?.make ?? null,
+          model: baseListings.find((entry) => !entry.listingUrl)?.model ?? null,
+          year: baseListings.find((entry) => !entry.listingUrl)?.year ?? null,
+          url: baseListings.find((entry) => !entry.listingUrl)?.listingUrl ?? null,
+        }
+      : null;
+
+  const urlFiltered = baseListings.filter((entry) => Boolean(entry.listingUrl));
+  const sampleRejectedModel =
+    urlFiltered.find((entry) => {
+      const listingMake = normalizeListingMatchText(entry.make);
+      const listingModel = normalizeListingMatchText(entry.model);
+      return requestedMake !== listingMake || !listingModelMatchesRequestedModel(input.descriptor.make, requestedModel, listingModel);
+    }) ?? null;
+
+  const makeModelFiltered = urlFiltered.filter((entry) => {
+    const listingMake = normalizeListingMatchText(entry.make);
+    const listingModel = normalizeListingMatchText(entry.model);
+    return requestedMake === listingMake && listingModelMatchesRequestedModel(input.descriptor.make, requestedModel, listingModel);
+  });
+
+  const sampleRejectedYear =
+    makeModelFiltered.find((entry) => entry.year < effectiveYearMin || entry.year > effectiveYearMax) ?? null;
+  const yearFiltered = makeModelFiltered.filter((entry) => entry.year >= effectiveYearMin && entry.year <= effectiveYearMax);
+
+  logger.info(
+    {
+      label: input.traceLabel,
+      vehicleId: input.vehicleId,
+      zip: input.zip,
+      radiusMiles: input.radiusMiles,
+      requestedYear: input.descriptor.year,
+      requestedYearRange:
+        input.yearRangeStart != null && input.yearRangeEnd != null
+          ? { start: Math.min(input.yearRangeStart, input.yearRangeEnd), end: Math.max(input.yearRangeStart, input.yearRangeEnd) }
+          : null,
+      requestedMake: input.descriptor.make,
+      requestedModel: input.descriptor.model,
+      requestedTrim: input.descriptor.trim ?? null,
+      specialtyVehicle: isSpecialtyExoticMake(input.descriptor.make),
+      rawCount: input.rawListings.length,
+      afterUrlCount: urlFiltered.length,
+      afterMakeModelCount: makeModelFiltered.length,
+      afterYearCount: yearFiltered.length,
+      sampleRejectedInvalidUrl,
+      sampleRejectedMakeModel: sampleRejectedModel
+        ? {
+            title: sampleRejectedModel.raw.heading ?? null,
+            make: sampleRejectedModel.make,
+            model: sampleRejectedModel.model,
+            year: sampleRejectedModel.year,
+            url: sampleRejectedModel.listingUrl,
+          }
+        : null,
+      sampleRejectedYear: sampleRejectedYear
+        ? {
+            title: sampleRejectedYear.raw.heading ?? null,
+            make: sampleRejectedYear.make,
+            model: sampleRejectedYear.model,
+            year: sampleRejectedYear.year,
+            url: sampleRejectedYear.listingUrl,
+          }
+        : null,
+    },
+    input.traceLabel,
+  );
+
+  const listings = yearFiltered.map((entry) => {
+    const trim = entry.raw.trim?.trim() || entry.raw.build?.trim?.trim() || input.descriptor.trim || "Base";
+    return {
+      id: `live-listing-${entry.raw.id ?? entry.raw.vin ?? buildLiveVehicleId({ year: entry.year, make: entry.make, model: entry.model, trim })}`,
+      vehicleId: input.vehicleId,
+      year: entry.year,
+      make: titleCase(entry.make),
+      model: titleCase(entry.model),
+      trim,
+      title: entry.raw.heading ?? `${entry.year} ${titleCase(entry.make)} ${titleCase(entry.model)} ${trim}`.trim(),
+      price: entry.raw.price!,
+      mileage: entry.raw.miles ?? 0,
+      dealer: entry.raw.dealer_name ?? entry.raw.dealer?.name ?? entry.raw.seller?.name ?? "Market listing",
+      distanceMiles: Math.round(entry.raw.dist ?? input.radiusMiles),
+      location: getLocation(entry.raw),
+      imageUrl: getImageUrl(entry.raw),
+      listingUrl: entry.listingUrl,
+      listedAt: entry.raw.first_seen_at_date ?? entry.raw.last_seen_at_date ?? new Date().toISOString(),
+    } satisfies ListingRecord;
+  });
+
+  return {
+    listings,
+    rawCount: input.rawListings.length,
+    normalizedCount: listings.length,
+  };
 }
 
 function getDescriptor(vehicleId: string, vehicle?: VehicleRecord | null): SearchDescriptor | null {
@@ -1039,8 +1180,8 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
       model: descriptor.model,
       trim: descriptor.trim,
       zip: input.zip,
-      radius: env.MARKETCHECK_VALUE_RADIUS_MILES,
-      rows: 0,
+      radius: input.requestMeta?.radiusMiles ?? env.MARKETCHECK_VALUE_RADIUS_MILES,
+      rows: 16,
       stats: "price",
       car_type: "used",
       miles_range: `${Math.max(0, input.mileage - 15000)}-${input.mileage + 15000}`,
@@ -1053,29 +1194,46 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
       trim: descriptor.trim ?? null,
       vehicleId: input.vehicleId,
       zip: input.zip,
-      radiusMiles: env.MARKETCHECK_VALUE_RADIUS_MILES,
+      radiusMiles: input.requestMeta?.radiusMiles ?? env.MARKETCHECK_VALUE_RADIUS_MILES,
       mileage: input.mileage,
       condition: input.condition,
       ...input.requestMeta,
     });
 
+    const normalizedListings = normalizeInventoryListings({
+      descriptor,
+      vehicleId: input.vehicleId,
+      rawListings: response.listings ?? [],
+      radiusMiles: input.requestMeta?.radiusMiles ?? env.MARKETCHECK_VALUE_RADIUS_MILES,
+      yearRangeStart: input.requestMeta?.yearRangeStart ?? null,
+      yearRangeEnd: input.requestMeta?.yearRangeEnd ?? null,
+      traceLabel: "VALUE_PROVIDER_FILTER_TRACE",
+      zip: input.zip,
+    });
     const stats = getPriceStats(response.stats);
-    if (!stats || (!stats.mean && !stats.median && !stats.min && !stats.max)) {
+    if ((!stats || (!stats.mean && !stats.median && !stats.min && !stats.max)) && normalizedListings.listings.length === 0) {
       return null;
     }
 
-    const anchor = stats.median ?? stats.mean ?? stats.max ?? stats.min ?? descriptor.vehicle?.msrp ?? 0;
+    const listingPrices = normalizedListings.listings
+      .map((listing) => listing.price)
+      .filter((price): price is number => typeof price === "number" && Number.isFinite(price) && price > 0)
+      .sort((left, right) => left - right);
+    const listingMedian = listingPrices.length > 0 ? listingPrices[Math.floor(listingPrices.length / 2)] ?? null : null;
+    const listingMin = listingPrices[0] ?? null;
+    const listingMax = listingPrices.at(-1) ?? null;
+    const anchor = stats?.median ?? stats?.mean ?? listingMedian ?? stats?.max ?? listingMax ?? stats?.min ?? listingMin ?? descriptor.vehicle?.msrp ?? 0;
     const conditionMultiplier = getConditionMultiplier(input.condition);
     const adjustedAnchor = Math.round(anchor * conditionMultiplier);
-    const privatePartyLow = Math.round((stats.min ?? adjustedAnchor * 0.94) * conditionMultiplier);
-    const privatePartyHigh = Math.round((stats.max ?? adjustedAnchor * 1.06) * conditionMultiplier);
+    const privatePartyLow = Math.round((stats?.min ?? listingMin ?? adjustedAnchor * 0.94) * conditionMultiplier);
+    const privatePartyHigh = Math.round((stats?.max ?? listingMax ?? adjustedAnchor * 1.06) * conditionMultiplier);
     const tradeInLow = Math.round(privatePartyLow * 0.92);
     const tradeInHigh = Math.round(privatePartyHigh * 0.92);
     const dealerRetailLow = Math.round(privatePartyLow * 1.06);
     const dealerRetailHigh = Math.round(privatePartyHigh * 1.08);
     const tradeIn = Math.round(adjustedAnchor * 0.92);
     const privateParty = Math.round(adjustedAnchor);
-    const dealerRetail = Math.round((stats.max ?? adjustedAnchor * 1.06) * conditionMultiplier);
+    const dealerRetail = Math.round((stats?.max ?? listingMax ?? adjustedAnchor * 1.06) * conditionMultiplier);
 
     return {
       id: `live-valuation-${input.vehicleId}-${input.zip}-${input.mileage}`,
@@ -1083,6 +1241,7 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
       zip: input.zip,
       mileage: input.mileage,
       condition: normalizeCondition(input.condition),
+      status: "loaded_value",
       tradeIn,
       tradeInLow,
       tradeInHigh,
@@ -1094,10 +1253,16 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
       dealerRetailHigh,
       currency: "USD",
       generatedAt: new Date().toISOString(),
-      sourceLabel: "Based on market data",
-      confidenceLabel: stats.min && stats.max && (stats.median || stats.mean) ? "High confidence" : "Moderate confidence",
-      modelType: "provider_range",
-      listingCount: null,
+      sourceLabel: normalizedListings.listings.length > 0 ? "Based on live MarketCheck listings" : "Based on market data",
+      confidenceLabel:
+        stats?.min && stats?.max && (stats.median || stats.mean)
+          ? "High confidence"
+          : normalizedListings.listings.length > 0
+            ? "Limited comps"
+            : "Moderate confidence",
+      modelType: normalizedListings.listings.length > 0 && (!stats || (!stats.mean && !stats.median && !stats.min && !stats.max)) ? "listing_derived" : "provider_range",
+      listingCount: normalizedListings.listings.length || null,
+      supportingListings: normalizedListings.listings,
     };
   }
 
@@ -1143,127 +1308,21 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
       ...input.requestMeta,
     });
 
-    const rawListings = response.listings ?? [];
-    const requestedMake = normalizeListingMatchText(descriptor.make);
-    const requestedModel = normalizeListingMatchText(descriptor.model);
-    const yearRangeStart =
-      typeof input.requestMeta?.yearRangeStart === "number" && Number.isFinite(input.requestMeta.yearRangeStart)
-        ? input.requestMeta.yearRangeStart
-        : null;
-    const yearRangeEnd =
-      typeof input.requestMeta?.yearRangeEnd === "number" && Number.isFinite(input.requestMeta.yearRangeEnd)
-        ? input.requestMeta.yearRangeEnd
-        : null;
-    const effectiveYearMin = yearRangeStart != null && yearRangeEnd != null ? Math.min(yearRangeStart, yearRangeEnd) - 1 : descriptor.year - 2;
-    const effectiveYearMax = yearRangeStart != null && yearRangeEnd != null ? Math.max(yearRangeStart, yearRangeEnd) + 1 : descriptor.year + 2;
-
-    const baseListings = rawListings.flatMap((listing) => {
-      const year = listing.year ?? listing.build?.year;
-      const make = listing.make ?? listing.build?.make;
-      const model = listing.model ?? listing.build?.model;
-      if (!year || !make || !model || !listing.price) {
-        return [];
-      }
-      return [
-        {
-          raw: listing,
-          year,
-          make,
-          model,
-          listingUrl: getListingUrl(listing),
-        },
-      ];
-    });
-
-    const sampleRejectedInvalidUrl =
-      baseListings.find((entry) => !entry.listingUrl)
-        ? {
-            title: baseListings.find((entry) => !entry.listingUrl)?.raw.heading ?? null,
-            make: baseListings.find((entry) => !entry.listingUrl)?.make ?? null,
-            model: baseListings.find((entry) => !entry.listingUrl)?.model ?? null,
-            year: baseListings.find((entry) => !entry.listingUrl)?.year ?? null,
-            url: baseListings.find((entry) => !entry.listingUrl)?.listingUrl ?? null,
-          }
-        : null;
-
-    const urlFiltered = baseListings.filter((entry) => Boolean(entry.listingUrl));
-    const sampleRejectedModel =
-      urlFiltered.find((entry) => {
-        const listingMake = normalizeListingMatchText(entry.make);
-        const listingModel = normalizeListingMatchText(entry.model);
-        return requestedMake !== listingMake || !listingModelMatchesRequestedModel(requestedModel, listingModel);
-      }) ?? null;
-
-    const makeModelFiltered = urlFiltered.filter((entry) => {
-      const listingMake = normalizeListingMatchText(entry.make);
-      const listingModel = normalizeListingMatchText(entry.model);
-      return requestedMake === listingMake && listingModelMatchesRequestedModel(requestedModel, listingModel);
-    });
-
-    const sampleRejectedYear =
-      makeModelFiltered.find((entry) => entry.year < effectiveYearMin || entry.year > effectiveYearMax) ?? null;
-    const yearFiltered = makeModelFiltered.filter((entry) => entry.year >= effectiveYearMin && entry.year <= effectiveYearMax);
-
-    logger.info(
-      {
-        label: "LISTINGS_PROVIDER_FILTER_TRACE",
-        vehicleId: input.vehicleId,
-        zip: input.zip,
-        radiusMiles: input.radiusMiles,
-        condition: null,
-        requestedYear: descriptor.year,
-        requestedYearRange:
-          yearRangeStart != null && yearRangeEnd != null
-            ? { start: Math.min(yearRangeStart, yearRangeEnd), end: Math.max(yearRangeStart, yearRangeEnd) }
-            : null,
-        requestedMake: descriptor.make,
-        requestedModel: descriptor.model,
-        rawCount: rawListings.length,
-        afterUrlCount: urlFiltered.length,
-        afterMakeModelCount: makeModelFiltered.length,
-        afterYearCount: yearFiltered.length,
-        sampleRejectedInvalidUrl,
-        sampleRejectedMakeModel: sampleRejectedModel
-          ? {
-              title: sampleRejectedModel.raw.heading ?? null,
-              make: sampleRejectedModel.make,
-              model: sampleRejectedModel.model,
-              year: sampleRejectedModel.year,
-              url: sampleRejectedModel.listingUrl,
-            }
+    return normalizeInventoryListings({
+      descriptor,
+      vehicleId: input.vehicleId,
+      rawListings: response.listings ?? [],
+      radiusMiles: input.radiusMiles,
+      yearRangeStart:
+        typeof input.requestMeta?.yearRangeStart === "number" && Number.isFinite(input.requestMeta.yearRangeStart)
+          ? input.requestMeta.yearRangeStart
           : null,
-        sampleRejectedYear: sampleRejectedYear
-          ? {
-              title: sampleRejectedYear.raw.heading ?? null,
-              make: sampleRejectedYear.make,
-              model: sampleRejectedYear.model,
-              year: sampleRejectedYear.year,
-              url: sampleRejectedYear.listingUrl,
-            }
+      yearRangeEnd:
+        typeof input.requestMeta?.yearRangeEnd === "number" && Number.isFinite(input.requestMeta.yearRangeEnd)
+          ? input.requestMeta.yearRangeEnd
           : null,
-      },
-      "LISTINGS_PROVIDER_FILTER_TRACE",
-    );
-
-    return yearFiltered.map((entry) => {
-      const trim = entry.raw.trim?.trim() || entry.raw.build?.trim?.trim() || descriptor.trim || "Base";
-      return {
-        id: `live-listing-${entry.raw.id ?? entry.raw.vin ?? buildLiveVehicleId({ year: entry.year, make: entry.make, model: entry.model, trim })}`,
-        vehicleId: input.vehicleId,
-        year: entry.year,
-        make: titleCase(entry.make),
-        model: titleCase(entry.model),
-        trim,
-        title: entry.raw.heading ?? `${entry.year} ${titleCase(entry.make)} ${titleCase(entry.model)} ${trim}`.trim(),
-        price: entry.raw.price!,
-        mileage: entry.raw.miles ?? 0,
-        dealer: entry.raw.dealer_name ?? entry.raw.dealer?.name ?? entry.raw.seller?.name ?? "Market listing",
-        distanceMiles: Math.round(entry.raw.dist ?? input.radiusMiles),
-        location: getLocation(entry.raw),
-        imageUrl: getImageUrl(entry.raw),
-        listingUrl: entry.listingUrl,
-        listedAt: entry.raw.first_seen_at_date ?? entry.raw.last_seen_at_date ?? new Date().toISOString(),
-      };
-    });
+      traceLabel: "LISTINGS_PROVIDER_FILTER_TRACE",
+      zip: input.zip,
+    }).listings;
   }
 }

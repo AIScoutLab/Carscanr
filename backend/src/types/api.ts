@@ -141,6 +141,7 @@ export const vehicleListingsQuerySchema = requireVehicleLookup(
     ...marketRefreshQueryFields,
     zip: z.preprocess((value) => (typeof value === "string" ? value.trim() : value), z.string().min(3).max(10)),
     radiusMiles: z.coerce.number().min(1).max(250).default(50),
+    mileage: z.coerce.number().int().nonnegative().optional(),
   }),
 );
 

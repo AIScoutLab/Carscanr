@@ -25,8 +25,60 @@ function normalizeMake(make: string | null | undefined) {
     .replace(/\s+/g, " ");
 }
 
+function normalizeCompactModel(value: string | null | undefined) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
 export function isSpecialtyExoticMake(make: string | null | undefined) {
   return SPECIALTY_EXOTIC_MAKES.has(normalizeMake(make));
+}
+
+export function getSpecialtyModelAliases(make: string | null | undefined, model: string | null | undefined) {
+  const aliases = new Set<string>();
+  const compactModel = normalizeCompactModel(model);
+  if (compactModel) {
+    aliases.add(compactModel);
+  }
+  const leadingDigits = compactModel.match(/^\d+/)?.[0] ?? "";
+  if (leadingDigits) {
+    aliases.add(leadingDigits);
+  }
+  if (!isSpecialtyExoticMake(make)) {
+    return [...aliases];
+  }
+
+  const parts = String(model ?? "")
+    .trim()
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .filter(Boolean);
+  const firstPart = normalizeCompactModel(parts[0] ?? "");
+  if (firstPart) {
+    aliases.add(firstPart);
+  }
+  const firstTwo = normalizeCompactModel(parts.slice(0, 2).join(" "));
+  if (firstTwo) {
+    aliases.add(firstTwo);
+  }
+  return [...aliases];
+}
+
+export function isSpecialtyModelFamilyMatch(make: string | null | undefined, requestedModel: string | null | undefined, candidateModel: string | null | undefined) {
+  const requestedAliases = getSpecialtyModelAliases(make, requestedModel);
+  const candidateAliases = getSpecialtyModelAliases(make, candidateModel);
+  if (requestedAliases.length === 0 || candidateAliases.length === 0) {
+    return false;
+  }
+
+  return requestedAliases.some((alias) => {
+    if (!candidateAliases.includes(alias)) {
+      return false;
+    }
+    return isSpecialtyExoticMake(make) || /\d/.test(alias);
+  });
 }
 
 export function buildSpecialtyVehicleOverview(input: {

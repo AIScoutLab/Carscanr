@@ -198,6 +198,7 @@ export type ValuationRecord = {
   sourceBasis?: "provider_direct" | "listing_median_adjusted" | "modeled_condition_adjusted" | null;
   modelType?: "provider_range" | "listing_derived" | "modeled" | "estimated_depreciation" | "estimated_family_model" | "specialty_unavailable";
   listingCount?: number | null;
+  supportingListings?: ListingRecord[] | null;
 };
 
 export type ListingRecord = {

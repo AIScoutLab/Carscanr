@@ -327,7 +327,7 @@ describe("bootstrap cost control", () => {
       action: "valueRefresh",
     });
 
-    assert.equal(providerCalls, 1);
+    assert.equal(providerCalls >= 1, true);
     assert.equal(result.data.modelType, "provider_range");
     assert.ok((result.data.privateParty ?? 0) >= 150000);
   });
@@ -420,14 +420,14 @@ describe("bootstrap cost control", () => {
       action: "valueRefresh",
     });
 
-    assert.equal(providerCalls, 1);
+    assert.equal(providerCalls >= 1, true);
     assert.equal(result.data.status, "no_comps_found");
     assert.equal(result.data.modelType, "specialty_unavailable");
     assert.equal(result.data.sourceLabel, "No live market comps found");
     assert.equal(result.data.privateParty, null);
   });
 
-  test("Ferrari explicit refresh still attempts one live call when action is missing but fetch metadata is explicit", async () => {
+  test("Ferrari explicit refresh still attempts live fallback calls when action is missing but fetch metadata is explicit", async () => {
     const testRepositories = createTestRepositories({
       vehicles: [
         {
@@ -476,7 +476,7 @@ describe("bootstrap cost control", () => {
       sourceScreen: "valueScreen",
     });
 
-    assert.equal(providerCalls, 1);
+    assert.equal(providerCalls >= 1, true);
     assert.equal(result.data.status, "no_comps_found");
     assert.equal(result.data.modelType, "specialty_unavailable");
     assert.equal(result.data.sourceLabel, "No live market comps found");
@@ -567,23 +567,21 @@ describe("bootstrap cost control", () => {
     setRepositories(testRepositories.repositories);
 
     let providerCalls = 0;
-    let providerRequest:
-      | {
-          vehicleId: string;
-          year: number;
-          make: string;
-          model: string;
-          trim: string | null;
-          zip: string;
-          mileage: number;
-          condition: string;
-          allowLive: boolean | undefined;
-          reason: string | undefined;
-          sourceScreen: string | undefined;
-          action: string | null | undefined;
-          forceLive: boolean | null | undefined;
-        }
-      | null = null;
+    const providerRequests: Array<{
+      vehicleId: string;
+      year: number;
+      make: string;
+      model: string;
+      trim: string | null;
+      zip: string;
+      mileage: number;
+      condition: string;
+      allowLive: boolean | undefined;
+      reason: string | undefined;
+      sourceScreen: string | undefined;
+      action: string | null | undefined;
+      forceLive: boolean | null | undefined;
+    }> = [];
 
     setProviders({
       ...createTestProviders(),
@@ -591,7 +589,7 @@ describe("bootstrap cost control", () => {
       valueProvider: {
         async getValuation(input) {
           providerCalls += 1;
-          providerRequest = {
+          providerRequests.push({
             vehicleId: input.vehicleId,
             year: input.vehicle.year,
             make: input.vehicle.make,
@@ -605,7 +603,7 @@ describe("bootstrap cost control", () => {
             sourceScreen: input.requestMeta?.sourceScreen,
             action: input.requestMeta?.action,
             forceLive: input.requestMeta?.forceLive,
-          };
+          });
           return null;
         },
       },
@@ -623,23 +621,26 @@ describe("bootstrap cost control", () => {
       forceLive: true,
     });
 
-    assert.equal(providerCalls, 1);
+    assert.equal(providerCalls >= 1, true);
     assert.equal(result.data.status, "no_comps_found");
-    assert.deepEqual(providerRequest, {
-      vehicleId: "519f29ed-979c-44ee-b443-83b2ce480333",
-      year: 2021,
-      make: "Ferrari",
-      model: "812 Superfast",
-      trim: "Base",
-      zip: "60610",
-      mileage: 18400,
-      condition: "good",
-      allowLive: true,
-      reason: "user_requested_value_refresh",
-      sourceScreen: "valueScreen",
-      action: "valueRefresh",
-      forceLive: true,
-    });
+    assert.equal(
+      providerRequests.some((request) =>
+        request.vehicleId === "519f29ed-979c-44ee-b443-83b2ce480333" &&
+        request.year === 2021 &&
+        request.make === "Ferrari" &&
+        request.model === "812 Superfast" &&
+        request.trim === "Base" &&
+        request.zip === "60610" &&
+        request.mileage === 18400 &&
+        request.condition === "good" &&
+        request.allowLive === true &&
+        request.reason === "user_requested_value_refresh" &&
+        request.sourceScreen === "valueScreen" &&
+        request.action === "valueRefresh" &&
+        request.forceLive === true,
+      ),
+      true,
+    );
     assert.equal(result.data.modelType, "specialty_unavailable");
     assert.equal(result.data.sourceLabel, "No live market comps found");
   });
@@ -696,6 +697,365 @@ describe("bootstrap cost control", () => {
     assert.equal(result.data.status, "provider_error");
     assert.equal(result.data.sourceLabel, "Live market data could not be loaded");
     assert.equal(result.data.privateParty, null);
+  });
+
+  test("Ferrari 812 explicit refresh widens from exact model to family-model fallback before giving up", async () => {
+    const testRepositories = createTestRepositories({
+      vehicles: [
+        {
+          id: "2021-ferrari-812-superfast",
+          year: 2021,
+          make: "Ferrari",
+          model: "812 Superfast",
+          trim: "Base",
+          bodyStyle: "Coupe",
+          vehicleType: "car",
+          msrp: 349000,
+          engine: "6.5L V12",
+          horsepower: 789,
+          torque: "530 lb-ft",
+          transmission: "7-speed dual-clutch automatic",
+          drivetrain: "RWD",
+          mpgOrRange: "12 city / 16 highway",
+          colors: ["Rosso Corsa"],
+        },
+      ],
+      valuations: [],
+      listings: [],
+    });
+    setRepositories(testRepositories.repositories);
+
+    const attemptedModels: Array<{ model: string; trim: string | null; year: number }> = [];
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation(input) {
+          attemptedModels.push({
+            model: input.vehicle?.model ?? "",
+            trim: input.vehicle?.trim ?? null,
+            year: input.vehicle?.year ?? 0,
+          });
+          if (input.vehicle?.model === "812") {
+            return {
+              id: "ferrari-812-live",
+              vehicleId: input.vehicleId,
+              zip: input.zip,
+              mileage: input.mileage,
+              condition: "good",
+              status: "loaded_listing_range",
+              tradeIn: 312000,
+              privateParty: 339995,
+              dealerRetail: 356000,
+              low: 325000,
+              median: 339995,
+              high: 355000,
+              currency: "USD",
+              generatedAt: "2026-05-14T00:00:00.000Z",
+              sourceLabel: "Based on live MarketCheck listings",
+              confidenceLabel: "Limited comps",
+              modelType: "listing_derived",
+              listingCount: 2,
+            };
+          }
+          return null;
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2021-ferrari-812-superfast",
+      zip: "60563",
+      mileage: 18400,
+      condition: "good",
+      allowLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+      forceLive: true,
+    });
+
+    assert.equal(result.data.status, "loaded_condition_set");
+    assert.equal(attemptedModels.some((attempt) => attempt.model === "812 Superfast" && attempt.trim === "Base"), true);
+    assert.equal(attemptedModels.some((attempt) => attempt.model === "812" && attempt.trim === ""), true);
+  });
+
+  test("explicit value refresh bypasses cached no-comps state and retries provider", async () => {
+    const testRepositories = createTestRepositories({
+      vehicles: [
+        {
+          id: "2021-ferrari-812-superfast",
+          year: 2021,
+          make: "Ferrari",
+          model: "812 Superfast",
+          trim: "Base",
+          bodyStyle: "Coupe",
+          vehicleType: "car",
+          msrp: 349000,
+          engine: "6.5L V12",
+          horsepower: 789,
+          torque: "530 lb-ft",
+          transmission: "7-speed dual-clutch automatic",
+          drivetrain: "RWD",
+          mpgOrRange: "12 city / 16 highway",
+          colors: ["Rosso Corsa"],
+        },
+      ],
+    });
+    testRepositories.state.valuesCache.push(
+      createValuesCacheRow({
+        descriptor: {
+          year: 2021,
+          make: "Ferrari",
+          model: "812 Superfast",
+          trim: "Base",
+          vehicleType: "car",
+          normalizedMake: "ferrari",
+          normalizedModel: "812 superfast",
+          normalizedTrim: "base",
+        },
+        cacheKey: "values:condition-set:2021:ferrari:812-superfast:base:60563:18400",
+        provider: "marketcheck",
+        zip: "60563",
+        mileage: 18400,
+        payload: {
+          id: "cached-no-comps",
+          vehicleId: "2021-ferrari-812-superfast",
+          zip: "60563",
+          mileage: 18400,
+          condition: "good",
+          status: "no_comps_found",
+          tradeIn: null,
+          privateParty: null,
+          dealerRetail: null,
+          currency: "USD",
+          generatedAt: "2026-05-14T00:00:00.000Z",
+          sourceLabel: "No live market comps found",
+          confidenceLabel: "No live market comps found for this ZIP, mileage, and condition.",
+          reason: "no_comps_found",
+          modelType: "specialty_unavailable",
+        },
+      }),
+    );
+    setRepositories(testRepositories.repositories);
+
+    let providerCalls = 0;
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          providerCalls += 1;
+          return null;
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    await service.getValue({
+      vehicleId: "2021-ferrari-812-superfast",
+      zip: "60563",
+      mileage: 18400,
+      condition: "good",
+      allowLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+      forceLive: true,
+    });
+
+    assert.equal(providerCalls > 0, true);
+  });
+
+  test("value lookup supporting listings populate the For Sale cache", async () => {
+    setRepositories(
+      createTestRepositories({
+        vehicles: [
+          {
+            id: "2021-ferrari-812-superfast",
+            year: 2021,
+            make: "Ferrari",
+            model: "812 Superfast",
+            trim: "Base",
+            bodyStyle: "Coupe",
+            vehicleType: "car",
+            msrp: 349000,
+            engine: "6.5L V12",
+            horsepower: 789,
+            torque: "530 lb-ft",
+            transmission: "7-speed dual-clutch automatic",
+            drivetrain: "RWD",
+            mpgOrRange: "12 city / 16 highway",
+            colors: ["Rosso Corsa"],
+          },
+        ],
+      }).repositories,
+    );
+    let listingsProviderCalls = 0;
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      listingsProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation(input) {
+          return {
+            id: "ferrari-812-live",
+            vehicleId: input.vehicleId,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: "good",
+            status: "loaded_listing_range",
+            tradeIn: 312000,
+            privateParty: 339995,
+            dealerRetail: 356000,
+            low: 325000,
+            median: 339995,
+            high: 355000,
+            currency: "USD",
+            generatedAt: "2026-05-14T00:00:00.000Z",
+            sourceLabel: "Based on live MarketCheck listings",
+            confidenceLabel: "Limited comps",
+            modelType: "listing_derived",
+            listingCount: 1,
+            supportingListings: [
+              {
+                id: "listing-812",
+                vehicleId: input.vehicleId,
+                year: 2021,
+                make: "Ferrari",
+                model: "812",
+                trim: "Base",
+                title: "2021 Ferrari 812",
+                price: 339995,
+                mileage: 7800,
+                dealer: "Exotic Motors",
+                distanceMiles: 42,
+                location: "Chicago, IL",
+                imageUrl: "https://dealer.example.test/ferrari-812.jpg",
+                listingUrl: "https://dealer.example.test/ferrari-812",
+                listedAt: "2026-05-14T00:00:00.000Z",
+              },
+            ],
+          };
+        },
+      },
+      listingsProvider: {
+        async getListings() {
+          listingsProviderCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    await service.getValue({
+      vehicleId: "2021-ferrari-812-superfast",
+      zip: "60563",
+      mileage: 18400,
+      condition: "good",
+      allowLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+      forceLive: true,
+    });
+
+    const listings = await service.getListings({
+      vehicleId: "2021-ferrari-812-superfast",
+      zip: "60563",
+      radiusMiles: 100,
+      allowLive: false,
+      fetchReason: "initial_load",
+    });
+
+    assert.equal(listingsProviderCalls, 0);
+    assert.equal(listings.data.length, 1);
+  });
+
+  test("listings lookup can populate the value cache when mileage is supplied", async () => {
+    setRepositories(
+      createTestRepositories({
+        vehicles: [
+          {
+            id: "2021-ferrari-812-superfast",
+            year: 2021,
+            make: "Ferrari",
+            model: "812 Superfast",
+            trim: "Base",
+            bodyStyle: "Coupe",
+            vehicleType: "car",
+            msrp: 349000,
+            engine: "6.5L V12",
+            horsepower: 789,
+            torque: "530 lb-ft",
+            transmission: "7-speed dual-clutch automatic",
+            drivetrain: "RWD",
+            mpgOrRange: "12 city / 16 highway",
+            colors: ["Rosso Corsa"],
+          },
+        ],
+      }).repositories,
+    );
+    let valueProviderCalls = 0;
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      listingsProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          valueProviderCalls += 1;
+          return null;
+        },
+      },
+      listingsProvider: {
+        async getListings(input) {
+          return [
+            {
+              id: "listing-812",
+              vehicleId: input.vehicleId,
+              year: 2021,
+              make: "Ferrari",
+              model: "812",
+              trim: "Base",
+              title: "2021 Ferrari 812",
+              price: 339995,
+              mileage: 7800,
+              dealer: "Exotic Motors",
+              distanceMiles: 42,
+              location: "Chicago, IL",
+              imageUrl: "https://dealer.example.test/ferrari-812.jpg",
+              listingUrl: "https://dealer.example.test/ferrari-812",
+              listedAt: "2026-05-14T00:00:00.000Z",
+            },
+          ];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    await service.getListings({
+      vehicleId: "2021-ferrari-812-superfast",
+      zip: "60563",
+      radiusMiles: 100,
+      mileage: 18400,
+      allowLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+    });
+
+    const value = await service.getValue({
+      vehicleId: "2021-ferrari-812-superfast",
+      zip: "60563",
+      mileage: 18400,
+      condition: "good",
+      allowLive: false,
+      fetchReason: "initial_load",
+    });
+
+    assert.equal(valueProviderCalls, 0);
+    assert.equal(value.data.status, "loaded_condition_set");
   });
 
   test("normal family cached estimated valuation still works for common vehicles", async () => {

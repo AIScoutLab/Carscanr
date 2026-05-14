@@ -351,6 +351,7 @@ export class VehicleController {
           yearRangeEnd: req.query.yearRangeEnd ?? null,
           zip: req.query.zip ?? null,
           radiusMiles: req.query.radiusMiles ?? null,
+          mileage: req.query.mileage ?? null,
         },
         "FORSALE_PIPELINE_START",
       );
@@ -367,6 +368,7 @@ export class VehicleController {
           yearRangeEnd: req.query.yearRangeEnd ?? null,
           zip: req.query.zip ?? null,
           radiusMiles: req.query.radiusMiles ?? null,
+          mileage: req.query.mileage ?? null,
         },
         "LISTINGS_PIPELINE_START",
       );
@@ -378,6 +380,7 @@ export class VehicleController {
           parsedDescriptor: descriptor,
           zip: req.query.zip ?? null,
           radiusMiles: req.query.radiusMiles ?? null,
+          mileage: req.query.mileage ?? null,
           yearRange: descriptor?.yearRange ?? null,
         },
         "LISTINGS_API_INPUTS",
@@ -388,6 +391,7 @@ export class VehicleController {
         descriptor,
         zip: req.query.zip as string,
         radiusMiles: Number(req.query.radiusMiles),
+        mileage: typeof req.query.mileage === "number" ? req.query.mileage : req.query.mileage != null ? Number(req.query.mileage) : undefined,
         allowLive: readOptionalBoolean(req.query.allowLive),
         fetchReason: typeof req.query.fetchReason === "string" ? req.query.fetchReason : undefined,
         sourceScreen: typeof req.query.sourceScreen === "string" ? req.query.sourceScreen : undefined,

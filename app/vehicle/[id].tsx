@@ -1313,6 +1313,7 @@ export default function VehicleDetailScreen() {
     }
 
     const normalizedZip = normalizeMarketAreaZip(zipCode);
+    const normalizedMileage = mileage.trim();
     if (!isValidMarketAreaZip(normalizedZip)) {
       return;
     }
@@ -1333,7 +1334,8 @@ export default function VehicleDetailScreen() {
         fetchReason: "user_requested_listings_refresh",
         sourceScreen: "listingsScreen",
         action: "listingsRefresh",
-        radiusMiles: 50,
+        radiusMiles: 100,
+        mileage: normalizedMileage,
         zipSource,
       })
       .then((result) => {
@@ -1351,7 +1353,7 @@ export default function VehicleDetailScreen() {
       .finally(() => {
         setListingsRefreshLoading(false);
       });
-  }, [id, scanId, valueLookupInput, vehicle, zipCode, zipSource]);
+  }, [id, mileage, scanId, valueLookupInput, vehicle, zipCode, zipSource]);
 
   useEffect(() => {
     if (__DEV__) {
@@ -3052,7 +3054,13 @@ export default function VehicleDetailScreen() {
                 </View>
                 {valuationLoading ? <Text style={styles.valueLoading}>Updating pricing…</Text> : null}
               </View>
-              <ValueEstimateCard result={displayValuation} tone={valueTabFinalState === "value_available_light" ? "light" : "strong"} />
+              <ValueEstimateCard
+                result={displayValuation}
+                tone={valueTabFinalState === "value_available_light" ? "light" : "strong"}
+                actionLabel={valuationLoading ? "Loading live market value..." : "Load live market value"}
+                onAction={requestExplicitLiveValue}
+                actionDisabled={!canRequestLiveValue || valuationLoading}
+              />
               {showQaDebugStrip ? <QaDebugStrip title="QA Value Debug" rows={valueQaRows} /> : null}
             </>
           ) : (
@@ -3182,10 +3190,20 @@ export default function VehicleDetailScreen() {
               title="Value preview"
               description="Preview the market card now. Pro reveals the full value context every time."
             >
-              <ValueEstimateCard result={displayValuation} />
+              <ValueEstimateCard
+                result={displayValuation}
+                actionLabel={valuationLoading ? "Loading live market value..." : "Load live market value"}
+                onAction={requestExplicitLiveValue}
+                actionDisabled={!canRequestLiveValue || valuationLoading}
+              />
             </LockedContentPreview>
           ) : (
-            <ValueEstimateCard result={displayValuation} />
+            <ValueEstimateCard
+              result={displayValuation}
+              actionLabel={valuationLoading ? "Loading live market value..." : "Load live market value"}
+              onAction={requestExplicitLiveValue}
+              actionDisabled={!canRequestLiveValue || valuationLoading}
+            />
           )}
           {showQaDebugStrip ? <QaDebugStrip title="QA Value Debug" rows={valueQaRows} /> : null}
           {isLocked ? (

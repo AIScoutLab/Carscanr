@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Colors, Typography } from "@/constants/theme";
 import { ValuationResult } from "@/types";
 import { cardStyles } from "@/design/patterns";
@@ -6,9 +6,15 @@ import { cardStyles } from "@/design/patterns";
 export function ValueEstimateCard({
   result,
   tone = "strong",
+  actionLabel,
+  onAction,
+  actionDisabled = false,
 }: {
   result: ValuationResult;
   tone?: "strong" | "light";
+  actionLabel?: string | null;
+  onAction?: (() => void) | null;
+  actionDisabled?: boolean;
 }) {
   const conditionSetMode = result.status === "loaded_condition_set";
   const listingRangeMode =
@@ -49,6 +55,15 @@ export function ValueEstimateCard({
       </View>
       <Text style={styles.source}>{result.sourceLabel}</Text>
       <Text style={[styles.caption, tone === "light" && styles.captionLight]}>{result.confidenceLabel}</Text>
+      {actionLabel && onAction ? (
+        <Pressable
+          style={[styles.actionButton, actionDisabled && styles.actionButtonDisabled]}
+          onPress={onAction}
+          disabled={actionDisabled}
+        >
+          <Text style={styles.actionButtonLabel}>{actionLabel}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -87,4 +102,19 @@ const styles = StyleSheet.create({
   source: { ...Typography.caption, color: Colors.textStrong },
   caption: { ...Typography.caption, color: Colors.success },
   captionLight: { color: Colors.textSoft },
+  actionButton: {
+    marginTop: 4,
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: Colors.textStrong,
+    alignItems: "center",
+  },
+  actionButtonDisabled: {
+    opacity: 0.55,
+  },
+  actionButtonLabel: {
+    ...Typography.bodyStrong,
+    color: Colors.background,
+  },
 });

@@ -22,8 +22,10 @@ import { providers } from "../lib/providerRegistry.js";
 import { repositories } from "../lib/repositoryRegistry.js";
 import {
   buildSpecialtyUnavailableValuation,
+  getSpecialtyModelAliases,
   isGenericFallbackValuation,
   isSpecialtyExoticMake,
+  isSpecialtyModelFamilyMatch,
   isTrustedSpecialtyValuationSource,
 } from "../lib/specialtyVehicles.js";
 import {
@@ -184,14 +186,20 @@ type ListingsLookupAttempt = {
   label:
     | "LISTINGS_EXACT_TRIM_MATCH"
     | "LISTINGS_SAME_MODEL_MIXED_TRIMS"
-    | "LISTINGS_ADJACENT_YEAR_MIXED_TRIMS";
+    | "LISTINGS_ADJACENT_YEAR_MIXED_TRIMS"
+    | "LISTINGS_MODEL_NORMALIZED"
+    | "LISTINGS_WIDER_RADIUS";
   strategy:
     | "exact-year-make-model"
     | "same-year-any-trim"
+    | "same-year-family-model"
     | "adjacent-year-previous"
     | "adjacent-year-next"
     | "adjacent-year-previous-2"
-    | "adjacent-year-next-2";
+    | "adjacent-year-next-2"
+    | "adjacent-year-family-model"
+    | "wider-radius-250"
+    | "wider-radius-500";
   vehicle: VehicleRecord;
   radiusMiles: number;
 };
@@ -200,8 +208,10 @@ type ValueLookupAttempt = {
   strategy:
     | "exact-year-make-model"
     | "same-year-any-trim"
+    | "same-year-family-model"
     | "adjacent-year-previous"
     | "adjacent-year-next"
+    | "adjacent-year-family-model"
     | "same-generation"
     | "similar-vehicle";
   vehicle: VehicleRecord;
@@ -537,14 +547,16 @@ function resolveListingsDebugMode(strategy: ListingsLookupAttempt["strategy"] | 
   if (strategy === "exact-year-make-model") {
     return "exact_trim";
   }
-  if (strategy === "same-year-any-trim") {
+  if (strategy === "same-year-any-trim" || strategy === "same-year-family-model" || strategy === "adjacent-year-family-model") {
     return "same_model_mixed_trims";
   }
   if (
     strategy === "adjacent-year-previous" ||
     strategy === "adjacent-year-next" ||
     strategy === "adjacent-year-previous-2" ||
-    strategy === "adjacent-year-next-2"
+    strategy === "adjacent-year-next-2" ||
+    strategy === "wider-radius-250" ||
+    strategy === "wider-radius-500"
   ) {
     return "adjacent_year_mixed_trims";
   }
@@ -991,6 +1003,28 @@ async function deriveValuationFromSimilarVehicles(input: {
   const seenListingIds = new Set<string>();
 
   for (const attempt of listingAttempts) {
+    const cachedDescriptor = buildCacheDescriptor({ vehicle: attempt.vehicle });
+    const cachedListingsKey = cachedDescriptor
+      ? getListingsCacheKey(cachedDescriptor, { zip: input.zip, radiusMiles: attempt.radiusMiles })
+      : null;
+    const familyCachedListingsKey = cachedDescriptor
+      ? getFamilyListingsCacheKey(cachedDescriptor, { zip: input.zip, radiusMiles: attempt.radiusMiles })
+      : null;
+    const cachedListingsRows = [
+      cachedListingsKey ? await repositories.listingsCache.findByCacheKey(cachedListingsKey).catch(() => null) : null,
+      familyCachedListingsKey ? await repositories.listingsCache.findByCacheKey(familyCachedListingsKey).catch(() => null) : null,
+    ].filter((row): row is NonNullable<typeof row> => Boolean(row));
+
+    for (const cachedRow of cachedListingsRows) {
+      for (const listing of cachedRow.responseJson.data ?? []) {
+        if (seenListingIds.has(listing.id) || !isBelievableListing(listing)) {
+          continue;
+        }
+        seenListingIds.add(listing.id);
+        collectedListings.push(listing);
+      }
+    }
+
     const listings = await repositories.listingResults.listByVehicle({
       vehicleId: attempt.vehicle.id,
       zip: input.zip,
@@ -1058,10 +1092,39 @@ async function buildValueFallbackAttempts(vehicle: VehicleRecord): Promise<Value
   if (normalizeVehicleLookupText(vehicle.trim)) {
     pushAttempt({ strategy: "same-year-any-trim", vehicle: { ...vehicle, trim: "" } });
   }
+  if (isSpecialtyExoticMake(vehicle.make)) {
+    pushAttempt(
+      buildSpecialtyFamilyVehicleVariant(vehicle)
+        ? { strategy: "same-year-family-model", vehicle: buildSpecialtyFamilyVehicleVariant(vehicle)! }
+        : null,
+    );
+  }
   if (vehicle.year > 1981) {
     pushAttempt({ strategy: "adjacent-year-previous", vehicle: { ...vehicle, year: vehicle.year - 1, trim: "" } });
   }
   pushAttempt({ strategy: "adjacent-year-next", vehicle: { ...vehicle, year: vehicle.year + 1, trim: "" } });
+  if (isSpecialtyExoticMake(vehicle.make)) {
+    pushAttempt(
+      buildSpecialtyFamilyVehicleVariant(vehicle, {
+        year: Math.max(1981, vehicle.year - 1),
+      })
+        ? {
+            strategy: "adjacent-year-family-model",
+            vehicle: buildSpecialtyFamilyVehicleVariant(vehicle, { year: Math.max(1981, vehicle.year - 1) })!,
+          }
+        : null,
+    );
+    pushAttempt(
+      buildSpecialtyFamilyVehicleVariant(vehicle, {
+        year: vehicle.year + 1,
+      })
+        ? {
+            strategy: "adjacent-year-family-model",
+            vehicle: buildSpecialtyFamilyVehicleVariant(vehicle, { year: vehicle.year + 1 })!,
+          }
+        : null,
+    );
+  }
 
   const descriptor = buildCacheDescriptor({ vehicle });
   if (!descriptor) {
@@ -1126,10 +1189,26 @@ function ensureValueAttempts(vehicle: VehicleRecord, attempts: ValueLookupAttemp
   if (normalizeVehicleLookupText(vehicle.trim)) {
     fallbackAttempts.push({ strategy: "same-year-any-trim", vehicle: { ...vehicle, trim: "" } });
   }
+  if (isSpecialtyExoticMake(vehicle.make)) {
+    const familyVariant = buildSpecialtyFamilyVehicleVariant(vehicle);
+    if (familyVariant) {
+      fallbackAttempts.push({ strategy: "same-year-family-model", vehicle: familyVariant });
+    }
+  }
   if (vehicle.year > 1981) {
     fallbackAttempts.push({ strategy: "adjacent-year-previous", vehicle: { ...vehicle, year: vehicle.year - 1, trim: "" } });
   }
   fallbackAttempts.push({ strategy: "adjacent-year-next", vehicle: { ...vehicle, year: vehicle.year + 1, trim: "" } });
+  if (isSpecialtyExoticMake(vehicle.make)) {
+    const previousFamily = buildSpecialtyFamilyVehicleVariant(vehicle, { year: Math.max(1981, vehicle.year - 1) });
+    const nextFamily = buildSpecialtyFamilyVehicleVariant(vehicle, { year: vehicle.year + 1 });
+    if (previousFamily) {
+      fallbackAttempts.push({ strategy: "adjacent-year-family-model", vehicle: previousFamily });
+    }
+    if (nextFamily) {
+      fallbackAttempts.push({ strategy: "adjacent-year-family-model", vehicle: nextFamily });
+    }
+  }
   fallbackAttempts.push({ strategy: "same-generation", vehicle: { ...vehicle, trim: "" } });
   return fallbackAttempts;
 }
@@ -1164,6 +1243,19 @@ async function buildListingsFallbackAttempts(input: {
       radiusMiles: input.radiusMiles,
     });
   }
+  if (isSpecialtyExoticMake(input.vehicle.make)) {
+    const familyVariant = buildSpecialtyFamilyVehicleVariant(input.vehicle);
+    pushAttempt(
+      familyVariant
+        ? {
+            label: "LISTINGS_MODEL_NORMALIZED",
+            strategy: "same-year-family-model",
+            vehicle: familyVariant,
+            radiusMiles: Math.max(input.radiusMiles, 100),
+          }
+        : null,
+    );
+  }
 
   if (input.vehicle.year > 1981) {
     pushAttempt({
@@ -1194,6 +1286,42 @@ async function buildListingsFallbackAttempts(input: {
     vehicle: { ...input.vehicle, year: input.vehicle.year + 2, trim: "" },
     radiusMiles: input.radiusMiles,
   });
+  if (isSpecialtyExoticMake(input.vehicle.make)) {
+    const familyPrevious = buildSpecialtyFamilyVehicleVariant(input.vehicle, { year: Math.max(1981, input.vehicle.year - 1) });
+    const familyNext = buildSpecialtyFamilyVehicleVariant(input.vehicle, { year: input.vehicle.year + 1 });
+    pushAttempt(
+      familyPrevious
+        ? {
+            label: "LISTINGS_MODEL_NORMALIZED",
+            strategy: "adjacent-year-family-model",
+            vehicle: familyPrevious,
+            radiusMiles: Math.max(input.radiusMiles, 100),
+          }
+        : null,
+    );
+    pushAttempt(
+      familyNext
+        ? {
+            label: "LISTINGS_MODEL_NORMALIZED",
+            strategy: "adjacent-year-family-model",
+            vehicle: familyNext,
+            radiusMiles: Math.max(input.radiusMiles, 100),
+          }
+        : null,
+    );
+    pushAttempt({
+      label: "LISTINGS_WIDER_RADIUS",
+      strategy: "wider-radius-250",
+      vehicle: { ...input.vehicle, trim: "" },
+      radiusMiles: Math.max(input.radiusMiles, 250),
+    });
+    pushAttempt({
+      label: "LISTINGS_WIDER_RADIUS",
+      strategy: "wider-radius-500",
+      vehicle: { ...input.vehicle, trim: "" },
+      radiusMiles: Math.max(input.radiusMiles, 500),
+    });
+  }
 
   return attempts;
 }
@@ -1223,6 +1351,17 @@ function ensureListingsAttempts(input: {
       radiusMiles: input.radiusMiles,
     });
   }
+  if (isSpecialtyExoticMake(input.vehicle.make)) {
+    const familyVariant = buildSpecialtyFamilyVehicleVariant(input.vehicle);
+    if (familyVariant) {
+      fallbackAttempts.push({
+        label: "LISTINGS_MODEL_NORMALIZED",
+        strategy: "same-year-family-model",
+        vehicle: familyVariant,
+        radiusMiles: Math.max(input.radiusMiles, 100),
+      });
+    }
+  }
   if (input.vehicle.year > 1981) {
     fallbackAttempts.push({
       label: "LISTINGS_ADJACENT_YEAR_MIXED_TRIMS",
@@ -1251,6 +1390,38 @@ function ensureListingsAttempts(input: {
     vehicle: { ...input.vehicle, year: input.vehicle.year + 2, trim: "" },
     radiusMiles: input.radiusMiles,
   });
+  if (isSpecialtyExoticMake(input.vehicle.make)) {
+    const previousFamily = buildSpecialtyFamilyVehicleVariant(input.vehicle, { year: Math.max(1981, input.vehicle.year - 1) });
+    const nextFamily = buildSpecialtyFamilyVehicleVariant(input.vehicle, { year: input.vehicle.year + 1 });
+    if (previousFamily) {
+      fallbackAttempts.push({
+        label: "LISTINGS_MODEL_NORMALIZED",
+        strategy: "adjacent-year-family-model",
+        vehicle: previousFamily,
+        radiusMiles: Math.max(input.radiusMiles, 100),
+      });
+    }
+    if (nextFamily) {
+      fallbackAttempts.push({
+        label: "LISTINGS_MODEL_NORMALIZED",
+        strategy: "adjacent-year-family-model",
+        vehicle: nextFamily,
+        radiusMiles: Math.max(input.radiusMiles, 100),
+      });
+    }
+    fallbackAttempts.push({
+      label: "LISTINGS_WIDER_RADIUS",
+      strategy: "wider-radius-250",
+      vehicle: { ...input.vehicle, trim: "" },
+      radiusMiles: Math.max(input.radiusMiles, 250),
+    });
+    fallbackAttempts.push({
+      label: "LISTINGS_WIDER_RADIUS",
+      strategy: "wider-radius-500",
+      vehicle: { ...input.vehicle, trim: "" },
+      radiusMiles: Math.max(input.radiusMiles, 500),
+    });
+  }
   return fallbackAttempts;
 }
 
@@ -1426,6 +1597,18 @@ function hasMarketValue(valuation: ValuationRecord | null) {
   return [valuation.tradeIn, valuation.privateParty, valuation.dealerRetail].some((value) => typeof value === "number" && Number.isFinite(value) && value > 0);
 }
 
+function isRetryableUnavailableValuation(valuation: ValuationRecord | null | undefined) {
+  if (!valuation) {
+    return false;
+  }
+  return (
+    valuation.status === "no_comps_found" ||
+    valuation.status === "provider_error" ||
+    valuation.status === "specialty_unavailable" ||
+    valuation.modelType === "specialty_unavailable"
+  );
+}
+
 function isBelievableListing(listing: ListingRecord) {
   return Boolean(
     typeof listing.price === "number" &&
@@ -1459,7 +1642,22 @@ function isCrvLikeModel(value: string) {
   return value === "crv" || value === "cr-v" || value === "cr v";
 }
 
-function listingModelMatchesRequestedModel(requestedModel: string, listingModel: string) {
+function buildSpecialtyFamilyVehicleVariant(vehicle: VehicleRecord, overrides?: Partial<VehicleRecord>) {
+  const aliases = getSpecialtyModelAliases(vehicle.make, vehicle.model);
+  const normalizedCurrentModel = normalizeListingStrictText(vehicle.model);
+  const familyAlias = aliases.find((alias) => alias && normalizeListingStrictText(alias) !== normalizedCurrentModel) ?? null;
+  if (!familyAlias) {
+    return null;
+  }
+  return {
+    ...vehicle,
+    model: familyAlias.toUpperCase() === familyAlias ? familyAlias : familyAlias,
+    trim: "",
+    ...overrides,
+  };
+}
+
+function listingModelMatchesRequestedModel(requestedMake: string, requestedModel: string, listingModel: string) {
   if (!requestedModel || !listingModel) {
     return false;
   }
@@ -1474,6 +1672,10 @@ function listingModelMatchesRequestedModel(requestedModel: string, listingModel:
 
   if (isCrvLikeModel(requestedModel)) {
     return isCrvLikeModel(listingModel);
+  }
+
+  if (isSpecialtyModelFamilyMatch(requestedMake, requestedModel, listingModel)) {
+    return true;
   }
 
   return false;
@@ -1497,13 +1699,18 @@ function getListingsSourceLabel(strategy: ListingsLookupAttempt["strategy"] | nu
   if (strategy === "same-year-any-trim") {
     return "Nearby listings for this model";
   }
+  if (strategy === "same-year-family-model" || strategy === "adjacent-year-family-model") {
+    return "Based on live MarketCheck listings";
+  }
   if (
     strategy === "adjacent-year-previous" ||
     strategy === "adjacent-year-next" ||
     strategy === "adjacent-year-previous-2" ||
-    strategy === "adjacent-year-next-2"
+    strategy === "adjacent-year-next-2" ||
+    strategy === "wider-radius-250" ||
+    strategy === "wider-radius-500"
   ) {
-    return "Adjacent-year listings for this model";
+    return "Limited comps from a wider live MarketCheck search";
   }
   return "Exact listings";
 }
@@ -1524,7 +1731,7 @@ function listingMatchesRequestedVehicle(
 
   return (
     requestedMake === listingMake &&
-    listingModelMatchesRequestedModel(requestedModel, listingModel) &&
+    listingModelMatchesRequestedModel(vehicle.make, requestedModel, listingModel) &&
     listingYearMatchesRequestedVehicle(listing.year, vehicle, yearRange)
   );
 }
@@ -1584,7 +1791,7 @@ function filterDisplayableListings(
       const listingMake = normalizeListingStrictText(listing.make);
       const listingModel = normalizeListingStrictText(listing.model);
       const makeMatches = requestedMake === listingMake;
-      const modelMatches = listingModelMatchesRequestedModel(requestedModel, listingModel);
+      const modelMatches = listingModelMatchesRequestedModel(vehicle.make, requestedModel, listingModel);
       if (!makeMatches || !modelMatches) {
         if (!sampleRejectedMismatch) {
           sampleRejectedMismatch = {
@@ -2936,7 +3143,20 @@ export class VehicleService {
                 vehicle,
                 source: "cache",
               });
-              if (isSpecialtyLookupVehicle && isGenericFallbackValuation(shaped)) {
+              if (isExplicitValueRefresh && isRetryableUnavailableValuation(shaped)) {
+                logger.info(
+                  {
+                    label: "VALUE_EXPLICIT_REFRESH_BYPASSING_NEGATIVE_CACHE",
+                    requestId: input.requestId,
+                    vehicleId: lookupVehicleId,
+                    cacheKey,
+                    cacheLevel: "exact",
+                    status: shaped.status ?? null,
+                    reason: shaped.reason ?? null,
+                  },
+                  "VALUE_EXPLICIT_REFRESH_BYPASSING_NEGATIVE_CACHE",
+                );
+              } else if (isSpecialtyLookupVehicle && isGenericFallbackValuation(shaped)) {
                 logger.info(
                   {
                     label: "SPECIALTY_GENERIC_VALUE_CACHE_REJECTED",
@@ -3083,7 +3303,20 @@ export class VehicleService {
             vehicle,
             source: "cache",
           });
-          if (isSpecialtyLookupVehicle && isGenericFallbackValuation(shapedFamilyValue)) {
+          if (isExplicitValueRefresh && isRetryableUnavailableValuation(shapedFamilyValue)) {
+            logger.info(
+              {
+                label: "VALUE_EXPLICIT_REFRESH_BYPASSING_NEGATIVE_CACHE",
+                requestId: input.requestId,
+                vehicleId: lookupVehicleId,
+                cacheKey: familyCacheKey,
+                cacheLevel: "family",
+                status: shapedFamilyValue.status ?? null,
+                reason: shapedFamilyValue.reason ?? null,
+              },
+              "VALUE_EXPLICIT_REFRESH_BYPASSING_NEGATIVE_CACHE",
+            );
+          } else if (isSpecialtyLookupVehicle && isGenericFallbackValuation(shapedFamilyValue)) {
             logger.info(
               {
                 label: "SPECIALTY_GENERIC_VALUE_CACHE_REJECTED",
@@ -3265,7 +3498,11 @@ export class VehicleService {
       let valueWasSimulated = false;
       let providerFailureReason: string | null = null;
       const providerValueAttempts =
-        providers.valueProviderName === "marketcheck" ? valueAttempts.slice(0, 1) : valueAttempts;
+        providers.valueProviderName === "marketcheck"
+          ? isSpecialtyLookupVehicle && isExplicitValueRefresh
+            ? valueAttempts
+            : valueAttempts.slice(0, 1)
+          : valueAttempts;
       const valueDecision = isValueLiveFetchAllowed({
         allowLive,
         fetchReason,
@@ -3433,6 +3670,7 @@ export class VehicleService {
                   trim: attempt.vehicle.trim ?? null,
                   zip: input.zip,
                   zipSource: input.zipSource ?? null,
+                  radiusMiles: isSpecialtyLookupVehicle && isExplicitValueRefresh ? env.MARKETCHECK_VALUE_RADIUS_MILES : null,
                   mileage: input.mileage,
                   condition: input.condition,
                   sourceScreen: input.sourceScreen ?? "valueScreen",
@@ -3562,6 +3800,33 @@ export class VehicleService {
               mileage: input.mileage,
             }),
           );
+        }
+        if (Array.isArray(liveValue?.supportingListings) && liveValue.supportingListings.length > 0) {
+          const listingsRadius = env.MARKETCHECK_VALUE_RADIUS_MILES;
+          const listingsCacheKey = getListingsCacheKey(descriptor, { zip: input.zip, radiusMiles: listingsRadius });
+          await repositories.listingsCache.upsert(
+            createListingsCacheRow({
+              descriptor,
+              cacheKey: listingsCacheKey,
+              provider: providers.valueProviderName,
+              payload: liveValue.supportingListings,
+              zip: input.zip,
+              radiusMiles: listingsRadius,
+            }),
+          );
+          if (familyCacheKey) {
+            const listingsFamilyCacheKey = getFamilyListingsCacheKey(descriptor, { zip: input.zip, radiusMiles: listingsRadius });
+            await repositories.listingsCache.upsert(
+              createListingsCacheRow({
+                descriptor: { ...descriptor, trim: "", normalizedTrim: "family" },
+                cacheKey: listingsFamilyCacheKey,
+                provider: providers.valueProviderName,
+                payload: liveValue.supportingListings,
+                zip: input.zip,
+                radiusMiles: listingsRadius,
+              }),
+            );
+          }
         }
         await fireAndForgetCleanup("values");
       }
@@ -4128,6 +4393,7 @@ export class VehicleService {
     descriptor?: VehicleLookupDescriptor | null;
     zip: string;
     radiusMiles: number;
+    mileage?: number;
     allowLive?: boolean;
     fetchReason?: string;
     sourceScreen?: string | null;
@@ -4518,17 +4784,6 @@ export class VehicleService {
         believableCount: number;
       }> = [];
       let listingsWereSimulated = false;
-      const providerListingsAttempts =
-        providers.listingsProviderName === "marketcheck"
-          ? [
-              // Keep the single-call MarketCheck budget protection, but use the
-              // broader same-year / any-trim request when available so manual
-              // search vehicles like CR-V can still return valid same-model
-              // listings even when an exact trim has no inventory.
-              fallbackAttempts.find((attempt) => attempt.strategy === "same-year-any-trim") ??
-                fallbackAttempts[0],
-            ].filter((attempt): attempt is ListingsLookupAttempt => Boolean(attempt))
-          : fallbackAttempts;
       const isExplicitListingsRefresh = isExplicitUserRequestedListingsRefresh({
         allowLive,
         fetchReason,
@@ -4536,6 +4791,16 @@ export class VehicleService {
         action: input.action,
         forceLive: null,
       });
+      const providerListingsAttempts =
+        providers.listingsProviderName === "marketcheck"
+          ? isSpecialtyExoticMake(lookupBaseVehicle?.make ?? descriptor?.make ?? null) && isExplicitListingsRefresh
+            ? fallbackAttempts
+            : [
+                fallbackAttempts.find((attempt) => attempt.strategy === "same-year-any-trim") ??
+                  fallbackAttempts.find((attempt) => attempt.strategy === "same-year-family-model") ??
+                  fallbackAttempts[0],
+              ].filter((attempt): attempt is ListingsLookupAttempt => Boolean(attempt))
+          : fallbackAttempts;
       logMarketGateEvaluated({
         label: "LISTINGS_LIVE_FETCH_GATE_EVALUATED",
         requestId: input.requestId,
@@ -4861,6 +5126,56 @@ export class VehicleService {
         model: descriptor?.model ?? vehicle?.model ?? null,
         condition: null,
       });
+      if (
+        listingsDecision.allowLiveProvider &&
+        descriptor &&
+        providers.listingsProviderName === "marketcheck" &&
+        typeof input.mileage === "number" &&
+        Number.isFinite(input.mileage) &&
+        input.mileage > 0 &&
+        lookupBaseVehicle &&
+        displayableLiveListings.length > 0
+      ) {
+        const derivedFromLiveListings = buildDerivedValuationFromListings({
+          vehicle: lookupBaseVehicle,
+          vehicleId: lookupVehicleId,
+          zip: input.zip,
+          mileage: input.mileage,
+          condition: "good",
+          listings: displayableLiveListings,
+        });
+        if (derivedFromLiveListings) {
+          const valueCacheKey = getValuesCacheKey(descriptor, { zip: input.zip, mileage: input.mileage });
+          const derivedConditionSet = buildConditionAwareValuation({
+            valuation: derivedFromLiveListings,
+            vehicle: lookupBaseVehicle,
+            selectedCondition: "good",
+          });
+          await repositories.valuesCache.upsert(
+            createValuesCacheRow({
+              descriptor,
+              cacheKey: valueCacheKey,
+              provider: providers.listingsProviderName,
+              payload: derivedConditionSet,
+              zip: input.zip,
+              mileage: input.mileage,
+            }),
+          );
+          if (familyCacheKey) {
+            const familyValueCacheKey = getFamilyValuesCacheKey(descriptor, { zip: input.zip, mileage: input.mileage });
+            await repositories.valuesCache.upsert(
+              createValuesCacheRow({
+                descriptor: { ...descriptor, trim: "", normalizedTrim: "family" },
+                cacheKey: familyValueCacheKey,
+                provider: providers.listingsProviderName,
+                payload: derivedConditionSet,
+                zip: input.zip,
+                mileage: input.mileage,
+              }),
+            );
+          }
+        }
+      }
       if (displayableLiveListings.length > 0) {
         const cacheRow = listingsDecision.allowLiveProvider && descriptor && cacheKey && providers.listingsProviderName === "marketcheck"
           ? createListingsCacheRow({

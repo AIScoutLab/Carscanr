@@ -444,6 +444,121 @@ describe("MarketCheck provider request guards", () => {
     assert.equal(fetchCalls, 0);
     assert.equal(result, null);
   });
+
+  test("Ferrari 812 listings accept family-model matches like 812 when requested model is 812 Superfast", async () => {
+    global.fetch = (async () =>
+      createJsonResponse({
+        listings: [
+          {
+            id: "listing-812",
+            vin: "ZFF83CLA0M0260001",
+            year: 2021,
+            make: "Ferrari",
+            model: "812",
+            trim: "",
+            heading: "2021 Ferrari 812 Coupe",
+            price: 339995,
+            miles: 7800,
+            dealer_name: "Exotic Motors",
+            city: "Chicago",
+            state: "IL",
+            img_url: "https://dealer.example.test/ferrari-812.jpg",
+            vdp_url: "https://dealer.example.test/ferrari-812",
+          },
+        ],
+      })) as typeof fetch;
+
+    const provider = new MarketCheckVehicleDataProvider();
+    const listings = await provider.getListings({
+      vehicleId: "2021-ferrari-812-superfast",
+      vehicle: {
+        id: "2021-ferrari-812-superfast",
+        vin: null,
+        year: 2021,
+        make: "Ferrari",
+        model: "812 Superfast",
+        trim: "Base",
+        bodyStyle: "Coupe",
+        vehicleType: "car" as const,
+        msrp: 0,
+        engine: "",
+        horsepower: null,
+        torque: "",
+        transmission: "",
+        drivetrain: "",
+        mpgOrRange: "",
+        colors: [],
+      },
+      zip: "60563",
+      radiusMiles: 100,
+      requestMeta: {
+        cacheKey: "listings:condition-set:2021:ferrari:812-superfast:base:60563:100",
+        sourceScreen: "listingsScreen",
+      },
+    });
+
+    assert.equal(listings.length, 1);
+    assert.equal(listings[0]?.price, 339995);
+  });
+
+  test("Ferrari 812 valuation can be derived from live listings when stats are empty", async () => {
+    global.fetch = (async () =>
+      createJsonResponse({
+        listings: [
+          {
+            id: "listing-812",
+            vin: "ZFF83CLA0M0260001",
+            year: 2021,
+            make: "Ferrari",
+            model: "812",
+            trim: "",
+            heading: "2021 Ferrari 812 Coupe",
+            price: 339995,
+            miles: 7800,
+            dealer_name: "Exotic Motors",
+            city: "Chicago",
+            state: "IL",
+            img_url: "https://dealer.example.test/ferrari-812.jpg",
+            vdp_url: "https://dealer.example.test/ferrari-812",
+          },
+        ],
+      })) as typeof fetch;
+
+    const provider = new MarketCheckVehicleDataProvider();
+    const valuation = await provider.getValuation({
+      vehicleId: "2021-ferrari-812-superfast",
+      vehicle: {
+        id: "2021-ferrari-812-superfast",
+        vin: null,
+        year: 2021,
+        make: "Ferrari",
+        model: "812 Superfast",
+        trim: "Base",
+        bodyStyle: "Coupe",
+        vehicleType: "car" as const,
+        msrp: 0,
+        engine: "",
+        horsepower: null,
+        torque: "",
+        transmission: "",
+        drivetrain: "",
+        mpgOrRange: "",
+        colors: [],
+      },
+      zip: "60563",
+      mileage: 18400,
+      condition: "good",
+      requestMeta: {
+        cacheKey: "values:condition-set:2021:ferrari:812-superfast:base:60563:18400",
+        sourceScreen: "valueScreen",
+      },
+    });
+
+    assert.ok(valuation);
+    assert.equal(valuation?.modelType, "listing_derived");
+    assert.equal(valuation?.listingCount, 1);
+    assert.equal(valuation?.supportingListings?.length, 1);
+  });
 });
 
 after(() => {
