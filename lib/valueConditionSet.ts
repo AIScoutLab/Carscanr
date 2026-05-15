@@ -15,6 +15,140 @@ export const SPECIALTY_CONDITION_MULTIPLIERS: Record<SupportedValueCondition, nu
   excellent: 1.03,
 };
 
+type ListingLike = {
+  price: string;
+};
+
+function parseCurrencyString(value: string | null | undefined) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const digits = value.replace(/[^\d]/g, "");
+  if (!digits) {
+    return null;
+  }
+  const parsed = Number.parseInt(digits, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function formatCurrencyValue(value: number | null) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function getConditionMultiplierMap(make?: string | null) {
+  return make && isSpecialtyExoticMake(make) ? SPECIALTY_CONDITION_MULTIPLIERS : STANDARD_CONDITION_MULTIPLIERS;
+}
+
+function buildConditionRangeSnapshot(input: {
+  low: number;
+  median: number;
+  high: number;
+  targetCondition: SupportedValueCondition;
+  make?: string | null;
+}) {
+  const multipliers = getConditionMultiplierMap(input.make);
+  const multiplier = multipliers[input.targetCondition];
+  const adjustedLow = Math.round(input.low * multiplier);
+  const adjustedMedian = Math.round(input.median * multiplier);
+  const adjustedHigh = Math.round(input.high * multiplier);
+
+  return {
+    tradeIn: "Unavailable",
+    privateParty: "Unavailable",
+    dealerRetail: formatCurrencyValue(adjustedMedian) ?? "Unavailable",
+    low: formatCurrencyValue(adjustedLow),
+    median: formatCurrencyValue(adjustedMedian),
+    high: formatCurrencyValue(adjustedHigh),
+  };
+}
+
+export function buildListingDerivedConditionSetFromListings(input: {
+  listings: ListingLike[];
+  selectedCondition?: string | null;
+  make?: string | null;
+  sourceLabel?: string | null;
+}) {
+  const prices = input.listings
+    .map((listing) => parseCurrencyString(listing.price))
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0)
+    .sort((left, right) => left - right);
+
+  if (prices.length === 0) {
+    return null;
+  }
+
+  const low = prices[0];
+  const high = prices[prices.length - 1];
+  const midpoint = Math.floor(prices.length / 2);
+  const median =
+    prices.length % 2 === 0 ? Math.round((prices[midpoint - 1] + prices[midpoint]) / 2) : prices[midpoint];
+  const selectedCondition = normalizeSupportedValueCondition(input.selectedCondition ?? "good");
+  const sourceLabel = input.sourceLabel ?? "Based on live MarketCheck listings";
+  const limitedCompsCopy =
+    prices.length <= 2
+      ? `Limited comps. Based on ${prices.length} live MarketCheck listing${prices.length === 1 ? "" : "s"}. Condition-adjusted estimate.`
+      : `Based on ${prices.length} live MarketCheck listings. Condition-adjusted estimate.`;
+  const specialtyNote =
+    input.make && isSpecialtyExoticMake(input.make)
+      ? " Actual pricing may vary by options, service history, color, and provenance."
+      : "";
+
+  return resolveConditionValues(
+    {
+      status: "loaded_condition_set",
+      selectedCondition: "good",
+      baseCondition: "good",
+      conditionValues: {
+        fair: buildConditionRangeSnapshot({
+          low,
+          median,
+          high,
+          targetCondition: "fair",
+          make: input.make,
+        }),
+        good: buildConditionRangeSnapshot({
+          low,
+          median,
+          high,
+          targetCondition: "good",
+          make: input.make,
+        }),
+        excellent: buildConditionRangeSnapshot({
+          low,
+          median,
+          high,
+          targetCondition: "excellent",
+          make: input.make,
+        }),
+      },
+      tradeIn: "Unavailable",
+      tradeInRange: "Unavailable",
+      privateParty: "Unavailable",
+      privatePartyRange: "Unavailable",
+      dealerRetail: formatCurrencyValue(median) ?? "Unavailable",
+      dealerRetailRange: "Condition-adjusted estimate",
+      low: formatCurrencyValue(low),
+      median: formatCurrencyValue(median),
+      high: formatCurrencyValue(high),
+      confidenceLabel: `${limitedCompsCopy}${specialtyNote}`.trim(),
+      sourceLabel,
+      message: null,
+      reason: null,
+      listingCount: prices.length,
+      sourceBasis: "listing_median_adjusted",
+      modelType: "listing_derived",
+    },
+    selectedCondition,
+  );
+}
+
 function normalizeConditionToken(value: string | null | undefined) {
   return String(value ?? "")
     .trim()
@@ -73,4 +207,3 @@ export function getConditionSourceLabel(input: {
     ? "Based on live MarketCheck listings. Condition-adjusted estimate. Actual pricing may vary by options, service history, color, and provenance."
     : "Based on live MarketCheck listings. Condition-adjusted estimate.";
 }
-

@@ -16,9 +16,9 @@ import { ValueEstimateCard } from "@/components/ValueEstimateCard";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
 import { useSubscription } from "@/hooks/useSubscription";
-import { getConditionSourceLabel, normalizeSupportedValueCondition, resolveConditionValues } from "@/lib/valueConditionSet";
+import { buildListingDerivedConditionSetFromListings, getConditionSourceLabel, normalizeSupportedValueCondition, resolveConditionValues } from "@/lib/valueConditionSet";
 import { formatHorsepowerLabel } from "@/lib/vehicleData";
-import { mobileEnv } from "@/lib/env";
+import { mobileBuildInfo, mobileEnv } from "@/lib/env";
 import { buildSpecialtyVehicleOverview, isSpecialtyExoticMake } from "@/lib/specialtyVehicles";
 import { MarketAreaZipSource, isValidMarketAreaZip, normalizeMarketAreaZip } from "@/lib/marketAreaZip";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
@@ -34,6 +34,21 @@ const defaultZip = "";
 const defaultMileage = "18400";
 const defaultCondition = "Good";
 const conditionOptions = ["Fair", "Good", "Excellent"];
+
+type ListingsMarketContext = {
+  zip: string;
+  mileage: string;
+  zipSource: MarketAreaZipSource;
+  radiusMiles: number;
+  acceptedListingsCount: number;
+  source: "listingsScreen";
+};
+
+type ZipStorageDebug = {
+  storageKey: string;
+  storageVersion: "v3";
+  wasLegacy60610Ignored: boolean;
+};
 
 type EstimateSupport = {
   groundedVehicleId: string | null;
@@ -278,6 +293,36 @@ function buildValueRequestKey(
 function parseMileageValue(value: string) {
   const digits = value.replace(/[^\d]/g, "");
   return digits.length > 0 ? digits : null;
+}
+
+function buildListingsHydratedValuation(input: {
+  listings: VehicleRecord["listings"];
+  condition: string;
+  vehicle: VehicleRecord;
+}) {
+  const believableListings = input.listings.filter(isBelievableListing);
+  const derived = buildListingDerivedConditionSetFromListings({
+    listings: believableListings,
+    selectedCondition: input.condition,
+    make: input.vehicle.make,
+    sourceLabel: "Based on live MarketCheck listings",
+  });
+  if (!derived) {
+    return null;
+  }
+
+  if (derived.status === "loaded_condition_set") {
+    return {
+      ...derived,
+      sourceLabel: getConditionSourceLabel({
+        result: derived,
+        make: input.vehicle.make,
+        model: input.vehicle.model,
+      }),
+    };
+  }
+
+  return derived;
 }
 
 function parseConditionLabel(value: string) {
@@ -543,6 +588,7 @@ function ApproximateDataState({
   badgeLabel = "Availability",
   secondaryAction = true,
   actionDisabled = false,
+  loading = false,
 }: {
   title: string;
   body: string;
@@ -552,6 +598,7 @@ function ApproximateDataState({
   badgeLabel?: string | null;
   secondaryAction?: boolean;
   actionDisabled?: boolean;
+  loading?: boolean;
 }) {
   return (
     <View style={styles.approximateStateCard}>
@@ -560,6 +607,7 @@ function ApproximateDataState({
           <Text style={styles.approximateStateBadgeLabel}>{badgeLabel}</Text>
         </View>
       ) : null}
+      {loading ? <ActivityIndicator color={Colors.textStrong} /> : null}
       <Text style={styles.approximateStateTitle}>{title}</Text>
       <Text style={styles.approximateStateBody}>{body}</Text>
       {supportNote ? <Text style={styles.approximateStateSupport}>{supportNote}</Text> : null}
@@ -910,10 +958,12 @@ export default function VehicleDetailScreen() {
   const [valuation, setValuation] = useState<ValuationResult>(createEmptyValuation());
   const [zipCode, setZipCode] = useState(defaultZip);
   const [zipSource, setZipSource] = useState<MarketAreaZipSource>("blank");
+  const [zipStorageDebug, setZipStorageDebug] = useState<ZipStorageDebug | null>(null);
   const [mileage, setMileage] = useState(defaultMileage);
   const [condition, setCondition] = useState(defaultCondition);
   const [valuationLoading, setValuationLoading] = useState(false);
   const [listingsRefreshLoading, setListingsRefreshLoading] = useState(false);
+  const [listingsMarketContext, setListingsMarketContext] = useState<ListingsMarketContext | null>(null);
   const [valueDebugStatus, setValueDebugStatus] = useState<ValueDebugStatus>("idle");
   const [valueDebugOrigin, setValueDebugOrigin] = useState<ValueDebugOrigin>("hydrated");
   const [valueDebugUpdateCount, setValueDebugUpdateCount] = useState(0);
@@ -1195,9 +1245,13 @@ export default function VehicleDetailScreen() {
   }, [estimateSupport?.groundedVehicleDescriptor, estimateSupport?.groundedVehicleId, isEstimateMode, vehicle]);
   const believableListingsCount = (vehicle?.listings ?? []).filter(isBelievableListing).length;
   const valueQaRows = [
+    { label: "Build commit", value: mobileBuildInfo.gitCommit || "unknown" },
     { label: "Value source", value: displayValuation.sourceLabel ?? "none" },
     { label: "Market ZIP", value: zipCode || "unset" },
     { label: "ZIP source", value: zipSource },
+    { label: "ZIP storage key", value: zipStorageDebug?.storageKey ?? "unset" },
+    { label: "ZIP storage version", value: zipStorageDebug?.storageVersion ?? "unknown" },
+    { label: "Legacy 60610 ignored", value: zipStorageDebug?.wasLegacy60610Ignored ? "yes" : "no" },
     { label: "Mileage", value: mileage || "unset" },
     { label: "Condition", value: condition || "unset" },
     { label: "Recalc status", value: valueDebugStatus },
@@ -1228,6 +1282,11 @@ export default function VehicleDetailScreen() {
     specialtyValueCopy,
     zipCode,
   });
+  const loadingValueCardCopy = {
+    title: "Loading live market value...",
+    body: "Checking MarketCheck listings and recent comps.",
+    supportNote: "This can take a few seconds for the current ZIP and mileage.",
+  };
   const handleZipCodeChange = useCallback((nextValue: string) => {
     const normalizedZip = normalizeMarketAreaZip(nextValue);
     setZipCode(normalizedZip);
@@ -1341,6 +1400,7 @@ export default function VehicleDetailScreen() {
       })
       .then(async (result) => {
         setListingsDebugMeta(result.meta);
+        const believableListings = result.listings.filter(isBelievableListing);
         setVehicle((current) =>
           current
             ? {
@@ -1349,20 +1409,40 @@ export default function VehicleDetailScreen() {
               }
             : current,
         );
-        if (result.listings.length > 0 && normalizedMileage && normalizedCondition) {
-          const derivedValue = await vehicleService.getValue(valueLookupInput, normalizedZip, normalizedMileage, normalizedCondition, {
-            allowLive: false,
-            fetchReason: "cached_listings_value_sync",
-            sourceScreen: "valueScreen",
-            action: "cachedValueSync",
-            forceLive: false,
-            zipSource,
+        setListingsMarketContext({
+          zip: normalizedZip,
+          mileage: normalizedMileage,
+          zipSource,
+          radiusMiles: 100,
+          acceptedListingsCount: believableListings.length,
+          source: "listingsScreen",
+        });
+        if (believableListings.length > 0 && normalizedMileage && normalizedCondition) {
+          const derivedValue = buildListingsHydratedValuation({
+            listings: result.listings,
+            condition: normalizedCondition,
+            vehicle,
           });
-          applyValuationUpdate(derivedValue, "listings-cache-sync", {
-            allowReplacement: true,
-          });
-          setVehicle((current) => (current ? { ...current, valuation: derivedValue } : current));
-          setValueDebugStatus(hasResolvedValueState(derivedValue) ? "accepted" : "idle");
+          if (derivedValue) {
+            console.log("[vehicle-detail] VALUE_HYDRATED_FROM_FORSALE_LISTINGS", {
+              vehicleId: vehicle.id,
+              valueRequestSource: "for_sale_listing_sync",
+              acceptedListingsAvailable: true,
+              acceptedListingsCount: believableListings.length,
+              derivedValueCreated: true,
+              finalValueStatus: derivedValue.status,
+              zip: normalizedZip,
+              mileage: normalizedMileage,
+              zipSource,
+            });
+            const requestKey = buildValueRequestKey(valueLookupInput, normalizedZip, normalizedMileage) ?? null;
+            lastValueRequestKeyRef.current = requestKey;
+            applyValuationUpdate(derivedValue, "listings-cache-sync", {
+              allowReplacement: true,
+            });
+            setVehicle((current) => (current ? { ...current, valuation: derivedValue } : current));
+            setValueDebugStatus(hasResolvedValueState(derivedValue) ? "accepted" : "idle");
+          }
         }
         void marketAreaZipService.saveLastUsedZip(normalizedZip);
       })
@@ -1396,6 +1476,8 @@ export default function VehicleDetailScreen() {
     setValueDebugUpdateCount(0);
     setValueDebugUpdatedAt(null);
     setListingsDebugMeta(null);
+    setListingsMarketContext(null);
+    setZipStorageDebug(null);
     setZipCode("");
     setZipSource("blank");
   }, [id, scanId]);
@@ -1411,12 +1493,17 @@ export default function VehicleDetailScreen() {
         }
         setZipCode(result.zip);
         setZipSource(result.zipSource);
+        setZipStorageDebug(result.debug);
         if (__DEV__) {
           console.log("[vehicle-detail] MARKET_AREA_ZIP_HYDRATED", {
             routeId: id,
             scanId: typeof scanId === "string" ? scanId : null,
             zip: result.zip,
             zipSource: result.zipSource,
+            storageKey: result.debug.storageKey,
+            storageVersion: result.debug.storageVersion,
+            wasLegacy60610Ignored: result.debug.wasLegacy60610Ignored,
+            buildCommit: mobileBuildInfo.gitCommit || "unknown",
           });
         }
       })
@@ -2310,6 +2397,67 @@ export default function VehicleDetailScreen() {
   }, [condition, displayValuation, id, mileage, scanId, tab, valuation, valueTabFinalState, vehicle, zipCode, zipSource]);
 
   useEffect(() => {
+    if (!vehicle || !listingsMarketContext) {
+      return;
+    }
+
+    const normalizedZip = normalizeMarketAreaZip(zipCode);
+    const normalizedMileage = mileage.trim();
+    const normalizedCondition = normalizeCondition(condition);
+    const sameMarketContext =
+      listingsMarketContext.zip === normalizedZip && listingsMarketContext.mileage === normalizedMileage;
+    const shouldHydrateUnavailableValue =
+      displayValuation.status === "no_comps_found" ||
+      displayValuation.status === "provider_error" ||
+      displayValuation.status === "specialty_unavailable" ||
+      displayValuation.status === "ready_to_load" ||
+      displayValuation.status === "stale_after_input_change";
+
+    if (!sameMarketContext || !shouldHydrateUnavailableValue) {
+      return;
+    }
+
+    const derivedValue = buildListingsHydratedValuation({
+      listings: vehicle.listings,
+      condition: normalizedCondition,
+      vehicle,
+    });
+    if (!derivedValue) {
+      return;
+    }
+
+    console.log("[vehicle-detail] VALUE_HYDRATED_FROM_SHARED_LISTINGS", {
+      vehicleId: vehicle.id,
+      valueRequestSource: "cache_read",
+      acceptedListingsAvailable: true,
+      acceptedListingsCount: listingsMarketContext.acceptedListingsCount,
+      derivedValueCreated: true,
+      finalValueStatus: derivedValue.status,
+      zip: normalizedZip,
+      mileage: normalizedMileage,
+      zipSource,
+      radiiChecked: [listingsMarketContext.radiusMiles],
+    });
+    const requestKey = buildValueRequestKey(valueLookupInput, normalizedZip, normalizedMileage) ?? null;
+    lastValueRequestKeyRef.current = requestKey;
+    applyValuationUpdate(derivedValue, "shared-listings-hydration", {
+      allowReplacement: true,
+    });
+    setVehicle((current) => (current ? { ...current, valuation: derivedValue } : current));
+    setValueDebugStatus(hasResolvedValueState(derivedValue) ? "accepted" : "idle");
+  }, [
+    applyValuationUpdate,
+    condition,
+    displayValuation.status,
+    mileage,
+    listingsMarketContext,
+    valueLookupInput,
+    vehicle,
+    zipCode,
+    zipSource,
+  ]);
+
+  useEffect(() => {
     if (!vehicle) {
       return;
     }
@@ -3068,15 +3216,27 @@ export default function VehicleDetailScreen() {
                     })}
                   </View>
                 </View>
-                {valuationLoading ? <Text style={styles.valueLoading}>Updating pricing…</Text> : null}
               </View>
-              <ValueEstimateCard
-                result={displayValuation}
-                tone={valueTabFinalState === "value_available_light" ? "light" : "strong"}
-                actionLabel={valuationLoading ? "Loading live market value..." : "Load live market value"}
-                onAction={requestExplicitLiveValue}
-                actionDisabled={!canRequestLiveValue || valuationLoading}
-              />
+              {valuationLoading ? (
+                <ApproximateDataState
+                  title={loadingValueCardCopy.title}
+                  body={loadingValueCardCopy.body}
+                  supportNote={loadingValueCardCopy.supportNote}
+                  actionLabel="Loading live market value..."
+                  onAction={requestExplicitLiveValue}
+                  badgeLabel={null}
+                  actionDisabled
+                  loading
+                />
+              ) : (
+                <ValueEstimateCard
+                  result={displayValuation}
+                  tone={valueTabFinalState === "value_available_light" ? "light" : "strong"}
+                  actionLabel="Load live market value"
+                  onAction={requestExplicitLiveValue}
+                  actionDisabled={!canRequestLiveValue}
+                />
+              )}
               {showQaDebugStrip ? <QaDebugStrip title="QA Value Debug" rows={valueQaRows} /> : null}
             </>
           ) : (
@@ -3128,16 +3288,16 @@ export default function VehicleDetailScreen() {
                     })}
                   </View>
                 </View>
-                {valuationLoading ? <Text style={styles.valueLoading}>Updating live value…</Text> : null}
               </View>
               <ApproximateDataState
-                title={valueStatusCardCopy.title}
-                body={valueStatusCardCopy.body}
-                supportNote={valueStatusCardCopy.supportNote}
+                title={valuationLoading ? loadingValueCardCopy.title : valueStatusCardCopy.title}
+                body={valuationLoading ? loadingValueCardCopy.body : valueStatusCardCopy.body}
+                supportNote={valuationLoading ? loadingValueCardCopy.supportNote : valueStatusCardCopy.supportNote}
                 actionLabel={valuationLoading ? "Loading live market value..." : "Load live market value"}
                 onAction={requestExplicitLiveValue}
                 badgeLabel={null}
                 actionDisabled={!canRequestLiveValue || valuationLoading}
+                loading={valuationLoading}
               />
               {showQaDebugStrip ? <QaDebugStrip title="QA Value Debug" rows={valueQaRows} /> : null}
             </>
@@ -3188,17 +3348,27 @@ export default function VehicleDetailScreen() {
                 })}
               </View>
             </View>
-            {valuationLoading ? <Text style={styles.valueLoading}>Updating live value…</Text> : null}
           </View>
-          {!canRenderValueEstimateCard(displayValuation) ? (
+          {valuationLoading ? (
+            <ApproximateDataState
+              title={loadingValueCardCopy.title}
+              body={loadingValueCardCopy.body}
+              supportNote={loadingValueCardCopy.supportNote}
+              actionLabel="Loading live market value..."
+              onAction={requestExplicitLiveValue}
+              badgeLabel={null}
+              actionDisabled
+              loading
+            />
+          ) : !canRenderValueEstimateCard(displayValuation) ? (
             <ApproximateDataState
               title={valueStatusCardCopy.title}
               body={valueStatusCardCopy.body}
               supportNote={valueStatusCardCopy.supportNote}
-              actionLabel={valuationLoading ? "Loading live market value..." : "Load live market value"}
+              actionLabel="Load live market value"
               onAction={requestExplicitLiveValue}
               badgeLabel={null}
-              actionDisabled={!canRequestLiveValue || valuationLoading}
+              actionDisabled={!canRequestLiveValue}
             />
           ) : isLocked ? (
             <LockedContentPreview
@@ -3208,17 +3378,17 @@ export default function VehicleDetailScreen() {
             >
               <ValueEstimateCard
                 result={displayValuation}
-                actionLabel={valuationLoading ? "Loading live market value..." : "Load live market value"}
+                actionLabel="Load live market value"
                 onAction={requestExplicitLiveValue}
-                actionDisabled={!canRequestLiveValue || valuationLoading}
+                actionDisabled={!canRequestLiveValue}
               />
             </LockedContentPreview>
           ) : (
             <ValueEstimateCard
               result={displayValuation}
-              actionLabel={valuationLoading ? "Loading live market value..." : "Load live market value"}
+              actionLabel="Load live market value"
               onAction={requestExplicitLiveValue}
-              actionDisabled={!canRequestLiveValue || valuationLoading}
+              actionDisabled={!canRequestLiveValue}
             />
           )}
           {showQaDebugStrip ? <QaDebugStrip title="QA Value Debug" rows={valueQaRows} /> : null}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveConditionValues } from "@/lib/valueConditionSet";
+import { buildListingDerivedConditionSetFromListings, resolveConditionValues } from "@/lib/valueConditionSet";
 import { ValuationResult } from "@/types";
 
 const loadedConditionSet: ValuationResult = {
@@ -64,4 +64,44 @@ test("changing displayed condition resolves locally without producing unavailabl
   assert.equal(excellent.dealerRetail, "$318,000");
   assert.equal(excellent.high, "$350,000");
   assert.notEqual(excellent.dealerRetail, "$0");
+});
+
+test("audi a4 listings create a condition set", () => {
+  const result = buildListingDerivedConditionSetFromListings({
+    listings: [{ price: "$24,995" }, { price: "$26,995" }, { price: "$28,495" }],
+    selectedCondition: "good",
+    make: "Audi",
+  });
+
+  assert.ok(result);
+  assert.equal(result?.status, "loaded_condition_set");
+  assert.equal(result?.listingCount, 3);
+  assert.equal(result?.median, "$26,995");
+});
+
+test("jeep liberty single listing creates low median and high from one comp", () => {
+  const result = buildListingDerivedConditionSetFromListings({
+    listings: [{ price: "$9,995" }],
+    selectedCondition: "good",
+    make: "Jeep",
+  });
+
+  assert.ok(result);
+  assert.equal(result?.status, "loaded_condition_set");
+  assert.equal(result?.low, "$9,995");
+  assert.equal(result?.median, "$9,995");
+  assert.equal(result?.high, "$9,995");
+});
+
+test("ferrari listings create a condition set with specialty copy", () => {
+  const result = buildListingDerivedConditionSetFromListings({
+    listings: [{ price: "$209,995" }, { price: "$219,995" }],
+    selectedCondition: "good",
+    make: "Ferrari",
+  });
+
+  assert.ok(result);
+  assert.equal(result?.status, "loaded_condition_set");
+  assert.match(result?.confidenceLabel ?? "", /Actual pricing may vary/);
+  assert.equal(JSON.stringify(result).includes("\"$0\""), false);
 });

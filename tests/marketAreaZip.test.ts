@@ -117,10 +117,14 @@ test("vehicle listings request path uses the same ZIP and mileage shown in the U
 test("value screen no longer hardcodes 60610 or passive initial-load value refreshes", () => {
   const screenSource = fs.readFileSync("/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx", "utf8");
   const valueServiceSource = fs.readFileSync("/Users/mattbrillman/Car_Identifier/services/vehicleService.ts", "utf8");
+  const zipServiceSource = fs.readFileSync("/Users/mattbrillman/Car_Identifier/services/marketAreaZipService.ts", "utf8");
 
   assert.doesNotMatch(screenSource, /const defaultZip = "60610"/);
   assert.doesNotMatch(screenSource, /fetchReason:\s*"initial_load"/);
   assert.doesNotMatch(valueServiceSource, /zip=60610/);
+  assert.match(zipServiceSource, /carscanr\.marketAreaZip\.v3/);
+  assert.match(zipServiceSource, /wasLegacy60610Ignored/);
+  assert.match(zipServiceSource, /legacyPayload\.zip === "60610"/);
 });
 
 test("condition chips remain local UI state and do not trigger live requests directly", () => {

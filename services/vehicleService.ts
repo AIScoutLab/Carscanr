@@ -233,9 +233,32 @@ function mapConditionValues(conditionValues: BackendValuation["conditionValues"]
 }
 
 function mapValuation(valuation: BackendValuation): ValuationResult {
+  const hasListingConditionSet =
+    valuation.conditionValues != null &&
+    Object.values(valuation.conditionValues).some((entry) =>
+      [entry.tradeIn, entry.privateParty, entry.dealerRetail, entry.low, entry.median, entry.high].some(isPositiveMarketNumber),
+    );
+  const hasListingRange =
+    isPositiveMarketNumber(valuation.low) ||
+    isPositiveMarketNumber(valuation.median) ||
+    isPositiveMarketNumber(valuation.high) ||
+    isPositiveMarketNumber(valuation.privatePartyLow) ||
+    isPositiveMarketNumber(valuation.privatePartyHigh) ||
+    isPositiveMarketNumber(valuation.tradeInLow) ||
+    isPositiveMarketNumber(valuation.tradeInHigh) ||
+    isPositiveMarketNumber(valuation.dealerRetailLow) ||
+    isPositiveMarketNumber(valuation.dealerRetailHigh);
   const status =
-    valuation.status ??
-    (valuation.modelType === "listing_derived"
+    (valuation.status === "no_comps_found" || valuation.status === "provider_error" || valuation.status === "ready_to_load") &&
+    hasListingConditionSet
+      ? "loaded_condition_set"
+      : (valuation.status === "no_comps_found" || valuation.status === "provider_error" || valuation.status === "ready_to_load") &&
+          hasListingRange
+        ? "loaded_listing_range"
+        : valuation.status ??
+          (hasListingConditionSet
+            ? "loaded_condition_set"
+            : valuation.modelType === "listing_derived" || hasListingRange
       ? "loaded_listing_range"
       : valuation.modelType === "specialty_unavailable"
         ? "specialty_unavailable"
