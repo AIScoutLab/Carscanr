@@ -301,25 +301,39 @@ function mapOfflineVehicleToRecord(vehicle: OfflineCanonicalVehicle): VehicleRec
   });
   const valuation = vehicle.lightweightValue
     ? {
+        status: "loaded_value" as const,
         tradeIn: formatCurrency(vehicle.lightweightValue.tradeIn),
         tradeInRange: `${formatCurrency(vehicle.lightweightValue.tradeIn)} - ${formatCurrency(vehicle.lightweightValue.tradeIn)}`,
         privateParty: formatCurrency(vehicle.lightweightValue.privateParty),
         privatePartyRange: `${formatCurrency(vehicle.lightweightValue.privateParty)} - ${formatCurrency(vehicle.lightweightValue.privateParty)}`,
         dealerRetail: formatCurrency(vehicle.lightweightValue.dealerRetail),
         dealerRetailRange: `${formatCurrency(vehicle.lightweightValue.dealerRetail)} - ${formatCurrency(vehicle.lightweightValue.dealerRetail)}`,
+        low: null,
+        high: null,
+        median: null,
         confidenceLabel: vehicle.lightweightValue.confidenceLabel,
         sourceLabel: vehicle.lightweightValue.sourceLabel,
+        message: null,
+        reason: null,
+        listingCount: null,
         modelType: "modeled" as const,
       }
     : {
+        status: "ready_to_load" as const,
         tradeIn: "Unavailable",
         tradeInRange: "Unavailable",
         privateParty: "Unavailable",
         privatePartyRange: "Unavailable",
         dealerRetail: "Unavailable",
         dealerRetailRange: "Unavailable",
+        low: null,
+        high: null,
+        median: null,
         confidenceLabel: "Offline quick estimate",
         sourceLabel: "Quick result",
+        message: null,
+        reason: null,
+        listingCount: null,
         modelType: "modeled" as const,
       };
 
