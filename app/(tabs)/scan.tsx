@@ -25,6 +25,7 @@ import {
   SelectedScanPhoto,
 } from "@/features/scan/useScanActions";
 import { useSubscription } from "@/hooks/useSubscription";
+import { mobileBuildInfo } from "@/lib/env";
 import { supabase } from "@/lib/supabase";
 import { ApiRequestError } from "@/services/apiClient";
 import { authService } from "@/services/authService";
@@ -633,6 +634,12 @@ export default function ScanScreen() {
     return "Analyzing vehicle...";
   }, [debugStatus]);
 
+  const visibleBuildStamp = useMemo(() => {
+    const shortCommit = mobileBuildInfo.gitCommit ? mobileBuildInfo.gitCommit.slice(0, 7) : "unknown";
+    const versionLabel = mobileBuildInfo.version || "unknown";
+    return `Build ${versionLabel} • ${shortCommit}`;
+  }, []);
+
   if (isBusy && retryImageUri && !scanError) {
     const scanBarTranslate = scanBarProgress.interpolate({
       inputRange: [0, 1],
@@ -789,14 +796,21 @@ export default function ScanScreen() {
               msrp: 0,
             },
             valuation: {
+              status: "ready_to_load",
               tradeIn: "",
               tradeInRange: "",
               privateParty: "",
               privatePartyRange: "",
               dealerRetail: "",
               dealerRetailRange: "",
+              low: null,
+              high: null,
+              median: null,
               confidenceLabel: "",
               sourceLabel: "",
+              message: null,
+              reason: null,
+              listingCount: null,
               modelType: "modeled",
             },
             listings: [],
@@ -829,6 +843,9 @@ export default function ScanScreen() {
           beginSampleScan(sampleId).catch(() => undefined);
         }}
       />
+      <View style={styles.buildStampRow}>
+        <Text style={styles.buildStampText}>{visibleBuildStamp}</Text>
+      </View>
     </AppContainer>
   );
 }
@@ -914,6 +931,15 @@ const styles = StyleSheet.create({
   },
   cameraButtonLabel: { ...Typography.title, color: "#FFFFFF" },
   helper: { ...Typography.caption, color: Colors.textSoft },
+  buildStampRow: {
+    alignItems: "center",
+    paddingTop: 6,
+    paddingBottom: 2,
+  },
+  buildStampText: {
+    ...Typography.caption,
+    color: Colors.textMuted,
+  },
   loadingScreen: { flex: 1, gap: 16 },
   loadingHeroFrame: {
     width: "100%",
