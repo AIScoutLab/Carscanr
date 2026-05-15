@@ -100,7 +100,7 @@ const styles = StyleSheet.create({
   metricValue: { ...Typography.bodyStrong, color: Colors.textStrong },
   metricRange: { ...Typography.caption, color: Colors.textMuted },
   source: { ...Typography.caption, color: Colors.textStrong },
-  caption: { ...Typography.caption, color: Colors.success },
+  caption: { ...Typography.caption, color: Colors.textSoft },
   captionLight: { color: Colors.textSoft },
   actionButton: {
     marginTop: 4,

@@ -961,6 +961,13 @@ function buildDerivedValuationFromListings(input: {
   const adjustedHigh = Math.round(high * conditionMultiplier);
   const tradeIn = Math.round(adjustedMedian * 0.92);
   const dealerRetail = Math.round(adjustedMedian * 1.08);
+  const confidenceLabel =
+    prices.length >= 6
+      ? `Based on ${prices.length} nearby comparable listings. Market confidence is moderate.`
+      : prices.length >= 3
+        ? `Based on ${prices.length} nearby comparable listings. Limited market confidence.`
+        : `Based on ${prices.length} nearby comparable listing${prices.length === 1 ? "" : "s"}. Limited market confidence.`;
+  const confidence = prices.length >= 6 ? "moderate" : "limited";
 
   return {
     id: `derived-market-range:${input.vehicleId}:${input.zip}:${input.mileage}`,
@@ -983,10 +990,17 @@ function buildDerivedValuationFromListings(input: {
     median: adjustedMedian,
     currency: "USD",
     generatedAt: new Date().toISOString(),
-    sourceLabel: "Estimated from similar vehicles",
-    confidenceLabel: prices.length >= 6 ? "Moderate confidence" : "Limited data",
+    sourceLabel: "Estimated from nearby comparable listings",
+    confidenceLabel,
+    valuationSource: "listing_comps",
+    compCount: prices.length,
+    confidence,
+    rangeLow: adjustedLow,
+    rangeHigh: adjustedHigh,
+    midpoint: adjustedMedian,
     modelType: "listing_derived",
     listingCount: prices.length,
+    sourceBasis: "listing_median_adjusted",
   };
 }
 
@@ -1001,6 +1015,26 @@ async function deriveValuationFromSimilarVehicles(input: {
     vehicle: input.vehicle,
     radiusMiles: DEFAULT_UNLOCK_EVALUATION_RADIUS_MILES,
   });
+  logger.info(
+    {
+      label: "VALUE_COMP_DERIVATION_STARTED",
+      vehicleId: input.vehicleId,
+      zip: input.zip,
+      mileage: input.mileage,
+      condition: input.condition,
+      attemptCount: listingAttempts.length,
+      radiiChecked: LISTING_DERIVATION_RADIUS_MILES,
+      attempts: listingAttempts.map((attempt) => ({
+        strategy: attempt.strategy,
+        year: attempt.vehicle.year,
+        make: attempt.vehicle.make,
+        model: attempt.vehicle.model,
+        trim: attempt.vehicle.trim ?? null,
+        radiusMiles: attempt.radiusMiles,
+      })),
+    },
+    "VALUE_COMP_DERIVATION_STARTED",
+  );
 
   const collectedListings: ListingRecord[] = [];
   const seenListingIds = new Set<string>();
@@ -1050,7 +1084,7 @@ async function deriveValuationFromSimilarVehicles(input: {
     }
   }
 
-  return buildDerivedValuationFromListings({
+  const derived = buildDerivedValuationFromListings({
     vehicle: input.vehicle,
     vehicleId: input.vehicleId,
     zip: input.zip,
@@ -1058,6 +1092,36 @@ async function deriveValuationFromSimilarVehicles(input: {
     condition: input.condition,
     listings: collectedListings,
   });
+  if (!derived) {
+    logger.info(
+      {
+        label: "VALUE_COMP_DERIVATION_REJECTED",
+        vehicleId: input.vehicleId,
+        zip: input.zip,
+        acceptedListingsCount: collectedListings.length,
+        reason: collectedListings.length === 0 ? "no_believable_listings" : "insufficient_pricing_data",
+      },
+      "VALUE_COMP_DERIVATION_REJECTED",
+    );
+    return null;
+  }
+
+  logger.info(
+    {
+      label: "VALUE_COMP_DERIVATION_RESULT",
+      vehicleId: input.vehicleId,
+      zip: input.zip,
+      acceptedListingsCount: collectedListings.length,
+      listingCount: derived.listingCount ?? null,
+      sourceLabel: derived.sourceLabel ?? null,
+      confidenceLabel: derived.confidenceLabel ?? null,
+      low: derived.low ?? null,
+      median: derived.median ?? null,
+      high: derived.high ?? null,
+    },
+    "VALUE_COMP_DERIVATION_RESULT",
+  );
+  return derived;
 }
 
 function buildConditionAwareValuation(input: {
@@ -1097,39 +1161,35 @@ async function buildValueFallbackAttempts(vehicle: VehicleRecord): Promise<Value
   if (normalizeVehicleLookupText(vehicle.trim)) {
     pushAttempt({ strategy: "same-year-any-trim", vehicle: { ...vehicle, trim: "" } });
   }
-  if (isSpecialtyExoticMake(vehicle.make)) {
-    pushAttempt(
-      buildSpecialtyFamilyVehicleVariant(vehicle)
-        ? { strategy: "same-year-family-model", vehicle: buildSpecialtyFamilyVehicleVariant(vehicle)! }
-        : null,
-    );
-  }
+  pushAttempt(
+    buildSpecialtyFamilyVehicleVariant(vehicle)
+      ? { strategy: "same-year-family-model", vehicle: buildSpecialtyFamilyVehicleVariant(vehicle)! }
+      : null,
+  );
   if (vehicle.year > 1981) {
     pushAttempt({ strategy: "adjacent-year-previous", vehicle: { ...vehicle, year: vehicle.year - 1, trim: "" } });
   }
   pushAttempt({ strategy: "adjacent-year-next", vehicle: { ...vehicle, year: vehicle.year + 1, trim: "" } });
-  if (isSpecialtyExoticMake(vehicle.make)) {
-    pushAttempt(
-      buildSpecialtyFamilyVehicleVariant(vehicle, {
-        year: Math.max(1981, vehicle.year - 1),
-      })
-        ? {
-            strategy: "adjacent-year-family-model",
-            vehicle: buildSpecialtyFamilyVehicleVariant(vehicle, { year: Math.max(1981, vehicle.year - 1) })!,
-          }
-        : null,
-    );
-    pushAttempt(
-      buildSpecialtyFamilyVehicleVariant(vehicle, {
-        year: vehicle.year + 1,
-      })
-        ? {
-            strategy: "adjacent-year-family-model",
-            vehicle: buildSpecialtyFamilyVehicleVariant(vehicle, { year: vehicle.year + 1 })!,
-          }
-        : null,
-    );
-  }
+  pushAttempt(
+    buildSpecialtyFamilyVehicleVariant(vehicle, {
+      year: Math.max(1981, vehicle.year - 1),
+    })
+      ? {
+          strategy: "adjacent-year-family-model",
+          vehicle: buildSpecialtyFamilyVehicleVariant(vehicle, { year: Math.max(1981, vehicle.year - 1) })!,
+        }
+      : null,
+  );
+  pushAttempt(
+    buildSpecialtyFamilyVehicleVariant(vehicle, {
+      year: vehicle.year + 1,
+    })
+      ? {
+          strategy: "adjacent-year-family-model",
+          vehicle: buildSpecialtyFamilyVehicleVariant(vehicle, { year: vehicle.year + 1 })!,
+        }
+      : null,
+  );
 
   const descriptor = buildCacheDescriptor({ vehicle });
   if (!descriptor) {
@@ -1194,25 +1254,21 @@ function ensureValueAttempts(vehicle: VehicleRecord, attempts: ValueLookupAttemp
   if (normalizeVehicleLookupText(vehicle.trim)) {
     fallbackAttempts.push({ strategy: "same-year-any-trim", vehicle: { ...vehicle, trim: "" } });
   }
-  if (isSpecialtyExoticMake(vehicle.make)) {
-    const familyVariant = buildSpecialtyFamilyVehicleVariant(vehicle);
-    if (familyVariant) {
-      fallbackAttempts.push({ strategy: "same-year-family-model", vehicle: familyVariant });
-    }
+  const familyVariant = buildSpecialtyFamilyVehicleVariant(vehicle);
+  if (familyVariant) {
+    fallbackAttempts.push({ strategy: "same-year-family-model", vehicle: familyVariant });
   }
   if (vehicle.year > 1981) {
     fallbackAttempts.push({ strategy: "adjacent-year-previous", vehicle: { ...vehicle, year: vehicle.year - 1, trim: "" } });
   }
   fallbackAttempts.push({ strategy: "adjacent-year-next", vehicle: { ...vehicle, year: vehicle.year + 1, trim: "" } });
-  if (isSpecialtyExoticMake(vehicle.make)) {
-    const previousFamily = buildSpecialtyFamilyVehicleVariant(vehicle, { year: Math.max(1981, vehicle.year - 1) });
-    const nextFamily = buildSpecialtyFamilyVehicleVariant(vehicle, { year: vehicle.year + 1 });
-    if (previousFamily) {
-      fallbackAttempts.push({ strategy: "adjacent-year-family-model", vehicle: previousFamily });
-    }
-    if (nextFamily) {
-      fallbackAttempts.push({ strategy: "adjacent-year-family-model", vehicle: nextFamily });
-    }
+  const previousFamily = buildSpecialtyFamilyVehicleVariant(vehicle, { year: Math.max(1981, vehicle.year - 1) });
+  const nextFamily = buildSpecialtyFamilyVehicleVariant(vehicle, { year: vehicle.year + 1 });
+  if (previousFamily) {
+    fallbackAttempts.push({ strategy: "adjacent-year-family-model", vehicle: previousFamily });
+  }
+  if (nextFamily) {
+    fallbackAttempts.push({ strategy: "adjacent-year-family-model", vehicle: nextFamily });
   }
   fallbackAttempts.push({ strategy: "same-generation", vehicle: { ...vehicle, trim: "" } });
   return fallbackAttempts;
@@ -1248,19 +1304,17 @@ async function buildListingsFallbackAttempts(input: {
       radiusMiles: input.radiusMiles,
     });
   }
-  if (isSpecialtyExoticMake(input.vehicle.make)) {
-    const familyVariant = buildSpecialtyFamilyVehicleVariant(input.vehicle);
-    pushAttempt(
-      familyVariant
-        ? {
-            label: "LISTINGS_MODEL_NORMALIZED",
-            strategy: "same-year-family-model",
-            vehicle: familyVariant,
-            radiusMiles: Math.max(input.radiusMiles, 100),
-          }
-        : null,
-    );
-  }
+  const familyVariant = buildSpecialtyFamilyVehicleVariant(input.vehicle);
+  pushAttempt(
+    familyVariant
+      ? {
+          label: "LISTINGS_MODEL_NORMALIZED",
+          strategy: "same-year-family-model",
+          vehicle: familyVariant,
+          radiusMiles: Math.max(input.radiusMiles, 100),
+        }
+      : null,
+  );
 
   if (input.vehicle.year > 1981) {
     pushAttempt({
@@ -1291,29 +1345,29 @@ async function buildListingsFallbackAttempts(input: {
     vehicle: { ...input.vehicle, year: input.vehicle.year + 2, trim: "" },
     radiusMiles: input.radiusMiles,
   });
+  const familyPrevious = buildSpecialtyFamilyVehicleVariant(input.vehicle, { year: Math.max(1981, input.vehicle.year - 1) });
+  const familyNext = buildSpecialtyFamilyVehicleVariant(input.vehicle, { year: input.vehicle.year + 1 });
+  pushAttempt(
+    familyPrevious
+      ? {
+          label: "LISTINGS_MODEL_NORMALIZED",
+          strategy: "adjacent-year-family-model",
+          vehicle: familyPrevious,
+          radiusMiles: Math.max(input.radiusMiles, 100),
+        }
+      : null,
+  );
+  pushAttempt(
+    familyNext
+      ? {
+          label: "LISTINGS_MODEL_NORMALIZED",
+          strategy: "adjacent-year-family-model",
+          vehicle: familyNext,
+          radiusMiles: Math.max(input.radiusMiles, 100),
+        }
+      : null,
+  );
   if (isSpecialtyExoticMake(input.vehicle.make)) {
-    const familyPrevious = buildSpecialtyFamilyVehicleVariant(input.vehicle, { year: Math.max(1981, input.vehicle.year - 1) });
-    const familyNext = buildSpecialtyFamilyVehicleVariant(input.vehicle, { year: input.vehicle.year + 1 });
-    pushAttempt(
-      familyPrevious
-        ? {
-            label: "LISTINGS_MODEL_NORMALIZED",
-            strategy: "adjacent-year-family-model",
-            vehicle: familyPrevious,
-            radiusMiles: Math.max(input.radiusMiles, 100),
-          }
-        : null,
-    );
-    pushAttempt(
-      familyNext
-        ? {
-            label: "LISTINGS_MODEL_NORMALIZED",
-            strategy: "adjacent-year-family-model",
-            vehicle: familyNext,
-            radiusMiles: Math.max(input.radiusMiles, 100),
-          }
-        : null,
-    );
     pushAttempt({
       label: "LISTINGS_WIDER_RADIUS",
       strategy: "wider-radius-250",
@@ -1356,16 +1410,14 @@ function ensureListingsAttempts(input: {
       radiusMiles: input.radiusMiles,
     });
   }
-  if (isSpecialtyExoticMake(input.vehicle.make)) {
-    const familyVariant = buildSpecialtyFamilyVehicleVariant(input.vehicle);
-    if (familyVariant) {
-      fallbackAttempts.push({
-        label: "LISTINGS_MODEL_NORMALIZED",
-        strategy: "same-year-family-model",
-        vehicle: familyVariant,
-        radiusMiles: Math.max(input.radiusMiles, 100),
-      });
-    }
+  const ensuredFamilyVariant = buildSpecialtyFamilyVehicleVariant(input.vehicle);
+  if (ensuredFamilyVariant) {
+    fallbackAttempts.push({
+      label: "LISTINGS_MODEL_NORMALIZED",
+      strategy: "same-year-family-model",
+      vehicle: ensuredFamilyVariant,
+      radiusMiles: Math.max(input.radiusMiles, 100),
+    });
   }
   if (input.vehicle.year > 1981) {
     fallbackAttempts.push({
@@ -1395,25 +1447,25 @@ function ensureListingsAttempts(input: {
     vehicle: { ...input.vehicle, year: input.vehicle.year + 2, trim: "" },
     radiusMiles: input.radiusMiles,
   });
+  const ensuredPreviousFamily = buildSpecialtyFamilyVehicleVariant(input.vehicle, { year: Math.max(1981, input.vehicle.year - 1) });
+  const ensuredNextFamily = buildSpecialtyFamilyVehicleVariant(input.vehicle, { year: input.vehicle.year + 1 });
+  if (ensuredPreviousFamily) {
+    fallbackAttempts.push({
+      label: "LISTINGS_MODEL_NORMALIZED",
+      strategy: "adjacent-year-family-model",
+      vehicle: ensuredPreviousFamily,
+      radiusMiles: Math.max(input.radiusMiles, 100),
+    });
+  }
+  if (ensuredNextFamily) {
+    fallbackAttempts.push({
+      label: "LISTINGS_MODEL_NORMALIZED",
+      strategy: "adjacent-year-family-model",
+      vehicle: ensuredNextFamily,
+      radiusMiles: Math.max(input.radiusMiles, 100),
+    });
+  }
   if (isSpecialtyExoticMake(input.vehicle.make)) {
-    const previousFamily = buildSpecialtyFamilyVehicleVariant(input.vehicle, { year: Math.max(1981, input.vehicle.year - 1) });
-    const nextFamily = buildSpecialtyFamilyVehicleVariant(input.vehicle, { year: input.vehicle.year + 1 });
-    if (previousFamily) {
-      fallbackAttempts.push({
-        label: "LISTINGS_MODEL_NORMALIZED",
-        strategy: "adjacent-year-family-model",
-        vehicle: previousFamily,
-        radiusMiles: Math.max(input.radiusMiles, 100),
-      });
-    }
-    if (nextFamily) {
-      fallbackAttempts.push({
-        label: "LISTINGS_MODEL_NORMALIZED",
-        strategy: "adjacent-year-family-model",
-        vehicle: nextFamily,
-        radiusMiles: Math.max(input.radiusMiles, 100),
-      });
-    }
     fallbackAttempts.push({
       label: "LISTINGS_WIDER_RADIUS",
       strategy: "wider-radius-250",
@@ -1647,10 +1699,68 @@ function isCrvLikeModel(value: string) {
   return value === "crv" || value === "cr-v" || value === "cr v";
 }
 
+const GENERIC_MODEL_VARIANT_SUFFIXES = new Set([
+  "allroad",
+  "avant",
+  "blackwing",
+  "cabrio",
+  "cabriolet",
+  "carrera",
+  "convertible",
+  "coupe",
+  "gran",
+  "gt",
+  "gts",
+  "italia",
+  "roadster",
+  "sedan",
+  "spider",
+  "sportback",
+  "superfast",
+  "touring",
+  "unlimited",
+  "wagon",
+]);
+
+function getProviderFamilyModelAlias(make: string | null | undefined, model: string | null | undefined) {
+  const specialtyAliases = getSpecialtyModelAliases(make, model);
+  const normalizedCurrentModel = normalizeListingStrictText(model);
+  const specialtyAlias =
+    specialtyAliases.find((alias) => alias && normalizeListingStrictText(alias) !== normalizedCurrentModel) ?? null;
+  if (specialtyAlias) {
+    return specialtyAlias;
+  }
+
+  const rawModel = String(model ?? "").trim().replace(/\s+/g, " ");
+  if (rawModel.length === 0) {
+    return null;
+  }
+  const parts = rawModel.split(" ");
+  if (parts.length < 2) {
+    return null;
+  }
+
+  const first = parts[0] ?? "";
+  const second = normalizeVehicleLookupText(parts[1] ?? "");
+  const normalizedFirst = normalizeVehicleLookupText(first);
+  if (!normalizedFirst) {
+    return null;
+  }
+
+  if (normalizedFirst === "model" && parts[1]) {
+    const alias = `${parts[0]} ${parts[1]}`.trim();
+    return normalizeListingStrictText(alias) !== normalizedCurrentModel ? alias : null;
+  }
+
+  if (GENERIC_MODEL_VARIANT_SUFFIXES.has(second)) {
+    return normalizeListingStrictText(first) !== normalizedCurrentModel ? first : null;
+  }
+
+  return null;
+}
+
 function buildSpecialtyFamilyVehicleVariant(vehicle: VehicleRecord, overrides?: Partial<VehicleRecord>) {
-  const aliases = getSpecialtyModelAliases(vehicle.make, vehicle.model);
-  const normalizedCurrentModel = normalizeListingStrictText(vehicle.model);
-  const familyAlias = aliases.find((alias) => alias && normalizeListingStrictText(alias) !== normalizedCurrentModel) ?? null;
+  const familyAlias = getProviderFamilyModelAlias(vehicle.make, vehicle.model);
   if (!familyAlias) {
     return null;
   }
@@ -1680,6 +1790,33 @@ function listingModelMatchesRequestedModel(requestedMake: string, requestedModel
   }
 
   if (isSpecialtyModelFamilyMatch(requestedMake, requestedModel, listingModel)) {
+    return true;
+  }
+
+  const normalizedRequested = normalizeListingStrictText(requestedModel);
+  const normalizedListing = normalizeListingStrictText(listingModel);
+  const requestedFamilyAlias = getProviderFamilyModelAlias(requestedMake, requestedModel);
+  const listingFamilyAlias = getProviderFamilyModelAlias(requestedMake, listingModel);
+  const normalizedRequestedFamily = normalizeListingStrictText(requestedFamilyAlias);
+  const normalizedListingFamily = normalizeListingStrictText(listingFamilyAlias);
+
+  if (normalizedRequestedFamily && normalizedRequestedFamily === normalizedListing) {
+    return true;
+  }
+
+  if (normalizedListingFamily && normalizedListingFamily === normalizedRequested) {
+    return true;
+  }
+
+  if (
+    normalizedRequestedFamily &&
+    normalizedListingFamily &&
+    normalizedRequestedFamily === normalizedListingFamily
+  ) {
+    return true;
+  }
+
+  if (normalizedRequested.includes(normalizedListing) || normalizedListing.includes(normalizedRequested)) {
     return true;
   }
 
@@ -2195,6 +2332,14 @@ function shapeValuationRecord(input: {
     valuation.median = selected.median ?? null;
     valuation.high = selected.high ?? null;
     valuation.sourceBasis = valuation.sourceBasis ?? (valuation.modelType === "listing_derived" ? "listing_median_adjusted" : "provider_direct");
+    valuation.valuationSource = valuation.valuationSource ?? (input.source === "cache" ? "cache" : valuation.modelType === "listing_derived" ? "listing_comps" : "provider");
+    valuation.compCount = valuation.compCount ?? valuation.listingCount ?? null;
+    valuation.rangeLow = valuation.rangeLow ?? valuation.low ?? null;
+    valuation.rangeHigh = valuation.rangeHigh ?? valuation.high ?? null;
+    valuation.midpoint = valuation.midpoint ?? valuation.median ?? null;
+    valuation.confidence =
+      valuation.confidence ??
+      (valuation.compCount != null ? (valuation.compCount <= 2 ? "limited" : valuation.compCount >= 6 ? "moderate" : "limited") : "moderate");
     return valuation;
   }
   if (
@@ -2227,6 +2372,13 @@ function shapeValuationRecord(input: {
         : valuation.status === "no_comps_found"
           ? "No live market comps found for this ZIP, mileage, and condition."
           : "Load live market value. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance.");
+    valuation.valuationSource = valuation.valuationSource ?? "unavailable";
+    valuation.compCount = valuation.compCount ?? valuation.listingCount ?? null;
+    valuation.rangeLow = valuation.rangeLow ?? null;
+    valuation.rangeHigh = valuation.rangeHigh ?? null;
+    valuation.midpoint = valuation.midpoint ?? null;
+    valuation.confidence = valuation.confidence ?? "unavailable";
+    valuation.unavailableReason = valuation.unavailableReason ?? valuation.reason ?? null;
     return valuation;
   }
   valuation.status = valuation.status ?? (valuation.modelType === "listing_derived" ? "loaded_listing_range" : "loaded_value");
@@ -2248,6 +2400,15 @@ function shapeValuationRecord(input: {
     valuation.high = valuation.high ?? valuation.privatePartyHigh ?? valuation.tradeInHigh ?? valuation.dealerRetailHigh ?? null;
     valuation.median = valuation.median ?? valuation.privateParty ?? null;
   }
+  valuation.valuationSource =
+    valuation.valuationSource ??
+    (input.source === "cache" ? "cache" : modelType === "listing_derived" ? "listing_comps" : "provider");
+  valuation.compCount = valuation.compCount ?? valuation.listingCount ?? null;
+  valuation.rangeLow =
+    valuation.rangeLow ?? valuation.low ?? valuation.privatePartyLow ?? valuation.tradeInLow ?? valuation.dealerRetailLow ?? null;
+  valuation.rangeHigh =
+    valuation.rangeHigh ?? valuation.high ?? valuation.privatePartyHigh ?? valuation.tradeInHigh ?? valuation.dealerRetailHigh ?? null;
+  valuation.midpoint = valuation.midpoint ?? valuation.median ?? valuation.privateParty ?? null;
   logger.info(
     {
       label: "VALUE_MODEL_TYPE_SELECTED",
@@ -2321,6 +2482,9 @@ function shapeValuationRecord(input: {
 
   valuation.confidenceLabel = confidenceLabel;
   valuation.sourceLabel = sourceLabel;
+  valuation.confidence =
+    valuation.confidence ??
+    (modelType === "provider_range" ? (exactTrimMatch ? "high" : "moderate") : modelType === "listing_derived" ? "limited" : "moderate");
   logger.info(
     {
       label: "VALUE_CONFIDENCE_COMPUTED",
@@ -2359,6 +2523,12 @@ function shapeValuationRecord(input: {
       dealerRetailHigh: valuation.dealerRetailHigh,
       sourceLabel,
       confidenceLabel,
+      valuationSource: valuation.valuationSource,
+      compCount: valuation.compCount,
+      confidence: valuation.confidence,
+      rangeLow: valuation.rangeLow,
+      rangeHigh: valuation.rangeHigh,
+      midpoint: valuation.midpoint,
     },
     "VALUE_RESPONSE_SHAPED",
   );
@@ -4167,6 +4337,18 @@ export class VehicleService {
           modelType: "modeled",
           listingCount: 0,
         };
+        logger.info(
+          {
+            label: "VALUE_UNAVAILABLE_REASON",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition,
+            reason: explicitLiveFailureReason ?? "no_comps_found",
+          },
+          "VALUE_UNAVAILABLE_REASON",
+        );
       }
 
       const normalizedFallbackValue = fallbackValue
@@ -4414,6 +4596,21 @@ export class VehicleService {
       const vehicle = lookup.vehicle;
       const descriptor = lookup.cacheDescriptor;
       const lookupVehicleId = lookup.lookupVehicleId;
+      logger.info(
+        {
+          label: "LISTINGS_LOAD_REQUESTED",
+          requestId: input.requestId,
+          vehicleId: lookupVehicleId,
+          zip: input.zip,
+          radiusMiles: input.radiusMiles,
+          mileage: input.mileage ?? null,
+          allowLive: input.allowLive ?? false,
+          fetchReason: input.fetchReason ?? null,
+          sourceScreen: input.sourceScreen ?? null,
+          action: input.action ?? null,
+        },
+        "LISTINGS_LOAD_REQUESTED",
+      );
       logger.info(
         {
           label: "LISTINGS_LOOKUP_START",
@@ -4749,6 +4946,22 @@ export class VehicleService {
       );
       logger.info(
         {
+          label: "LISTINGS_QUERY_BUILT",
+          requestId: input.requestId,
+          vehicleId: lookupVehicleId,
+          attempts: fallbackAttempts.map((attempt) => ({
+            strategy: attempt.strategy,
+            year: attempt.vehicle.year,
+            make: attempt.vehicle.make,
+            model: attempt.vehicle.model,
+            trim: attempt.vehicle.trim || null,
+            radiusMiles: attempt.radiusMiles,
+          })),
+        },
+        "LISTINGS_QUERY_BUILT",
+      );
+      logger.info(
+        {
           label: "LISTINGS_CANDIDATE_SET",
           requestId: input.requestId,
           vehicleId: lookupVehicleId,
@@ -4802,7 +5015,7 @@ export class VehicleService {
       });
       const providerListingsAttempts =
         providers.listingsProviderName === "marketcheck"
-          ? isSpecialtyExoticMake(lookupBaseVehicle?.make ?? descriptor?.make ?? null) && isExplicitListingsRefresh
+          ? isExplicitListingsRefresh
             ? fallbackAttempts
             : [
                 fallbackAttempts.find((attempt) => attempt.strategy === "same-year-any-trim") ??
@@ -4874,6 +5087,21 @@ export class VehicleService {
         });
         listingsWereSimulated = listingsDecision.shouldSimulateSuccess;
         for (const attempt of providerListingsAttempts) {
+          logger.info(
+            {
+              label: "LISTINGS_FALLBACK_ATTEMPT",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              strategy: attempt.strategy,
+              year: attempt.vehicle.year,
+              make: attempt.vehicle.make,
+              model: attempt.vehicle.model,
+              trim: attempt.vehicle.trim ?? null,
+              zip: input.zip,
+              radiusMiles: attempt.radiusMiles,
+            },
+            "LISTINGS_FALLBACK_ATTEMPT",
+          );
           logMarketCheckApiFallbackAttempt({
             requestId: input.requestId,
             endpointType: "listings",
@@ -4888,6 +5116,23 @@ export class VehicleService {
             zip: input.zip,
             radiusMiles: attempt.radiusMiles,
           });
+          logger.info(
+            {
+              label: "LISTINGS_PROVIDER_ATTEMPT",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              provider: providers.listingsProviderName,
+              strategy: attempt.strategy,
+              simulated: listingsWereSimulated,
+              year: attempt.vehicle.year,
+              make: attempt.vehicle.make,
+              model: attempt.vehicle.model,
+              trim: attempt.vehicle.trim ?? null,
+              zip: input.zip,
+              radiusMiles: attempt.radiusMiles,
+            },
+            "LISTINGS_PROVIDER_ATTEMPT",
+          );
           logger.info(
             {
               label: "LISTINGS_LOOKUP_QUERY",
@@ -4975,6 +5220,17 @@ export class VehicleService {
                 }
                 throw error;
               });
+          logger.info(
+            {
+              label: "LISTINGS_PROVIDER_RESULT_COUNT",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              provider: providers.listingsProviderName,
+              strategy: attempt.strategy,
+              rawCount: liveListings.length,
+            },
+            "LISTINGS_PROVIDER_RESULT_COUNT",
+          );
           const believableListings = filterDisplayableListings(liveListings, attempt.vehicle, input.descriptor?.yearRange ?? null, {
             requestId: input.requestId,
             vehicleId: lookupVehicleId,
@@ -4984,6 +5240,17 @@ export class VehicleService {
             model: attempt.vehicle.model,
             condition: null,
           });
+          logger.info(
+            {
+              label: "LISTINGS_FILTERED_RESULT_COUNT",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              strategy: attempt.strategy,
+              rawCount: liveListings.length,
+              believableCount: believableListings.length,
+            },
+            "LISTINGS_FILTERED_RESULT_COUNT",
+          );
           logger.info(
             {
               label: "FORSALE_ATTEMPT_RESULT",
@@ -5310,6 +5577,25 @@ export class VehicleService {
           attemptedStrategies: fallbackAttempts.map((attempt) => attempt.strategy),
         },
         "LISTINGS_FAILED",
+      );
+      logger.info(
+        {
+          label: "LISTINGS_EMPTY_REASON",
+          requestId: input.requestId,
+          vehicleId: lookupVehicleId,
+          reason:
+            liveListingsAttempts.length === 0
+              ? "no-listing-attempts-created"
+              : liveListingsAttempts.every((attempt) => attempt.returnedCount === 0)
+                ? "provider-returned-zero-at-all-attempts"
+                : liveListingsAttempts.some((attempt) => attempt.returnedCount > 0) &&
+                    liveListingsAttempts.every((attempt) => attempt.believableCount === 0)
+                  ? "raw-listings-filtered-out-as-unbelievable"
+                  : "no-believable-listings-found",
+          rawAttemptCount: liveListingsAttempts.length,
+          attempts: liveListingsAttempts,
+        },
+        "LISTINGS_EMPTY_REASON",
       );
       if (isCommonVehicleFamily({ make: vehicle?.make ?? descriptor?.make ?? null, model: vehicle?.model ?? descriptor?.model ?? null })) {
         logger.info(

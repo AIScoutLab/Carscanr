@@ -76,6 +76,9 @@ test("audi a4 listings create a condition set", () => {
   assert.ok(result);
   assert.equal(result?.status, "loaded_condition_set");
   assert.equal(result?.listingCount, 3);
+  assert.equal(result?.valuationSource, "listing_comps");
+  assert.equal(result?.compCount, 3);
+  assert.equal(result?.confidence, "moderate");
   assert.equal(result?.median, "$26,995");
 });
 
@@ -91,6 +94,8 @@ test("jeep liberty single listing creates low median and high from one comp", ()
   assert.equal(result?.low, "$9,995");
   assert.equal(result?.median, "$9,995");
   assert.equal(result?.high, "$9,995");
+  assert.equal(result?.confidence, "limited");
+  assert.equal(result?.midpoint, "$9,995");
 });
 
 test("ferrari listings create a condition set with specialty copy", () => {
@@ -103,5 +108,24 @@ test("ferrari listings create a condition set with specialty copy", () => {
   assert.ok(result);
   assert.equal(result?.status, "loaded_condition_set");
   assert.match(result?.confidenceLabel ?? "", /Actual pricing may vary/);
+  assert.equal(result?.valuationSource, "listing_comps");
   assert.equal(JSON.stringify(result).includes("\"$0\""), false);
+});
+
+test("one nearby listing still produces a limited-comp listing-derived estimate instead of unavailable", () => {
+  const result = buildListingDerivedConditionSetFromListings({
+    listings: [{ price: "$209,995" }],
+    selectedCondition: "good",
+    make: "Ferrari",
+    sourceLabel: "Estimated from nearby comparable listings",
+  });
+
+  assert.ok(result);
+  assert.equal(result?.status, "loaded_condition_set");
+  assert.equal(result?.low, "$209,995");
+  assert.equal(result?.median, "$209,995");
+  assert.equal(result?.high, "$209,995");
+  assert.equal(result?.compCount, 1);
+  assert.equal(result?.confidence, "limited");
+  assert.match(result?.confidenceLabel ?? "", /Limited/i);
 });

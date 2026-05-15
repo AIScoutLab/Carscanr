@@ -46,9 +46,16 @@ type ListingsMarketContext = {
 
 type ZipStorageDebug = {
   storageKey: string;
-  storageVersion: "v3";
+  storageVersion: "v4";
   wasLegacy60610Ignored: boolean;
 };
+
+function logValueUiTransition(
+  label: "VALUE_UI_REFRESH_STARTED" | "VALUE_UI_REFRESH_SUCCESS" | "VALUE_UI_REFRESH_UNAVAILABLE" | "VALUE_UI_REFRESH_ERROR",
+  payload: Record<string, unknown>,
+) {
+  console.log(`[vehicle-detail] ${label}`, payload);
+}
 
 type EstimateSupport = {
   groundedVehicleId: string | null;
@@ -1291,7 +1298,19 @@ export default function VehicleDetailScreen() {
     const normalizedZip = normalizeMarketAreaZip(nextValue);
     setZipCode(normalizedZip);
     setZipSource(normalizedZip.length > 0 ? "user_input" : "blank");
-  }, []);
+    console.log("[vehicle-detail] VALUE_ZIP_SOURCE", {
+      routeId: id,
+      scanId: typeof scanId === "string" ? scanId : null,
+      zip: normalizedZip,
+      zipSource: normalizedZip.length > 0 ? "user_input" : "empty_required",
+      previousZip: zipCode,
+      requestZip: normalizedZip,
+      storageKey: zipStorageDebug?.storageKey ?? null,
+      storageVersion: zipStorageDebug?.storageVersion ?? null,
+      wasLegacy60610Ignored: zipStorageDebug?.wasLegacy60610Ignored ?? false,
+      buildCommit: mobileBuildInfo.gitCommit || "unknown",
+    });
+  }, [id, scanId, zipCode, zipStorageDebug?.storageKey, zipStorageDebug?.storageVersion, zipStorageDebug?.wasLegacy60610Ignored]);
   const requestExplicitLiveValue = useCallback(() => {
     if (!vehicle || !valueLookupInput || valuationLoading) {
       return;
@@ -1302,6 +1321,15 @@ export default function VehicleDetailScreen() {
     const normalizedCondition = normalizeCondition(condition);
     if (!isValidMarketAreaZip(normalizedZip) || !normalizedMileage || !normalizedCondition) {
       setValueDebugStatus("rejected");
+      console.log("[vehicle-detail] VALUE_ZIP_SOURCE", {
+        routeId: id,
+        scanId: typeof scanId === "string" ? scanId : null,
+        zip: normalizedZip,
+        zipSource: normalizedZip ? zipSource : "empty_required",
+        previousZip: zipCode,
+        requestZip: normalizedZip,
+        buildCommit: mobileBuildInfo.gitCommit || "unknown",
+      });
       return;
     }
 
@@ -1309,6 +1337,16 @@ export default function VehicleDetailScreen() {
     pendingValueRequestKeyRef.current = requestKey;
     setValueDebugStatus("requested");
     setValuationLoading(true);
+    logValueUiTransition("VALUE_UI_REFRESH_STARTED", {
+      routeId: id,
+      scanId: typeof scanId === "string" ? scanId : null,
+      vehicleId: vehicle.id,
+      zip: normalizedZip,
+      zipSource,
+      mileage: normalizedMileage,
+      condition: normalizedCondition,
+      buildCommit: mobileBuildInfo.gitCommit || "unknown",
+    });
     console.log("[vehicle-detail] VALUE_LIVE_REFRESH_BUTTON_PRESSED", {
       routeId: id,
       scanId: typeof scanId === "string" ? scanId : null,
@@ -1335,6 +1373,29 @@ export default function VehicleDetailScreen() {
             ? buildApproximateValuation(result, estimateSupport.familyLabel, estimateSupport.yearRangeLabel)
             : result;
         setValueDebugStatus(hasResolvedValueState(nextResult) ? "accepted" : "rejected");
+        if (hasStructuredValueEvidence(nextResult)) {
+          logValueUiTransition("VALUE_UI_REFRESH_SUCCESS", {
+            routeId: id,
+            scanId: typeof scanId === "string" ? scanId : null,
+            vehicleId: vehicle.id,
+            zip: normalizedZip,
+            zipSource,
+            valuationStatus: nextResult.status,
+            valuationSource: nextResult.valuationSource ?? nextResult.modelType,
+            listingCount: nextResult.listingCount ?? null,
+          });
+        } else {
+          logValueUiTransition("VALUE_UI_REFRESH_UNAVAILABLE", {
+            routeId: id,
+            scanId: typeof scanId === "string" ? scanId : null,
+            vehicleId: vehicle.id,
+            zip: normalizedZip,
+            zipSource,
+            valuationStatus: nextResult.status,
+            reason: nextResult.reason ?? null,
+            sourceLabel: nextResult.sourceLabel ?? null,
+          });
+        }
         lastValueRequestKeyRef.current = requestKey;
         applyValuationUpdate(nextResult, "value-refresh-success", {
           allowReplacement: true,
@@ -1344,8 +1405,16 @@ export default function VehicleDetailScreen() {
         previousValueRef.current = JSON.stringify(result);
         void marketAreaZipService.saveLastUsedZip(normalizedZip);
       })
-      .catch(() => {
+      .catch((error) => {
         setValueDebugStatus("rejected");
+        logValueUiTransition("VALUE_UI_REFRESH_ERROR", {
+          routeId: id,
+          scanId: typeof scanId === "string" ? scanId : null,
+          vehicleId: vehicle.id,
+          zip: normalizedZip,
+          zipSource,
+          message: error instanceof Error ? error.message : String(error),
+        });
       })
       .finally(() => {
         if (pendingValueRequestKeyRef.current === requestKey) {
@@ -1367,7 +1436,7 @@ export default function VehicleDetailScreen() {
     valuationLoading,
   ]);
   const requestExplicitLiveListings = useCallback(() => {
-    if (!vehicle || !valueLookupInput) {
+    if (!vehicle || !valueLookupInput || listingsRefreshLoading) {
       return;
     }
 
@@ -1494,18 +1563,16 @@ export default function VehicleDetailScreen() {
         setZipCode(result.zip);
         setZipSource(result.zipSource);
         setZipStorageDebug(result.debug);
-        if (__DEV__) {
-          console.log("[vehicle-detail] MARKET_AREA_ZIP_HYDRATED", {
-            routeId: id,
-            scanId: typeof scanId === "string" ? scanId : null,
-            zip: result.zip,
-            zipSource: result.zipSource,
-            storageKey: result.debug.storageKey,
-            storageVersion: result.debug.storageVersion,
-            wasLegacy60610Ignored: result.debug.wasLegacy60610Ignored,
-            buildCommit: mobileBuildInfo.gitCommit || "unknown",
-          });
-        }
+        console.log("[vehicle-detail] VALUE_ZIP_SOURCE", {
+          routeId: id,
+          scanId: typeof scanId === "string" ? scanId : null,
+          zip: result.zip,
+          zipSource: result.zipSource === "blank" ? "empty_required" : result.zipSource,
+          storageKey: result.debug.storageKey,
+          storageVersion: result.debug.storageVersion,
+          wasLegacy60610Ignored: result.debug.wasLegacy60610Ignored,
+          buildCommit: mobileBuildInfo.gitCommit || "unknown",
+        });
       })
       .catch(() => undefined);
 
@@ -2451,6 +2518,67 @@ export default function VehicleDetailScreen() {
     displayValuation.status,
     mileage,
     listingsMarketContext,
+    valueLookupInput,
+    vehicle,
+    zipCode,
+    zipSource,
+  ]);
+
+  useEffect(() => {
+    if (!vehicle) {
+      return;
+    }
+
+    const normalizedZip = normalizeMarketAreaZip(zipCode);
+    const normalizedMileage = mileage.trim();
+    const normalizedCondition = normalizeCondition(condition);
+    const believableListings = vehicle.listings.filter(isBelievableListing);
+    const shouldHydrateUnavailableValue =
+      displayValuation.status === "no_comps_found" ||
+      displayValuation.status === "provider_error" ||
+      displayValuation.status === "specialty_unavailable" ||
+      displayValuation.status === "ready_to_load" ||
+      displayValuation.status === "stale_after_input_change";
+
+    if (!normalizedZip || !normalizedMileage || believableListings.length === 0 || !shouldHydrateUnavailableValue) {
+      return;
+    }
+
+    const derivedValue = buildListingsHydratedValuation({
+      listings: believableListings,
+      condition: normalizedCondition,
+      vehicle,
+    });
+    if (!derivedValue) {
+      return;
+    }
+
+    console.log("[vehicle-detail] VALUE_HYDRATED_FROM_SHARED_LISTINGS", {
+      vehicleId: vehicle.id,
+      valueRequestSource: listingsMarketContext ? "for_sale_listing_sync" : "cache_read",
+      acceptedListingsAvailable: true,
+      acceptedListingsCount: believableListings.length,
+      listingCacheKeysChecked: ["shared_vehicle_listings"],
+      radiiChecked: listingsMarketContext ? [listingsMarketContext.radiusMiles] : [50, 100, 250, 500],
+      derivedValueCreated: true,
+      finalValueStatus: derivedValue.status,
+      zip: normalizedZip,
+      mileage: normalizedMileage,
+      zipSource,
+    });
+    const requestKey = buildValueRequestKey(valueLookupInput, normalizedZip, normalizedMileage) ?? null;
+    lastValueRequestKeyRef.current = requestKey;
+    applyValuationUpdate(derivedValue, "shared-listings-hydration", {
+      allowReplacement: true,
+    });
+    setVehicle((current) => (current ? { ...current, valuation: derivedValue } : current));
+    setValueDebugStatus(hasResolvedValueState(derivedValue) ? "accepted" : "idle");
+  }, [
+    applyValuationUpdate,
+    condition,
+    displayValuation.status,
+    listingsMarketContext,
+    mileage,
     valueLookupInput,
     vehicle,
     zipCode,
@@ -3461,7 +3589,6 @@ export default function VehicleDetailScreen() {
                 onAction={requestExplicitLiveListings}
                 badgeLabel={null}
               />
-              {listingsRefreshLoading ? <Text style={styles.valueLoading}>Updating live listings…</Text> : null}
               {showQaDebugStrip ? <QaDebugStrip title="QA Listings Debug" rows={listingsQaRows} /> : null}
             </>
           )
@@ -3498,7 +3625,6 @@ export default function VehicleDetailScreen() {
                 onAction={requestExplicitLiveListings}
                 badgeLabel={null}
               />
-              {listingsRefreshLoading ? <Text style={styles.valueLoading}>Updating live listings…</Text> : null}
             </>
           ) : (
             <View style={styles.listingsWrap}>

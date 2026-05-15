@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Colors, Radius, Shadows, Typography } from "@/constants/theme";
+import { premiumPillStyles } from "@/design/patterns";
 
 type Props = {
   title: string;
@@ -31,20 +32,17 @@ const styles = StyleSheet.create({
     ...Shadows.cardStrong,
   },
   badge: {
+    ...premiumPillStyles.surface,
     alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
     paddingHorizontal: 12,
     paddingVertical: 7,
-    borderRadius: Radius.pill,
-    backgroundColor: "rgba(0, 194, 255, 0.12)",
-    borderWidth: 1,
-    borderColor: Colors.cyanGlow,
   },
   badgeLabel: {
     ...Typography.caption,
-    color: Colors.premium,
+    color: "#F4F8FF",
     textTransform: "uppercase",
     letterSpacing: 1.1,
   },

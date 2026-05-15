@@ -119,10 +119,39 @@ export function buildConditionSetValuation(input: {
     low: baseSnapshot.low ?? null,
     median: baseSnapshot.median ?? null,
     high: baseSnapshot.high ?? null,
+    valuationSource:
+      input.valuation.valuationSource ??
+      (input.valuation.status === "loaded_listing_range" || input.valuation.modelType === "listing_derived"
+        ? "listing_comps"
+        : "provider"),
+    compCount: input.valuation.compCount ?? input.valuation.listingCount ?? null,
+    confidence:
+      input.valuation.confidence ??
+      ((input.valuation.compCount ?? input.valuation.listingCount ?? 0) <= 2
+        ? "limited"
+        : input.valuation.modelType === "listing_derived"
+          ? "moderate"
+          : "high"),
+    rangeLow:
+      input.valuation.rangeLow ??
+      baseSnapshot.low ??
+      input.valuation.low ??
+      input.valuation.privatePartyLow ??
+      input.valuation.tradeInLow ??
+      input.valuation.dealerRetailLow ??
+      null,
+    rangeHigh:
+      input.valuation.rangeHigh ??
+      baseSnapshot.high ??
+      input.valuation.high ??
+      input.valuation.privatePartyHigh ??
+      input.valuation.tradeInHigh ??
+      input.valuation.dealerRetailHigh ??
+      null,
+    midpoint: input.valuation.midpoint ?? baseSnapshot.median ?? input.valuation.median ?? input.valuation.privateParty ?? null,
     sourceBasis:
       input.valuation.status === "loaded_listing_range" || input.valuation.modelType === "listing_derived"
         ? "listing_median_adjusted"
         : "provider_direct",
   };
 }
-

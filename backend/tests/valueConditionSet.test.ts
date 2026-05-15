@@ -90,5 +90,10 @@ test("condition-set builder derives fair good and excellent from one listing-bas
   assert.equal(conditionSet.conditionValues?.fair.median, 288000);
   assert.equal(conditionSet.conditionValues?.excellent.median, 309000);
   assert.equal(conditionSet.sourceBasis, "listing_median_adjusted");
+  assert.equal(conditionSet.valuationSource, "listing_comps");
+  assert.equal(conditionSet.compCount, 8);
+  assert.equal(conditionSet.confidence, "moderate");
+  assert.equal(conditionSet.rangeLow, 275000);
+  assert.equal(conditionSet.rangeHigh, 330000);
+  assert.equal(conditionSet.midpoint, 300000);
 });
-

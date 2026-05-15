@@ -124,6 +124,13 @@ type BackendValuation = {
   generatedAt: string;
   sourceLabel?: string;
   confidenceLabel?: string;
+  valuationSource?: "provider" | "cache" | "listing_comps" | "unavailable" | null;
+  compCount?: number | null;
+  confidence?: "high" | "moderate" | "limited" | "unavailable" | null;
+  rangeLow?: number | null;
+  rangeHigh?: number | null;
+  midpoint?: number | null;
+  unavailableReason?: string | null;
   message?: string | null;
   reason?: string | null;
   sourceBasis?: "provider_direct" | "listing_median_adjusted" | "modeled_condition_adjusted" | null;
@@ -285,6 +292,13 @@ function mapValuation(valuation: BackendValuation): ValuationResult {
         valuation.confidenceLabel ??
         "Based on live MarketCheck listings. Condition-adjusted estimate.",
       sourceLabel: valuation.sourceLabel ?? "MarketCheck live market value",
+      valuationSource: valuation.valuationSource ?? "listing_comps",
+      compCount: valuation.compCount ?? valuation.listingCount ?? null,
+      confidence: valuation.confidence ?? (valuation.listingCount != null && valuation.listingCount <= 2 ? "limited" : "moderate"),
+      rangeLow: formatOptionalComparableRange(valuation.rangeLow ?? valuation.low),
+      rangeHigh: formatOptionalComparableRange(valuation.rangeHigh ?? valuation.high),
+      midpoint: formatOptionalComparableRange(valuation.midpoint ?? valuation.median),
+      unavailableReason: valuation.unavailableReason ?? null,
       message: valuation.message ?? null,
       reason: valuation.reason ?? null,
       listingCount: valuation.listingCount ?? null,
@@ -311,6 +325,13 @@ function mapValuation(valuation: BackendValuation): ValuationResult {
       median: typeof median === "number" ? formatCurrency(median) : null,
       confidenceLabel: valuation.confidenceLabel ?? "Comparable market listings found",
       sourceLabel: valuation.sourceLabel ?? "Listing-derived market range",
+      valuationSource: valuation.valuationSource ?? "listing_comps",
+      compCount: valuation.compCount ?? valuation.listingCount ?? null,
+      confidence: valuation.confidence ?? (valuation.listingCount != null && valuation.listingCount <= 2 ? "limited" : "moderate"),
+      rangeLow: typeof (valuation.rangeLow ?? low) === "number" ? formatCurrency((valuation.rangeLow ?? low) as number) : null,
+      rangeHigh: typeof (valuation.rangeHigh ?? high) === "number" ? formatCurrency((valuation.rangeHigh ?? high) as number) : null,
+      midpoint: typeof (valuation.midpoint ?? median) === "number" ? formatCurrency((valuation.midpoint ?? median) as number) : null,
+      unavailableReason: valuation.unavailableReason ?? null,
       message: valuation.message ?? null,
       reason: valuation.reason ?? null,
       listingCount: valuation.listingCount ?? null,
@@ -352,6 +373,13 @@ function mapValuation(valuation: BackendValuation): ValuationResult {
             : status === "specialty_unavailable"
               ? "Specialty market value unavailable"
               : "Live market value available on demand"),
+      valuationSource: valuation.valuationSource ?? "unavailable",
+      compCount: valuation.compCount ?? valuation.listingCount ?? null,
+      confidence: valuation.confidence ?? "unavailable",
+      rangeLow: null,
+      rangeHigh: null,
+      midpoint: null,
+      unavailableReason: valuation.unavailableReason ?? valuation.reason ?? null,
       message: valuation.message ?? null,
       reason: valuation.reason ?? null,
       listingCount: valuation.listingCount ?? null,
@@ -396,6 +424,13 @@ function mapValuation(valuation: BackendValuation): ValuationResult {
         (valuation.reason === "provider_timeout" || valuation.reason === "provider_error"
           ? "Live market data could not be loaded"
           : "No live market comps found"),
+      valuationSource: valuation.valuationSource ?? "unavailable",
+      compCount: valuation.compCount ?? valuation.listingCount ?? null,
+      confidence: valuation.confidence ?? "unavailable",
+      rangeLow: null,
+      rangeHigh: null,
+      midpoint: null,
+      unavailableReason: valuation.unavailableReason ?? valuation.reason ?? null,
       message:
         valuation.message ??
         (valuation.reason === "provider_timeout" || valuation.reason === "provider_error"
@@ -426,6 +461,13 @@ function mapValuation(valuation: BackendValuation): ValuationResult {
       valuation.confidenceLabel ??
       `Based on ${valuation.condition.replace("_", " ")} condition at ${valuation.mileage.toLocaleString("en-US")} miles`,
     sourceLabel: valuation.sourceLabel ?? "Modeled estimate",
+    valuationSource: valuation.valuationSource ?? "provider",
+    compCount: valuation.compCount ?? valuation.listingCount ?? null,
+    confidence: valuation.confidence ?? "moderate",
+    rangeLow: null,
+    rangeHigh: null,
+    midpoint: null,
+    unavailableReason: valuation.unavailableReason ?? null,
     message: valuation.message ?? null,
     reason: valuation.reason ?? null,
     listingCount: valuation.listingCount ?? null,
@@ -467,6 +509,13 @@ function createEmptyValuation(): ValuationResult {
     median: null,
     confidenceLabel: "Enter ZIP, mileage, and condition, then load live market value.",
     sourceLabel: "Live market value available on demand",
+    valuationSource: "unavailable",
+    compCount: null,
+    confidence: "unavailable",
+    rangeLow: null,
+    rangeHigh: null,
+    midpoint: null,
+    unavailableReason: null,
     message: null,
     reason: null,
     listingCount: null,

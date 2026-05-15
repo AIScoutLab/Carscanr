@@ -1,6 +1,6 @@
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { Colors, Radius, Typography } from "@/constants/theme";
-import { cardStyles } from "@/design/patterns";
+import { cardStyles, premiumPillStyles } from "@/design/patterns";
 
 type Props = {
   onPress?: () => void;
@@ -41,22 +41,20 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(17, 32, 57, 0.92)",
   },
   eyebrowPill: {
+    ...premiumPillStyles.subtleSurface,
     alignSelf: "flex-start",
-    backgroundColor: Colors.premiumSoft,
-    borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  eyebrow: { ...Typography.caption, color: Colors.premium },
+  eyebrow: { ...Typography.caption, color: "#F4F8FF" },
   title: { ...Typography.heading, color: Colors.textStrong },
   row: { flexDirection: "row", gap: 10, flexWrap: "wrap" },
   item: { ...Typography.caption, color: Colors.textSoft },
   ctaWrap: {
+    ...premiumPillStyles.surface,
     alignSelf: "flex-start",
-    backgroundColor: Colors.accentSoft,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: Radius.pill,
   },
-  cta: { ...Typography.caption, color: Colors.accent, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.7 },
+  cta: { ...Typography.caption, color: "#D9E9FF", fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.7 },
 });

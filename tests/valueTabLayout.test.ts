@@ -14,6 +14,7 @@ test("value results keep the live market button grouped with the card", () => {
   assert.match(screenSource, /<ApproximateDataState[\s\S]*title=\{loadingValueCardCopy\.title\}[\s\S]*loading/);
   assert.doesNotMatch(screenSource, /Updating live value…/);
   assert.doesNotMatch(screenSource, /Updating pricing…/);
+  assert.doesNotMatch(screenSource, /Updating live listings…/);
   assert.match(cardSource, /actionLabel\?: string \| null;/);
   assert.match(cardSource, /<Pressable[\s\S]*actionButton/);
 });
@@ -25,4 +26,6 @@ test("listings refresh hydrates value state from cached listings", () => {
   assert.match(screenSource, /VALUE_HYDRATED_FROM_FORSALE_LISTINGS/);
   assert.match(screenSource, /VALUE_HYDRATED_FROM_SHARED_LISTINGS/);
   assert.match(screenSource, /buildListingsHydratedValuation/);
+  assert.match(screenSource, /acceptedListingsAvailable: true/);
+  assert.match(screenSource, /listingCacheKeysChecked: \["shared_vehicle_listings"\]/);
 });

@@ -1212,6 +1212,252 @@ describe("bootstrap cost control", () => {
     assert.equal(value.data.median, 209995);
   });
 
+  test("Kia Soul cached listings produce at least a limited comp-based value", async () => {
+    setRepositories(
+      createTestRepositories({
+        vehicles: [
+          {
+            id: "2020-kia-soul-s",
+            year: 2020,
+            make: "Kia",
+            model: "Soul",
+            trim: "S",
+            bodyStyle: "Hatchback",
+            vehicleType: "car",
+            msrp: 22300,
+            engine: "2.0L I4",
+            horsepower: 147,
+            torque: "132 lb-ft",
+            transmission: "CVT",
+            drivetrain: "FWD",
+            mpgOrRange: "29 city / 35 highway",
+            colors: ["Neptune Blue"],
+          },
+        ],
+        listings: [
+          {
+            id: "listing-kia-soul-1",
+            vehicleId: "2020-kia-soul-s",
+            year: 2020,
+            make: "Kia",
+            model: "Soul",
+            trim: "S",
+            title: "2020 Kia Soul S",
+            price: 16995,
+            mileage: 44000,
+            dealer: "Westmont Kia",
+            distanceMiles: 21,
+            location: "Westmont, IL",
+            imageUrl: "https://dealer.example.test/soul-1.jpg",
+            listingUrl: "https://dealer.example.test/soul-1",
+            listedAt: "2026-05-15T00:00:00.000Z",
+          },
+          {
+            id: "listing-kia-soul-2",
+            vehicleId: "2020-kia-soul-s",
+            year: 2020,
+            make: "Kia",
+            model: "Soul",
+            trim: "EX",
+            title: "2020 Kia Soul EX",
+            price: 17995,
+            mileage: 39000,
+            dealer: "Downers Grove Kia",
+            distanceMiles: 27,
+            location: "Downers Grove, IL",
+            imageUrl: "https://dealer.example.test/soul-2.jpg",
+            listingUrl: "https://dealer.example.test/soul-2",
+            listedAt: "2026-05-15T00:00:00.000Z",
+          },
+        ],
+      }).repositories,
+    );
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2020-kia-soul-s",
+      zip: "60563",
+      mileage: 41000,
+      condition: "good",
+      allowLive: false,
+      fetchReason: "cached_listings_value_sync",
+      sourceScreen: "valueScreen",
+    });
+
+    assert.equal(result.data.status, "loaded_condition_set");
+    assert.equal(result.data.valuationSource, "listing_comps");
+    assert.equal(result.data.compCount, 2);
+    assert.equal(result.data.confidence, "limited");
+    assert.match(result.data.confidenceLabel ?? "", /Limited market confidence/i);
+    assert.notEqual(result.data.sourceLabel, "Market value unavailable");
+  });
+
+  test("Ferrari 458 Italia listings broaden to Ferrari 458 family and adjacent year before giving up", async () => {
+    const testRepositories = createTestRepositories({
+      vehicles: [
+        {
+          id: "2013-ferrari-458-italia",
+          year: 2013,
+          make: "Ferrari",
+          model: "458 Italia",
+          trim: "Base",
+          bodyStyle: "Coupe",
+          vehicleType: "car",
+          msrp: 239340,
+          engine: "4.5L V8",
+          horsepower: 562,
+          torque: "398 lb-ft",
+          transmission: "7-speed dual-clutch automatic",
+          drivetrain: "RWD",
+          mpgOrRange: "13 city / 17 highway",
+          colors: ["Rosso Corsa"],
+        },
+      ],
+      listings: [],
+    });
+    setRepositories(testRepositories.repositories);
+
+    const attempts: Array<{ model: string; year: number; trim: string | null; radiusMiles: number | null }> = [];
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            trim: input.vehicle?.trim ?? null,
+            radiusMiles: input.radiusMiles ?? null,
+          });
+
+          if (input.vehicle?.model === "458" && input.vehicle?.year === 2014) {
+            return [
+              {
+                id: "listing-458-family-2014",
+                vehicleId: input.vehicleId,
+                year: 2014,
+                make: "Ferrari",
+                model: "458",
+                trim: "Spider",
+                title: "2014 Ferrari 458 Spider",
+                price: 249995,
+                mileage: 17600,
+                dealer: "Exotic Motors",
+                distanceMiles: 140,
+                location: "Cleveland, OH",
+                imageUrl: "https://dealer.example.test/458.jpg",
+                listingUrl: "https://dealer.example.test/458",
+                listedAt: "2026-05-15T00:00:00.000Z",
+              },
+            ];
+          }
+
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getListings({
+      vehicleId: "2013-ferrari-458-italia",
+      zip: "60563",
+      radiusMiles: 50,
+      mileage: 18400,
+      allowLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+    });
+
+    assert.equal(result.data.length, 1);
+    assert.equal(attempts.some((attempt) => attempt.model === "458 Italia" && attempt.year === 2013), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "458" && attempt.year === 2013 && attempt.trim === ""), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "458" && attempt.year === 2014), true);
+  });
+
+  test("explicit listings refresh for non-specialty models broadens from trim/body variant to family model and adjacent year", async () => {
+    const testRepositories = createTestRepositories({
+      vehicles: [
+        {
+          id: "2018-audi-a4-allroad-premium-plus",
+          year: 2018,
+          make: "Audi",
+          model: "A4 allroad",
+          trim: "Premium Plus",
+          bodyStyle: "Wagon",
+          vehicleType: "car",
+          msrp: 44900,
+          engine: "2.0L turbo I4",
+          horsepower: 252,
+          torque: "273 lb-ft",
+          transmission: "7-speed dual-clutch automatic",
+          drivetrain: "AWD",
+          mpgOrRange: "23 city / 28 highway",
+          colors: ["Glacier White"],
+        },
+      ],
+      listings: [],
+    });
+    setRepositories(testRepositories.repositories);
+
+    const attempts: Array<{ model: string; year: number; trim: string | null }> = [];
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            trim: input.vehicle?.trim ?? null,
+          });
+
+          if (input.vehicle?.model === "A4" && input.vehicle?.year === 2019) {
+            return [
+              {
+                id: "listing-a4-family-2019",
+                vehicleId: input.vehicleId,
+                year: 2019,
+                make: "Audi",
+                model: "A4",
+                trim: "Premium",
+                title: "2019 Audi A4 Premium",
+                price: 24995,
+                mileage: 38200,
+                dealer: "North Shore Audi",
+                distanceMiles: 41,
+                location: "Milwaukee, WI",
+                imageUrl: "https://dealer.example.test/a4.jpg",
+                listingUrl: "https://dealer.example.test/a4",
+                listedAt: "2026-05-15T00:00:00.000Z",
+              },
+            ];
+          }
+
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getListings({
+      vehicleId: "2018-audi-a4-allroad-premium-plus",
+      zip: "60563",
+      radiusMiles: 50,
+      mileage: 32000,
+      allowLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+    });
+
+    assert.equal(result.data.length, 1);
+    assert.equal(attempts.some((attempt) => attempt.model === "A4 allroad" && attempt.year === 2018 && attempt.trim === "Premium Plus"), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "A4 allroad" && attempt.year === 2018 && attempt.trim === ""), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "A4" && attempt.year === 2018), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "A4" && attempt.year === 2019), true);
+  });
+
   test("normal family cached estimated valuation still works for common vehicles", async () => {
     const civicDescriptor = {
       year: 2020,

@@ -84,3 +84,18 @@ export const buttonStyles = {
     borderColor: colors.line,
   },
 };
+
+export const premiumPillStyles = {
+  surface: {
+    backgroundColor: "rgba(11, 20, 36, 0.92)",
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "rgba(94, 231, 255, 0.16)",
+  },
+  subtleSurface: {
+    backgroundColor: "rgba(17, 30, 50, 0.86)",
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "rgba(94, 231, 255, 0.14)",
+  },
+};

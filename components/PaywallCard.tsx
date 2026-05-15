@@ -2,6 +2,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { StyleSheet, Text, View } from "react-native";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { shadow } from "@/design/tokens";
+import { premiumPillStyles } from "@/design/patterns";
 import { SubscriptionStatus } from "@/types";
 
 export function PaywallCard({
@@ -47,13 +48,10 @@ const styles = StyleSheet.create({
   title: { ...Typography.title, color: "#FFFFFF" },
   price: { ...Typography.heading, color: "#5EE7FF" },
   badge: {
+    ...premiumPillStyles.surface,
     alignSelf: "flex-start",
-    backgroundColor: "rgba(94, 231, 255, 0.12)",
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: Radius.pill,
-    borderWidth: 1,
-    borderColor: "rgba(94, 231, 255, 0.22)",
   },
   badgeText: { ...Typography.caption, color: "#FFFFFF" },
   footer: { ...Typography.caption, color: "rgba(230,238,249,0.76)" },

@@ -193,6 +193,13 @@ export type ValuationRecord = {
   generatedAt: string;
   sourceLabel?: string;
   confidenceLabel?: string;
+  valuationSource?: "provider" | "cache" | "listing_comps" | "unavailable" | null;
+  compCount?: number | null;
+  confidence?: "high" | "moderate" | "limited" | "unavailable" | null;
+  rangeLow?: number | null;
+  rangeHigh?: number | null;
+  midpoint?: number | null;
+  unavailableReason?: string | null;
   message?: string | null;
   reason?: string | null;
   sourceBasis?: "provider_direct" | "listing_median_adjusted" | "modeled_condition_adjusted" | null;

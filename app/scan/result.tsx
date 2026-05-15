@@ -1160,7 +1160,7 @@ export default function ScanResultScreen() {
   const isHighConfidence = displayConfidenceScore >= 0.82;
   const confidencePalette =
     displayConfidenceScore >= 0.9
-      ? { pill: "rgba(34,197,94,0.12)", text: "#7AF0A8", label: "#7AF0A8", dot: "#34D399" }
+      ? { pill: "rgba(12,24,40,0.92)", text: "#EAF3FF", label: "#D8E8FF", dot: Colors.accent }
       : displayConfidenceScore >= 0.75
         ? { pill: "rgba(44,127,255,0.14)", text: Colors.premium, label: Colors.premium, dot: Colors.accent }
         : { pill: "rgba(100,116,139,0.18)", text: Colors.textSoft, label: Colors.textMuted, dot: Colors.textMuted };

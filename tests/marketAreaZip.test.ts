@@ -122,9 +122,10 @@ test("value screen no longer hardcodes 60610 or passive initial-load value refre
   assert.doesNotMatch(screenSource, /const defaultZip = "60610"/);
   assert.doesNotMatch(screenSource, /fetchReason:\s*"initial_load"/);
   assert.doesNotMatch(valueServiceSource, /zip=60610/);
-  assert.match(zipServiceSource, /carscanr\.marketAreaZip\.v3/);
+  assert.match(zipServiceSource, /carscanr\.marketAreaZip\.v4/);
   assert.match(zipServiceSource, /wasLegacy60610Ignored/);
-  assert.match(zipServiceSource, /legacyPayload\.zip === "60610"/);
+  assert.match(zipServiceSource, /shouldIgnoreLegacyChicagoZip/);
+  assert.match(screenSource, /VALUE_ZIP_SOURCE/);
 });
 
 test("condition chips remain local UI state and do not trigger live requests directly", () => {

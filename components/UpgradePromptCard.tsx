@@ -1,7 +1,7 @@
 import { StyleSheet, Text, View } from "react-native";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Typography } from "@/constants/theme";
-import { cardStyles } from "@/design/patterns";
+import { cardStyles, premiumPillStyles } from "@/design/patterns";
 
 type Props = {
   title: string;
@@ -35,13 +35,12 @@ const styles = StyleSheet.create({
     borderColor: Colors.premium,
   },
   eyebrowPill: {
+    ...premiumPillStyles.subtleSurface,
     alignSelf: "flex-start",
-    backgroundColor: Colors.premiumSoft,
-    borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  eyebrow: { ...Typography.caption, color: Colors.premium },
+  eyebrow: { ...Typography.caption, color: "#F4F8FF" },
   title: { ...Typography.heading, color: Colors.textStrong },
   description: { ...Typography.body, color: Colors.textSoft },
 });

@@ -72,6 +72,13 @@ export type ValuationResult = {
   median?: string | null;
   confidenceLabel: string;
   sourceLabel: string;
+  valuationSource?: "provider" | "cache" | "listing_comps" | "unavailable" | null;
+  compCount?: number | null;
+  confidence?: "high" | "moderate" | "limited" | "unavailable" | null;
+  rangeLow?: string | null;
+  rangeHigh?: string | null;
+  midpoint?: string | null;
+  unavailableReason?: string | null;
   message?: string | null;
   reason?: string | null;
   listingCount?: number | null;

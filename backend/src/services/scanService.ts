@@ -12,7 +12,7 @@ import { createVehicleFocusCrop } from "../lib/vehicleImageCrop.js";
 import { matchesCanonicalLookupModel, normalizeMercedesSlIdentity, shouldBroadenCanonicalLookupModelSearch } from "../lib/vehicleAliases.js";
 import { refineVehicleYearEstimate } from "../lib/yearRefinement.js";
 import { buildLiveVehicleId } from "../providers/marketcheck/vehicleId.js";
-import { AuthContext, CanonicalGapQueueRecord, EnrichmentMode, ListingRecord, MatchedVehicleCandidate, PayloadEvaluation, ScanRecord, VehicleRecord, VisionProviderResult, VisionResult } from "../types/domain.js";
+import { AuthContext, CanonicalGapQueueRecord, EnrichmentMode, ListingRecord, MatchedVehicleCandidate, PayloadEvaluation, ScanRecord, VehicleRecord, VisionCandidate, VisionProviderResult, VisionResult, VisibleTextEvidence } from "../types/domain.js";
 import { AnalysisCacheService } from "./analysisCacheService.js";
 import { coverageInstrumentationService } from "./coverageInstrumentationService.js";
 import { GoogleVisionOcrResult, googleVisionOcrService } from "./googleVisionOcrService.js";
@@ -6986,6 +6986,17 @@ export function normalizeVisionResult(result: VisionResult): VisionResult {
     );
   }
 
+  const cadillacCtDecision = resolveCadillacCt4Ct5Disambiguation({
+    result,
+    normalizedBadgeText,
+    normalizedTextEvidence,
+    normalizedAlternates,
+    normalizedPrimary,
+  });
+  const normalizedPrimaryCandidate = cadillacCtDecision?.primary ?? normalizedPrimary;
+  const finalizedAlternates = cadillacCtDecision?.alternates ?? normalizedAlternates;
+  const finalizedConfidence = cadillacCtDecision?.confidence ?? Math.max(0, Math.min(1, result.confidence));
+
   return {
     ...result,
     likely_year: result.likely_year,
@@ -6996,10 +7007,10 @@ export function normalizeVisionResult(result: VisionResult): VisionResult {
     displayYearLabel: result.displayYearLabel ?? null,
     yearRange: result.yearRange ?? null,
     yearReasoning: result.yearReasoning ?? null,
-    likely_make: normalizedPrimary.make,
-    likely_model: normalizedPrimary.model,
-    likely_trim: normalizedPrimary.trim,
-    confidence: Math.max(0, Math.min(1, result.confidence)),
+    likely_make: normalizedPrimaryCandidate.make,
+    likely_model: normalizedPrimaryCandidate.model,
+    likely_trim: normalizedPrimaryCandidate.trim,
+    confidence: finalizedConfidence,
     visible_text_evidence: normalizedTextEvidence,
     visible_clues: result.visible_clues.map((clue) => clue.trim()).filter(Boolean),
     visible_badge_text: normalizedBadgeText?.trim(),
@@ -7009,9 +7020,153 @@ export function normalizeVisionResult(result: VisionResult): VisionResult {
       ? normalizedVisibleModel.trim ?? normalizedTextEvidence.trim_text ?? result.visible_trim_text?.trim()
       : normalizedTextEvidence.trim_text ?? result.visible_trim_text?.trim(),
     emblem_logo_clues: (result.emblem_logo_clues ?? []).map((clue) => clue.trim()).filter(Boolean),
-    alternate_candidates: normalizedAlternates,
+    alternate_candidates: finalizedAlternates,
     textDominanceApplied: result.textDominanceApplied ?? false,
     focusCropUsed: result.focusCropUsed ?? false,
     matchEvidence: result.matchEvidence ?? null,
+  };
+}
+
+function resolveCadillacCt4Ct5Disambiguation(input: {
+  result: VisionResult;
+  normalizedBadgeText: string | null | undefined;
+  normalizedTextEvidence: VisibleTextEvidence;
+  normalizedAlternates: VisionCandidate[];
+  normalizedPrimary: { make: string; model: string; trim?: string; applied: boolean };
+}) {
+  const make = normalizeMatchText(input.normalizedPrimary.make);
+  if (make !== "cadillac") {
+    return null;
+  }
+
+  const primaryModel = normalizeMatchText(input.normalizedPrimary.model);
+  const alternateSibling = input.normalizedAlternates.find((candidate) => {
+    const model = normalizeMatchText(candidate.likely_model);
+    return model === "ct4" || model === "ct5";
+  });
+  const alternateModel = normalizeMatchText(alternateSibling?.likely_model);
+  const isSiblingComparison =
+    (primaryModel === "ct4" || primaryModel === "ct5") &&
+    (alternateModel === "ct4" || alternateModel === "ct5" || primaryModel === "ct4" || primaryModel === "ct5");
+
+  const rawEvidence = [
+    input.normalizedTextEvidence.model_text,
+    input.normalizedBadgeText,
+    input.result.visible_model_text,
+    input.result.visible_trim_text,
+    input.result.visible_badge_text,
+    ...(input.result.visible_clues ?? []),
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(" ")
+    .toLowerCase();
+
+  const rawBadgeModel =
+    /\bct4\b/.test(rawEvidence) ? "ct4" : /\bct5\b/.test(rawEvidence) ? "ct5" : null;
+  if (!isSiblingComparison && !rawBadgeModel) {
+    return null;
+  }
+
+  logger.info(
+    {
+      label: "CADILLAC_CT4_CT5_DISAMBIGUATION_ENTERED",
+      likelyModel: input.normalizedPrimary.model,
+      alternateModels: input.normalizedAlternates.map((candidate) => candidate.likely_model),
+      visibleModelText: input.normalizedTextEvidence.model_text ?? input.result.visible_model_text ?? null,
+      visibleBadgeText: input.normalizedBadgeText ?? null,
+    },
+    "CADILLAC_CT4_CT5_DISAMBIGUATION_ENTERED",
+  );
+
+  const ct4CueHits = [
+    "compact",
+    "smaller sedan",
+    "smaller grille",
+    "tighter proportions",
+    "shorter wheelbase",
+    "short rear deck",
+    "narrow grille",
+  ].filter((token) => rawEvidence.includes(token)).length;
+  const ct5CueHits = [
+    "larger sedan",
+    "larger grille",
+    "broader grille",
+    "wider grille",
+    "longer wheelbase",
+    "longer body",
+    "midsize",
+  ].filter((token) => rawEvidence.includes(token)).length;
+  const primaryScore = rawBadgeModel === "ct4" ? (primaryModel === "ct4" ? 4 : 0) : rawBadgeModel === "ct5" ? (primaryModel === "ct5" ? 4 : 0) : 0;
+  const ct4Score = (rawBadgeModel === "ct4" ? 6 : 0) + ct4CueHits * 2 + (primaryModel === "ct4" ? 1 : 0);
+  const ct5Score = (rawBadgeModel === "ct5" ? 6 : 0) + ct5CueHits * 2 + (primaryModel === "ct5" ? 1 : 0);
+  const scoreDelta = Math.abs(ct4Score - ct5Score);
+  const chosenModel = ct4Score > ct5Score ? "CT4" : ct5Score > ct4Score ? "CT5" : input.normalizedPrimary.model;
+  const closeCall = scoreDelta <= 1 && Boolean(alternateSibling);
+
+  logger.info(
+    {
+      label: "CADILLAC_CT4_CT5_EVIDENCE",
+      badgeModel: rawBadgeModel,
+      ct4CueHits,
+      ct5CueHits,
+      ct4Score,
+      ct5Score,
+      scoreDelta,
+      primaryModel: input.normalizedPrimary.model,
+      alternateModel: alternateSibling?.likely_model ?? null,
+      primaryScore,
+    },
+    "CADILLAC_CT4_CT5_EVIDENCE",
+  );
+
+  const alternates = [...input.normalizedAlternates];
+  if (closeCall && alternateSibling) {
+    const siblingModel = primaryModel === "ct4" ? "CT5" : "CT4";
+    if (!alternates.some((candidate) => normalizeMatchText(candidate.likely_model) === normalizeMatchText(siblingModel))) {
+      alternates.unshift({
+        likely_year: input.result.likely_year,
+        likely_make: "Cadillac",
+        likely_model: siblingModel,
+        likely_trim: input.normalizedPrimary.trim,
+        confidence: Math.max(0.45, Math.min(0.78, input.result.confidence - 0.06)),
+      });
+    }
+  }
+
+  const normalizedPrimaryCandidate = {
+    ...input.normalizedPrimary,
+    model: chosenModel,
+  };
+  const finalConfidence =
+    rawBadgeModel && normalizeMatchText(chosenModel) === rawBadgeModel
+      ? Math.max(input.result.confidence, 0.9)
+      : closeCall
+        ? Math.min(input.result.confidence, 0.74)
+        : Math.max(0.52, input.result.confidence);
+
+  logger.info(
+    {
+      label: "CADILLAC_CT4_CT5_DECISION",
+      chosenModel,
+      finalConfidence,
+      closeCall,
+      alternateIncluded: alternates.some((candidate) => {
+        const model = normalizeMatchText(candidate.likely_model);
+        return model === "ct4" || model === "ct5";
+      }),
+      reason:
+        rawBadgeModel && normalizeMatchText(chosenModel) === rawBadgeModel
+          ? "visible_text"
+          : closeCall
+            ? "close_call_preserved_alternate"
+            : "visual_cue_weighting",
+    },
+    "CADILLAC_CT4_CT5_DECISION",
+  );
+
+  return {
+    primary: normalizedPrimaryCandidate,
+    alternates,
+    confidence: Math.max(0, Math.min(1, finalConfidence)),
   };
 }
