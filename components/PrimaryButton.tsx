@@ -44,7 +44,7 @@ export function PrimaryButton({ label, onPress, secondary = false, disabled = fa
         {secondary ? (
           <Text style={[styles.label, styles.secondaryLabel]}>{label}</Text>
         ) : (
-          <LinearGradient colors={["#165FBA", "#0F4F9E", "#1E70C8"]} start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }} style={styles.gradient}>
+          <LinearGradient colors={["#1D7DFF", "#43D8FF"]} start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }} style={styles.gradient}>
             <Text style={styles.label}>{label}</Text>
           </LinearGradient>
         )}
@@ -71,6 +71,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     borderRadius: 999,
   },
-  label: { ...Typography.bodyStrong, color: "#F8FCFF", letterSpacing: 0.2 },
+  label: { ...Typography.bodyStrong, color: "#041120", letterSpacing: 0.2 },
   secondaryLabel: { color: Colors.textStrong },
 });

@@ -10,10 +10,10 @@ type Props = {
 
 export function EmptyState({ title, description }: Props) {
   return (
-    <View style={styles.card}>
+    <View style={styles.shell}>
       <View style={styles.badge}>
         <Ionicons name="sparkles-outline" size={18} color={Colors.premium} />
-        <Text style={styles.badgeLabel}>CarScanr</Text>
+        <Text style={styles.badgeText}>CarScanr</Text>
       </View>
       <Text style={styles.title}>{title}</Text>
       <Text style={styles.description}>{description}</Text>
@@ -22,29 +22,29 @@ export function EmptyState({ title, description }: Props) {
 }
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: Colors.cardSoft,
-    borderRadius: Radius.lg,
-    padding: 24,
-    gap: 10,
+  shell: {
+    borderRadius: Radius.xl,
     borderWidth: 1,
-    borderColor: Colors.border,
-    ...Shadows.cardStrong,
+    borderColor: "rgba(105, 164, 255, 0.16)",
+    backgroundColor: "rgba(15, 31, 48, 0.82)",
+    padding: 18,
+    gap: 10,
+    overflow: "hidden",
+    ...Shadows.card,
   },
   badge: {
     ...premiumPillStyles.surface,
-    alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
+    alignSelf: "flex-start",
     gap: 8,
     paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingVertical: 8,
   },
-  badgeLabel: {
+  badgeText: {
     ...Typography.caption,
-    color: "#F4F8FF",
-    textTransform: "uppercase",
-    letterSpacing: 1.1,
+    color: Colors.textStrong,
+    fontWeight: "700",
   },
   title: { ...Typography.heading, color: Colors.textStrong },
   description: { ...Typography.body, color: Colors.textSoft },
