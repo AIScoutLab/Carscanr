@@ -436,6 +436,9 @@ function mergeUsageStatus(usage: SubscriptionStatus, overrides?: Partial<Subscri
 export const subscriptionService = {
   async getStatus(): Promise<SubscriptionStatus> {
     try {
+      console.log("ENTITLEMENT_LOOKUP_STARTED", {
+        source: "subscriptionService.getStatus",
+      });
       const [usage, purchaseSnapshot] = await Promise.all([
         scanService.getUsage(),
         purchaseService.getPurchaseSnapshot().catch(() => ({
@@ -459,6 +462,13 @@ export const subscriptionService = {
         purchaseAvailable: purchaseSnapshot.purchaseAvailable,
         purchaseAvailabilityState: purchaseSnapshot.purchaseAvailabilityState,
         availableProducts: purchaseSnapshot.availableProducts,
+      });
+      console.log("ENTITLEMENT_CACHE_STATE", {
+        plan: status.plan,
+        provider: status.provider,
+        purchaseAvailabilityState: status.purchaseAvailabilityState,
+        purchaseAvailable: status.purchaseAvailable,
+        activeProductId: purchaseSnapshot.activeProductId,
       });
       return status;
     } catch {
@@ -725,6 +735,11 @@ export const subscriptionService = {
         renewalLabel: formatRenewalLabel("pro", restore.snapshot.activeEntitlement.expirationDate ?? undefined),
       });
       console.log("[subscription] RESTORE_PURCHASES_SUCCESS", { outcome: "restored", active: true });
+      console.log("ENTITLEMENT_RESTORE_RESULT", {
+        outcome: "restored",
+        active: true,
+        productId: restore.snapshot.activeProductId,
+      });
       return {
         outcome: "restored",
         status,
@@ -732,6 +747,11 @@ export const subscriptionService = {
       };
     }
     console.log("[subscription] RESTORE_PURCHASES_FAILURE", { stage: restore.outcome, message: restore.message });
+    console.log("ENTITLEMENT_RESTORE_RESULT", {
+      outcome: restore.outcome,
+      active: false,
+      message: restore.message,
+    });
     status = mergeUsageStatus(await scanService.getUsage().catch(() => status), {
       purchaseAvailable: restore.snapshot.purchaseAvailable,
       purchaseAvailabilityState: restore.snapshot.purchaseAvailabilityState,

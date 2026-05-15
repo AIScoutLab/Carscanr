@@ -12,7 +12,7 @@ type Props = {
 export function EmptyState({ title, description }: Props) {
   return (
     <PremiumCard variant="glass" contentStyle={styles.card}>
-      <PillBadge tone="accent" label="CarScanr">
+      <PillBadge tone="brand" label="CarScanr">
         <Ionicons name="sparkles-outline" size={18} color={Colors.premium} />
       </PillBadge>
       <Text style={styles.title}>{title}</Text>

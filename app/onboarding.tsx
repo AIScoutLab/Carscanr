@@ -1,9 +1,10 @@
 import { router } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Image, NativeScrollEvent, NativeSyntheticEvent, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { Animated, NativeScrollEvent, NativeSyntheticEvent, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
+import { BrandMark } from "@/components/BrandMark";
 import { APP_BRAND, ONBOARDING_STEPS, OnboardingVisualKind } from "@/lib/onboardingFlow";
 import { getOnboardingLayoutMetrics } from "@/lib/onboardingLayout";
 import { Radius, Typography } from "@/constants/theme";
@@ -273,7 +274,7 @@ export default function OnboardingScreen() {
         <View style={[styles.header, { paddingHorizontal: metrics.horizontalPadding }]}>
           <View style={styles.brandWrap}>
             <View style={styles.brandIcon}>
-              <Image source={require("../Icon.png")} style={styles.brandIconImage} />
+              <BrandMark size={88} imageStyle={styles.brandIconImage} />
             </View>
             <View>
               <Text style={styles.brandName}>{APP_BRAND.name}</Text>

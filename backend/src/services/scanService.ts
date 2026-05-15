@@ -7078,43 +7078,74 @@ function resolveCadillacCt4Ct5Disambiguation(input: {
     "CADILLAC_CT4_CT5_DISAMBIGUATION_ENTERED",
   );
 
-  const ct4CueHits = [
-    "compact",
-    "smaller sedan",
-    "smaller grille",
-    "tighter proportions",
-    "shorter wheelbase",
-    "short rear deck",
-    "narrow grille",
-  ].filter((token) => rawEvidence.includes(token)).length;
-  const ct5CueHits = [
-    "larger sedan",
-    "larger grille",
-    "broader grille",
-    "wider grille",
-    "longer wheelbase",
-    "longer body",
-    "midsize",
-  ].filter((token) => rawEvidence.includes(token)).length;
-  const primaryScore = rawBadgeModel === "ct4" ? (primaryModel === "ct4" ? 4 : 0) : rawBadgeModel === "ct5" ? (primaryModel === "ct5" ? 4 : 0) : 0;
-  const ct4Score = (rawBadgeModel === "ct4" ? 6 : 0) + ct4CueHits * 2 + (primaryModel === "ct4" ? 1 : 0);
-  const ct5Score = (rawBadgeModel === "ct5" ? 6 : 0) + ct5CueHits * 2 + (primaryModel === "ct5" ? 1 : 0);
+  const countTokenHits = (tokens: string[]) => tokens.filter((token) => rawEvidence.includes(token)).length;
+  const featureVector = {
+    badgeModel: rawBadgeModel,
+    primaryModel,
+    alternateModel,
+    ct4: {
+      sizeHits: countTokenHits(["compact", "compact sedan", "smaller sedan", "smaller footprint", "tighter proportions"]),
+      wheelbaseHits: countTokenHits(["shorter wheelbase", "short wheelbase", "short rear deck", "shorter body", "shorter overall length"]),
+      grilleHits: countTokenHits(["smaller grille", "narrow grille", "compact grille", "tighter grille", "less grille"]),
+      frontOverhangHits: countTokenHits(["short front overhang", "tighter front overhang", "shorter front overhang"]),
+      hoodHits: countTokenHits(["short hood", "shorter hood", "compact hood"]),
+      lightingHits: countTokenHits(["vertical led signature", "vertical drl", "stacked drl", "tall drl"]),
+      bumperHits: countTokenHits(["smaller lower intake", "tighter bumper opening", "compact bumper"]),
+    },
+    ct5: {
+      sizeHits: countTokenHits(["larger sedan", "midsize", "midsize sedan", "larger footprint", "stretched proportions"]),
+      wheelbaseHits: countTokenHits(["longer wheelbase", "long wheelbase", "long rear deck", "longer body", "longer overall length"]),
+      grilleHits: countTokenHits(["larger grille", "broader grille", "wider grille", "taller grille", "larger crest grille"]),
+      frontOverhangHits: countTokenHits(["long front overhang", "longer front overhang", "extended front overhang"]),
+      hoodHits: countTokenHits(["long hood", "longer hood", "stretched hood"]),
+      lightingHits: countTokenHits(["wide drl", "wider drl signature", "broader lighting signature"]),
+      bumperHits: countTokenHits(["larger lower intake", "broader bumper opening", "wider bumper intake"]),
+    },
+  };
+
+  logger.info(
+    {
+      label: "CADILLAC_CT4_CT5_FEATURE_VECTOR",
+      featureVector,
+    },
+    "CADILLAC_CT4_CT5_FEATURE_VECTOR",
+  );
+
+  const ct4Score =
+    (rawBadgeModel === "ct4" ? 6 : 0) +
+    featureVector.ct4.sizeHits * 3 +
+    featureVector.ct4.wheelbaseHits * 3 +
+    featureVector.ct4.grilleHits * 2 +
+    featureVector.ct4.frontOverhangHits * 2 +
+    featureVector.ct4.hoodHits +
+    featureVector.ct4.lightingHits +
+    featureVector.ct4.bumperHits +
+    (primaryModel === "ct4" ? 1 : 0);
+  const ct5Score =
+    (rawBadgeModel === "ct5" ? 6 : 0) +
+    featureVector.ct5.sizeHits * 3 +
+    featureVector.ct5.wheelbaseHits * 3 +
+    featureVector.ct5.grilleHits * 2 +
+    featureVector.ct5.frontOverhangHits * 2 +
+    featureVector.ct5.hoodHits +
+    featureVector.ct5.lightingHits +
+    featureVector.ct5.bumperHits +
+    (primaryModel === "ct5" ? 1 : 0);
   const scoreDelta = Math.abs(ct4Score - ct5Score);
-  const chosenModel = ct4Score > ct5Score ? "CT4" : ct5Score > ct4Score ? "CT5" : input.normalizedPrimary.model;
-  const closeCall = scoreDelta <= 1 && Boolean(alternateSibling);
+  const closeCall = scoreDelta <= 2 && Boolean(alternateSibling);
+  const chosenModel =
+    ct4Score > ct5Score ? "CT4" : ct5Score > ct4Score ? "CT5" : input.normalizedPrimary.model;
 
   logger.info(
     {
       label: "CADILLAC_CT4_CT5_EVIDENCE",
       badgeModel: rawBadgeModel,
-      ct4CueHits,
-      ct5CueHits,
+      primaryModel: input.normalizedPrimary.model,
+      alternateModel: alternateSibling?.likely_model ?? null,
       ct4Score,
       ct5Score,
       scoreDelta,
-      primaryModel: input.normalizedPrimary.model,
-      alternateModel: alternateSibling?.likely_model ?? null,
-      primaryScore,
+      closeCall,
     },
     "CADILLAC_CT4_CT5_EVIDENCE",
   );
@@ -7137,12 +7168,31 @@ function resolveCadillacCt4Ct5Disambiguation(input: {
     ...input.normalizedPrimary,
     model: chosenModel,
   };
-  const finalConfidence =
-    rawBadgeModel && normalizeMatchText(chosenModel) === rawBadgeModel
-      ? Math.max(input.result.confidence, 0.9)
-      : closeCall
-        ? Math.min(input.result.confidence, 0.74)
-        : Math.max(0.52, input.result.confidence);
+  const badgeAligned = rawBadgeModel && normalizeMatchText(chosenModel) === rawBadgeModel;
+  const noBadgeSiblingGuess = !rawBadgeModel && isSiblingComparison;
+  const finalConfidence = badgeAligned
+    ? Math.max(0.82, Math.min(input.result.confidence, 0.91))
+    : closeCall
+      ? Math.min(input.result.confidence, 0.64)
+      : noBadgeSiblingGuess && normalizeMatchText(chosenModel) === "ct5"
+        ? Math.min(input.result.confidence, 0.68)
+        : noBadgeSiblingGuess
+          ? Math.min(input.result.confidence, 0.76)
+          : Math.max(0.52, Math.min(input.result.confidence, 0.84));
+
+  logger.info(
+    {
+      label: "CADILLAC_CT4_CT5_CONFIDENCE_ADJUSTED",
+      chosenModel,
+      inputConfidence: input.result.confidence,
+      finalConfidence,
+      badgeAligned,
+      noBadgeSiblingGuess,
+      closeCall,
+      scoreDelta,
+    },
+    "CADILLAC_CT4_CT5_CONFIDENCE_ADJUSTED",
+  );
 
   logger.info(
     {

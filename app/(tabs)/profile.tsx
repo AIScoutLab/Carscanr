@@ -6,6 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { AppContainer } from "@/components/AppContainer";
 import { PaywallCard } from "@/components/PaywallCard";
+import { PillBadge } from "@/components/PillBadge";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { useSubscription } from "@/hooks/useSubscription";
@@ -54,10 +55,9 @@ export default function ProfileScreen() {
   return (
     <AppContainer>
       <LinearGradient colors={["rgba(29,140,255,0.18)", "rgba(94,231,255,0.05)", "rgba(4,8,18,0.2)"]} style={styles.heroCard}>
-        <View style={styles.heroBadge}>
+        <PillBadge tone="brand" label="Driver profile">
           <Ionicons name="person-circle-outline" size={18} color={Colors.premium} />
-          <Text style={styles.heroBadgeLabel}>Driver profile</Text>
-        </View>
+        </PillBadge>
         <Text style={styles.title}>Account and access</Text>
         <Text style={styles.heroBody}>Unlimited free scans stay front and center. Your account adds sync, history, and recovery across devices.</Text>
       </LinearGradient>
@@ -74,7 +74,7 @@ export default function ProfileScreen() {
         <Text style={styles.sectionTitle}>What stays free</Text>
         <Text style={styles.meta}>Unlimited scans, basic identification, and your included free Pro unlocks stay available without upgrading.</Text>
       </View>
-      <View style={styles.card}>
+      <View style={[styles.card, styles.accountCard]}>
         <Text style={styles.name}>{user ? user.fullName : "Guest"}</Text>
         <Text style={styles.meta}>{user ? user.email : "Sign in to sync your account"}</Text>
         {__DEV__ ? (
@@ -102,6 +102,7 @@ export default function ProfileScreen() {
           {freeUnlocksUsed} of {freeUnlocksLimit} free Pro unlocks used
         </Text>
         <Text style={styles.meta}>{Math.max(0, freeUnlocksRemaining)} remaining</Text>
+        {status?.plan !== "pro" ? <Text style={styles.helper}>Missing Pro after sign-in? Use Restore Purchases to recheck your App Store entitlements for this account.</Text> : null}
         <PrimaryButton label={status?.plan === "pro" ? "View Pro Status" : "Upgrade to Pro"} secondary={!user} onPress={() => router.push("/paywall")} />
         <PrimaryButton
           label={isRestoring ? "Checking App Store..." : "Restore Purchases"}
@@ -176,26 +177,14 @@ const styles = StyleSheet.create({
   title: { ...Typography.largeTitle, color: Colors.textStrong, marginTop: 4 },
   heroCard: {
     borderRadius: Radius.xl,
-    padding: 20,
-    gap: 12,
+    padding: 22,
+    gap: 10,
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  heroBadge: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: Radius.pill,
-    backgroundColor: "rgba(12, 21, 36, 0.82)",
-    borderWidth: 1,
-    borderColor: Colors.borderSoft,
-  },
-  heroBadgeLabel: { ...Typography.caption, color: Colors.premium, textTransform: "uppercase", letterSpacing: 0.8 },
   heroBody: { ...Typography.body, color: Colors.textSoft },
   card: { backgroundColor: Colors.cardSoft, borderRadius: Radius.xl, padding: 20, gap: 10, borderWidth: 1, borderColor: Colors.border },
+  accountCard: { gap: 8 },
   name: { ...Typography.heading, color: Colors.textStrong },
   meta: { ...Typography.body, color: Colors.textSoft },
   sectionTitle: { ...Typography.heading, color: Colors.textStrong },

@@ -1,4 +1,5 @@
 import { StyleSheet, Text, View } from "react-native";
+import { PillBadge } from "@/components/PillBadge";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
@@ -20,11 +21,7 @@ export function UpgradePromptCard({
 }: Props) {
   return (
     <View style={styles.card}>
-      {showBadge ? (
-        <View style={styles.eyebrowPill}>
-          <Text style={styles.eyebrow}>Pro unlock</Text>
-        </View>
-      ) : null}
+      {showBadge ? <PillBadge tone="brand" label="Pro unlock" /> : null}
       <Text style={styles.title}>{title}</Text>
       <Text style={styles.description}>{description}</Text>
       <PrimaryButton label={ctaLabel} onPress={onPress} />
@@ -38,14 +35,6 @@ const styles = StyleSheet.create({
     gap: 10,
     borderColor: "rgba(59,130,246,0.35)",
   },
-  eyebrowPill: {
-    alignSelf: "flex-start",
-    backgroundColor: Colors.premiumSoft,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  eyebrow: { ...Typography.caption, color: Colors.premium },
   title: { ...Typography.heading, color: Colors.textStrong },
   description: { ...Typography.body, color: Colors.textSoft },
 });

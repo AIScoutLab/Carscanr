@@ -64,6 +64,12 @@ async function getAppUserId() {
 
 async function ensureConfigured() {
   const config = getRevenueCatConfig();
+  console.log("ENTITLEMENT_LOOKUP_STARTED", {
+    configured: config.configured,
+    expoGo: isExpoGo(),
+    hasApiKey: Boolean(config.apiKey),
+    hasEntitlementId: Boolean(config.entitlementId),
+  });
   if (!config.configured) {
     return { configured: false as const, reason: "missing_env" as const };
   }
@@ -82,6 +88,10 @@ async function ensureConfigured() {
     }
     configuredAppUserId = appUserId;
     purchasesConfigured = true;
+    console.log("ENTITLEMENT_ACCOUNT_LINK", {
+      mode: "configure",
+      appUserId,
+    });
     return { configured: true as const, appUserId };
   }
 
@@ -93,6 +103,10 @@ async function ensureConfigured() {
       });
     });
     configuredAppUserId = appUserId;
+    console.log("ENTITLEMENT_ACCOUNT_LINK", {
+      mode: "login",
+      appUserId,
+    });
   }
 
   return { configured: true as const, appUserId };
@@ -110,6 +124,10 @@ export const purchaseService = {
   async getPurchaseSnapshot(): Promise<PurchaseSnapshot> {
     const configuration = await ensureConfigured();
     if (!configuration.configured) {
+      console.log("ENTITLEMENT_LOOKUP_RESULT", {
+        configured: false,
+        reason: configuration.reason,
+      });
       return {
         purchaseAvailable: false,
         purchaseAvailabilityState: configuration.reason === "expo_go_preview" ? "preview_only" : "not_configured",
@@ -126,6 +144,13 @@ export const purchaseService = {
     ]);
     const availableProducts = (offerings.current?.availablePackages ?? []).map(mapPackageToProduct);
     const activeEntitlement = resolveActiveEntitlement(customerInfo);
+    console.log("ENTITLEMENT_LOOKUP_RESULT", {
+      configured: true,
+      appUserId: configuration.appUserId,
+      purchaseAvailable: availableProducts.length > 0,
+      activeEntitlement: activeEntitlement?.identifier ?? null,
+      activeProductId: activeEntitlement?.productIdentifier ?? null,
+    });
     return {
       purchaseAvailable: availableProducts.length > 0,
       purchaseAvailabilityState: availableProducts.length > 0 ? "ready" : "not_configured",
@@ -176,6 +201,10 @@ export const purchaseService = {
 
   async restorePurchases() {
     const configuration = await ensureConfigured();
+    console.log("ENTITLEMENT_RESTORE_ATTEMPT", {
+      configured: configuration.configured,
+      reason: configuration.configured ? null : configuration.reason,
+    });
     if (!configuration.configured) {
       return {
         snapshot: await this.getPurchaseSnapshot(),
@@ -188,6 +217,11 @@ export const purchaseService = {
     }
 
     const customerInfo = await Purchases.restorePurchases();
+    console.log("ENTITLEMENT_RESTORE_RESULT", {
+      configured: true,
+      restoredEntitlements: Object.keys(customerInfo.entitlements.active ?? {}),
+      activeEntitlement: resolveActiveEntitlement(customerInfo)?.identifier ?? null,
+    });
     return {
       snapshot: await this.getPurchaseSnapshot(),
       outcome: "restored" as const,

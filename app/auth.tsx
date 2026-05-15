@@ -1,8 +1,10 @@
 import { router, useLocalSearchParams, usePathname } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { BrandMark } from "@/components/BrandMark";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { useSubscription } from "@/hooks/useSubscription";
@@ -249,6 +251,31 @@ export default function AuthScreen() {
           keyboardDismissMode="interactive"
         >
       <View ref={contentRef} collapsable={false}>
+      <View style={styles.topBar}>
+        <TouchableOpacity
+          style={styles.topBarButton}
+          activeOpacity={0.86}
+          accessibilityRole="button"
+          onPress={() => {
+            if (router.canGoBack()) {
+              router.back();
+              return;
+            }
+            router.replace("/(tabs)/scan");
+          }}
+        >
+          <Ionicons name="chevron-back" size={18} color={Colors.textStrong} />
+          <Text style={styles.topBarButtonLabel}>Back</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.topBarButton}
+          activeOpacity={0.86}
+          accessibilityRole="button"
+          onPress={() => router.replace("/(tabs)/scan")}
+        >
+          <Text style={styles.topBarButtonLabel}>Close</Text>
+        </TouchableOpacity>
+      </View>
       {__DEV__ ? (
         <View style={styles.debugBanner}>
           <Text style={styles.debugBannerTitle}>LIVE AUTH SCREEN V2</Text>
@@ -267,10 +294,8 @@ export default function AuthScreen() {
           ))}
         </View>
       ) : null}
-      <LinearGradient colors={["rgba(16,56,148,0.38)", "rgba(0,194,255,0.12)", "rgba(7,13,28,0.94)"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.brandWrap}>
-        <View style={styles.logoShell}>
-          <Image source={require("@/carscanr_app_icon_1024.png")} style={styles.logoImage} resizeMode="cover" />
-        </View>
+      <LinearGradient colors={["rgba(16,56,148,0.32)", "rgba(53,96,207,0.10)", "rgba(7,13,28,0.94)"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.brandWrap}>
+        <BrandMark size={76} />
         <View style={styles.brandTextWrap}>
           <Text style={styles.brandName}>Use CarScanr free right away.</Text>
           <Text style={styles.brandNote}>Create an account only if you want Garage sync, saved history, and restore across devices.</Text>
@@ -414,6 +439,31 @@ const styles = StyleSheet.create({
     gap: 20,
     paddingHorizontal: 20,
   },
+  topBar: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 2,
+  },
+  topBarButton: {
+    minHeight: 42,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: Radius.pill,
+    backgroundColor: Colors.cardSoft,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  topBarButtonLabel: {
+    ...Typography.caption,
+    color: Colors.textStrong,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+  },
   debugBanner: {
     backgroundColor: "#FFF0C7",
     borderRadius: Radius.lg,
@@ -435,30 +485,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 14,
     marginTop: 8,
-    padding: 18,
+    padding: 20,
     borderRadius: Radius.xl,
     borderWidth: 1,
     borderColor: Colors.border,
     overflow: "hidden",
   },
-  logoShell: {
-    width: 72,
-    height: 72,
-    borderRadius: 24,
-    backgroundColor: Colors.card,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: Colors.accentGlow,
-    overflow: "hidden",
-  },
-  logoImage: {
-    width: 72,
-    height: 72,
-    borderRadius: 24,
-  },
   brandTextWrap: {
-    gap: 4,
+    gap: 6,
     flex: 1,
   },
   brandName: {
@@ -472,7 +506,7 @@ const styles = StyleSheet.create({
   title: { ...Typography.largeTitle, color: Colors.text, marginTop: 10 },
   subtitle: { ...Typography.body, color: Colors.textSoft },
   quickActions: {
-    gap: 10,
+    gap: 12,
   },
   guestNoteCard: {
     backgroundColor: Colors.cardAlt,
@@ -505,7 +539,7 @@ const styles = StyleSheet.create({
     color: Colors.text,
     textAlign: "center",
   },
-  card: { backgroundColor: Colors.card, borderRadius: Radius.xl, padding: 20, gap: 14 },
+  card: { backgroundColor: Colors.card, borderRadius: Radius.xl, padding: 20, gap: 14, borderWidth: 1, borderColor: Colors.border },
   input: {
     backgroundColor: Colors.cardAlt,
     borderRadius: Radius.md,

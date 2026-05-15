@@ -2,12 +2,38 @@ import { PropsWithChildren } from "react";
 import { StyleProp, StyleSheet, Text, View, ViewStyle } from "react-native";
 import { Colors, Radius, Typography } from "@/constants/theme";
 
-type Tone = "accent" | "neutral" | "success" | "subtle";
+type Tone = "brand" | "accent" | "neutral" | "success" | "subtle";
 
+const warnedLegacyTones = new Set<string>();
+
+function warnDeprecatedLegacyTone(tone: Tone) {
+  if (!__DEV__) {
+    return;
+  }
+  if (tone !== "accent" && tone !== "success") {
+    return;
+  }
+  if (warnedLegacyTones.has(tone)) {
+    return;
+  }
+  warnedLegacyTones.add(tone);
+  console.warn(
+    `[ui-regression] PillBadge tone "${tone}" is mapped to the canonical premium badge palette. Do not reintroduce bright aqua/green variants.`,
+  );
+}
+
+// Centralized premium badge palette. Older aqua/green pills kept leaking back in
+// when screens imported or recreated legacy variants, so all badge surfaces map
+// through this restrained navy-first system now.
 const TONE_STYLES: Record<Tone, { backgroundColor: string; borderColor: string; color: string }> = {
+  brand: {
+    backgroundColor: "rgba(10, 20, 34, 0.92)",
+    borderColor: "rgba(71, 123, 255, 0.26)",
+    color: Colors.premium,
+  },
   accent: {
-    backgroundColor: "rgba(94, 235, 255, 0.12)",
-    borderColor: "rgba(94, 235, 255, 0.18)",
+    backgroundColor: "rgba(10, 20, 34, 0.92)",
+    borderColor: "rgba(71, 123, 255, 0.26)",
     color: Colors.premium,
   },
   neutral: {
@@ -16,12 +42,12 @@ const TONE_STYLES: Record<Tone, { backgroundColor: string; borderColor: string; 
     color: Colors.textSoft,
   },
   success: {
-    backgroundColor: "rgba(122, 240, 168, 0.12)",
-    borderColor: "rgba(122, 240, 168, 0.20)",
-    color: "#7AF0A8",
+    backgroundColor: "rgba(14, 24, 40, 0.92)",
+    borderColor: "rgba(52, 96, 207, 0.26)",
+    color: Colors.textStrong,
   },
   subtle: {
-    backgroundColor: "rgba(255,255,255,0.04)",
+    backgroundColor: "rgba(255,255,255,0.03)",
     borderColor: Colors.borderSoft,
     color: Colors.textMuted,
   },
@@ -37,6 +63,7 @@ export function PillBadge({
   tone?: Tone;
   style?: StyleProp<ViewStyle>;
 }>) {
+  warnDeprecatedLegacyTone(tone);
   const toneStyle = TONE_STYLES[tone];
 
   return (

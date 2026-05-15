@@ -5,6 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { AppContainer } from "@/components/AppContainer";
 import { EmptyState } from "@/components/EmptyState";
+import { PillBadge } from "@/components/PillBadge";
 import { PremiumSkeleton } from "@/components/PremiumSkeleton";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { ScanUsageMeter } from "@/components/ScanUsageMeter";
@@ -49,10 +50,9 @@ export default function GarageScreen() {
   return (
     <AppContainer>
       <LinearGradient colors={["rgba(29,140,255,0.18)", "rgba(94,231,255,0.05)", "rgba(4,8,18,0.2)"]} style={styles.heroCard}>
-        <View style={styles.heroBadge}>
+        <PillBadge tone="brand" label="Garage archive">
           <Ionicons name="car-sport-outline" size={18} color={Colors.premium} />
-          <Text style={styles.heroBadgeLabel}>Garage archive</Text>
-        </View>
+        </PillBadge>
         <Text style={styles.title}>Your saved machines</Text>
         <Text style={styles.subtitle}>Collect scans, keep notes, and revisit the vehicles that deserve a second look.</Text>
       </LinearGradient>
@@ -83,10 +83,9 @@ export default function GarageScreen() {
         </View>
       ) : filtered.length === 0 ? (
         <View style={styles.emptyWrap}>
-          <View style={styles.emptyBadge}>
+          <PillBadge tone="subtle" label="Collection ready" style={styles.emptyBadge}>
             <Ionicons name="albums-outline" size={18} color={Colors.premium} />
-            <Text style={styles.emptyBadgeLabel}>Collection ready</Text>
-          </View>
+          </PillBadge>
           <EmptyState
             title="No saved vehicles yet"
             description={
@@ -164,24 +163,11 @@ const styles = StyleSheet.create({
   subtitle: { ...Typography.body, color: Colors.textSoft },
   heroCard: {
     borderRadius: Radius.xl,
-    padding: 20,
-    gap: 12,
+    padding: 22,
+    gap: 10,
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  heroBadge: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: Radius.pill,
-    backgroundColor: "rgba(12, 21, 36, 0.82)",
-    borderWidth: 1,
-    borderColor: Colors.borderSoft,
-  },
-  heroBadgeLabel: { ...Typography.caption, color: Colors.premium, textTransform: "uppercase", letterSpacing: 0.8 },
   input: { backgroundColor: Colors.cardSoft, borderRadius: Radius.md, padding: 16, color: Colors.textStrong, borderWidth: 1, borderColor: Colors.border, ...Typography.body },
   filter: { alignSelf: "flex-start", paddingHorizontal: 16, paddingVertical: 10, backgroundColor: Colors.cardAlt, borderRadius: Radius.pill, borderWidth: 1, borderColor: Colors.borderSoft },
   filterActive: { backgroundColor: Colors.primary },
@@ -201,17 +187,5 @@ const styles = StyleSheet.create({
   loadingTitle: { ...Typography.heading, color: Colors.textStrong },
   loadingText: { ...Typography.body, color: Colors.textSoft, textAlign: "center" },
   emptyWrap: { gap: 14 },
-  emptyBadge: {
-    alignSelf: "center",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "rgba(0, 194, 255, 0.12)",
-    borderRadius: Radius.pill,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: Colors.cyanGlow,
-  },
-  emptyBadgeLabel: { ...Typography.caption, color: Colors.premium, textTransform: "uppercase", letterSpacing: 0.9 },
+  emptyBadge: { alignSelf: "center" },
 });

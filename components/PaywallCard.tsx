@@ -1,5 +1,6 @@
 import { LinearGradient } from "expo-linear-gradient";
 import { StyleSheet, Text, View } from "react-native";
+import { PillBadge } from "@/components/PillBadge";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { PRICING } from "@/lib/pricing";
 import { FREE_PRO_UNLOCKS_TOTAL } from "@/constants/product";
@@ -67,17 +68,13 @@ export function PaywallCard({
 
   return (
     <LinearGradient colors={PremiumGradients.primaryCard} start={{ x: 0.4, y: 0 }} end={{ x: 0.6, y: 1 }} style={styles.card}>
-      {showEyebrow ? <Text style={styles.eyebrow}>CarScanr Pro</Text> : null}
+      {showEyebrow ? <PillBadge tone="subtle" label="CarScanr Pro" /> : null}
       <Text style={styles.title}>{title}</Text>
       <Text style={styles.price}>{`${PRICING.yearlyDisplay}/year`}</Text>
       <Text style={styles.subprice}>{`or ${PRICING.monthlyDisplay}/month`}</Text>
-      <View style={styles.badge}>
-        <Text style={styles.badgeText}>{usageLabel}</Text>
-      </View>
+      <PillBadge tone="neutral" label={usageLabel} />
       {showCreditBadge && unlockCredits > 0 ? (
-        <View style={styles.creditBadge}>
-          <Text style={styles.creditBadgeText}>{`${unlockCredits} unlock credits ready`}</Text>
-        </View>
+        <PillBadge tone="success" label={`${unlockCredits} unlock credits ready`} />
       ) : null}
       {optionPills?.length ? (
         <View style={styles.optionPillRow}>
@@ -106,30 +103,9 @@ const styles = StyleSheet.create({
     borderColor: PremiumCard.accentBorder,
     ...shadow.card,
   },
-  eyebrow: { ...Typography.caption, color: Colors.textMuted, textTransform: "uppercase", letterSpacing: 1.1 },
   title: { ...Typography.title, color: Colors.textStrong },
   price: { ...Typography.heading, color: Colors.premium },
   subprice: { ...Typography.body, color: Colors.textSoft },
-  badge: {
-    alignSelf: "flex-start",
-    backgroundColor: "rgba(94, 231, 255, 0.12)",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: Radius.pill,
-    borderWidth: 1,
-    borderColor: "rgba(94, 231, 255, 0.22)",
-  },
-  badgeText: { ...Typography.caption, color: Colors.textStrong },
-  creditBadge: {
-    alignSelf: "flex-start",
-    backgroundColor: "rgba(122, 240, 168, 0.12)",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: Radius.pill,
-    borderWidth: 1,
-    borderColor: "rgba(122, 240, 168, 0.22)",
-  },
-  creditBadgeText: { ...Typography.caption, color: "#7AF0A8" },
   optionPillRow: {
     flexDirection: "row",
     flexWrap: "wrap",

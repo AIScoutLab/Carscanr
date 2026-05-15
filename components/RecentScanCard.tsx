@@ -30,7 +30,7 @@ export function RecentScanCard({
         <View style={styles.mediaWrap}>
           {scan.imageUri ? <Image source={{ uri: scan.imageUri }} style={styles.image} resizeMode="cover" /> : null}
           <View style={styles.mediaOverlay}>
-            <PillBadge tone="accent" label={formatTimestamp(scan.scannedAt)}>
+            <PillBadge tone="brand" label={formatTimestamp(scan.scannedAt)}>
               <Ionicons name="time-outline" size={14} color={Colors.premium} />
             </PillBadge>
           </View>

@@ -5,6 +5,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { AppContainer } from "@/components/AppContainer";
+import { BrandMark } from "@/components/BrandMark";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorStateCard } from "@/components/ErrorStateCard";
 import { FeatureRow } from "@/components/FeatureRow";
@@ -646,9 +647,7 @@ export default function ScanScreen() {
     <AppContainer>
       <PremiumCard variant="hero" glow contentStyle={styles.brandHero}>
         <View style={styles.brandHeroRow}>
-          <View style={styles.brandIconWrap}>
-            <Image source={require("../../Icon.png")} style={styles.brandIconImage} />
-          </View>
+          <BrandMark size={72} style={styles.brandIconWrap} imageStyle={styles.brandIconImage} />
           <View style={styles.brandCopy}>
             <Text style={styles.brandName}>{APP_BRAND.name}</Text>
             <Text style={styles.brandTagline}>{APP_BRAND.tagline}</Text>
@@ -687,7 +686,7 @@ export default function ScanScreen() {
         />
       ) : null}
       <PremiumCard variant="default" glow contentStyle={styles.scanCard}>
-        <PillBadge tone="accent" label="Ready to identify" />
+        <PillBadge tone="brand" label="Ready to identify" />
         <Pressable style={({ pressed }) => [styles.cameraButton, pressed && styles.cameraPressed]} onPress={() => beginScan("camera")} disabled={isBusy}>
           <LinearGradient colors={["#0A72E8", "#1D8CFF", "#5EE7FF"]} style={styles.cameraGradient}>
             <Text style={styles.cameraButtonLabel}>{isBusy ? "Analyzing..." : "Scan Vehicle"}</Text>

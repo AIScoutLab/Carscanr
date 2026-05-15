@@ -820,12 +820,12 @@ const styles = StyleSheet.create({
   },
   processingPill: {
     alignSelf: "flex-start",
-    backgroundColor: "rgba(0, 194, 255, 0.12)",
+    backgroundColor: "rgba(10, 20, 34, 0.92)",
     borderRadius: Radius.pill,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderWidth: 1,
-    borderColor: Colors.cyanGlow,
+    borderColor: "rgba(71, 123, 255, 0.26)",
   },
   processingPillLabel: {
     ...Typography.caption,

@@ -1,4 +1,5 @@
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { PillBadge } from "@/components/PillBadge";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
 
@@ -10,9 +11,7 @@ export function ProLockCard({ onPress }: Props) {
   return (
     <TouchableOpacity accessibilityRole="button" onPress={onPress} style={styles.card} activeOpacity={0.86}>
       <View style={styles.blur}>
-        <View style={styles.eyebrowPill}>
-          <Text style={styles.eyebrow}>Pro insights</Text>
-        </View>
+        <PillBadge tone="brand" label="Pro insights" />
         <Text style={styles.title}>Unlock deeper market context</Text>
         <View style={styles.row}>
           <Text style={styles.item}>Live listings near you</Text>
@@ -40,14 +39,6 @@ const styles = StyleSheet.create({
     gap: 12,
     backgroundColor: "rgba(17, 32, 57, 0.92)",
   },
-  eyebrowPill: {
-    alignSelf: "flex-start",
-    backgroundColor: Colors.premiumSoft,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  eyebrow: { ...Typography.caption, color: Colors.premium },
   title: { ...Typography.heading, color: Colors.textStrong },
   row: { flexDirection: "row", gap: 10, flexWrap: "wrap" },
   item: { ...Typography.caption, color: Colors.textSoft },
