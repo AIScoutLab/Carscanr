@@ -647,7 +647,7 @@ export default function ScanScreen() {
       <PremiumCard variant="hero" glow contentStyle={styles.brandHero}>
         <View style={styles.brandHeroRow}>
           <View style={styles.brandIconWrap}>
-            <Image source={require("../../assets/icon.png")} style={styles.brandIconImage} />
+            <Image source={require("../../Icon.png")} style={styles.brandIconImage} />
           </View>
           <View style={styles.brandCopy}>
             <Text style={styles.brandName}>{APP_BRAND.name}</Text>
