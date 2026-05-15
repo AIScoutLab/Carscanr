@@ -273,7 +273,7 @@ export default function OnboardingScreen() {
         <View style={[styles.header, { paddingHorizontal: metrics.horizontalPadding }]}>
           <View style={styles.brandWrap}>
             <View style={styles.brandIcon}>
-              <Image source={require("../assets/icon.png")} style={styles.brandIconImage} />
+              <Image source={require("../Icon.png")} style={styles.brandIconImage} />
             </View>
             <View>
               <Text style={styles.brandName}>{APP_BRAND.name}</Text>
