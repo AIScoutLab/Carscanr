@@ -5,7 +5,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import { AppContainer } from "@/components/AppContainer";
 import { PremiumSkeleton } from "@/components/PremiumSkeleton";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Colors, Radius, Typography } from "@/constants/theme";
+import { Colors, PremiumGradients, Radius, Typography } from "@/constants/theme";
+import { resolveStartupRoute } from "@/lib/onboardingFlow";
 import { authService } from "@/services/authService";
 import { guestSessionService } from "@/services/guestSessionService";
 import { startupPreferences } from "@/services/startupPreferences";
@@ -28,25 +29,31 @@ export default function Index() {
     const hydrate = async () => {
       try {
         setStartupError(null);
-        const [hasSeenOnboarding, token] = await Promise.all([startupPreferences.hasSeenOnboarding(), authService.getAccessToken()]);
+        const [hasCompletedOnboarding, token] = await Promise.all([
+          startupPreferences.hasCompletedOnboarding(),
+          authService.getAccessToken(),
+        ]);
         if (!active) return;
-        if (token) {
-          console.log("[startup] route decision", {
-            pathname,
-            reason: "access-token-present",
-            target: "/(tabs)/scan",
-          });
-          setTarget("/(tabs)/scan");
-          return;
-        }
         await guestSessionService.getGuestId();
         if (!active) return;
-        const nextTarget = hasSeenOnboarding ? "/(tabs)/scan" : "/onboarding";
+        // Onboarding is a local first-launch experience. We intentionally let
+        // this flag win over a restored auth token so reinstalls/resets can
+        // show onboarding again without depending on auth state.
+        const nextTarget = resolveStartupRoute({
+          hasCompletedOnboarding,
+          hasAccessToken: Boolean(token),
+        });
+        if (!hasCompletedOnboarding) {
+          console.log("[startup] FIRST_LAUNCH_DETECTED", {
+            pathname,
+            hasAccessToken: Boolean(token),
+          });
+        }
         console.log("[startup] route decision", {
           pathname,
-          reason: hasSeenOnboarding ? "guest-resume" : "first-launch",
-          hasSeenOnboarding,
-          guestMode: true,
+          reason: hasCompletedOnboarding ? (token ? "returning-authenticated" : "returning-guest") : "first-launch",
+          hasCompletedOnboarding,
+          hasAccessToken: Boolean(token),
           target: nextTarget,
         });
         setTarget(nextTarget as never);
@@ -96,7 +103,7 @@ export default function Index() {
   if (!target) {
     return (
       <AppContainer scroll={false} contentContainerStyle={styles.loadingPage}>
-        <LinearGradient colors={["rgba(29,140,255,0.24)", "rgba(94,231,255,0.08)", "rgba(4,8,18,0.08)"]} style={styles.loadingHero}>
+        <LinearGradient colors={PremiumGradients.primaryCard} start={{ x: 0.2, y: 0 }} end={{ x: 0.8, y: 1 }} style={styles.loadingHero}>
           <Text style={styles.title}>Starting CarScanr</Text>
           <Text style={styles.message}>Restoring your session and getting the next scan ready.</Text>
         </LinearGradient>

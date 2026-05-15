@@ -2,7 +2,10 @@ import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Animated, Easing, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { CameraView, type CameraCapturedPicture } from "expo-camera";
+import { LinearGradient } from "expo-linear-gradient";
 import { useSubscription } from "@/hooks/useSubscription";
+import { getNextScanLoadingFactIndex, getRandomScanLoadingFactIndex, SCAN_LOADING_FACTS } from "@/lib/scanLoadingFacts";
+import { SCAN_LOADING_STAGES, getScanLoadingStageState } from "@/lib/scanLoadingStages";
 import { supabase } from "@/lib/supabase";
 import { ApiRequestError } from "@/services/apiClient";
 import { authService } from "@/services/authService";
@@ -14,7 +17,7 @@ const PERMISSION_PROMPT_TIMEOUT_MS = 10000;
 const CAMERA_READY_TIMEOUT_MS = 10000;
 const IMAGE_PROCESSING_TIMEOUT_MS = 15000;
 const IDENTIFY_TIMEOUT_MS = 60000;
-const MAX_CAMERA_ZOOM = 0.32;
+const MAX_CAMERA_ZOOM = 0.16;
 const MIN_PINCH_DISTANCE_DELTA = 12;
 const ZOOM_WARNING_THRESHOLD = 0.2;
 
@@ -81,7 +84,8 @@ export default function ScanCameraScreen() {
   const pinchStartZoomRef = useRef(0);
   const zoomGestureActiveRef = useRef(false);
   const zoomWarningShownRef = useRef(false);
-  const scanBarProgress = useRef(new Animated.Value(0)).current;
+  const stagedProgress = useRef(new Animated.Value(0)).current;
+  const factOpacity = useRef(new Animated.Value(1)).current;
 
   const [permissionReady, setPermissionReady] = useState<boolean | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
@@ -95,6 +99,8 @@ export default function ScanCameraScreen() {
   const [tokenPresent, setTokenPresent] = useState(false);
   const [zoom, setZoom] = useState(0);
   const [capturedPreviewUri, setCapturedPreviewUri] = useState<string | null>(null);
+  const [loadingStageIndex, setLoadingStageIndex] = useState(0);
+  const [activeFactIndex, setActiveFactIndex] = useState(0);
   const { status: usage, freeUnlocksRemaining, freeUnlocksUsed } = useSubscription();
 
   const isFlowActive = useCallback((flowId: number) => activeFlowIdRef.current === flowId, []);
@@ -181,6 +187,17 @@ export default function ScanCameraScreen() {
     if (!isFlowActive(flowId)) {
       return;
     }
+    console.log("[SCAN_ENTRY]", {
+      file: "app/scan/camera.tsx",
+      action: "capture_flow",
+      imageUri: selection.cachedUri ?? null,
+      forceFreshRequest: true,
+    });
+    scanService.beginNewScanFlow({
+      source: "camera",
+      route: "/scan/camera",
+      imageUri: selection.cachedUri ?? null,
+    });
 
     setRetrySelection(selection);
     appendStage("photo selected", {
@@ -212,6 +229,7 @@ export default function ScanCameraScreen() {
       armWaitingIdentifyTimeout(flowId);
       const result = await scanService.identifyVehicle(optimized.cachedUri!, {
         timeoutMs: IDENTIFY_TIMEOUT_MS,
+        forceFreshRequest: true,
           onStage: (stage, payload) => {
             if (!isFlowActive(flowId)) {
               return;
@@ -240,7 +258,8 @@ export default function ScanCameraScreen() {
       setIsBusy(false);
       setStatus("Opening result");
       appendStage("navigation to result start", { scanId: result.id }, flowId);
-      router.replace({ pathname: "/scan/result", params: { scanId: result.id, imageUri: result.imageUri } });
+      console.log("[RESULT_NAVIGATION]", { resultSource: "fresh_api", scanId: result.id });
+      router.replace({ pathname: "/scan/result", params: { scanId: result.id, imageUri: result.imageUri, resultSource: "fresh_api" } });
     } catch (error) {
       const message =
         error instanceof ApiRequestError && error.code === "AUTH_REQUIRED"
@@ -288,7 +307,7 @@ export default function ScanCameraScreen() {
     try {
       const picture = await withTimeout(
         cameraRef.current.takePictureAsync({
-          quality: 0.7,
+          quality: 0.92,
           exif: false,
           skipProcessing: false,
         }),
@@ -468,34 +487,82 @@ export default function ScanCameraScreen() {
 
   useEffect(() => {
     if (!(capturedPreviewUri && isBusy)) {
-      scanBarProgress.stopAnimation();
-      scanBarProgress.setValue(0);
+      stagedProgress.stopAnimation();
+      stagedProgress.setValue(0);
+      setLoadingStageIndex(0);
       return;
     }
 
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(scanBarProgress, {
-          toValue: 1,
-          duration: 1100,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(scanBarProgress, {
-          toValue: 0,
-          duration: 1100,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    loop.start();
+    console.log("[scan-loading-ui] scannerAnimationMounted", {
+      componentName: "ScanCameraScreenLoadingOverlay",
+      route: "/scan/camera",
+    });
     return () => {
-      loop.stop();
-      scanBarProgress.stopAnimation();
-      scanBarProgress.setValue(0);
+      stagedProgress.stopAnimation();
+      stagedProgress.setValue(0);
     };
-  }, [capturedPreviewUri, isBusy, scanBarProgress]);
+  }, [capturedPreviewUri, isBusy, stagedProgress]);
+
+  useEffect(() => {
+    if (!(capturedPreviewUri && isBusy)) {
+      return;
+    }
+    const derived = getScanLoadingStageState(status);
+    setLoadingStageIndex((current) => Math.max(current, derived.stageIndex));
+  }, [capturedPreviewUri, isBusy, status]);
+
+  useEffect(() => {
+    if (!(capturedPreviewUri && isBusy)) {
+      return;
+    }
+    const progressRatio = (loadingStageIndex + 1) / SCAN_LOADING_STAGES.length;
+    console.log("[scan-loading-ui] progressStage", {
+      componentName: "ScanCameraScreenLoadingOverlay",
+      route: "/scan/camera",
+      stageIndex: loadingStageIndex,
+      stageLabel: SCAN_LOADING_STAGES[loadingStageIndex],
+    });
+    Animated.timing(stagedProgress, {
+      toValue: progressRatio,
+      duration: 320,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [capturedPreviewUri, isBusy, loadingStageIndex, stagedProgress]);
+
+  useEffect(() => {
+    if (!(capturedPreviewUri && isBusy)) {
+      factOpacity.stopAnimation();
+      factOpacity.setValue(1);
+      setActiveFactIndex(0);
+      return;
+    }
+
+    setActiveFactIndex((current) => (current === 0 ? getRandomScanLoadingFactIndex() : current));
+    const interval = setInterval(() => {
+      Animated.sequence([
+        Animated.timing(factOpacity, {
+          toValue: 0,
+          duration: 240,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(factOpacity, {
+          toValue: 1,
+          duration: 280,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]).start();
+      setActiveFactIndex((current) => getNextScanLoadingFactIndex(current));
+    }, 4200);
+
+    return () => {
+      clearInterval(interval);
+      factOpacity.stopAnimation();
+      factOpacity.setValue(1);
+    };
+  }, [capturedPreviewUri, factOpacity, isBusy]);
 
   const statusTone = useMemo(() => {
     if (status.startsWith("Scan failed:")) {
@@ -508,7 +575,6 @@ export default function ScanCameraScreen() {
   }, [status]);
 
   const showZoomWarning = zoom > ZOOM_WARNING_THRESHOLD;
-  const processingHeadline = status === "Identifying vehicle..." || status === "Waiting for identification" ? "Analyzing vehicle..." : "Preparing scan...";
   const visibleStatusTitle = useMemo(() => {
     if (status.startsWith("Scan failed:")) {
       return "Scan failed";
@@ -542,6 +608,17 @@ export default function ScanCameraScreen() {
       : "Optimizing your captured photo...";
 
   useEffect(() => {
+    if (!(capturedPreviewUri && isBusy)) {
+      return;
+    }
+    console.log("[scan-loading-ui] ACTIVE_SCAN_LOADING_SCREEN", {
+      componentName: "ScanCameraScreenLoadingOverlay",
+      route: "/scan/camera",
+      stagedProgress: true,
+    });
+  }, [capturedPreviewUri, isBusy]);
+
+  useEffect(() => {
     if (showZoomWarning && !zoomWarningShownRef.current) {
       zoomWarningShownRef.current = true;
       console.log("[scan-camera] CAMERA_ZOOM_WARNING_SHOWN", {
@@ -559,50 +636,49 @@ export default function ScanCameraScreen() {
     <View style={styles.screen}>
       {permissionReady ? (
         capturedPreviewUri ? (
+          (() => {
+            const stageState = getScanLoadingStageState(status);
+            const loadingProgressWidth = stagedProgress.interpolate({
+              inputRange: [0, 1],
+              outputRange: ["16%", "100%"],
+            });
+            return (
           <View style={styles.capturedPreviewFrame}>
             <Image source={{ uri: capturedPreviewUri }} style={styles.capturedPreviewImage} resizeMode="contain" />
             {isBusy ? (
               <View style={styles.processingOverlay} pointerEvents="none">
                 <View style={styles.processingCard}>
                   <View style={styles.processingPill}>
-                    <Text style={styles.processingPillLabel}>Analyzing photo</Text>
+                    <Text style={styles.processingPillLabel}>Scan in progress</Text>
                   </View>
-                  <Text style={styles.processingTitle}>{processingHeadline}</Text>
-                  <Text style={styles.processingBody}>{processingSubhead}</Text>
+                  <Text style={styles.processingTitle}>Scanning your vehicle</Text>
+                  <Text style={styles.processingBody}>{stageState.stageLabel}</Text>
+                  <View style={styles.processingProgressTrack}>
+                    <Animated.View style={[styles.processingProgressGlow, { width: loadingProgressWidth }]} />
+                    <Animated.View style={[styles.processingProgressFillWrap, { width: loadingProgressWidth }]}>
+                      <LinearGradient
+                        colors={["#1B63F3", "#49D9FF", "#F7FDFF"]}
+                        start={{ x: 0, y: 0.5 }}
+                        end={{ x: 1, y: 0.5 }}
+                        style={styles.processingProgressFill}
+                      />
+                    </Animated.View>
+                  </View>
+                  <View style={styles.processingStageMetaRow}>
+                    <Text style={styles.processingStageStep}>
+                      Step {Math.min(loadingStageIndex + 1, SCAN_LOADING_STAGES.length)} of {SCAN_LOADING_STAGES.length}
+                    </Text>
+                    <Text style={styles.processingStageLabel}>{stageState.stageLabel}</Text>
+                  </View>
+                  <Animated.Text style={[styles.processingFact, { opacity: factOpacity }]}>
+                    {SCAN_LOADING_FACTS[activeFactIndex]}
+                  </Animated.Text>
                 </View>
-                <Animated.View
-                  style={[
-                    styles.previewScanLineGlow,
-                    {
-                      transform: [
-                        {
-                          translateY: scanBarProgress.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [0, 720],
-                          }),
-                        },
-                      ],
-                    },
-                  ]}
-                />
-                <Animated.View
-                  style={[
-                    styles.previewScanLineCore,
-                    {
-                      transform: [
-                        {
-                          translateY: scanBarProgress.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [0, 720],
-                          }),
-                        },
-                      ],
-                    },
-                  ]}
-                />
               </View>
             ) : null}
           </View>
+            );
+          })()
         ) : (
           <View
             style={StyleSheet.absoluteFill}
@@ -765,25 +841,51 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: Colors.textSoft,
   },
-  previewScanLineGlow: {
+  processingProgressTrack: {
+    width: "100%",
+    height: 16,
+    borderRadius: Radius.pill,
+    backgroundColor: "rgba(255,255,255,0.07)",
+    overflow: "hidden",
+    position: "relative",
+    borderWidth: 1,
+    borderColor: "rgba(83, 222, 255, 0.16)",
+  },
+  processingProgressGlow: {
     position: "absolute",
     left: 0,
-    right: 0,
-    height: 26,
+    top: 0,
+    bottom: 0,
     borderRadius: Radius.pill,
-    backgroundColor: "rgba(94, 231, 255, 0.16)",
-    shadowColor: Colors.accent,
-    shadowOpacity: 0.45,
-    shadowRadius: 14,
+    backgroundColor: "rgba(83, 222, 255, 0.22)",
+    shadowColor: "#61E8FF",
+    shadowOpacity: 0.34,
+    shadowRadius: 12,
     shadowOffset: { width: 0, height: 0 },
   },
-  previewScanLineCore: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    height: 2,
+  processingProgressFillWrap: {
+    height: "100%",
     borderRadius: Radius.pill,
-    backgroundColor: Colors.premium,
+    overflow: "hidden",
+  },
+  processingProgressFill: {
+    flex: 1,
+    borderRadius: Radius.pill,
+  },
+  processingStageMetaRow: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  processingStageStep: { ...Typography.caption, color: Colors.textMuted, textTransform: "uppercase", letterSpacing: 0.8 },
+  processingStageLabel: { ...Typography.bodyStrong, color: Colors.textSoft, flexShrink: 1, textAlign: "right" },
+  processingFact: {
+    ...Typography.caption,
+    color: Colors.textMuted,
+    lineHeight: 18,
+    minHeight: 36,
   },
   topBar: {
     position: "absolute",

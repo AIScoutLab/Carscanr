@@ -2,7 +2,7 @@ import { PropsWithChildren } from "react";
 import { Keyboard, ScrollView, StyleSheet, TouchableWithoutFeedback, View, ViewStyle } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
-import { Colors } from "@/constants/theme";
+import { Colors, PremiumGradients, Spacing } from "@/constants/theme";
 
 type Props = PropsWithChildren<{
   scroll?: boolean;
@@ -12,14 +12,14 @@ type Props = PropsWithChildren<{
 export function AppContainer({ children, scroll = true, contentContainerStyle }: Props) {
   const contentPadding = {
     paddingTop: 6,
-    paddingBottom: 14,
-    paddingHorizontal: 20,
+    paddingBottom: Spacing.screenBottom,
+    paddingHorizontal: Spacing.screenHorizontal,
   } satisfies ViewStyle;
 
   if (scroll) {
     return (
       <SafeAreaView style={styles.safeArea} edges={["top", "right", "bottom", "left"]}>
-        <LinearGradient colors={[Colors.background, Colors.backgroundAlt, Colors.background]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.gradient}>
+        <LinearGradient colors={PremiumGradients.page} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={styles.gradient}>
           <View style={styles.glowPrimary} pointerEvents="none" />
           <View style={styles.glowSecondary} pointerEvents="none" />
           <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
@@ -40,7 +40,7 @@ export function AppContainer({ children, scroll = true, contentContainerStyle }:
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "right", "bottom", "left"]}>
-      <LinearGradient colors={[Colors.background, Colors.backgroundAlt, Colors.background]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.gradient}>
+      <LinearGradient colors={PremiumGradients.page} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={styles.gradient}>
         <View style={styles.glowPrimary} pointerEvents="none" />
         <View style={styles.glowSecondary} pointerEvents="none" />
         <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>

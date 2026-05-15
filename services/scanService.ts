@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { getVehicleImage } from "@/constants/vehicleImages";
 import { applyPlanOverride } from "@/features/subscription/planOverride";
+import { sampleScanPhotos } from "@/features/scan/samplePhotos";
 import { getApiBaseUrlOrThrow } from "@/lib/env";
 import { authService } from "@/services/authService";
 import { guestSessionService } from "@/services/guestSessionService";
@@ -11,6 +12,7 @@ import { ScanResult, SubscriptionStatus, VehicleCandidate } from "@/types";
 import * as FileSystem from "expo-file-system";
 
 let mutableRecentScans: ScanResult[] = [];
+const recentScansListeners = new Set<(scans: ScanResult[]) => void>();
 let mutableUsage: SubscriptionStatus = { ...defaultSubscriptionStatus };
 let mutableUnlockStatus = {
   freeUnlocksTotal: 5,
@@ -20,6 +22,19 @@ let mutableUnlockStatus = {
   unlockedVehicleIds: [] as string[],
 };
 let usageRequestInFlight: Promise<SubscriptionStatus> | null = null;
+let mutableRecentScansDiagnostics = {
+  currentStorageKey: "in_memory_recent_scans",
+  guestStorageKey: "in_memory_recent_scans",
+  mirrorStorageKey: "in_memory_recent_scans",
+  lastSavedCount: 0,
+  lastLoadedCount: 0,
+  lastSavedLabel: null as string | null,
+  lastSavedAt: null as string | null,
+  lastLoadedAt: null as string | null,
+  lastSaveError: null as string | null,
+  lastLoadError: null as string | null,
+  lastMigratedFromKeys: [] as string[],
+};
 
 const MAX_UPLOAD_BYTES = 4.8 * 1024 * 1024;
 const BACKEND_WAKE_TIMEOUT_MS = 45000;
@@ -151,6 +166,76 @@ async function assertUploadSize(imageUri: string) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function emitRecentScansChanged() {
+  for (const listener of recentScansListeners) {
+    try {
+      listener([...mutableRecentScans]);
+    } catch (error) {
+      console.log("[scan-service] RECENT_SCANS_LISTENER_FAILURE", {
+        message: error instanceof Error ? error.message : "Unknown recent scans listener error",
+      });
+    }
+  }
+}
+
+function getRecentScanDisplayName(scan: ScanResult) {
+  return `${scan.identifiedVehicle.year} ${scan.identifiedVehicle.make} ${scan.identifiedVehicle.model} ${scan.identifiedVehicle.trim ?? ""}`.trim();
+}
+
+function createInMemorySampleResult(sampleId: string): ScanResult {
+  const sample = sampleScanPhotos.find((entry) => entry.id === sampleId);
+  if (!sample) {
+    throw new Error("Sample photo not found.");
+  }
+
+  const titleMatch = sample.title.match(/^(\d{4})\s+(.+)$/);
+  const year = titleMatch ? Number(titleMatch[1]) : 0;
+  const label = titleMatch ? titleMatch[2] : sample.title;
+  const parts = label.split(" ");
+  const make = parts[0] ?? "Unknown";
+  const model = parts.slice(1).join(" ") || "Vehicle";
+  const vehicleId = `${sample.id}-sample`;
+
+  return {
+    id: `sample-${sample.id}`,
+    imageUri: sample.previewUrl,
+    identifiedVehicle: {
+      id: vehicleId,
+      year,
+      make,
+      model,
+      trim: "",
+      confidence: 0.92,
+      thumbnailUrl: getVehicleImage(vehicleId),
+    },
+    candidates: [
+      {
+        id: vehicleId,
+        year,
+        make,
+        model,
+        trim: "",
+        confidence: 0.92,
+        thumbnailUrl: getVehicleImage(vehicleId),
+      },
+    ],
+    source: "visual_candidate",
+    confidenceScore: 0.92,
+    detectedVehicleType: model.toLowerCase().includes("glide") ? "motorcycle" : "car",
+    limitedPreview: true,
+    scannedAt: new Date().toISOString(),
+    quickResult: true,
+    quickResultSource: "local_scan_cache",
+    offlineDatasetVersion: null,
+    identificationConfidence: 0.92,
+    dataConfidence: 0.7,
+    payloadStrength: "usable",
+    enrichmentMode: "fallback_only",
+    unlockEligible: true,
+    unlockRecommendationReason: null,
+  };
 }
 
 function mapUsage(usage: BackendUsageResponse): SubscriptionStatus {
@@ -301,13 +386,49 @@ async function writeOfflineScanCache(cache: StoredOfflineScanCache) {
   }
 }
 
+async function clearOfflineScanCache() {
+  try {
+    await AsyncStorage.removeItem(OFFLINE_SCAN_CACHE_KEY);
+  } catch {
+    // Best-effort local cache only.
+  }
+}
+
 export const scanService = {
-  async getRecentScans(): Promise<ScanResult[]> {
+  async getRecentScans(options?: { forceRefresh?: boolean }): Promise<ScanResult[]> {
+    mutableRecentScansDiagnostics.lastLoadedAt = new Date().toISOString();
+    mutableRecentScansDiagnostics.lastLoadedCount = mutableRecentScans.length;
     return mutableRecentScans;
+  },
+
+  subscribeRecentScans(listener: (scans: ScanResult[]) => void) {
+    recentScansListeners.add(listener);
+    return () => {
+      recentScansListeners.delete(listener);
+    };
+  },
+
+  getRecentScansDiagnostics() {
+    return { ...mutableRecentScansDiagnostics };
   },
 
   getCachedUnlockStatus() {
     return mutableUnlockStatus;
+  },
+
+  beginNewScanFlow(input: { source: "camera" | "library" | "sample"; route: string; imageUri?: string | null }) {
+    console.log("[SCAN_ENTRY]", { file: input.route, action: input.source, imageUri: input.imageUri ?? null, forceFreshRequest: true });
+    void clearOfflineScanCache();
+  },
+
+  async createSampleResult(sampleId: string): Promise<ScanResult> {
+    const result = createInMemorySampleResult(sampleId);
+    mutableRecentScans = [result, ...mutableRecentScans.filter((entry) => entry.id !== result.id)].slice(0, 6);
+    mutableRecentScansDiagnostics.lastSavedAt = new Date().toISOString();
+    mutableRecentScansDiagnostics.lastSavedCount = mutableRecentScans.length;
+    mutableRecentScansDiagnostics.lastSavedLabel = getRecentScanDisplayName(result);
+    emitRecentScansChanged();
+    return result;
   },
 
   async getUsage(): Promise<SubscriptionStatus> {
@@ -349,7 +470,7 @@ export const scanService = {
     return usageRequestInFlight;
   },
 
-  async identifyVehicle(imageUri: string, options?: { onStage?: IdentifyStageLogger; timeoutMs?: number }): Promise<ScanResult> {
+  async identifyVehicle(imageUri: string, options?: { onStage?: IdentifyStageLogger; timeoutMs?: number; forceFreshRequest?: boolean }): Promise<ScanResult> {
     if (typeof imageUri !== "string" || imageUri.length === 0) {
       throw new Error("Image URI is missing.");
     }
@@ -368,7 +489,7 @@ export const scanService = {
     await assertUploadSize(imageUri);
     const usage = mutableUsage;
     const imageFingerprint = await getImageFingerprint(imageUri);
-    if (imageFingerprint) {
+    if (imageFingerprint && options?.forceFreshRequest !== true) {
       const offlineScanCache = await readOfflineScanCache();
       const cachedScan = offlineScanCache[imageFingerprint];
       if (cachedScan) {
@@ -387,6 +508,7 @@ export const scanService = {
           quickResultSource: "local_scan_cache" as const,
         };
         mutableRecentScans = [quickCached, ...mutableRecentScans.filter((entry) => entry.id !== quickCached.id)].slice(0, 6);
+        emitRecentScansChanged();
         return quickCached;
       }
     }
@@ -582,6 +704,10 @@ export const scanService = {
       await writeOfflineScanCache(cache);
     }
     mutableRecentScans = [finalResult, ...mutableRecentScans.filter((entry) => entry.id !== finalResult.id)].slice(0, 6);
+    mutableRecentScansDiagnostics.lastSavedAt = new Date().toISOString();
+    mutableRecentScansDiagnostics.lastSavedCount = mutableRecentScans.length;
+    mutableRecentScansDiagnostics.lastSavedLabel = getRecentScanDisplayName(finalResult);
+    emitRecentScansChanged();
     mutableUsage = await scanService.getUsage();
     return finalResult;
   },
@@ -617,12 +743,17 @@ export const scanService = {
 
     const result = mapScanResponse(response.data, imageUri, usage, response.meta ?? null);
     mutableRecentScans = [result, ...mutableRecentScans.filter((entry) => entry.id !== result.id)].slice(0, 6);
+    mutableRecentScansDiagnostics.lastSavedAt = new Date().toISOString();
+    mutableRecentScansDiagnostics.lastSavedCount = mutableRecentScans.length;
+    mutableRecentScansDiagnostics.lastSavedLabel = getRecentScanDisplayName(result);
+    emitRecentScansChanged();
     mutableUsage = await scanService.getUsage();
     return { result, entitlement: response.meta?.premium ?? null };
   },
 
   resetState() {
     mutableRecentScans = [];
+    recentScansListeners.clear();
     mutableUsage = { ...defaultSubscriptionStatus };
     mutableUnlockStatus = {
       freeUnlocksTotal: 5,

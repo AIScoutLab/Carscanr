@@ -33,6 +33,23 @@ export const Colors = {
   dangerSoft: "rgba(217, 75, 91, 0.18)",
 };
 
+export const PremiumGradients = {
+  page: [colors.pageAlt, colors.page, colors.page] as const,
+  primaryCard: ["#0F2236", "#0A1A2A"] as const,
+  imageFrame: ["#0F2236", "#0A1A2A"] as const,
+};
+
+export const PremiumCard = {
+  primaryBackground: colors.surface,
+  secondaryBackground: colors.surfaceSoft,
+  supportBackground: colors.surfaceTint,
+  inputBackground: colors.surfaceStrong,
+  imageFrameInner: "rgba(5, 11, 20, 0.92)",
+  border: colors.line,
+  accentBorder: "rgba(59,130,246,0.35)",
+  softAccentBorder: "rgba(59,130,246,0.25)",
+};
+
 export const Spacing = {
   xxs: spacing[1],
   xs: spacing[2],
@@ -41,6 +58,10 @@ export const Spacing = {
   lg: spacing[5],
   xl: spacing[6],
   xxl: spacing[8],
+  screenHorizontal: spacing[4],
+  screenBottom: spacing[7],
+  cardGap: 18,
+  ctaGap: 16,
 };
 
 export const Radius = {
@@ -50,6 +71,8 @@ export const Radius = {
   lg: radius.lg,
   xl: radius.xl,
   pill: radius.pill,
+  card: 16,
+  imageFrameInner: 12,
 };
 
 export const Typography = {

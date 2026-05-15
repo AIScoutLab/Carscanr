@@ -8,7 +8,15 @@ export const startupPreferences = {
     return value === "true";
   },
 
+  async hasCompletedOnboarding() {
+    return this.hasSeenOnboarding();
+  },
+
   async setHasSeenOnboarding() {
     await AsyncStorage.setItem(HAS_SEEN_ONBOARDING_KEY, "true");
+  },
+
+  async markOnboardingComplete() {
+    await this.setHasSeenOnboarding();
   },
 };
