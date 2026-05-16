@@ -2,9 +2,10 @@ import Constants from "expo-constants";
 import Purchases from "react-native-purchases";
 import type { CustomerInfo, PurchasesEntitlementInfo, PurchasesPackage } from "@revenuecat/purchases-typescript-internal";
 import { mobileEnv } from "@/lib/env";
+import { getMissingPurchaseOptionKinds, getPurchaseOptionKind } from "@/lib/purchaseOptions";
 import { authService } from "@/services/authService";
 import { guestSessionService } from "@/services/guestSessionService";
-import { SubscriptionProduct } from "@/types";
+import { PurchaseOptionKind, SubscriptionProduct } from "@/types";
 
 type PurchaseAvailabilityState = "ready" | "preview_only" | "not_configured";
 
@@ -34,10 +35,48 @@ function getRevenueCatConfig() {
   };
 }
 
+function classifyPackage(pkg: PurchasesPackage): PurchaseOptionKind {
+  const product = pkg.product;
+  const normalized = [
+    pkg.identifier,
+    pkg.packageType,
+    product.identifier,
+    product.title,
+    product.description,
+    product.productCategory,
+    product.productType,
+    product.subscriptionPeriod,
+  ]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join(" ")
+    .toLowerCase();
+
+  if (pkg.packageType === "ANNUAL" || product.subscriptionPeriod === "P1Y" || normalized.includes("annual") || normalized.includes("year")) {
+    return "annual";
+  }
+  if (pkg.packageType === "MONTHLY" || product.subscriptionPeriod === "P1M" || normalized.includes("monthly") || normalized.includes("month")) {
+    return "monthly";
+  }
+  if (
+    product.productCategory === "NON_SUBSCRIPTION" ||
+    product.productType === "CONSUMABLE" ||
+    product.productType === "NON_CONSUMABLE" ||
+    normalized.includes("unlock") ||
+    normalized.includes("credit") ||
+    normalized.includes("pack")
+  ) {
+    return "unlock_pack";
+  }
+  return "other";
+}
+
 function mapPackageToProduct(pkg: PurchasesPackage): SubscriptionProduct {
   const product = pkg.product;
+  const optionKind = classifyPackage(pkg);
   const billingPeriodLabel =
-    pkg.packageType === "MONTHLY"
+    optionKind === "unlock_pack"
+      ? "unlock pack"
+      : pkg.packageType === "MONTHLY"
       ? "month"
       : pkg.packageType === "ANNUAL"
         ? "year"
@@ -47,11 +86,36 @@ function mapPackageToProduct(pkg: PurchasesPackage): SubscriptionProduct {
 
   return {
     productId: product.identifier,
+    packageIdentifier: pkg.identifier,
+    packageType: pkg.packageType,
+    optionKind,
     platform: "ios",
     plan: "pro",
     priceLabel: product.priceString,
     billingPeriodLabel,
+    title: product.title,
+    description: product.description,
   };
+}
+
+function logPackageAvailability(availableProducts: SubscriptionProduct[], context: Record<string, unknown>) {
+  for (const product of availableProducts) {
+    console.log("PAYWALL_PACKAGE_RENDERED", {
+      ...context,
+      productId: product.productId,
+      packageIdentifier: product.packageIdentifier ?? null,
+      optionKind: getPurchaseOptionKind(product),
+      priceLabel: product.priceLabel,
+    });
+  }
+  for (const missingKind of getMissingPurchaseOptionKinds(availableProducts)) {
+    console.log("PAYWALL_PACKAGE_MISSING", {
+      ...context,
+      optionKind: missingKind,
+      availableKinds: availableProducts.map(getPurchaseOptionKind),
+      reason: availableProducts.length > 0 ? "revenuecat_current_offering_missing_package" : "no_revenuecat_packages_returned",
+    });
+  }
 }
 
 async function getAppUserId() {
@@ -124,6 +188,19 @@ export const purchaseService = {
   async getPurchaseSnapshot(): Promise<PurchaseSnapshot> {
     const configuration = await ensureConfigured();
     if (!configuration.configured) {
+      console.log("PAYWALL_OFFERINGS_LOAD_STARTED", {
+        configured: false,
+        reason: configuration.reason,
+      });
+      console.log("PAYWALL_OFFERINGS_LOAD_RESULT", {
+        configured: false,
+        reason: configuration.reason,
+        packageCount: 0,
+      });
+      logPackageAvailability([], {
+        configured: false,
+        reason: configuration.reason,
+      });
       console.log("ENTITLEMENT_LOOKUP_RESULT", {
         configured: false,
         reason: configuration.reason,
@@ -138,12 +215,31 @@ export const purchaseService = {
       };
     }
 
+    console.log("PAYWALL_OFFERINGS_LOAD_STARTED", {
+      configured: true,
+      appUserId: configuration.appUserId,
+    });
     const [offerings, customerInfo] = await Promise.all([
       Purchases.getOfferings(),
       Purchases.getCustomerInfo(),
     ]);
     const availableProducts = (offerings.current?.availablePackages ?? []).map(mapPackageToProduct);
     const activeEntitlement = resolveActiveEntitlement(customerInfo);
+    console.log("PAYWALL_OFFERINGS_LOAD_RESULT", {
+      configured: true,
+      appUserId: configuration.appUserId,
+      currentOffering: offerings.current?.identifier ?? null,
+      packageCount: availableProducts.length,
+      packages: availableProducts.map((product) => ({
+        productId: product.productId,
+        packageIdentifier: product.packageIdentifier,
+        optionKind: getPurchaseOptionKind(product),
+      })),
+    });
+    logPackageAvailability(availableProducts, {
+      configured: true,
+      currentOffering: offerings.current?.identifier ?? null,
+    });
     console.log("ENTITLEMENT_LOOKUP_RESULT", {
       configured: true,
       appUserId: configuration.appUserId,
@@ -161,7 +257,7 @@ export const purchaseService = {
     };
   },
 
-  async purchasePro() {
+  async purchasePro(selectedProductKey?: string | null) {
     const configuration = await ensureConfigured();
     if (!configuration.configured) {
       return {
@@ -174,20 +270,43 @@ export const purchaseService = {
       };
     }
 
+    console.log("PAYWALL_PURCHASE_OPTION_SELECTED", {
+      selectedProductKey: selectedProductKey ?? null,
+    });
+
     const offerings = await Purchases.getOfferings();
-    const targetPackage =
-      offerings.current?.monthly ??
-      offerings.current?.annual ??
-      offerings.current?.availablePackages?.[0] ??
-      null;
+    const packages = offerings.current?.availablePackages ?? [];
+    const packageOptions = packages.map((pkg) => ({
+      pkg,
+      product: mapPackageToProduct(pkg),
+    }));
+    const targetOption = selectedProductKey
+      ? packageOptions.find(
+          (option) =>
+            option.pkg.identifier === selectedProductKey ||
+            option.pkg.product.identifier === selectedProductKey ||
+            option.product.packageIdentifier === selectedProductKey ||
+            option.product.productId === selectedProductKey,
+        ) ?? null
+      : packageOptions.find((option) => option.product.optionKind === "annual") ?? packageOptions[0] ?? null;
+    const targetPackage = targetOption?.pkg ?? null;
 
     if (!targetPackage) {
       return {
         snapshot: await this.getPurchaseSnapshot(),
         outcome: "not_configured" as const,
-        message: "No purchasable RevenueCat package is configured for this build yet.",
+        message: selectedProductKey
+          ? "The selected RevenueCat package is not available in this build."
+          : "No purchasable RevenueCat package is configured for this build yet.",
       };
     }
+
+    console.log("PAYWALL_PURCHASE_OPTION_SELECTED", {
+      selectedProductKey: selectedProductKey ?? null,
+      productId: targetPackage.product.identifier,
+      packageIdentifier: targetPackage.identifier,
+      optionKind: classifyPackage(targetPackage),
+    });
 
     const result = await Purchases.purchasePackage(targetPackage);
     return {
@@ -206,6 +325,9 @@ export const purchaseService = {
       reason: configuration.configured ? null : configuration.reason,
     });
     if (!configuration.configured) {
+      console.log("ENTITLEMENT_RESTORE_SKIPPED_CONFIG_MISSING", {
+        reason: configuration.reason,
+      });
       return {
         snapshot: await this.getPurchaseSnapshot(),
         outcome: "not_configured" as const,

@@ -8,6 +8,7 @@ import { PaywallCard } from "@/components/PaywallCard";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { useSubscription } from "@/hooks/useSubscription";
+import { resolveProfileAccessState } from "@/lib/subscription";
 import { supabase } from "@/lib/supabase";
 import { authService } from "@/services/authService";
 import { getApiAuthDebug } from "@/services/apiClient";
@@ -31,6 +32,7 @@ export default function ProfileScreen() {
   const [tokenPresent, setTokenPresent] = useState(false);
   const [sessionDetected, setSessionDetected] = useState(false);
   const [apiDebug, setApiDebug] = useState(getApiAuthDebug());
+  const accessState = resolveProfileAccessState(status, isLoading);
 
   const refreshAuthSnapshot = async () => {
     const [{ data }, nextUser, token] = await Promise.all([supabase.auth.getSession(), authService.getCurrentUser(), authService.getAccessToken()]);
@@ -49,6 +51,42 @@ export default function ProfileScreen() {
       refreshAuthSnapshot().catch(() => undefined);
     }, []),
   );
+
+  useEffect(() => {
+    console.log("SUBSCRIPTION_STATE_RESOLVED", {
+      plan: status?.plan ?? null,
+      provider: status?.provider ?? null,
+      isActive: status?.isActive ?? null,
+      purchaseAvailabilityState: accessState.purchaseAvailabilityState,
+      hasProEntitlement: accessState.hasProEntitlement,
+      planLabel: accessState.planLabel,
+      showUpgradeOptions: accessState.showUpgradeOptions,
+    });
+    console.log("PROFILE_ACCESS_STATE_RENDERED", {
+      plan: status?.plan ?? null,
+      provider: status?.provider ?? null,
+      isActive: status?.isActive ?? null,
+      planLabel: accessState.planLabel,
+      renewalLabel: accessState.renewalLabel,
+      hasProEntitlement: accessState.hasProEntitlement,
+    });
+    console.log("PAYWALL_VISIBILITY_DECISION", {
+      surface: "profile",
+      showUpgradeOptions: accessState.showUpgradeOptions,
+      showFreeUnlockUsage: accessState.showFreeUnlockUsage,
+      purchaseAvailabilityState: accessState.purchaseAvailabilityState,
+    });
+  }, [
+    accessState.hasProEntitlement,
+    accessState.planLabel,
+    accessState.purchaseAvailabilityState,
+    accessState.renewalLabel,
+    accessState.showFreeUnlockUsage,
+    accessState.showUpgradeOptions,
+    status?.isActive,
+    status?.plan,
+    status?.provider,
+  ]);
 
   return (
     <AppContainer>
@@ -86,16 +124,20 @@ export default function ProfileScreen() {
       </View>
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Subscription & access</Text>
-        <Text style={styles.meta}>{isLoading ? "Checking plan..." : status?.plan === "pro" ? "Pro active" : "Free plan"}</Text>
-        <Text style={styles.meta}>{status?.renewalLabel ?? "Sign in to sync your subscription status."}</Text>
-        <Text style={styles.meta}>
-          {freeUnlocksUsed} of {freeUnlocksLimit} free Pro unlocks used
-        </Text>
-        <Text style={styles.meta}>{Math.max(0, freeUnlocksRemaining)} remaining</Text>
-        {status?.plan !== "pro" ? <Text style={styles.helper}>Missing Pro after sign-in? Use Restore Purchases to recheck your App Store entitlements for this account.</Text> : null}
-        {status?.plan !== "pro" ? <PaywallCard status={status} unlocksRemaining={freeUnlocksRemaining} unlocksLimit={freeUnlocksLimit} /> : null}
+        <Text style={styles.meta}>{accessState.planLabel}</Text>
+        <Text style={styles.meta}>{accessState.renewalLabel}</Text>
+        {accessState.showFreeUnlockUsage ? (
+          <>
+            <Text style={styles.meta}>
+              {freeUnlocksUsed} of {freeUnlocksLimit} free Pro unlocks used
+            </Text>
+            <Text style={styles.meta}>{Math.max(0, freeUnlocksRemaining)} remaining</Text>
+          </>
+        ) : null}
+        {accessState.showUpgradeOptions ? <Text style={styles.helper}>Missing Pro after sign-in? Use Restore Purchases to recheck your App Store entitlements for this account.</Text> : null}
+        {accessState.showUpgradeOptions ? <PaywallCard status={status} unlocksRemaining={freeUnlocksRemaining} unlocksLimit={freeUnlocksLimit} /> : null}
         <View style={styles.actionGroup}>
-          <PrimaryButton label={status?.plan === "pro" ? "View Pro Status" : "Upgrade to Pro"} secondary={!user} onPress={() => router.push("/paywall")} />
+          <PrimaryButton label={accessState.hasProEntitlement ? "View Pro Status" : "Upgrade to Pro"} secondary={!user || accessState.hasProEntitlement} onPress={() => router.push("/paywall")} />
           <PrimaryButton
             label={isRestoring ? "Checking App Store..." : "Restore Purchases"}
             secondary
@@ -106,7 +148,7 @@ export default function ProfileScreen() {
             disabled={isRestoring}
           />
         </View>
-        {status?.plan === "pro" ? (
+        {accessState.hasProEntitlement ? (
           <TouchableOpacity
             activeOpacity={0.86}
             accessibilityRole="button"

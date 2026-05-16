@@ -5,6 +5,7 @@ import { getVehicleImage } from "@/constants/vehicleImages";
 import { applyPlanOverride } from "@/features/subscription/planOverride";
 import { sampleScanPhotos } from "@/features/scan/samplePhotos";
 import { getApiBaseUrlOrThrow } from "@/lib/env";
+import { isProPlan } from "@/lib/subscription";
 import { authService } from "@/services/authService";
 import { guestSessionService } from "@/services/guestSessionService";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
@@ -52,7 +53,7 @@ type BackendHealthResponse = {
 
 type BackendUsageResponse = {
   userId: string;
-  plan: "free" | "pro";
+  plan: "free" | "pro" | "pro_monthly" | "pro_yearly";
   isPro: boolean;
   scansUsed: number;
   scansRemaining: number | null;
@@ -264,7 +265,7 @@ function mapUsage(usage: BackendUsageResponse): SubscriptionStatus {
   }
   return applyPlanOverride({
     plan: usage.plan,
-    renewalLabel: usage.plan === "pro" ? "Pro active" : "Upgrade for unlimited Pro details",
+    renewalLabel: isProPlan(usage.plan) ? "Pro active" : "Upgrade for unlimited Pro details",
     scansUsed: usage.scansUsed,
     scansRemaining: usage.scansRemaining,
     limitType: usage.limitType,

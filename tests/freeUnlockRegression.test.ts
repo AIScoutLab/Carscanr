@@ -41,3 +41,24 @@ test("free unlock counters clamp impossible persisted states back into the canon
     remaining: 0,
   });
 });
+
+test("restore purchases does not reset or rewrite free unlock counters", () => {
+  const providerSource = read("features/subscription/SubscriptionProvider.tsx");
+  const serviceSource = read("services/subscriptionService.ts");
+  const restoreProviderStart = providerSource.indexOf("const restorePurchases = useCallback");
+  const restoreProviderEnd = providerSource.indexOf("const cancelPro = useCallback", restoreProviderStart);
+  const restoreProviderBlock = providerSource.slice(restoreProviderStart, restoreProviderEnd);
+  const restoreServiceStart = serviceSource.indexOf("async restorePurchases()");
+  const restoreServiceEnd = serviceSource.indexOf("async cancelSubscription()", restoreServiceStart);
+  const restoreServiceBlock = serviceSource.slice(restoreServiceStart, restoreServiceEnd);
+
+  assert.notEqual(restoreProviderStart, -1, "restorePurchases provider callback was not found");
+  assert.notEqual(restoreServiceStart, -1, "restorePurchases service method was not found");
+  assert.equal(restoreProviderBlock.includes("setFreeUnlocksUsed"), false, "restore provider must not mutate used free unlocks");
+  assert.equal(restoreProviderBlock.includes("setFreeUnlocksRemaining"), false, "restore provider must not mutate remaining free unlocks");
+  assert.equal(restoreProviderBlock.includes("setFreeUnlocksLimit"), false, "restore provider must not mutate free unlock limit");
+  assert.equal(restoreServiceBlock.includes("saveFreeUnlockState"), false, "restore service must not persist free unlock state");
+  assert.equal(restoreServiceBlock.includes("scanService.getUsage()"), false, "restore service must not refresh usage counters");
+  assert.equal(providerSource.includes("FREE_UNLOCK_COUNTER_STATE_BEFORE_RESTORE"), true);
+  assert.equal(providerSource.includes("FREE_UNLOCK_COUNTER_STATE_AFTER_RESTORE"), true);
+});

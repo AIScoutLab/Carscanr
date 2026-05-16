@@ -17,12 +17,7 @@ export default function AuthScreen() {
   const pathname = usePathname();
   const params = useLocalSearchParams<{ mode?: "sign-in" | "sign-up" }>();
   const insets = useSafeAreaInsets();
-  const scrollRef = useRef<ScrollView | null>(null);
-  const contentRef = useRef<View | null>(null);
   const passwordInputRef = useRef<TextInput | null>(null);
-  const emailFieldRef = useRef<View | null>(null);
-  const passwordFieldRef = useRef<View | null>(null);
-  const submitButtonRef = useRef<View | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
@@ -55,43 +50,6 @@ export default function AuthScreen() {
     const nextLine = value === undefined ? label : `${label}: ${typeof value === "string" ? value : JSON.stringify(value)}`;
     console.log("[auth-debug]", nextLine);
     setAuthDebugLines((current) => [...current.slice(-5), nextLine]);
-  };
-
-  const scrollFieldIntoView = (field: "email" | "password") => {
-    requestAnimationFrame(() => {
-      const contentNode = contentRef.current;
-      const fieldNode = field === "email" ? emailFieldRef.current : passwordFieldRef.current;
-      const submitNode = submitButtonRef.current;
-
-      if (!contentNode || !fieldNode || !submitNode) {
-        return;
-      }
-
-      fieldNode.measureLayout(
-        contentNode,
-        (_fieldX, fieldY) => {
-          submitNode.measureLayout(
-            contentNode,
-            (_submitX, submitY) => {
-              const desiredY = Math.max(0, Math.min(fieldY - 48, submitY - 220));
-              scrollRef.current?.scrollTo({
-                y: desiredY,
-                animated: true,
-              });
-            },
-            () => {
-              scrollRef.current?.scrollTo({
-                y: Math.max(0, fieldY - 48),
-                animated: true,
-              });
-            },
-          );
-        },
-        () => {
-          return;
-        },
-      );
-    });
   };
 
   useEffect(() => {
@@ -241,17 +199,16 @@ export default function AuthScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["top", "right", "left"]}>
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={Math.max(insets.top, 12)}>
+    <SafeAreaView style={styles.safeArea} edges={["top", "right", "left", "bottom"]}>
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={0}>
         <ScrollView
-          ref={scrollRef}
           style={styles.flex}
-          contentContainerStyle={[styles.content, { paddingTop: 4, paddingBottom: Math.max(insets.bottom, 24) + 120 }]}
+          contentContainerStyle={[styles.content, { paddingTop: 4, paddingBottom: Math.max(insets.bottom, 24) }]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
+          keyboardDismissMode="on-drag"
         >
-      <View ref={contentRef} collapsable={false}>
+      <View style={styles.contentInner}>
       <View style={styles.topBar}>
         <TouchableOpacity
           style={styles.topBarButton}
@@ -345,7 +302,7 @@ export default function AuthScreen() {
         </View>
       </View>
       <View style={styles.card}>
-        <View ref={emailFieldRef} collapsable={false}>
+        <View>
           <TextInput
             value={email}
             onChangeText={setEmail}
@@ -356,13 +313,10 @@ export default function AuthScreen() {
             style={styles.input}
             placeholder="Email"
             placeholderTextColor={Colors.textMuted}
-            onFocus={() => {
-              scrollFieldIntoView("email");
-            }}
             onSubmitEditing={() => passwordInputRef.current?.focus()}
           />
         </View>
-        <View ref={passwordFieldRef} collapsable={false}>
+        <View>
           <TextInput
             ref={passwordInputRef}
             value={password}
@@ -372,9 +326,6 @@ export default function AuthScreen() {
             placeholder="Password"
             placeholderTextColor={Colors.textMuted}
             returnKeyType="done"
-            onFocus={() => {
-              scrollFieldIntoView("password");
-            }}
             onSubmitEditing={() => {
               void submit();
             }}
@@ -392,7 +343,7 @@ export default function AuthScreen() {
             <Text style={styles.forgotPasswordText}>Forgot password?</Text>
           </TouchableOpacity>
         ) : null}
-        <View ref={submitButtonRef} collapsable={false}>
+        <View>
           <PrimaryButton label={isSubmitting ? "Working..." : mode === "sign-in" ? "Sign In" : "Create Account"} onPress={submit} disabled={isSubmitting} />
         </View>
         <PrimaryButton
@@ -432,8 +383,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    gap: 20,
+    flexGrow: 1,
     paddingHorizontal: 20,
+  },
+  contentInner: {
+    gap: 20,
   },
   topBar: {
     flexDirection: "row",

@@ -192,16 +192,23 @@ export type GarageItem = {
   vehicle: VehicleRecord;
 };
 
-export type UserPlan = "free" | "pro";
+export type UserPlan = "free" | "pro" | "pro_monthly" | "pro_yearly";
 
 export type BillingProvider = "storekit" | "revenuecat" | "backend" | "placeholder";
 
+export type PurchaseOptionKind = "annual" | "monthly" | "unlock_pack" | "other";
+
 export type SubscriptionProduct = {
   productId: string;
+  packageIdentifier?: string;
+  packageType?: string;
+  optionKind?: PurchaseOptionKind;
   platform: "ios";
   plan: UserPlan;
   priceLabel: string;
   billingPeriodLabel: string;
+  title?: string;
+  description?: string | null;
 };
 
 export type PurchaseAvailabilityState = "ready" | "preview_only" | "not_configured";

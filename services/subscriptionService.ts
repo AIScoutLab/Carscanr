@@ -2,17 +2,19 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { FREE_PRO_UNLOCKS_TOTAL, normalizeFreeUnlockCounter } from "@/constants/product";
 import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { applyPlanOverride } from "@/features/subscription/planOverride";
+import { getPurchaseOptionKind } from "@/lib/purchaseOptions";
+import { isProPlan } from "@/lib/subscription";
 import { apiRequest } from "@/services/apiClient";
 import { authService } from "@/services/authService";
 import { purchaseService } from "@/services/purchaseService";
 import { scanService } from "@/services/scanService";
 import { wait } from "@/lib/utils";
-import { FreeUnlockReason, SubscriptionActionResult, SubscriptionProduct, SubscriptionStatus, SubscriptionVerifyPayload } from "@/types";
+import { FreeUnlockReason, SubscriptionActionResult, SubscriptionProduct, SubscriptionStatus, SubscriptionVerifyPayload, UserPlan } from "@/types";
 
 type BackendSubscriptionRecord = {
   id: string;
   userId: string;
-  plan: "free" | "pro";
+  plan: UserPlan;
   status: "active" | "inactive" | "expired";
   productId: string;
   expiresAt?: string;
@@ -318,14 +320,6 @@ type FreeUnlockState = {
   unlockedVehicleIds: string[];
 };
 
-const PRO_MONTHLY_PRODUCT: SubscriptionProduct = {
-  productId: "com.caridentifier.pro.monthly",
-  platform: "ios",
-  plan: "pro",
-  priceLabel: "$6.99",
-  billingPeriodLabel: "month",
-};
-
 function normalizeUnlockState(input: unknown): FreeUnlockState {
   if (!input || typeof input !== "object") {
     return { used: 0, localUsed: 0, unlockedVehicleIds: [] };
@@ -421,12 +415,18 @@ let status: SubscriptionStatus = applyPlanOverride({
   purchaseAvailable: false,
 });
 
-function formatRenewalLabel(plan: "free" | "pro", expiresAt?: string) {
-  if (plan === "free") {
+function formatRenewalLabel(plan: UserPlan, expiresAt?: string) {
+  if (!isProPlan(plan)) {
     return "Upgrade for unlimited Pro details";
   }
 
   if (!expiresAt) {
+    if (plan === "pro_yearly") {
+      return "Pro yearly active";
+    }
+    if (plan === "pro_monthly") {
+      return "Pro monthly active";
+    }
     return "Pro active";
   }
 
@@ -439,12 +439,12 @@ function formatRenewalLabel(plan: "free" | "pro", expiresAt?: string) {
 }
 
 function mergeUsageStatus(usage: SubscriptionStatus, overrides?: Partial<SubscriptionStatus>): SubscriptionStatus {
-  return applyPlanOverride({
+  const merged = applyPlanOverride({
     ...usage,
-    isActive: usage.plan === "pro",
-    provider: "placeholder",
-    productId: PRO_MONTHLY_PRODUCT.productId,
-    willAutoRenew: usage.plan === "pro",
+    isActive: isProPlan(usage.plan),
+    provider: usage.provider ?? "placeholder",
+    productId: usage.productId ?? null,
+    willAutoRenew: usage.willAutoRenew ?? isProPlan(usage.plan),
     lastVerifiedAt: overrides?.lastVerifiedAt ?? null,
     purchaseAvailable: false,
     purchaseAvailabilityState: "not_configured",
@@ -452,6 +452,37 @@ function mergeUsageStatus(usage: SubscriptionStatus, overrides?: Partial<Subscri
     renewalLabel: formatRenewalLabel(usage.plan),
     ...overrides,
   });
+  const proActive = isProPlan(merged.plan);
+  const normalizedRenewalLabel =
+    proActive && merged.renewalLabel.toLowerCase().includes("free plan")
+      ? formatRenewalLabel(merged.plan)
+      : !proActive && merged.renewalLabel.toLowerCase().includes("pro active")
+        ? formatRenewalLabel("free")
+        : merged.renewalLabel;
+
+  return {
+    ...merged,
+    isActive: proActive,
+    willAutoRenew: proActive ? merged.willAutoRenew : false,
+    renewalLabel: normalizedRenewalLabel,
+  };
+}
+
+function buildRevenueCatReceiptData(customerInfo: unknown, productId: string) {
+  const info = customerInfo as {
+    originalAppUserId?: string;
+    requestDate?: string;
+    nonSubscriptionTransactions?: Array<{
+      productIdentifier?: string;
+      transactionIdentifier?: string;
+      purchaseDate?: string;
+    }>;
+  };
+  const transaction = info.nonSubscriptionTransactions?.find((entry) => entry.productIdentifier === productId);
+  if (transaction?.transactionIdentifier) {
+    return `${transaction.transactionIdentifier}:${transaction.purchaseDate ?? ""}`;
+  }
+  return `revenuecat:${info.originalAppUserId ?? "unknown"}:${productId}:${info.requestDate ?? new Date().toISOString()}`;
 }
 
 export const subscriptionService = {
@@ -473,9 +504,9 @@ export const subscriptionService = {
       ]);
       status = mergeUsageStatus(usage, {
         plan: purchaseSnapshot.activeEntitlement?.isActive ? "pro" : usage.plan,
-        provider: purchaseSnapshot.activeEntitlement?.isActive ? "revenuecat" : usage.plan === "pro" ? "backend" : "placeholder",
+        provider: purchaseSnapshot.activeEntitlement?.isActive ? "revenuecat" : isProPlan(usage.plan) ? "backend" : "placeholder",
         productId: purchaseSnapshot.activeProductId ?? status.productId ?? null,
-        willAutoRenew: purchaseSnapshot.activeEntitlement?.willRenew ?? usage.plan === "pro",
+        willAutoRenew: purchaseSnapshot.activeEntitlement?.willRenew ?? isProPlan(usage.plan),
         renewalLabel: purchaseSnapshot.activeEntitlement?.isActive
           ? formatRenewalLabel("pro", purchaseSnapshot.activeEntitlement.expirationDate ?? undefined)
           : usage.renewalLabel,
@@ -487,6 +518,7 @@ export const subscriptionService = {
       console.log("ENTITLEMENT_CACHE_STATE", {
         plan: status.plan,
         provider: status.provider,
+        isActive: status.isActive,
         purchaseAvailabilityState: status.purchaseAvailabilityState,
         purchaseAvailable: status.purchaseAvailable,
         activeProductId: purchaseSnapshot.activeProductId,
@@ -725,15 +757,22 @@ export const subscriptionService = {
     return this.getStatus();
   },
 
-  async purchaseSubscription(): Promise<SubscriptionActionResult> {
+  async purchaseSubscription(selectedProductKey?: string | null): Promise<SubscriptionActionResult> {
     console.log("[subscription] PURCHASE_FLOW_START");
     console.log("[subscription] PURCHASE_PRODUCTS_LOAD_START");
-    const purchase = await purchaseService.purchasePro();
+    const purchase = await purchaseService.purchasePro(selectedProductKey);
     console.log("[subscription] PURCHASE_PRODUCTS_LOAD_SUCCESS", {
       configured: purchase.snapshot.purchaseAvailable,
       products: purchase.snapshot.availableProducts.map((product) => product.productId),
     });
     console.log("[subscription] PURCHASE_ATTEMPT_START", { configured: purchase.snapshot.purchaseAvailable });
+    const purchasedProductId = "productIdentifier" in purchase ? purchase.productIdentifier : null;
+    const purchasedProduct = purchase.snapshot.availableProducts.find(
+      (product) =>
+        product.productId === purchasedProductId ||
+        product.packageIdentifier === selectedProductKey ||
+        product.productId === selectedProductKey,
+    );
     if (purchase.outcome === "verified" && purchase.snapshot.activeEntitlement?.isActive) {
       status = mergeUsageStatus(await scanService.getUsage().catch(() => status), {
         plan: "pro",
@@ -756,6 +795,38 @@ export const subscriptionService = {
         message: purchase.message,
       };
     }
+    if (purchase.outcome === "verified" && purchasedProductId && purchasedProduct && getPurchaseOptionKind(purchasedProduct) === "unlock_pack") {
+      await apiRequest<BackendSubscriptionRecord>({
+        path: "/api/subscription/verify",
+        method: "POST",
+        body: {
+          platform: "ios",
+          productId: purchasedProductId,
+          receiptData: buildRevenueCatReceiptData("customerInfo" in purchase ? purchase.customerInfo : null, purchasedProductId),
+        },
+      }).catch((error) => {
+        console.log("[subscription] UNLOCK_PACK_SYNC_FAILURE", {
+          productId: purchasedProductId,
+          message: error instanceof Error ? error.message : "Unknown unlock pack sync failure",
+        });
+        throw error;
+      });
+      status = mergeUsageStatus(await scanService.getUsage().catch(() => status), {
+        purchaseAvailable: purchase.snapshot.purchaseAvailable,
+        purchaseAvailabilityState: purchase.snapshot.purchaseAvailabilityState,
+        availableProducts: purchase.snapshot.availableProducts,
+      });
+      console.log("[subscription] PURCHASE_ATTEMPT_SUCCESS", {
+        outcome: "verified",
+        productId: purchasedProductId,
+        optionKind: "unlock_pack",
+      });
+      return {
+        outcome: "verified",
+        status,
+        message: "Unlock pack purchase verified. Five unlock credits were added to this account.",
+      };
+    }
     console.log("[subscription] PURCHASE_ATTEMPT_FAILURE", { stage: purchase.outcome, message: purchase.message });
     console.log("[subscription] PURCHASE_FLOW_FAILURE", { stage: purchase.outcome, message: purchase.message });
     status = mergeUsageStatus(await scanService.getUsage().catch(() => status), {
@@ -774,7 +845,7 @@ export const subscriptionService = {
     console.log("[subscription] RESTORE_PURCHASES_START");
     const restore = await purchaseService.restorePurchases();
     if (restore.outcome === "restored" && restore.snapshot.activeEntitlement?.isActive) {
-      status = mergeUsageStatus(await scanService.getUsage().catch(() => status), {
+      status = mergeUsageStatus(status, {
         plan: "pro",
         provider: "revenuecat",
         productId: restore.snapshot.activeProductId,
@@ -803,7 +874,7 @@ export const subscriptionService = {
       active: false,
       message: restore.message,
     });
-    status = mergeUsageStatus(await scanService.getUsage().catch(() => status), {
+    status = mergeUsageStatus(status, {
       purchaseAvailable: restore.snapshot.purchaseAvailable,
       purchaseAvailabilityState: restore.snapshot.purchaseAvailabilityState,
       availableProducts: restore.snapshot.availableProducts,
@@ -860,10 +931,10 @@ export const subscriptionService = {
 
     status = mergeUsageStatus(usage, {
       plan: record.plan,
-      isActive: record.plan === "pro" && record.status === "active",
+      isActive: isProPlan(record.plan) && record.status === "active",
       provider: "backend",
       productId: record.productId,
-      willAutoRenew: record.plan === "pro" && record.status === "active",
+      willAutoRenew: isProPlan(record.plan) && record.status === "active",
       lastVerifiedAt: record.verifiedAt,
       purchaseAvailable: false,
       renewalLabel: formatRenewalLabel(record.plan, record.expiresAt),
@@ -872,7 +943,7 @@ export const subscriptionService = {
     return {
       outcome: "verified",
       status,
-      message: record.plan === "pro" ? "Your Pro access is now synced." : "Subscription sync completed.",
+      message: isProPlan(record.plan) ? "Your Pro access is now synced." : "Subscription sync completed.",
     };
   },
 };

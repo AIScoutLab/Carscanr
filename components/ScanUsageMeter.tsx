@@ -2,6 +2,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { FREE_PRO_UNLOCKS_TOTAL } from "@/constants/product";
 import { cardStyles } from "@/design/patterns";
+import { isProPlan } from "@/lib/subscription";
 import { SubscriptionStatus } from "@/types";
 
 type Props = {
@@ -31,9 +32,10 @@ export function ScanUsageMeter({
   const limit = isUnlockMode ? unlocksLimit ?? FREE_PRO_UNLOCKS_TOTAL : status.limit ?? status.dailyScanLimit ?? 1;
   const used = isUnlockMode ? unlocksUsed ?? 0 : status.scansUsed ?? status.scansUsedToday ?? 0;
   const remaining = isUnlockMode ? unlocksRemaining ?? Math.max(0, limit - used) : status.scansRemaining ?? 0;
-  const progress = status.plan === "pro" ? 1 : Math.min(used / limit, 1);
+  const isPro = isProPlan(status.plan);
+  const progress = isPro ? 1 : Math.min(used / limit, 1);
   const title =
-    status.plan === "pro"
+    isPro
       ? isUnlockMode
         ? "Full access active"
         : "Unlimited scans"
@@ -41,7 +43,7 @@ export function ScanUsageMeter({
         ? `${used} of ${limit} free unlocks used`
         : `${used} of ${limit} free scans used`;
   const note =
-    status.plan === "pro"
+    isPro
       ? "Unlimited scans with instant full vehicle access."
       : isUnlockMode
         ? `${remaining} free unlocks remaining for premium access.`
@@ -50,14 +52,14 @@ export function ScanUsageMeter({
     <View style={styles.card}>
       <View style={styles.row}>
         <Text style={styles.title}>{title}</Text>
-        <Text style={styles.caption}>{status.plan === "pro" ? "Pro Active" : isUnlockMode ? "Unlocks" : "Free Scan"}</Text>
+        <Text style={styles.caption}>{isPro ? "Pro Active" : isUnlockMode ? "Unlocks" : "Free Scan"}</Text>
       </View>
       <View style={styles.track}>
         <View style={[styles.fill, { width: `${progress * 100}%` }]} />
       </View>
       <Text style={styles.note}>{note}</Text>
       {supportingText ? <Text style={styles.supporting}>{supportingText}</Text> : null}
-      {status.plan === "free" && ctaLabel && onCtaPress ? (
+      {!isPro && ctaLabel && onCtaPress ? (
         <TouchableOpacity onPress={onCtaPress} accessibilityRole="button" activeOpacity={0.86}>
           <Text style={styles.cta}>{ctaLabel}</Text>
         </TouchableOpacity>

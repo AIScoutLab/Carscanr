@@ -14,6 +14,7 @@ import { cardStyles } from "@/design/patterns";
 import { useSubscription } from "@/hooks/useSubscription";
 import { buildVehicleDescription } from "@/lib/vehicleDescription";
 import { generateVehicleInsight } from "@/lib/vehicleInsights";
+import { isProPlan } from "@/lib/subscription";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { scanService } from "@/services/scanService";
 import { buildVehicleSoftUnlockId, buildVehicleUnlockId } from "@/services/subscriptionService";
@@ -1129,7 +1130,7 @@ export default function ScanResultScreen() {
   let insightLine = "Solid all-around vehicle.";
   const isCatalogMatched = Boolean(bestMatch.id);
   const isQuickResult = normalized?.quickResult === true;
-  const isPro = usage?.plan === "pro";
+  const isPro = isProPlan(usage?.plan);
   const displayConfidenceScore = safeNumber(normalized?.confidenceScore, 0) ?? 0;
   const isVisualOverride = normalized?.source === "visual_override" || bestMatch.source === "visual_override";
   const isHighConfidenceVisualOverride = !isCatalogMatched && isVisualOverride && displayConfidenceScore >= 0.9;

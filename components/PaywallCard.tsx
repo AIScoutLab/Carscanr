@@ -2,10 +2,16 @@ import { LinearGradient } from "expo-linear-gradient";
 import { StyleSheet, Text, View } from "react-native";
 import { PillBadge } from "@/components/PillBadge";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { PRICING } from "@/lib/pricing";
 import { FREE_PRO_UNLOCKS_TOTAL } from "@/constants/product";
 import { Colors, PremiumCard, PremiumGradients, Radius, Typography } from "@/constants/theme";
 import { deriveFreeUnlockCounter } from "@/lib/freeUnlockDisplay";
+import {
+  getPurchaseOptionDescription,
+  getPurchaseOptionKind,
+  getPurchaseOptionPriceLine,
+  getPurchaseOptionTitle,
+  sortPurchaseProductsForDisplay,
+} from "@/lib/purchaseOptions";
 import { shadow } from "@/design/tokens";
 import { SubscriptionStatus } from "@/types";
 
@@ -24,7 +30,6 @@ export function PaywallCard({
   secondaryCtaDisabled = false,
   showCreditBadge = true,
   usageLabelOverride,
-  optionPills,
 }: {
   status?: SubscriptionStatus | null;
   unlocksUsed?: number;
@@ -40,8 +45,8 @@ export function PaywallCard({
   secondaryCtaDisabled?: boolean;
   showCreditBadge?: boolean;
   usageLabelOverride?: string;
-  optionPills?: string[];
 }) {
+  const availableProducts = sortPurchaseProductsForDisplay(status?.availableProducts ?? []);
   const unlockCounter = deriveFreeUnlockCounter({
     used: unlocksUsed,
     remaining: unlocksRemaining,
@@ -63,24 +68,43 @@ export function PaywallCard({
     mode: "paywall-card",
     plan: status?.plan ?? "free",
   });
+  availableProducts.forEach((product) => {
+    console.log("PAYWALL_PACKAGE_RENDERED", {
+      surface: "paywall-card",
+      productId: product.productId,
+      packageIdentifier: product.packageIdentifier ?? null,
+      optionKind: getPurchaseOptionKind(product),
+      priceLabel: product.priceLabel,
+    });
+  });
 
   return (
     <LinearGradient colors={PremiumGradients.primaryCard} start={{ x: 0.4, y: 0 }} end={{ x: 0.6, y: 1 }} style={styles.card}>
       <Text style={styles.title}>{title}</Text>
-      <Text style={styles.price}>{`${PRICING.yearlyDisplay}/year`}</Text>
-      <Text style={styles.subprice}>{`or ${PRICING.monthlyDisplay}/month`}</Text>
-      <PillBadge tone="neutral" label={usageLabel} />
-      {showCreditBadge && unlockCredits > 0 ? (
-        <PillBadge tone="success" label={`${unlockCredits} unlock credits ready`} />
-      ) : null}
-      {optionPills?.length ? (
-        <View style={styles.optionPillRow}>
-          {optionPills.map((pill) => (
-            <View key={pill} style={styles.optionPill}>
-              <Text style={styles.optionPillText}>{pill}</Text>
+      <Text style={styles.price}>{availableProducts.length > 0 ? "Choose your access" : "Pro access"}</Text>
+      <Text style={styles.subprice}>
+        {availableProducts.length > 0
+          ? "Live App Store options returned by RevenueCat."
+          : status?.purchaseAvailabilityState === "ready"
+            ? "No RevenueCat packages were returned for this build."
+            : "Purchases are unavailable until RevenueCat is configured for this build."}
+      </Text>
+      {availableProducts.length > 0 ? (
+        <View style={styles.optionList}>
+          {availableProducts.map((product) => (
+            <View key={product.packageIdentifier ?? product.productId} style={styles.optionRow}>
+              <View style={styles.optionTextWrap}>
+                <Text style={styles.optionTitle}>{getPurchaseOptionTitle(product)}</Text>
+                <Text style={styles.optionDescription}>{getPurchaseOptionDescription(product)}</Text>
+              </View>
+              <Text style={styles.optionPrice}>{getPurchaseOptionPriceLine(product)}</Text>
             </View>
           ))}
         </View>
+      ) : null}
+      <PillBadge tone="neutral" label={usageLabel} />
+      {showCreditBadge && unlockCredits > 0 ? (
+        <PillBadge tone="success" label={`${unlockCredits} unlock credits ready`} />
       ) : null}
       <Text style={styles.footer}>{description}</Text>
       {ctaLabel && onCtaPress ? <PrimaryButton label={ctaLabel} onPress={onCtaPress} /> : null}
@@ -103,19 +127,21 @@ const styles = StyleSheet.create({
   title: { ...Typography.title, color: Colors.textStrong },
   price: { ...Typography.heading, color: Colors.premium },
   subprice: { ...Typography.body, color: Colors.textSoft },
-  optionPillRow: {
+  optionList: { gap: 8 },
+  optionRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  optionPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: Radius.pill,
-    backgroundColor: "rgba(12, 21, 36, 0.78)",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    padding: 12,
+    borderRadius: Radius.md,
+    backgroundColor: "rgba(12, 21, 36, 0.72)",
     borderWidth: 1,
     borderColor: Colors.borderSoft,
   },
-  optionPillText: { ...Typography.caption, color: Colors.textSoft },
+  optionTextWrap: { flex: 1, gap: 3 },
+  optionTitle: { ...Typography.bodyStrong, color: Colors.textStrong },
+  optionDescription: { ...Typography.caption, color: Colors.textSoft },
+  optionPrice: { ...Typography.caption, color: Colors.premium, fontWeight: "700", textAlign: "right" },
   footer: { ...Typography.caption, color: Colors.textSoft },
 });

@@ -19,6 +19,7 @@ import { useSubscription } from "@/hooks/useSubscription";
 import { buildListingDerivedConditionSetFromListings, getConditionSourceLabel, normalizeSupportedValueCondition, resolveConditionValues } from "@/lib/valueConditionSet";
 import { formatHorsepowerLabel } from "@/lib/vehicleData";
 import { mobileBuildInfo, mobileEnv } from "@/lib/env";
+import { isProPlan } from "@/lib/subscription";
 import { buildSpecialtyVehicleOverview, isSpecialtyExoticMake } from "@/lib/specialtyVehicles";
 import { buildVehicleDescription } from "@/lib/vehicleDescription";
 import { MarketAreaZipSource, isValidMarketAreaZip, normalizeMarketAreaZip } from "@/lib/marketAreaZip";
@@ -1021,7 +1022,7 @@ export default function VehicleDetailScreen() {
   const unlockFailureTitle = (reason?: string) => (reason === "payload_too_thin" ? "Unlock protected" : "Unlock unavailable");
   const isEstimateMode = estimate === "1" || id.startsWith("estimate:");
   const showQaDebugStrip = mobileEnv.appEnv !== "production" || mobileEnv.showQaDebug === "1";
-  const isPro = usage?.plan === "pro";
+  const isPro = isProPlan(usage?.plan);
   const resolvedUnlockId =
     (typeof unlockId === "string" && unlockId.trim().length > 0
       ? unlockId

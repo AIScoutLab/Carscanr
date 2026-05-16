@@ -69,3 +69,21 @@ test("banned decorative labels do not return on high-risk production screens", (
     }
   }
 });
+
+test("paywall decorative premium-depth pill label does not return", () => {
+  const guardedFiles = [
+    "app/paywall.tsx",
+    "components/PaywallCard.tsx",
+    "components/UpgradePromptCard.tsx",
+    "components/ProLockCard.tsx",
+    "app/(tabs)/profile.tsx",
+  ];
+  const forbiddenLabels = [`PREMIUM ${"DEPTH"}`, `Premium ${"depth"}`];
+
+  for (const filePath of guardedFiles) {
+    const source = read(filePath);
+    for (const forbiddenLabel of forbiddenLabels) {
+      assert.equal(source.includes(forbiddenLabel), false, `Decorative paywall pill label leaked back into ${filePath}`);
+    }
+  }
+});
