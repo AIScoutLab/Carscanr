@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { FREE_PRO_UNLOCKS_TOTAL } from "@/constants/product";
 import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { getVehicleImage } from "@/constants/vehicleImages";
 import { applyPlanOverride } from "@/features/subscription/planOverride";
@@ -15,9 +16,9 @@ let mutableRecentScans: ScanResult[] = [];
 const recentScansListeners = new Set<(scans: ScanResult[]) => void>();
 let mutableUsage: SubscriptionStatus = { ...defaultSubscriptionStatus };
 let mutableUnlockStatus = {
-  freeUnlocksTotal: 5,
+  freeUnlocksTotal: FREE_PRO_UNLOCKS_TOTAL,
   freeUnlocksUsed: 0,
-  freeUnlocksRemaining: 5,
+  freeUnlocksRemaining: FREE_PRO_UNLOCKS_TOTAL,
   unlockedVehicleCount: 0,
   unlockedVehicleIds: [] as string[],
 };
@@ -241,13 +242,20 @@ function createInMemorySampleResult(sampleId: string): ScanResult {
 function mapUsage(usage: BackendUsageResponse): SubscriptionStatus {
   if (typeof usage.freeUnlocksTotal === "number") {
     mutableUnlockStatus = {
-      freeUnlocksTotal: usage.freeUnlocksTotal ?? 5,
+      freeUnlocksTotal: usage.freeUnlocksTotal ?? FREE_PRO_UNLOCKS_TOTAL,
       freeUnlocksUsed: usage.freeUnlocksUsed ?? 0,
       freeUnlocksRemaining:
-        usage.freeUnlocksRemaining ?? Math.max(0, (usage.freeUnlocksTotal ?? 5) - (usage.freeUnlocksUsed ?? 0)),
+        usage.freeUnlocksRemaining ?? Math.max(0, (usage.freeUnlocksTotal ?? FREE_PRO_UNLOCKS_TOTAL) - (usage.freeUnlocksUsed ?? 0)),
       unlockedVehicleCount: usage.unlockedVehicleCount ?? 0,
       unlockedVehicleIds: Array.isArray(usage.unlockedVehicleIds) ? usage.unlockedVehicleIds : mutableUnlockStatus.unlockedVehicleIds,
     };
+    console.log("FREE_UNLOCK_COUNTER_STATE", {
+      source: "scan_usage",
+      used: mutableUnlockStatus.freeUnlocksUsed,
+      remaining: mutableUnlockStatus.freeUnlocksRemaining,
+      limit: mutableUnlockStatus.freeUnlocksTotal,
+      unlockedVehicleCount: mutableUnlockStatus.unlockedVehicleIds.length,
+    });
   }
   return applyPlanOverride({
     plan: usage.plan,
@@ -756,9 +764,9 @@ export const scanService = {
     recentScansListeners.clear();
     mutableUsage = { ...defaultSubscriptionStatus };
     mutableUnlockStatus = {
-      freeUnlocksTotal: 5,
+      freeUnlocksTotal: FREE_PRO_UNLOCKS_TOTAL,
       freeUnlocksUsed: 0,
-      freeUnlocksRemaining: 5,
+      freeUnlocksRemaining: FREE_PRO_UNLOCKS_TOTAL,
       unlockedVehicleCount: 0,
       unlockedVehicleIds: [],
     };

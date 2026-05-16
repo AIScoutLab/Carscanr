@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { FREE_PRO_UNLOCKS_TOTAL } from "../config/product.js";
 import { env } from "../config/env.js";
 import { AppError } from "../errors/appError.js";
 import { enableMockRepositories, isSupabaseNetworkError, isUsingMockRepositories, repositories } from "../lib/repositoryRegistry.js";
@@ -55,9 +56,9 @@ export class UsageService {
           dailyScanLimit: null,
           scansRemainingToday: null,
           abuseWindowLimit: env.ABUSE_MAX_SCAN_ATTEMPTS_PER_10_MIN,
-          freeUnlocksTotal: 5,
+          freeUnlocksTotal: FREE_PRO_UNLOCKS_TOTAL,
           freeUnlocksUsed: 0,
-          freeUnlocksRemaining: 5,
+          freeUnlocksRemaining: FREE_PRO_UNLOCKS_TOTAL,
           unlockedVehicleCount: 0,
           unlockedVehicleIds: [],
         };

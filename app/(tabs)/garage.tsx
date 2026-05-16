@@ -54,7 +54,7 @@ export default function GarageScreen() {
           <Ionicons name="car-sport-outline" size={18} color={Colors.premium} />
         </PillBadge>
         <Text style={styles.title}>Your saved machines</Text>
-        <Text style={styles.subtitle}>Collect scans, keep notes, and revisit the vehicles that deserve a second look.</Text>
+        <Text style={styles.subtitle}>Collect scans, keep notes, and revisit the vehicles that are worth a second look.</Text>
       </LinearGradient>
       {usage ? <ScanUsageMeter status={usage} mode="unlocks" unlocksUsed={freeUnlocksLimit - freeUnlocksRemaining} unlocksRemaining={freeUnlocksRemaining} unlocksLimit={freeUnlocksLimit} /> : null}
       <TextInput value={query} onChangeText={setQuery} placeholder="Search your garage" placeholderTextColor={Colors.textMuted} style={styles.input} />
@@ -83,9 +83,6 @@ export default function GarageScreen() {
         </View>
       ) : filtered.length === 0 ? (
         <View style={styles.emptyWrap}>
-          <PillBadge tone="subtle" label="Collection ready" style={styles.emptyBadge}>
-            <Ionicons name="albums-outline" size={18} color={Colors.premium} />
-          </PillBadge>
           <EmptyState
             title="No saved vehicles yet"
             description={
@@ -187,5 +184,4 @@ const styles = StyleSheet.create({
   loadingTitle: { ...Typography.heading, color: Colors.textStrong },
   loadingText: { ...Typography.body, color: Colors.textSoft, textAlign: "center" },
   emptyWrap: { gap: 14 },
-  emptyBadge: { alignSelf: "center" },
 });

@@ -68,7 +68,10 @@ describe("bootstrap cost control", () => {
     });
 
     assert.equal(providerCalls, 0);
-    assert.match(result.data.sourceLabel ?? "", /Estimated from similar vehicles|Estimated from vehicle data/);
+    assert.match(
+      result.data.sourceLabel ?? "",
+      /Estimated from similar vehicles|Estimated from vehicle data|Estimated from nearby comparable listings/,
+    );
     assert.ok(result.data.privateParty > 0);
   });
 
@@ -1656,7 +1659,7 @@ describe("bootstrap cost control", () => {
     assert.equal(second.data.conditionValues?.excellent.privateParty != null, true);
   });
 
-  test("user requested listings refresh calls MarketCheck listings at most once", async () => {
+  test("user requested listings refresh keeps provider traffic in listings only while broadening through fallback attempts", async () => {
     env.ENABLE_LIVE_PROVIDER_CALLS = true;
     let listingsProviderCalls = 0;
     let valueProviderCalls = 0;
@@ -1717,10 +1720,11 @@ describe("bootstrap cost control", () => {
       action: "listingsRefresh",
     });
 
-    assert.equal(listingsProviderCalls, 1);
+    assert.ok(listingsProviderCalls >= 2);
     assert.equal(valueProviderCalls, 0);
     assert.equal(specsProviderCalls, 0);
-    assert.deepEqual(providerTrims, [""]);
+    assert.equal(providerTrims[0], "Base");
+    assert.ok(providerTrims.slice(1).every((trim) => trim === "" || trim == null));
   });
 
   test("scanning 3 cars makes 0 MarketCheck calls by default", async () => {

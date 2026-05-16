@@ -5,6 +5,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { BrandMark } from "@/components/BrandMark";
+import { BRAND_MARK_SIZES } from "@/constants/branding";
 import { APP_BRAND, ONBOARDING_STEPS, OnboardingVisualKind } from "@/lib/onboardingFlow";
 import { getOnboardingLayoutMetrics } from "@/lib/onboardingLayout";
 import { Radius, Typography } from "@/constants/theme";
@@ -273,9 +274,7 @@ export default function OnboardingScreen() {
       >
         <View style={[styles.header, { paddingHorizontal: metrics.horizontalPadding }]}>
           <View style={styles.brandWrap}>
-            <View style={styles.brandIcon}>
-              <BrandMark size={88} imageStyle={styles.brandIconImage} />
-            </View>
+            <BrandMark size={BRAND_MARK_SIZES.onboardingHeader} style={styles.brandIcon} resizeMode="contain" />
             <View>
               <Text style={styles.brandName}>{APP_BRAND.name}</Text>
               <Text style={styles.brandTagline}>{APP_BRAND.tagline}</Text>
@@ -387,24 +386,11 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   brandIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    overflow: "hidden",
-    alignItems: "center",
-    justifyContent: "center",
     backgroundColor: "rgba(12, 27, 44, 0.2)",
-    borderWidth: 1,
-    borderColor: "rgba(103, 226, 255, 0.12)",
     shadowColor: "#39CFFF",
     shadowOpacity: 0.12,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 3 },
-  },
-  brandIconImage: {
-    width: "100%",
-    height: "100%",
-    borderRadius: 14,
   },
   brandName: {
     ...Typography.heading,

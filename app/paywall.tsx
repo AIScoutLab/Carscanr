@@ -10,6 +10,7 @@ import { ScanUsageMeter } from "@/components/ScanUsageMeter";
 import { planBenefits } from "@/features/subscription/planCopy";
 import { useSubscription } from "@/hooks/useSubscription";
 import { Colors, Radius, Typography } from "@/constants/theme";
+import { FREE_PRO_UNLOCKS_TOTAL } from "@/constants/product";
 import { cardStyles } from "@/design/patterns";
 
 export default function PaywallScreen() {
@@ -83,7 +84,7 @@ export default function PaywallScreen() {
       ) : (
         <View style={styles.detailCard}>
           <Text style={styles.title}>Everything behind Pro</Text>
-          <Text style={styles.subtitle}>Unlimited scans stay free. Use your 5 free unlocks first, then upgrade only if you want always-on full access.</Text>
+          <Text style={styles.subtitle}>Unlimited scans stay free. Use your {FREE_PRO_UNLOCKS_TOTAL} free unlocks first, then upgrade only if you want always-on full access.</Text>
           <PlanColumn title="Included" items={planBenefits.pro} highlight />
           {availableProduct ? (
             <View style={styles.productCard}>

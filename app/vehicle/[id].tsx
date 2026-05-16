@@ -20,6 +20,7 @@ import { buildListingDerivedConditionSetFromListings, getConditionSourceLabel, n
 import { formatHorsepowerLabel } from "@/lib/vehicleData";
 import { mobileBuildInfo, mobileEnv } from "@/lib/env";
 import { buildSpecialtyVehicleOverview, isSpecialtyExoticMake } from "@/lib/specialtyVehicles";
+import { buildVehicleDescription } from "@/lib/vehicleDescription";
 import { MarketAreaZipSource, isValidMarketAreaZip, normalizeMarketAreaZip } from "@/lib/marketAreaZip";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { marketAreaZipService } from "@/services/marketAreaZipService";
@@ -1104,7 +1105,7 @@ export default function VehicleDetailScreen() {
     ? trustedResult
       ? "High-confidence identification"
       : "Vehicle identification"
-    : "Vehicle dossier";
+    : "Vehicle details";
   const unlockedDetailSubtitle = isEstimateMode
     ? trustedResult
       ? "High-confidence identification"
@@ -3006,6 +3007,27 @@ export default function VehicleDetailScreen() {
           bodyStyle: resolvedDisplayBodyStyle || vehicle.bodyStyle,
         })
       : vehicle?.overview ?? "";
+  const vehicleDescription = useMemo(
+    () =>
+      buildVehicleDescription({
+        year: vehicle?.year,
+        make: vehicle?.make,
+        model: vehicle?.model,
+        trim: resolvedDisplayTrim || vehicle?.trim,
+        bodyStyle: resolvedDisplayBodyStyle || vehicle?.bodyStyle,
+        vehicleType: typeof vehicleType === "string" ? vehicleType : vehicle?.bodyStyle,
+        engine: vehicle?.specs.engine,
+        horsepower: vehicle?.specs.horsepower ?? null,
+        drivetrain: vehicle?.specs.drivetrain,
+        transmission: vehicle?.specs.transmission,
+      }),
+    [
+      resolvedDisplayBodyStyle,
+      resolvedDisplayTrim,
+      vehicle,
+      vehicleType,
+    ],
+  );
 
   useEffect(() => {
     if (!vehicle || !heroImageUri) {
@@ -3027,6 +3049,34 @@ export default function VehicleDetailScreen() {
       vehicleId: vehicle.id,
     });
   }, [heroImageFitMode, heroImageUri, scanId, selectedImageSourceLabel, vehicle]);
+
+  useEffect(() => {
+    if (!vehicle) {
+      return;
+    }
+    if (vehicleDescription.description) {
+      console.log("[vehicle-detail] VEHICLE_DESCRIPTION_GENERATED", {
+        vehicleId: vehicle.id,
+        make: vehicle.make,
+        model: vehicle.model,
+        year: vehicle.year,
+      });
+      return;
+    }
+    console.log(
+      `[vehicle-detail] ${
+        vehicleDescription.reason === "data_insufficient"
+          ? "VEHICLE_DESCRIPTION_DATA_INSUFFICIENT"
+          : "VEHICLE_DESCRIPTION_SKIPPED"
+      }`,
+      {
+        vehicleId: vehicle.id,
+        make: vehicle.make,
+        model: vehicle.model,
+        year: vehicle.year,
+      },
+    );
+  }, [vehicle, vehicleDescription.description, vehicleDescription.reason]);
 
   useEffect(() => {
     if (loading || !vehicle) {
@@ -3053,7 +3103,7 @@ export default function VehicleDetailScreen() {
           <View style={styles.loadingHeroCard}>
             <PremiumSkeleton height={280} radius={Radius.xl} />
             <View style={styles.loadingHeroCopy}>
-              <Text style={styles.loadingEyebrow}>Vehicle dossier</Text>
+              <Text style={styles.loadingEyebrow}>Loading vehicle details</Text>
               <Text style={styles.loadingText}>Preparing the performance report</Text>
               <Text style={styles.loadingBody}>Loading identity, specs, ownership context, value, and related market sections.</Text>
             </View>
@@ -3100,9 +3150,13 @@ export default function VehicleDetailScreen() {
           </Pressable>
           <View style={styles.heroMetaCard}>
             <View style={styles.heroMetaTopRow}>
-              <View style={styles.heroBadge}>
-                <Text style={styles.heroBadgeLabel}>{lockedEyebrow}</Text>
-              </View>
+              {isEstimateMode ? (
+                <View style={styles.heroBadge}>
+                  <Text style={styles.heroBadgeLabel}>{lockedEyebrow}</Text>
+                </View>
+              ) : (
+                <View />
+              )}
               <View style={styles.heroTopActions}>
                 <View style={styles.heroTapBadge}>
                   <Text style={styles.heroTapBadgeLabel}>Open quick view</Text>
@@ -3169,29 +3223,45 @@ export default function VehicleDetailScreen() {
       <SegmentedTabBar tabs={tabs} activeTab={tab} onChange={setTab} />
 
       {tab === "Overview" ? (
-        <View style={styles.sectionCard}>
-          {isEstimateMode ? (
-            <SectionHeader
-              title="Vehicle Identification"
-              subtitle={trustedResult ? "High-confidence identification." : "Vehicle identification from your scan."}
+        <>
+          {vehicleDescription.description ? (
+            <View style={styles.sectionCard}>
+              <SectionHeader
+                title="Description"
+                subtitle="Grounded in confirmed vehicle identity and available specs."
+              />
+              <Text style={styles.body}>{vehicleDescription.description}</Text>
+            </View>
+          ) : null}
+          <View style={styles.sectionCard}>
+            {isEstimateMode ? (
+              <SectionHeader
+                title="Vehicle Identification"
+                subtitle={trustedResult ? "High-confidence identification." : "Vehicle identification from your scan."}
+              />
+            ) : (
+              <SectionHeader
+                title="Overview"
+                subtitle="Core identity details and confirmed overview copy."
+              />
+            )}
+            <Text style={styles.body}>{overviewCopy}</Text>
+            <DetailRow
+              label="Year"
+              value={
+                isEstimateMode
+                  ? (finalDisplayIdentity.yearLabel || (vehicle.year ? `${vehicle.year}` : "Vehicle identified"))
+                  : finalDisplayIdentity.yearLabel || `${vehicle.year}`
+              }
             />
-          ) : null}
-          <Text style={styles.body}>{overviewCopy}</Text>
-          <DetailRow
-            label="Year"
-            value={
-              isEstimateMode
-                ? (finalDisplayIdentity.yearLabel || (vehicle.year ? `${vehicle.year}` : "Vehicle identified"))
-                : finalDisplayIdentity.yearLabel || `${vehicle.year}`
-            }
-          />
-          <DetailRow label="Make" value={finalDisplayIdentity.make || vehicle.make} />
-          <DetailRow label="Model" value={finalDisplayIdentity.model || vehicle.model} />
-          {!trustedResult ? (
-            <DetailRow label={isEstimateMode ? "Trim" : "Trim"} value={resolvedDisplayTrim || "Unavailable"} />
-          ) : null}
-          <DetailRow label="Body style" value={resolvedDisplayBodyStyle || "Vehicle"} />
-        </View>
+            <DetailRow label="Make" value={finalDisplayIdentity.make || vehicle.make} />
+            <DetailRow label="Model" value={finalDisplayIdentity.model || vehicle.model} />
+            {!trustedResult ? (
+              <DetailRow label={isEstimateMode ? "Trim" : "Trim"} value={resolvedDisplayTrim || "Unavailable"} />
+            ) : null}
+            <DetailRow label="Body style" value={resolvedDisplayBodyStyle || "Vehicle"} />
+          </View>
+        </>
       ) : null}
 
       {tab === "Specs" ? (
@@ -3203,14 +3273,18 @@ export default function VehicleDetailScreen() {
             />
             {resolvedSpecsAvailable ? (
               <View style={styles.trustedSpecsStack}>
-                <DetailRow label={horsepowerSupport?.label ?? "Horsepower"} value={horsepowerSupport?.value ?? formatHorsepowerLabel(vehicle.specs.horsepower)} />
-                <DetailRow label="Drivetrain" value={vehicle.specs.drivetrain} />
-                <DetailRow label="Transmission" value={vehicle.specs.transmission} />
-                <DetailRow label="MPG / Range" value={vehicle.specs.mpgOrRange} />
-                <DetailRow label="Engine" value={vehicle.specs.engine} />
-                <DetailRow
-                  label={estimateSupport?.msrpRangeLabel?.includes(" - ") ? "MSRP range" : "MSRP"}
-                  value={estimateSupport?.msrpRangeLabel ?? (vehicle.specs.msrp > 0 ? formatCurrency(vehicle.specs.msrp) : "Unavailable")}
+                <SpecGrid
+                  items={[
+                    { label: horsepowerSupport?.label ?? "Horsepower", value: horsepowerSupport?.value ?? formatHorsepowerLabel(vehicle.specs.horsepower) },
+                    { label: "Drivetrain", value: vehicle.specs.drivetrain },
+                    { label: "Transmission", value: vehicle.specs.transmission },
+                    { label: "MPG / Range", value: vehicle.specs.mpgOrRange },
+                    { label: "Engine", value: vehicle.specs.engine },
+                    {
+                      label: estimateSupport?.msrpRangeLabel?.includes(" - ") ? "MSRP range" : "MSRP",
+                      value: estimateSupport?.msrpRangeLabel ?? (vehicle.specs.msrp > 0 ? formatCurrency(vehicle.specs.msrp) : "Unavailable"),
+                    },
+                  ]}
                 />
               </View>
             ) : (
@@ -3229,30 +3303,38 @@ export default function VehicleDetailScreen() {
               description="See the full powertrain, drivetrain, colors, and pricing with Pro."
             >
               <View style={styles.sectionCard}>
-                <DetailRow label="Engine" value={vehicle.specs.engine} />
-                <DetailRow label={horsepowerSupport?.label ?? "Horsepower"} value={horsepowerSupport?.value ?? formatHorsepowerLabel(vehicle.specs.horsepower)} />
+                <SpecGrid
+                  items={[
+                    { label: "Engine", value: vehicle.specs.engine },
+                    { label: horsepowerSupport?.label ?? "Horsepower", value: horsepowerSupport?.value ?? formatHorsepowerLabel(vehicle.specs.horsepower) },
+                    { label: "Torque", value: vehicle.specs.torque },
+                    { label: "Transmission", value: vehicle.specs.transmission },
+                    { label: "Drivetrain", value: vehicle.specs.drivetrain },
+                    { label: "MPG / Range", value: vehicle.specs.mpgOrRange },
+                  ]}
+                />
                 {horsepowerSupport && !horsepowerSupport.exact ? (
                   <Text style={styles.specSupportNote}>This horsepower comes from a strong family match because trim-level power differs across nearby variants.</Text>
                 ) : null}
-                <DetailRow label="Torque" value={vehicle.specs.torque} />
-                <DetailRow label="Transmission" value={vehicle.specs.transmission} />
-                <DetailRow label="Drivetrain" value={vehicle.specs.drivetrain} />
-                <DetailRow label="MPG / Range" value={vehicle.specs.mpgOrRange} />
                 <DetailRow label="Colors" value={vehicle.specs.exteriorColors.join(", ")} />
                 <DetailRow label="Original MSRP" value={formatCurrency(vehicle.specs.msrp)} />
               </View>
             </LockedContentPreview>
           ) : (
             <View style={styles.sectionCard}>
-              <DetailRow label="Engine" value={vehicle.specs.engine} />
-              <DetailRow label={horsepowerSupport?.label ?? "Horsepower"} value={horsepowerSupport?.value ?? formatHorsepowerLabel(vehicle.specs.horsepower)} />
+              <SpecGrid
+                items={[
+                  { label: "Engine", value: vehicle.specs.engine },
+                  { label: horsepowerSupport?.label ?? "Horsepower", value: horsepowerSupport?.value ?? formatHorsepowerLabel(vehicle.specs.horsepower) },
+                  { label: "Torque", value: vehicle.specs.torque },
+                  { label: "Transmission", value: vehicle.specs.transmission },
+                  { label: "Drivetrain", value: vehicle.specs.drivetrain },
+                  { label: "MPG / Range", value: vehicle.specs.mpgOrRange },
+                ]}
+              />
               {horsepowerSupport && !horsepowerSupport.exact ? (
                 <Text style={styles.specSupportNote}>This horsepower comes from a strong family match because trim-level power differs across nearby variants.</Text>
               ) : null}
-              <DetailRow label="Torque" value={vehicle.specs.torque} />
-              <DetailRow label="Transmission" value={vehicle.specs.transmission} />
-              <DetailRow label="Drivetrain" value={vehicle.specs.drivetrain} />
-              <DetailRow label="MPG / Range" value={vehicle.specs.mpgOrRange} />
               <DetailRow label="Colors" value={vehicle.specs.exteriorColors.join(", ")} />
               <DetailRow label="Original MSRP" value={formatCurrency(vehicle.specs.msrp)} />
             </View>
@@ -3703,7 +3785,7 @@ export default function VehicleDetailScreen() {
                   ))}
                 </View>
               ) : null}
-              <PrimaryButton label="Close dossier" secondary onPress={() => setHeroPreviewOpen(false)} />
+              <PrimaryButton label="Close quick view" secondary onPress={() => setHeroPreviewOpen(false)} />
             </View>
           </Pressable>
         </Pressable>
@@ -3717,6 +3799,23 @@ function DetailRow({ label, value }: { label: string; value: string }) {
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
       <Text style={styles.rowValue}>{value}</Text>
+    </View>
+  );
+}
+
+function SpecGrid({
+  items,
+}: {
+  items: Array<{ label: string; value: string }>;
+}) {
+  return (
+    <View style={styles.specGrid}>
+      {items.map((item) => (
+        <View key={`${item.label}-${item.value}`} style={styles.specCard}>
+          <Text style={styles.specCardLabel}>{item.label}</Text>
+          <Text style={styles.specCardValue}>{item.value}</Text>
+        </View>
+      ))}
     </View>
   );
 }
@@ -3959,7 +4058,33 @@ const styles = StyleSheet.create({
   estimateBadgeLabel: { ...Typography.caption, color: Colors.premium, fontWeight: "700", letterSpacing: 0.4 },
   estimateNoticeInline: { ...Typography.caption, color: Colors.textMuted, lineHeight: 18 },
   sectionCard: { ...cardStyles.primary, padding: 20, gap: 16 },
-  trustedSpecsStack: { gap: 4 },
+  trustedSpecsStack: { gap: 12 },
+  specGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+  },
+  specCard: {
+    width: "47%",
+    minHeight: 92,
+    borderRadius: Radius.lg,
+    padding: 14,
+    backgroundColor: Colors.cardAlt,
+    borderWidth: 1,
+    borderColor: Colors.borderSoft,
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  specCardLabel: {
+    ...Typography.caption,
+    color: Colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.7,
+  },
+  specCardValue: {
+    ...Typography.bodyStrong,
+    color: Colors.textStrong,
+  },
   approximateStateCard: { ...cardStyles.secondary, gap: 12, padding: 18 },
   approximateStateBadge: {
     alignSelf: "flex-start",

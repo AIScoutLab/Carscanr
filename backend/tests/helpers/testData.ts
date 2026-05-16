@@ -16,6 +16,7 @@ import {
   VisionDebugRecord,
   VisionProviderResult,
 } from "../../src/types/domain.js";
+import { FREE_PRO_UNLOCKS_TOTAL } from "../../src/config/product.js";
 import { ProviderRegistry } from "../../src/lib/providerRegistry.js";
 import { RepositoryRegistry } from "../../src/lib/repositoryRegistry.js";
 
@@ -276,7 +277,7 @@ export function createTestRepositories(seed?: {
         }
         const created = {
           userId,
-          freeUnlocksTotal: 5,
+          freeUnlocksTotal: FREE_PRO_UNLOCKS_TOTAL,
           freeUnlocksUsed: 0,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),

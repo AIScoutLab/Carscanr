@@ -59,24 +59,20 @@ export default function ProfileScreen() {
           <Ionicons name="person-circle-outline" size={18} color={Colors.premium} />
         </PillBadge>
         <Text style={styles.title}>Account and access</Text>
-        <Text style={styles.heroBody}>Unlimited free scans stay front and center. Your account adds sync, history, and recovery across devices.</Text>
+        <Text style={styles.heroBody}>Unlimited free scans stay front and center. Your account adds sync, history, support, and recovery across devices.</Text>
       </LinearGradient>
-      {!user ? (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Create your free account</Text>
-          <Text style={styles.meta}>Unlimited basic scans stay free forever. Create an account to save your Garage, keep unlock history, and restore across devices.</Text>
-          <PrimaryButton label="Create Free Account" onPress={() => router.push("/auth?mode=sign-up")} />
-          <PrimaryButton label="Sign In" secondary onPress={() => router.push("/auth?mode=sign-in")} />
-          <PrimaryButton label="See Pro Extras" secondary onPress={() => router.push("/paywall")} />
-        </View>
-      ) : null}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>What stays free</Text>
-        <Text style={styles.meta}>Unlimited scans, basic identification, and your included free Pro unlocks stay available without upgrading.</Text>
-      </View>
       <View style={[styles.card, styles.accountCard]}>
-        <Text style={styles.name}>{user ? user.fullName : "Guest"}</Text>
-        <Text style={styles.meta}>{user ? user.email : "Sign in to sync your account"}</Text>
+        <Text style={styles.sectionTitle}>Account</Text>
+        <Text style={styles.name}>{user ? user.fullName : "Guest mode"}</Text>
+        <Text style={styles.meta}>
+          {user ? user.email : "Create an account to sync your Garage, unlock history, and purchase recovery across devices."}
+        </Text>
+        {!user ? (
+          <View style={styles.actionGroup}>
+            <PrimaryButton label="Create Free Account" onPress={() => router.push("/auth?mode=sign-up")} />
+            <PrimaryButton label="Sign In" secondary onPress={() => router.push("/auth?mode=sign-in")} />
+          </View>
+        ) : null}
         {__DEV__ ? (
           <View style={styles.debugBlock}>
             <Text style={styles.debugLine}>Session detected: {sessionDetected ? "yes" : "no"}</Text>
@@ -93,9 +89,8 @@ export default function ProfileScreen() {
           </View>
         ) : null}
       </View>
-      {status?.plan !== "pro" ? <PaywallCard status={status} unlocksRemaining={freeUnlocksRemaining} unlocksLimit={freeUnlocksLimit} /> : null}
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Plan</Text>
+        <Text style={styles.sectionTitle}>Subscription & access</Text>
         <Text style={styles.meta}>{isLoading ? "Checking plan..." : status?.plan === "pro" ? "Pro active" : "Free plan"}</Text>
         <Text style={styles.meta}>{status?.renewalLabel ?? "Sign in to sync your subscription status."}</Text>
         <Text style={styles.meta}>
@@ -103,16 +98,19 @@ export default function ProfileScreen() {
         </Text>
         <Text style={styles.meta}>{Math.max(0, freeUnlocksRemaining)} remaining</Text>
         {status?.plan !== "pro" ? <Text style={styles.helper}>Missing Pro after sign-in? Use Restore Purchases to recheck your App Store entitlements for this account.</Text> : null}
-        <PrimaryButton label={status?.plan === "pro" ? "View Pro Status" : "Upgrade to Pro"} secondary={!user} onPress={() => router.push("/paywall")} />
-        <PrimaryButton
-          label={isRestoring ? "Checking App Store..." : "Restore Purchases"}
-          secondary
-          onPress={() => {
-            console.log("[tap] profile-restore-purchases");
-            restorePurchases().catch(() => undefined);
-          }}
-          disabled={isRestoring}
-        />
+        {status?.plan !== "pro" ? <PaywallCard status={status} unlocksRemaining={freeUnlocksRemaining} unlocksLimit={freeUnlocksLimit} /> : null}
+        <View style={styles.actionGroup}>
+          <PrimaryButton label={status?.plan === "pro" ? "View Pro Status" : "Upgrade to Pro"} secondary={!user} onPress={() => router.push("/paywall")} />
+          <PrimaryButton
+            label={isRestoring ? "Checking App Store..." : "Restore Purchases"}
+            secondary
+            onPress={() => {
+              console.log("[tap] profile-restore-purchases");
+              restorePurchases().catch(() => undefined);
+            }}
+            disabled={isRestoring}
+          />
+        </View>
         {status?.plan === "pro" ? (
           <TouchableOpacity
             activeOpacity={0.86}
@@ -142,15 +140,39 @@ export default function ProfileScreen() {
         {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
       </View>
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Privacy & Settings</Text>
-        <Text style={styles.meta}>Manage account, app permissions, analytics preferences, and future sync settings here.</Text>
-        <PrimaryButton
-          label="Request a Feature"
-          secondary
-          onPress={() => {
-            void Linking.openURL("mailto:support@carscanr.app?subject=CarScanr%20Feature%20Request");
-          }}
-        />
+        <Text style={styles.sectionTitle}>Garage & sync</Text>
+        <Text style={styles.meta}>
+          {user
+            ? "Your signed-in account can keep vehicle history, unlocks, and future sync data tied to one profile."
+            : "Sign in anytime to connect this device to a single Garage and purchase history."}
+        </Text>
+        <Text style={styles.helper}>
+          Session {sessionDetected ? "detected" : "not detected"} • API auth header {tokenPresent ? "ready" : "missing"}
+        </Text>
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>Support & feedback</Text>
+        <Text style={styles.meta}>Reach the team quickly when something breaks, when Pro needs to be restored, or when you have an idea worth building.</Text>
+        <View style={styles.actionGroup}>
+          <PrimaryButton
+            label="Request a Feature"
+            secondary
+            onPress={() => {
+              void Linking.openURL("mailto:support@carscanr.app?subject=CarScanr%20Feature%20Request");
+            }}
+          />
+          <PrimaryButton
+            label="Report an Issue"
+            secondary
+            onPress={() => {
+              void Linking.openURL("mailto:support@carscanr.app?subject=CarScanr%20Bug%20Report");
+            }}
+          />
+        </View>
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>App & account</Text>
+        <Text style={styles.meta}>Manage account access and keep the current app experience organized on this device.</Text>
         {user ? (
           <PrimaryButton
             label="Sign Out"
@@ -185,6 +207,7 @@ const styles = StyleSheet.create({
   heroBody: { ...Typography.body, color: Colors.textSoft },
   card: { backgroundColor: Colors.cardSoft, borderRadius: Radius.xl, padding: 20, gap: 10, borderWidth: 1, borderColor: Colors.border },
   accountCard: { gap: 8 },
+  actionGroup: { gap: 10 },
   name: { ...Typography.heading, color: Colors.textStrong },
   meta: { ...Typography.body, color: Colors.textSoft },
   sectionTitle: { ...Typography.heading, color: Colors.textStrong },

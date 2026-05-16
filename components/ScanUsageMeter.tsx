@@ -1,5 +1,6 @@
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { Colors, Radius, Typography } from "@/constants/theme";
+import { FREE_PRO_UNLOCKS_TOTAL } from "@/constants/product";
 import { cardStyles } from "@/design/patterns";
 import { SubscriptionStatus } from "@/types";
 
@@ -27,7 +28,7 @@ export function ScanUsageMeter({
   const hasUnlockProps =
     typeof unlocksLimit === "number" || typeof unlocksRemaining === "number" || typeof unlocksUsed === "number";
   const isUnlockMode = mode === "unlocks" || hasUnlockProps;
-  const limit = isUnlockMode ? unlocksLimit ?? 5 : status.limit ?? status.dailyScanLimit ?? 1;
+  const limit = isUnlockMode ? unlocksLimit ?? FREE_PRO_UNLOCKS_TOTAL : status.limit ?? status.dailyScanLimit ?? 1;
   const used = isUnlockMode ? unlocksUsed ?? 0 : status.scansUsed ?? status.scansUsedToday ?? 0;
   const remaining = isUnlockMode ? unlocksRemaining ?? Math.max(0, limit - used) : status.scansRemaining ?? 0;
   const progress = status.plan === "pro" ? 1 : Math.min(used / limit, 1);

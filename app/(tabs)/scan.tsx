@@ -6,6 +6,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { AppContainer } from "@/components/AppContainer";
 import { BrandMark } from "@/components/BrandMark";
+import { BRAND_MARK_SIZES } from "@/constants/branding";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorStateCard } from "@/components/ErrorStateCard";
 import { FeatureRow } from "@/components/FeatureRow";
@@ -647,7 +648,7 @@ export default function ScanScreen() {
     <AppContainer>
       <PremiumCard variant="hero" glow contentStyle={styles.brandHero}>
         <View style={styles.brandHeroRow}>
-          <BrandMark size={72} style={styles.brandIconWrap} imageStyle={styles.brandIconImage} />
+          <BrandMark size={BRAND_MARK_SIZES.scanHero} style={styles.brandIconWrap} resizeMode="contain" />
           <View style={styles.brandCopy}>
             <Text style={styles.brandName}>{APP_BRAND.name}</Text>
             <Text style={styles.brandTagline}>{APP_BRAND.tagline}</Text>
@@ -785,20 +786,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   brandIconWrap: {
-    width: 46,
-    height: 46,
-    borderRadius: 14,
-    overflow: "hidden",
-    alignItems: "center",
-    justifyContent: "center",
     backgroundColor: "rgba(17, 42, 70, 0.24)",
-    borderWidth: 1,
-    borderColor: "rgba(114, 225, 255, 0.16)",
-  },
-  brandIconImage: {
-    width: "100%",
-    height: "100%",
-    borderRadius: 14,
   },
   brandCopy: {
     flex: 1,

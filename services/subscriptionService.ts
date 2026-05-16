@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { FREE_PRO_UNLOCKS_TOTAL } from "@/constants/product";
 import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { applyPlanOverride } from "@/features/subscription/planOverride";
 import { apiRequest } from "@/services/apiClient";
@@ -47,7 +48,7 @@ type FreeUnlockActionResult = {
   message: string;
 };
 
-const FREE_UNLOCKS_LIMIT = 5;
+const FREE_UNLOCKS_LIMIT = FREE_PRO_UNLOCKS_TOTAL;
 const FREE_UNLOCK_STORAGE_KEY = "carscanr.freeUnlocks.v1";
 const ESTIMATED_UNLOCK_PREFIX = "estimate:";
 const ESTIMATED_SOFT_UNLOCK_PREFIX = "estimate-soft:";
@@ -296,6 +297,21 @@ function normalizeEstimatedUnlockId(vehicleId: string) {
   return vehicleId;
 }
 
+function logFreeUnlockCounterState(source: string, payload: {
+  used: number;
+  remaining: number;
+  limit: number;
+  unlockedVehicleIds?: string[];
+}) {
+  console.log("FREE_UNLOCK_COUNTER_STATE", {
+    source,
+    used: payload.used,
+    remaining: payload.remaining,
+    limit: payload.limit,
+    unlockedVehicleCount: payload.unlockedVehicleIds?.length ?? 0,
+  });
+}
+
 type FreeUnlockState = {
   used: number;
   localUsed?: number;
@@ -478,6 +494,10 @@ export const subscriptionService = {
   },
 
   async getFreeUnlockState() {
+    console.log("FREE_UNLOCK_LIMIT_SOURCE", {
+      source: "constants/product",
+      limit: FREE_UNLOCKS_LIMIT,
+    });
     const user = await authService.getCurrentUser();
     const token = await authService.getAccessToken();
     const localState = await loadFreeUnlockState(user?.id ?? "guest");
@@ -486,6 +506,12 @@ export const subscriptionService = {
         console.log("[subscription] unlock status skipped (no auth token)");
       }
       const remaining = Math.max(0, FREE_UNLOCKS_LIMIT - localState.used);
+      logFreeUnlockCounterState("local_no_auth", {
+        used: localState.localUsed ?? localState.used,
+        remaining,
+        limit: FREE_UNLOCKS_LIMIT,
+        unlockedVehicleIds: localState.unlockedVehicleIds,
+      });
       return {
         used: localState.localUsed ?? localState.used,
         remaining,
@@ -496,6 +522,7 @@ export const subscriptionService = {
     const cached = scanService.getCachedUnlockStatus?.();
     if (cached && typeof cached.freeUnlocksTotal === "number") {
       const merged = mergeUnlockStates(cached.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT, cached.unlockedVehicleIds ?? [], localState);
+      logFreeUnlockCounterState("scan_cache", merged);
       return {
         used: merged.used,
         remaining: merged.remaining,
@@ -511,6 +538,7 @@ export const subscriptionService = {
         path: "/api/unlocks/status",
       });
       const merged = mergeUnlockStates(status.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT, status.unlockedVehicleIds ?? [], localState);
+      logFreeUnlockCounterState("backend_status", merged);
       return {
         used: merged.used,
         remaining: merged.remaining,
@@ -519,6 +547,12 @@ export const subscriptionService = {
       };
     } catch {
       const remaining = Math.max(0, FREE_UNLOCKS_LIMIT - localState.used);
+      logFreeUnlockCounterState("local_fallback", {
+        used: localState.localUsed ?? localState.used,
+        remaining,
+        limit: FREE_UNLOCKS_LIMIT,
+        unlockedVehicleIds: localState.unlockedVehicleIds,
+      });
       return {
         used: localState.localUsed ?? localState.used,
         remaining,
@@ -567,6 +601,12 @@ export const subscriptionService = {
         unlockedVehicleIds: dedupeUnlockIds([...unlockState.unlockedVehicleIds, ...candidateIds]),
       };
       await saveFreeUnlockState(localUserId, nextState);
+      logFreeUnlockCounterState("local_unlock_consumed", {
+        used: nextState.used,
+        remaining: Math.max(0, FREE_UNLOCKS_LIMIT - nextState.used),
+        limit: FREE_UNLOCKS_LIMIT,
+        unlockedVehicleIds: nextState.unlockedVehicleIds,
+      });
       return {
         ok: true,
         state: nextState,
@@ -603,6 +643,12 @@ export const subscriptionService = {
         unlockedVehicleIds: status.unlockedVehicleIds ?? [],
       };
       await saveFreeUnlockState(user.id, unlockState);
+      logFreeUnlockCounterState("backend_unlock_status", {
+        used: unlockState.used,
+        remaining: status.freeUnlocksRemaining ?? Math.max(0, status.freeUnlocksTotal - status.freeUnlocksUsed),
+        limit: status.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT,
+        unlockedVehicleIds: unlockState.unlockedVehicleIds,
+      });
       return {
         ok: response.entitlement.allowed,
         state: unlockState,

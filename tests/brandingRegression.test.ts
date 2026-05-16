@@ -62,3 +62,17 @@ test("branding uses a single canonical logo asset path in app code", () => {
     );
   }
 });
+
+test("shared brand mark usage keeps header logos on the canonical component path", () => {
+  const riskyFiles = [
+    "app/onboarding.tsx",
+    "app/(tabs)/scan.tsx",
+    "app/auth.tsx",
+  ];
+
+  for (const relativePath of riskyFiles) {
+    const source = fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
+    assert.equal(source.includes("<BrandMark"), true, `${relativePath} should use the shared BrandMark component`);
+    assert.equal(source.includes("imageStyle={styles.brandIconImage}"), false, `${relativePath} should not override BrandMark with full-bleed image sizing`);
+  }
+});

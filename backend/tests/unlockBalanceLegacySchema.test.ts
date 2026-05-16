@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
+import { FREE_PRO_UNLOCKS_TOTAL } from "../src/config/product.js";
 import { SupabaseUnlockBalanceRepository } from "../src/repositories/supabaseRepositories.js";
 
 type UpsertPayload = Record<string, unknown>;
@@ -49,7 +50,7 @@ class FakeTableQuery {
     const userId = String(this.pendingPayload.user_id);
     const row = {
       user_id: userId,
-      free_unlocks_total: this.pendingPayload.free_unlocks_total ?? 5,
+      free_unlocks_total: this.pendingPayload.free_unlocks_total ?? FREE_PRO_UNLOCKS_TOTAL,
       free_unlocks_used: this.pendingPayload.free_unlocks_used ?? 0,
       created_at: this.pendingPayload.created_at ?? new Date().toISOString(),
       updated_at: this.pendingPayload.updated_at ?? new Date().toISOString(),
