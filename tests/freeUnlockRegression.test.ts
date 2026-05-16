@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { FREE_PRO_UNLOCKS_TOTAL } from "@/constants/product";
+import { FREE_PRO_UNLOCKS_TOTAL, normalizeFreeUnlockCounter } from "@/constants/product";
 import { FREE_PRO_UNLOCKS_TOTAL as BACKEND_FREE_PRO_UNLOCKS_TOTAL } from "../backend/src/config/product";
 
 const repoRoot = path.resolve(__dirname, "..");
@@ -32,4 +32,12 @@ test("high-risk unlock files do not carry the old five-unlock default", () => {
     assert.equal(source.includes("freeUnlocksRemaining: 5"), false, `${filePath} still hardcodes a five-unlock remainder`);
     assert.equal(source.includes("Use your 5 free unlocks"), false, `${filePath} still references the old five-unlock copy`);
   }
+});
+
+test("free unlock counters clamp impossible persisted states back into the canonical three-unlock range", () => {
+  assert.deepEqual(normalizeFreeUnlockCounter({ total: 5, used: 4, remaining: 1 }), {
+    limit: 3,
+    used: 3,
+    remaining: 0,
+  });
 });

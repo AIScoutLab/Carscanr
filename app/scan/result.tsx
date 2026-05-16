@@ -12,6 +12,7 @@ import { SectionHeader } from "@/components/SectionHeader";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
 import { useSubscription } from "@/hooks/useSubscription";
+import { buildVehicleDescription } from "@/lib/vehicleDescription";
 import { generateVehicleInsight } from "@/lib/vehicleInsights";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { scanService } from "@/services/scanService";
@@ -74,6 +75,7 @@ type NormalizedScan = {
   unlockEligible: boolean | null;
   unlockRecommendationReason: string | null;
   previewSpecFacts: string[];
+  visibleClues: string[];
 };
 
 function safeString(value: unknown, fallback = "") {
@@ -172,6 +174,9 @@ function normalizeScanForResult(raw: ScanResult): NormalizedScan {
     unlockEligible: typeof raw.unlockEligible === "boolean" ? raw.unlockEligible : null,
     unlockRecommendationReason: typeof raw.unlockRecommendationReason === "string" ? raw.unlockRecommendationReason : null,
     previewSpecFacts: [],
+    visibleClues: Array.isArray((raw as any)?.normalizedResult?.visible_clues)
+      ? (raw as any).normalizedResult.visible_clues.filter((clue: unknown): clue is string => typeof clue === "string" && clue.trim().length > 0)
+      : [],
   };
 }
 
@@ -1407,6 +1412,13 @@ export default function ScanResultScreen() {
     normalized?.detectedVehicleType ? `Vehicle type: ${normalized.detectedVehicleType === "motorcycle" ? "Motorcycle" : "Car"}` : null,
   ].filter((entry): entry is string => Boolean(entry));
   const previewSpecFacts = normalized?.previewSpecFacts ?? [];
+  const previewDescription = buildVehicleDescription({
+    year: bestMatch.year,
+    make: bestMatch.make,
+    model: bestMatch.model,
+    trim: bestMatch.displayTrimLabel ?? bestMatch.trim ?? null,
+    vehicleType: normalized?.detectedVehicleType ?? null,
+  }).description;
   const highConfidenceOverrideBody =
     bestMatch.displayYearLabel || bestMatch.make || bestMatch.model
       ? `We identified this ${[bestMatch.displayYearLabel, bestMatch.make, bestMatch.model].filter(Boolean).join(" ")} with high confidence.`
@@ -1414,6 +1426,16 @@ export default function ScanResultScreen() {
   const confidenceSupportNote = isHighConfidenceTrustedVisualOverride
     ? "This identification is based on strong visible design cues from your photo."
     : "This is the most likely match based on visible design cues from your photo.";
+  const previewFallbackFacts = [
+    previewDescription ? `Overview: ${previewDescription}` : null,
+    normalized?.visibleClues?.[0] ? `Visible clue: ${normalized.visibleClues[0]}` : null,
+    normalized?.visibleClues?.[1] ? `Visible clue: ${normalized.visibleClues[1]}` : null,
+    confidenceSupportNote ? `Confidence note: ${confidenceSupportNote}` : null,
+  ]
+    .filter((entry, index, list): entry is string => Boolean(entry) && list.indexOf(entry) === index)
+    .slice(0, 3);
+  const previewSecondaryFacts = previewSpecFacts.length > 0 ? previewSpecFacts : previewFallbackFacts;
+  const previewSecondaryLabel = previewSpecFacts.length > 0 ? "Partial Specs" : "What we can confirm now";
 
   useEffect(() => {
     if (!isCatalogMatched && normalized) {
@@ -1426,14 +1448,14 @@ export default function ScanResultScreen() {
         scanId: normalized.id,
         title: "Estimated match",
       });
-      if (basicPreviewFacts.length > 0 || previewSpecFacts.length > 0) {
+      if (basicPreviewFacts.length > 0 || previewSecondaryFacts.length > 0) {
         console.log("[scan-result] FALLBACK_QUICK_FACTS_RENDERED", {
           scanId: normalized.id,
-          facts: [...basicPreviewFacts, ...previewSpecFacts],
+          facts: [...basicPreviewFacts, ...previewSecondaryFacts],
         });
       }
     }
-  }, [basicPreviewFacts, displayConfidenceScore, isCatalogMatched, normalized, previewSpecFacts]);
+  }, [basicPreviewFacts, displayConfidenceScore, isCatalogMatched, normalized, previewSecondaryFacts]);
 
   useEffect(() => {
     if (!normalized?.imageUri) {
@@ -1574,13 +1596,17 @@ export default function ScanResultScreen() {
             </View>
             {showBasicInfoDetails ? (
               <View style={styles.previewGroup}>
-                <Text style={styles.previewGroupLabel}>Partial Specs</Text>
-                {previewSpecFacts.length > 0 ? (
-                  previewSpecFacts.map((fact) => (
+                <Text style={styles.previewGroupLabel}>{previewSecondaryLabel}</Text>
+                {previewSecondaryFacts.length > 0 ? (
+                  previewSecondaryFacts.map((fact) => (
                     <Text key={fact} style={styles.quickFactLine}>{fact}</Text>
                   ))
                 ) : (
-                  <Text style={styles.quickFactLine}>Partial specs are still loading for this result.</Text>
+                  <View style={styles.previewLoadingState}>
+                    <PremiumSkeleton height={12} radius={999} />
+                    <PremiumSkeleton height={12} radius={999} />
+                    <Text style={styles.previewLoadingCopy}>We’re organizing the first confirmed details from this scan.</Text>
+                  </View>
                 )}
               </View>
             ) : null}
@@ -1703,6 +1729,14 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 0.8,
     fontWeight: "700",
+  },
+  previewLoadingState: {
+    gap: 10,
+    paddingTop: 4,
+  },
+  previewLoadingCopy: {
+    ...Typography.caption,
+    color: Colors.textMuted,
   },
   singleActionCard: {
     gap: 12,

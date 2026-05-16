@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { FREE_PRO_UNLOCKS_TOTAL } from "@/constants/product";
+import { FREE_PRO_UNLOCKS_TOTAL, normalizeFreeUnlockCounter } from "@/constants/product";
 import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { getVehicleImage } from "@/constants/vehicleImages";
 import { applyPlanOverride } from "@/features/subscription/planOverride";
@@ -241,11 +241,16 @@ function createInMemorySampleResult(sampleId: string): ScanResult {
 
 function mapUsage(usage: BackendUsageResponse): SubscriptionStatus {
   if (typeof usage.freeUnlocksTotal === "number") {
-    mutableUnlockStatus = {
-      freeUnlocksTotal: usage.freeUnlocksTotal ?? FREE_PRO_UNLOCKS_TOTAL,
-      freeUnlocksUsed: usage.freeUnlocksUsed ?? 0,
-      freeUnlocksRemaining:
+    const normalizedCounter = normalizeFreeUnlockCounter({
+      total: usage.freeUnlocksTotal ?? FREE_PRO_UNLOCKS_TOTAL,
+      used: usage.freeUnlocksUsed ?? 0,
+      remaining:
         usage.freeUnlocksRemaining ?? Math.max(0, (usage.freeUnlocksTotal ?? FREE_PRO_UNLOCKS_TOTAL) - (usage.freeUnlocksUsed ?? 0)),
+    });
+    mutableUnlockStatus = {
+      freeUnlocksTotal: normalizedCounter.limit,
+      freeUnlocksUsed: normalizedCounter.used,
+      freeUnlocksRemaining: normalizedCounter.remaining,
       unlockedVehicleCount: usage.unlockedVehicleCount ?? 0,
       unlockedVehicleIds: Array.isArray(usage.unlockedVehicleIds) ? usage.unlockedVehicleIds : mutableUnlockStatus.unlockedVehicleIds,
     };

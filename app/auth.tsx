@@ -5,7 +5,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { BrandMark } from "@/components/BrandMark";
-import { BRAND_MARK_SIZES } from "@/constants/branding";
+import { BRAND_MARK_LAYOUT } from "@/constants/branding";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { useSubscription } from "@/hooks/useSubscription";
@@ -296,7 +296,11 @@ export default function AuthScreen() {
         </View>
       ) : null}
       <LinearGradient colors={["rgba(16,56,148,0.32)", "rgba(53,96,207,0.10)", "rgba(7,13,28,0.94)"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.brandWrap}>
-        <BrandMark size={BRAND_MARK_SIZES.authHero} resizeMode="contain" />
+        <BrandMark
+          size={BRAND_MARK_LAYOUT.authHero.size}
+          contentScale={BRAND_MARK_LAYOUT.authHero.contentScale}
+          resizeMode="contain"
+        />
         <View style={styles.brandTextWrap}>
           <Text style={styles.brandName}>Use CarScanr free right away.</Text>
           <Text style={styles.brandNote}>Create an account only if you want Garage sync, saved history, and restore across devices.</Text>

@@ -7,7 +7,7 @@ export function BrandMark({
   style,
   imageStyle,
   resizeMode = "contain",
-  contentScale = 0.84,
+  contentScale = 0.8,
 }: {
   size?: number;
   style?: StyleProp<ViewStyle>;

@@ -6,7 +6,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { AppContainer } from "@/components/AppContainer";
 import { BrandMark } from "@/components/BrandMark";
-import { BRAND_MARK_SIZES } from "@/constants/branding";
+import { BRAND_MARK_LAYOUT } from "@/constants/branding";
 import { EmptyState } from "@/components/EmptyState";
 import { ErrorStateCard } from "@/components/ErrorStateCard";
 import { FeatureRow } from "@/components/FeatureRow";
@@ -648,7 +648,12 @@ export default function ScanScreen() {
     <AppContainer>
       <PremiumCard variant="hero" glow contentStyle={styles.brandHero}>
         <View style={styles.brandHeroRow}>
-          <BrandMark size={BRAND_MARK_SIZES.scanHero} style={styles.brandIconWrap} resizeMode="contain" />
+          <BrandMark
+            size={BRAND_MARK_LAYOUT.scanHero.size}
+            contentScale={BRAND_MARK_LAYOUT.scanHero.contentScale}
+            style={styles.brandIconWrap}
+            resizeMode="contain"
+          />
           <View style={styles.brandCopy}>
             <Text style={styles.brandName}>{APP_BRAND.name}</Text>
             <Text style={styles.brandTagline}>{APP_BRAND.tagline}</Text>

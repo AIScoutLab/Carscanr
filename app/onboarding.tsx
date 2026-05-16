@@ -5,7 +5,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { BrandMark } from "@/components/BrandMark";
-import { BRAND_MARK_SIZES } from "@/constants/branding";
+import { BRAND_MARK_LAYOUT } from "@/constants/branding";
 import { APP_BRAND, ONBOARDING_STEPS, OnboardingVisualKind } from "@/lib/onboardingFlow";
 import { getOnboardingLayoutMetrics } from "@/lib/onboardingLayout";
 import { Radius, Typography } from "@/constants/theme";
@@ -274,7 +274,12 @@ export default function OnboardingScreen() {
       >
         <View style={[styles.header, { paddingHorizontal: metrics.horizontalPadding }]}>
           <View style={styles.brandWrap}>
-            <BrandMark size={BRAND_MARK_SIZES.onboardingHeader} style={styles.brandIcon} resizeMode="contain" />
+            <BrandMark
+              size={BRAND_MARK_LAYOUT.onboardingHeader.size}
+              contentScale={BRAND_MARK_LAYOUT.onboardingHeader.contentScale}
+              style={styles.brandIcon}
+              resizeMode="contain"
+            />
             <View>
               <Text style={styles.brandName}>{APP_BRAND.name}</Text>
               <Text style={styles.brandTagline}>{APP_BRAND.tagline}</Text>

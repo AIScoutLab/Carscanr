@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { FREE_PRO_UNLOCKS_TOTAL } from "@/constants/product";
+import { FREE_PRO_UNLOCKS_TOTAL, normalizeFreeUnlockCounter } from "@/constants/product";
 import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { applyPlanOverride } from "@/features/subscription/planOverride";
 import { apiRequest } from "@/services/apiClient";
@@ -331,12 +331,14 @@ function normalizeUnlockState(input: unknown): FreeUnlockState {
     return { used: 0, localUsed: 0, unlockedVehicleIds: [] };
   }
   const raw = input as Partial<FreeUnlockState>;
-  const localUsed =
-    typeof raw.localUsed === "number" && Number.isFinite(raw.localUsed)
-      ? Math.max(0, raw.localUsed)
-      : typeof raw.used === "number" && Number.isFinite(raw.used)
-        ? Math.max(0, raw.used)
-        : 0;
+  const localUsed = normalizeFreeUnlockCounter({
+    used:
+      typeof raw.localUsed === "number" && Number.isFinite(raw.localUsed)
+        ? raw.localUsed
+        : typeof raw.used === "number" && Number.isFinite(raw.used)
+          ? raw.used
+          : 0,
+  }).used;
   const unlockedVehicleIds = Array.isArray(raw.unlockedVehicleIds)
     ? Array.from(
         new Set(
@@ -393,16 +395,19 @@ function dedupeUnlockIds(ids: string[]) {
 }
 
 function mergeUnlockStates(limit: number, backendIds: string[], localState: FreeUnlockState) {
+  const normalizedLimit = normalizeFreeUnlockCounter({ total: limit }).limit;
   const estimatedIds = localState.unlockedVehicleIds.filter((id) => isEstimatedUnlockId(id) || isEstimatedSoftUnlockId(id));
   const unlockedVehicleIds = dedupeUnlockIds([...backendIds, ...estimatedIds]);
   const uniqueBackendIds = Array.from(new Set(backendIds.filter((id) => typeof id === "string" && id.length > 0)));
-  const localUsed = typeof localState.localUsed === "number" ? Math.max(0, localState.localUsed) : Math.max(0, localState.used);
-  const used = Math.min(limit, uniqueBackendIds.length + localUsed);
+  const localUsed = normalizeFreeUnlockCounter({
+    used: typeof localState.localUsed === "number" ? localState.localUsed : localState.used,
+  }).used;
+  const used = Math.min(normalizedLimit, uniqueBackendIds.length + localUsed);
   return {
     used,
-    remaining: Math.max(0, limit - used),
+    remaining: Math.max(0, normalizedLimit - used),
     unlockedVehicleIds,
-    limit,
+    limit: normalizedLimit,
   };
 }
 
