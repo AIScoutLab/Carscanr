@@ -3197,7 +3197,7 @@ export default function VehicleDetailScreen() {
         </View>
       </Animated.View>
       {__DEV__ ? <Text style={styles.imageDebug}>Image source: {selectedImageSourceLabel}</Text> : null}
-      <Animated.View style={{ opacity: contentOpacity, transform: [{ translateY: contentTranslate }] }}>
+      <Animated.View style={[styles.contentStack, { opacity: contentOpacity, transform: [{ translateY: contentTranslate }] }]}>
       {usage ? (
         <ScanUsageMeter
           status={usage}
@@ -3984,6 +3984,7 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 8,
   },
+  contentStack: { gap: 18 },
   imageDebug: { ...Typography.caption, color: Colors.textMuted },
   headerCard: { ...cardStyles.primary, padding: 20, gap: 8 },
   headerCardEstimate: {
@@ -4139,7 +4140,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.cardAlt,
   },
   photo: { width: "100%", height: "100%" },
-  bottomActionStack: { gap: 12, paddingTop: 6, paddingBottom: 10 },
+  bottomActionStack: { gap: 12, marginTop: 6, paddingTop: 10, paddingBottom: 10 },
   loadingPage: { flex: 1, gap: 20 },
   loadingWrap: { flex: 1, justifyContent: "center", gap: 18 },
   loadingHeroCard: { ...cardStyles.primaryTint, gap: 16, padding: 18 },

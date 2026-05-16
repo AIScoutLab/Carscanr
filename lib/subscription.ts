@@ -1,4 +1,4 @@
-import { SubscriptionStatus, UserPlan } from "@/types";
+import { BillingProvider, PurchaseAvailabilityState, SubscriptionStatus, UserPlan } from "@/types";
 
 export function isProPlan(plan?: UserPlan | null) {
   return plan === "pro" || plan === "pro_monthly" || plan === "pro_yearly";
@@ -37,40 +37,90 @@ export function getProActiveLabel(status?: SubscriptionStatus | null) {
   return "Pro active";
 }
 
-export function hasAuthoritativeProEntitlement(status?: SubscriptionStatus | null) {
-  if (!status || !isProPlan(status.plan)) {
-    return false;
-  }
-  if (status.provider === "backend" || status.provider === "revenuecat" || status.provider === "storekit") {
-    return true;
-  }
-  return Boolean(status.isActive && status.purchaseAvailabilityState !== "not_configured");
+function isTrustedEntitlementProvider(provider?: BillingProvider | null) {
+  return provider === "backend" || provider === "revenuecat" || provider === "storekit";
 }
 
-export function resolveProfileAccessState(status?: SubscriptionStatus | null, isLoading = false) {
+export function hasAuthoritativeProEntitlement(status?: SubscriptionStatus | null) {
+  if (!status || !isTrustedEntitlementProvider(status.provider)) {
+    return false;
+  }
+  if (status.isActive === true) {
+    return true;
+  }
+  if (status.isActive === false) {
+    return false;
+  }
+  return isProPlan(status.plan);
+}
+
+function isUpgradeOrFreeCopy(label: string) {
+  const normalized = label.toLowerCase();
+  return (
+    normalized.includes("free plan") ||
+    normalized.includes("free unlock") ||
+    normalized.includes("upgrade") ||
+    normalized.includes("keep free access")
+  );
+}
+
+function getProDetailLabel(status: SubscriptionStatus | null | undefined, primaryLabel: string) {
+  const label = status?.renewalLabel?.trim();
+  if (!label || isUpgradeOrFreeCopy(label)) {
+    return null;
+  }
+  const normalizedLabel = label.toLowerCase();
+  const normalizedPrimary = primaryLabel.toLowerCase();
+  if (normalizedLabel === normalizedPrimary || (normalizedLabel.startsWith("pro") && normalizedLabel.includes("active"))) {
+    return null;
+  }
+  return label;
+}
+
+export type ProfileAccessState = {
+  mode: "loading" | "pro" | "free";
+  hasProEntitlement: boolean;
+  planLabel: string;
+  renewalLabel: string | null;
+  showFreeUnlockUsage: boolean;
+  showUpgradeOptions: boolean;
+  showPaywallCard: boolean;
+  showPrimaryUpgradeCta: boolean;
+  showRestorePurchases: boolean;
+  purchaseAvailabilityState: PurchaseAvailabilityState;
+};
+
+export function resolveProfileAccessState(status?: SubscriptionStatus | null, isLoading = false): ProfileAccessState {
   const hasProEntitlement = hasAuthoritativeProEntitlement(status);
   const purchaseAvailabilityState = status?.purchaseAvailabilityState ?? "not_configured";
+  const mode: ProfileAccessState["mode"] = isLoading ? "loading" : hasProEntitlement ? "pro" : "free";
   const qaConfigurationMessage =
     purchaseAvailabilityState === "preview_only"
       ? "Purchases and restore require a development or production build."
       : purchaseAvailabilityState === "not_configured"
         ? "RevenueCat purchases are not configured for this build."
         : null;
-  const renewalLabel = hasProEntitlement
-    ? status?.renewalLabel && !status.renewalLabel.toLowerCase().includes("free plan")
-      ? status.renewalLabel
-      : getProActiveLabel(status)
-    : qaConfigurationMessage ?? "Free unlocks are available on this account.";
+  const primaryProLabel = getProActiveLabel(status);
+  const planLabel = mode === "loading" ? "Checking plan..." : mode === "pro" ? primaryProLabel : "Free plan";
+  const renewalLabel =
+    mode === "loading"
+      ? null
+      : mode === "pro"
+        ? getProDetailLabel(status, primaryProLabel)
+        : qaConfigurationMessage ?? "Free unlocks are available on this account.";
 
   const resolved = {
+    mode,
     hasProEntitlement,
-    planLabel: isLoading ? "Checking plan..." : hasProEntitlement ? getProActiveLabel(status) : "Free plan",
+    planLabel,
     renewalLabel,
-    showFreeUnlockUsage: !hasProEntitlement,
-    showUpgradeOptions: !hasProEntitlement,
+    showFreeUnlockUsage: mode === "free",
+    showUpgradeOptions: mode === "free",
+    showPaywallCard: mode === "free",
+    showPrimaryUpgradeCta: mode === "free",
     showRestorePurchases: true,
     purchaseAvailabilityState,
-  };
+  } satisfies ProfileAccessState;
 
   return resolved;
 }

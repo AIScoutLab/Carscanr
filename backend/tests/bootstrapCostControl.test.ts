@@ -1378,6 +1378,144 @@ describe("bootstrap cost control", () => {
     assert.equal(attempts.some((attempt) => attempt.model === "458" && attempt.year === 2014), true);
   });
 
+  test("Cadillac CT4 listing fallback attempts exact, mixed trim, adjacent year, and wider radius before empty", async () => {
+    const attempts: Array<{ model: string; year: number; trim: string | null; radiusMiles: number | null }> = [];
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            trim: input.vehicle?.trim ?? null,
+            radiusMiles: input.radiusMiles ?? null,
+          });
+
+          if (input.vehicle?.model === "CT4" && input.vehicle?.year === 2021 && input.vehicle?.trim === "" && input.radiusMiles === 250) {
+            return [
+              {
+                id: "listing-ct4-wider-radius",
+                vehicleId: input.vehicleId,
+                year: 2021,
+                make: "Cadillac",
+                model: "CT4",
+                trim: "Luxury",
+                title: "2021 Cadillac CT4 Luxury",
+                price: 32995,
+                mileage: 21400,
+                dealer: "Naperville Cadillac",
+                distanceMiles: 88,
+                location: "Naperville, IL",
+                imageUrl: "https://dealer.example.test/ct4-2022.jpg",
+                listingUrl: "https://dealer.example.test/ct4-2022",
+                listedAt: "2026-05-15T00:00:00.000Z",
+              },
+            ];
+          }
+
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getListings({
+      vehicleId: "2021-cadillac-ct4-premium-luxury",
+      zip: "60563",
+      radiusMiles: 50,
+      mileage: 18400,
+      allowLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+    });
+
+    assert.equal(result.data.length, 1);
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === "Premium Luxury"), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === ""), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2020 && attempt.trim === ""), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2022 && attempt.trim === ""), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === "" && attempt.radiusMiles === 250), true);
+  });
+
+  test("Cadillac CT4 broadened live comps produce listing_comps value instead of unavailable", async () => {
+    const attempts: Array<{ model: string; year: number; trim: string | null }> = [];
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            trim: input.vehicle?.trim ?? null,
+          });
+
+          if (input.vehicle?.model === "CT4" && input.vehicle?.year === 2021 && input.vehicle?.trim === "") {
+            return {
+              id: "ct4-broadened-live-value",
+              vehicleId: input.vehicleId,
+              zip: input.zip,
+              mileage: input.mileage,
+              condition: "good",
+              status: "loaded_listing_range",
+              tradeIn: 28500,
+              tradeInLow: 27140,
+              tradeInHigh: 29900,
+              privateParty: 31000,
+              privatePartyLow: 29500,
+              privatePartyHigh: 32500,
+              dealerRetail: 33480,
+              dealerRetailLow: 31860,
+              dealerRetailHigh: 35100,
+              low: 29500,
+              median: 31000,
+              high: 32500,
+              currency: "USD",
+              generatedAt: "2026-05-15T00:00:00.000Z",
+              sourceLabel: "Estimated from nearby comparable listings",
+              confidenceLabel: "Based on 3 nearby comparable listings. Limited market confidence.",
+              valuationSource: "listing_comps",
+              compCount: 3,
+              confidence: "limited",
+              rangeLow: 29500,
+              rangeHigh: 32500,
+              midpoint: 31000,
+              modelType: "listing_derived",
+              listingCount: 3,
+              sourceBasis: "listing_median_adjusted",
+            };
+          }
+
+          return null;
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2021-cadillac-ct4-premium-luxury",
+      zip: "60563",
+      mileage: 18400,
+      condition: "good",
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
+
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === "Premium Luxury"), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === ""), true);
+    assert.equal(result.data.status, "loaded_condition_set");
+    assert.equal(result.data.valuationSource, "listing_comps");
+    assert.equal(result.data.sourceBasis, "listing_median_adjusted");
+    assert.equal(result.data.confidence, "limited");
+    assert.notEqual(result.data.sourceLabel, "No live market comps found");
+    assert.notEqual(result.data.valuationSource, "unavailable");
+  });
+
   test("explicit listings refresh for non-specialty models broadens from trim/body variant to family model and adjacent year", async () => {
     const testRepositories = createTestRepositories({
       vehicles: [

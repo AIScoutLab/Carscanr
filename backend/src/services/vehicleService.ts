@@ -748,7 +748,7 @@ function vehicleLookupKey(vehicle: VehicleRecord, radiusMiles: number) {
     vehicle.year,
     normalizeVehicleLookupText(vehicle.make),
     normalizeVehicleLookupText(vehicle.model),
-    normalizeVehicleLookupText(vehicle.trim),
+    normalizeLookupText(vehicle.trim),
     normalizeVehicleLookupText(vehicle.bodyStyle),
     radiusMiles,
   ].join("|");
@@ -1158,7 +1158,7 @@ async function buildValueFallbackAttempts(vehicle: VehicleRecord): Promise<Value
   };
 
   pushAttempt({ strategy: "exact-year-make-model", vehicle: { ...vehicle } });
-  if (normalizeVehicleLookupText(vehicle.trim)) {
+  if (hasExplicitTrimValue(vehicle.trim)) {
     pushAttempt({ strategy: "same-year-any-trim", vehicle: { ...vehicle, trim: "" } });
   }
   pushAttempt(
@@ -1251,7 +1251,7 @@ function ensureValueAttempts(vehicle: VehicleRecord, attempts: ValueLookupAttemp
   }
 
   const fallbackAttempts: ValueLookupAttempt[] = [{ strategy: "exact-year-make-model", vehicle: { ...vehicle } }];
-  if (normalizeVehicleLookupText(vehicle.trim)) {
+  if (hasExplicitTrimValue(vehicle.trim)) {
     fallbackAttempts.push({ strategy: "same-year-any-trim", vehicle: { ...vehicle, trim: "" } });
   }
   const familyVariant = buildSpecialtyFamilyVehicleVariant(vehicle);
@@ -1380,6 +1380,13 @@ async function buildListingsFallbackAttempts(input: {
       vehicle: { ...input.vehicle, trim: "" },
       radiusMiles: Math.max(input.radiusMiles, 500),
     });
+  } else {
+    pushAttempt({
+      label: "LISTINGS_WIDER_RADIUS",
+      strategy: "wider-radius-250",
+      vehicle: { ...input.vehicle, trim: "" },
+      radiusMiles: Math.max(input.radiusMiles, 250),
+    });
   }
 
   return attempts;
@@ -1477,6 +1484,13 @@ function ensureListingsAttempts(input: {
       strategy: "wider-radius-500",
       vehicle: { ...input.vehicle, trim: "" },
       radiusMiles: Math.max(input.radiusMiles, 500),
+    });
+  } else {
+    fallbackAttempts.push({
+      label: "LISTINGS_WIDER_RADIUS",
+      strategy: "wider-radius-250",
+      vehicle: { ...input.vehicle, trim: "" },
+      radiusMiles: Math.max(input.radiusMiles, 250),
     });
   }
   return fallbackAttempts;
@@ -1688,6 +1702,9 @@ function isStrictListingUrl(url: string | null | undefined) {
 }
 
 function hasOpenableListingUrl(listing: ListingRecord) {
+  if (typeof listing.listingUrl !== "string" || listing.listingUrl.trim().length === 0) {
+    return true;
+  }
   return isStrictListingUrl(listing.listingUrl);
 }
 
@@ -2051,6 +2068,7 @@ function isCommonVehicleFamily(input: {
   const model = normalizeVehicleLookupText(input.model);
   const family = `${make} ${model}`.trim();
   return [
+    "cadillac ct4",
     "honda cr v",
     "toyota corolla",
     "toyota camry",
@@ -3119,6 +3137,7 @@ export class VehicleService {
           bodyStyle: vehicle?.bodyStyle ?? input.descriptor?.bodyStyle ?? null,
           zip: input.zip,
           zipSource: input.zipSource ?? null,
+          radiusMiles: env.MARKETCHECK_VALUE_RADIUS_MILES,
           mileage: input.mileage,
           condition: input.condition,
         },
@@ -3678,7 +3697,7 @@ export class VehicleService {
       let providerFailureReason: string | null = null;
       const providerValueAttempts =
         providers.valueProviderName === "marketcheck"
-          ? isSpecialtyLookupVehicle && isExplicitValueRefresh
+          ? isExplicitValueRefresh
             ? valueAttempts
             : valueAttempts.slice(0, 1)
           : valueAttempts;
@@ -3777,6 +3796,7 @@ export class VehicleService {
             zip: input.zip,
             mileage: input.mileage,
             condition: input.condition,
+            radiusMiles: env.MARKETCHECK_VALUE_RADIUS_MILES,
           });
           logger.info(
             {
@@ -3789,6 +3809,9 @@ export class VehicleService {
               make: attempt.vehicle.make,
               model: attempt.vehicle.model,
               trim: attempt.vehicle.trim,
+              zip: input.zip,
+              radiusMiles: env.MARKETCHECK_VALUE_RADIUS_MILES,
+              mileage: input.mileage,
               condition: input.condition,
             },
             "VALUE_LOOKUP_QUERY",
@@ -3814,6 +3837,10 @@ export class VehicleService {
                   make: attempt.vehicle.make,
                   model: attempt.vehicle.model,
                   trim: attempt.vehicle.trim ?? null,
+                  zip: input.zip,
+                  radiusMiles: env.MARKETCHECK_VALUE_RADIUS_MILES,
+                  mileage: input.mileage,
+                  condition: input.condition,
                   sourceScreen: input.sourceScreen ?? "valueScreen",
                   route: "/api/vehicle/value",
                   caller: "VehicleService.getValue",
@@ -3849,7 +3876,7 @@ export class VehicleService {
                   trim: attempt.vehicle.trim ?? null,
                   zip: input.zip,
                   zipSource: input.zipSource ?? null,
-                  radiusMiles: isSpecialtyLookupVehicle && isExplicitValueRefresh ? env.MARKETCHECK_VALUE_RADIUS_MILES : null,
+                  radiusMiles: env.MARKETCHECK_VALUE_RADIUS_MILES,
                   mileage: input.mileage,
                   condition: input.condition,
                   sourceScreen: input.sourceScreen ?? "valueScreen",
@@ -4185,6 +4212,19 @@ export class VehicleService {
       }
 
       if (!fallbackValue && lookupBaseVehicle) {
+        logger.info(
+          {
+            label: "VALUE_COMP_SOURCE",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition,
+            source: "cached_or_stored_listings",
+            reason: normalizedLiveValue ? "provider_value_unusable" : "provider_value_unavailable",
+          },
+          "VALUE_COMP_SOURCE",
+        );
         const derivedFromListings = await deriveValuationFromSimilarVehicles({
           vehicle: lookupBaseVehicle,
           vehicleId: lookupVehicleId,
@@ -4601,9 +4641,14 @@ export class VehicleService {
           label: "LISTINGS_LOAD_REQUESTED",
           requestId: input.requestId,
           vehicleId: lookupVehicleId,
+          year: vehicle?.year ?? descriptor?.year ?? null,
+          make: vehicle?.make ?? descriptor?.make ?? null,
+          model: vehicle?.model ?? descriptor?.model ?? null,
+          trim: vehicle?.trim ?? descriptor?.trim ?? null,
           zip: input.zip,
           radiusMiles: input.radiusMiles,
           mileage: input.mileage ?? null,
+          condition: null,
           allowLive: input.allowLive ?? false,
           fetchReason: input.fetchReason ?? null,
           sourceScreen: input.sourceScreen ?? null,

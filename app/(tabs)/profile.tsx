@@ -61,6 +61,8 @@ export default function ProfileScreen() {
       hasProEntitlement: accessState.hasProEntitlement,
       planLabel: accessState.planLabel,
       showUpgradeOptions: accessState.showUpgradeOptions,
+      showPrimaryUpgradeCta: accessState.showPrimaryUpgradeCta,
+      showPaywallCard: accessState.showPaywallCard,
     });
     console.log("PROFILE_ACCESS_STATE_RENDERED", {
       plan: status?.plan ?? null,
@@ -75,6 +77,8 @@ export default function ProfileScreen() {
       showUpgradeOptions: accessState.showUpgradeOptions,
       showFreeUnlockUsage: accessState.showFreeUnlockUsage,
       purchaseAvailabilityState: accessState.purchaseAvailabilityState,
+      showPrimaryUpgradeCta: accessState.showPrimaryUpgradeCta,
+      showPaywallCard: accessState.showPaywallCard,
     });
   }, [
     accessState.hasProEntitlement,
@@ -83,6 +87,8 @@ export default function ProfileScreen() {
     accessState.renewalLabel,
     accessState.showFreeUnlockUsage,
     accessState.showUpgradeOptions,
+    accessState.showPaywallCard,
+    accessState.showPrimaryUpgradeCta,
     status?.isActive,
     status?.plan,
     status?.provider,
@@ -125,7 +131,7 @@ export default function ProfileScreen() {
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>Subscription & access</Text>
         <Text style={styles.meta}>{accessState.planLabel}</Text>
-        <Text style={styles.meta}>{accessState.renewalLabel}</Text>
+        {accessState.renewalLabel ? <Text style={styles.meta}>{accessState.renewalLabel}</Text> : null}
         {accessState.showFreeUnlockUsage ? (
           <>
             <Text style={styles.meta}>
@@ -135,9 +141,9 @@ export default function ProfileScreen() {
           </>
         ) : null}
         {accessState.showUpgradeOptions ? <Text style={styles.helper}>Missing Pro after sign-in? Use Restore Purchases to recheck your App Store entitlements for this account.</Text> : null}
-        {accessState.showUpgradeOptions ? <PaywallCard status={status} unlocksRemaining={freeUnlocksRemaining} unlocksLimit={freeUnlocksLimit} /> : null}
+        {accessState.showPaywallCard ? <PaywallCard status={status} unlocksRemaining={freeUnlocksRemaining} unlocksLimit={freeUnlocksLimit} /> : null}
         <View style={styles.actionGroup}>
-          <PrimaryButton label={accessState.hasProEntitlement ? "View Pro Status" : "Upgrade to Pro"} secondary={!user || accessState.hasProEntitlement} onPress={() => router.push("/paywall")} />
+          {accessState.showPrimaryUpgradeCta ? <PrimaryButton label="Upgrade to Pro" secondary={!user} onPress={() => router.push("/paywall")} /> : null}
           <PrimaryButton
             label={isRestoring ? "Checking App Store..." : "Restore Purchases"}
             secondary

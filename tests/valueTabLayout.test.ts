@@ -30,3 +30,11 @@ test("listings refresh hydrates value state from cached listings", () => {
   assert.match(screenSource, /acceptedListingsAvailable: true/);
   assert.match(screenSource, /listingCacheKeysChecked: \["shared_vehicle_listings"\]/);
 });
+
+test("vehicle detail tabs keep shared vertical spacing around cards and bottom actions", () => {
+  const screenSource = fs.readFileSync(screenPath, "utf8");
+
+  assert.match(screenSource, /<Animated\.View style=\{\[styles\.contentStack,/);
+  assert.match(screenSource, /contentStack:\s*\{\s*gap:\s*18\s*\}/);
+  assert.match(screenSource, /bottomActionStack:\s*\{[^}]*marginTop:\s*6[^}]*paddingTop:\s*10/);
+});
