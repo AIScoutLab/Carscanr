@@ -1,11 +1,9 @@
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { AppContainer } from "@/components/AppContainer";
 import { EmptyState } from "@/components/EmptyState";
-import { PillBadge } from "@/components/PillBadge";
 import { PremiumSkeleton } from "@/components/PremiumSkeleton";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { ScanUsageMeter } from "@/components/ScanUsageMeter";
@@ -50,9 +48,6 @@ export default function GarageScreen() {
   return (
     <AppContainer>
       <LinearGradient colors={["rgba(29,140,255,0.18)", "rgba(94,231,255,0.05)", "rgba(4,8,18,0.2)"]} style={styles.heroCard}>
-        <PillBadge tone="brand" label="Garage archive">
-          <Ionicons name="car-sport-outline" size={18} color={Colors.premium} />
-        </PillBadge>
         <Text style={styles.title}>Your saved machines</Text>
         <Text style={styles.subtitle}>Collect scans, keep notes, and revisit the vehicles that are worth a second look.</Text>
       </LinearGradient>

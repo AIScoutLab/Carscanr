@@ -42,7 +42,7 @@ function formatBodyDescriptor(input: { bodyStyle?: string | null; vehicleType?: 
   if (normalized.includes("motorcycle")) return "motorcycle";
   if (bodyStyle) return bodyStyle;
   if (cleanText(input.vehicleType).toLowerCase() === "motorcycle") return "motorcycle";
-  if (cleanText(input.vehicleType).toLowerCase() === "car") return "passenger vehicle";
+  if (cleanText(input.vehicleType).toLowerCase() === "car") return "car";
   return "";
 }
 
@@ -51,29 +51,62 @@ function formatIdentity(input: VehicleDescriptionInput) {
   const make = cleanText(input.make);
   const model = cleanText(input.model);
   const trim = cleanText(input.trim);
-  const parts = [year, make, model, trim].filter(Boolean);
-  return parts.join(" ");
+  return [year, make, model, trim].filter(Boolean).join(" ");
 }
 
-function joinTraits(input: VehicleDescriptionInput) {
-  const traits: string[] = [];
+function buildBodySentence(identity: string, bodyDescriptor: string) {
+  switch (bodyDescriptor.toLowerCase()) {
+    case "suv":
+      return `The ${identity} is an SUV shaped around passenger space, cargo flexibility, and everyday versatility.`;
+    case "sedan":
+      return `The ${identity} is a sedan built for everyday road use with a more traditional three-box profile.`;
+    case "coupe":
+      return `The ${identity} is a coupe with a lower, sportier roofline and a more focused road-car stance.`;
+    case "convertible":
+      return `The ${identity} is a convertible with an open-air touring focus and a more dramatic profile.`;
+    case "hatchback":
+      return `The ${identity} is a hatchback with upright packaging and practical day-to-day usability.`;
+    case "wagon":
+      return `The ${identity} is a wagon with added cargo flexibility and a long-roof shape built for everyday use.`;
+    case "pickup":
+      return `The ${identity} is a pickup designed around utility, hauling, and everyday work duty.`;
+    case "motorcycle":
+      return `The ${identity} is a motorcycle identified from the confirmed details available for this match.`;
+    case "car":
+      return `The ${identity} is a road-going passenger vehicle identified from the strongest confirmed details available.`;
+    default:
+      return `The ${identity} is identified from the strongest confirmed vehicle details available here.`;
+  }
+}
+
+function joinKnownTraits(input: VehicleDescriptionInput) {
   const engine = cleanText(input.engine);
   const drivetrain = cleanText(input.drivetrain);
   const transmission = cleanText(input.transmission);
-  const horsepower = typeof input.horsepower === "number" && Number.isFinite(input.horsepower) && input.horsepower > 0 ? `${Math.round(input.horsepower)} hp` : "";
+  const horsepower =
+    typeof input.horsepower === "number" && Number.isFinite(input.horsepower) && input.horsepower > 0
+      ? `${Math.round(input.horsepower)} hp`
+      : "";
 
-  if (engine) traits.push(engine);
-  if (horsepower) traits.push(horsepower);
-  if (drivetrain) traits.push(drivetrain);
-  if (transmission) traits.push(transmission);
+  return [engine, horsepower, drivetrain, transmission].filter(Boolean).slice(0, 4);
+}
 
-  return traits.slice(0, 3);
+function buildTraitSentence(traits: string[]) {
+  if (traits.length === 0) {
+    return "";
+  }
+  if (traits.length === 1) {
+    return `Known details for this match include ${traits[0]}.`;
+  }
+  const finalTrait = traits[traits.length - 1];
+  const leadingTraits = traits.slice(0, -1);
+  return `Known details for this match include ${leadingTraits.join(", ")}, and ${finalTrait}.`;
 }
 
 export function buildVehicleDescription(input: VehicleDescriptionInput): VehicleDescriptionResult {
   const identity = formatIdentity(input);
   const bodyDescriptor = formatBodyDescriptor(input);
-  const traits = joinTraits(input);
+  const traits = joinKnownTraits(input);
 
   if (!identity || (!bodyDescriptor && traits.length === 0)) {
     return {
@@ -82,23 +115,21 @@ export function buildVehicleDescription(input: VehicleDescriptionInput): Vehicle
     };
   }
 
-  const opening = isSpecialtyExoticMake(cleanText(input.make))
-    ? buildSpecialtyVehicleOverview({
-        make: cleanText(input.make),
-        model: cleanText(input.model),
-        bodyStyle: cleanText(input.bodyStyle) || bodyDescriptor,
-      })
-    : bodyDescriptor
-      ? `${identity} is a ${bodyDescriptor.toLowerCase()} in this record.`
-      : `${identity} is identified in this record with confirmed vehicle details.`;
-
-  const traitsSentence =
-    traits.length > 0
-      ? `Confirmed details include ${traits.join(", ")}.`
-      : "";
+  if (isSpecialtyExoticMake(cleanText(input.make))) {
+    const overview = buildSpecialtyVehicleOverview({
+      make: cleanText(input.make),
+      model: cleanText(input.model),
+      bodyStyle: cleanText(input.bodyStyle) || bodyDescriptor,
+    });
+    const traitSentence = buildTraitSentence(traits);
+    return {
+      description: [overview, traitSentence].filter(Boolean).join(" "),
+      reason: "generated",
+    };
+  }
 
   return {
-    description: [opening, traitsSentence].filter(Boolean).join(" "),
+    description: [buildBodySentence(identity, bodyDescriptor), buildTraitSentence(traits)].filter(Boolean).join(" "),
     reason: "generated",
   };
 }

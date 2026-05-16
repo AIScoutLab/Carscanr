@@ -22,7 +22,6 @@ export function PaywallCard({
   secondaryCtaLabel,
   onSecondaryCtaPress,
   secondaryCtaDisabled = false,
-  showEyebrow = true,
   showCreditBadge = true,
   usageLabelOverride,
   optionPills,
@@ -39,7 +38,6 @@ export function PaywallCard({
   secondaryCtaLabel?: string;
   onSecondaryCtaPress?: () => void;
   secondaryCtaDisabled?: boolean;
-  showEyebrow?: boolean;
   showCreditBadge?: boolean;
   usageLabelOverride?: string;
   optionPills?: string[];
@@ -68,7 +66,6 @@ export function PaywallCard({
 
   return (
     <LinearGradient colors={PremiumGradients.primaryCard} start={{ x: 0.4, y: 0 }} end={{ x: 0.6, y: 1 }} style={styles.card}>
-      {showEyebrow ? <PillBadge tone="subtle" label="CarScanr Pro" /> : null}
       <Text style={styles.title}>{title}</Text>
       <Text style={styles.price}>{`${PRICING.yearlyDisplay}/year`}</Text>
       <Text style={styles.subprice}>{`or ${PRICING.monthlyDisplay}/month`}</Text>

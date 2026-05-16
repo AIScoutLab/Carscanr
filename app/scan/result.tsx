@@ -1405,9 +1405,6 @@ export default function ScanResultScreen() {
   const resultImageSource = normalized?.imageUri ? "scanned-photo" : "none";
   const resultImageFitMode = normalized?.imageUri ? "contain" : "cover";
   const basicPreviewFacts = [
-    bestMatch.displayYearLabel ? `Year: ${bestMatch.displayYearLabel}` : null,
-    bestMatch.make ? `Make: ${bestMatch.make}` : null,
-    bestMatch.model ? `Model: ${bestMatch.model}` : null,
     bestMatch.displayTrimLabel ? `Trim: ${bestMatch.displayTrimLabel}` : null,
     normalized?.detectedVehicleType ? `Vehicle type: ${normalized.detectedVehicleType === "motorcycle" ? "Motorcycle" : "Car"}` : null,
   ].filter((entry): entry is string => Boolean(entry));
@@ -1427,15 +1424,16 @@ export default function ScanResultScreen() {
     ? "This identification is based on strong visible design cues from your photo."
     : "This is the most likely match based on visible design cues from your photo.";
   const previewFallbackFacts = [
-    previewDescription ? `Overview: ${previewDescription}` : null,
+    previewDescription,
     normalized?.visibleClues?.[0] ? `Visible clue: ${normalized.visibleClues[0]}` : null,
     normalized?.visibleClues?.[1] ? `Visible clue: ${normalized.visibleClues[1]}` : null,
-    confidenceSupportNote ? `Confidence note: ${confidenceSupportNote}` : null,
   ]
     .filter((entry, index, list): entry is string => Boolean(entry) && list.indexOf(entry) === index)
     .slice(0, 3);
+  const hasMeaningfulBasicInfo = previewSpecFacts.length > 0 || previewFallbackFacts.length > 0;
+  const showFreePreviewCard = basicPreviewFacts.length > 0 || hasMeaningfulBasicInfo;
   const previewSecondaryFacts = previewSpecFacts.length > 0 ? previewSpecFacts : previewFallbackFacts;
-  const previewSecondaryLabel = previewSpecFacts.length > 0 ? "Partial Specs" : "What we can confirm now";
+  const previewSecondaryLabel = previewSpecFacts.length > 0 ? "Confirmed details" : "Quick overview";
 
   useEffect(() => {
     if (!isCatalogMatched && normalized) {
@@ -1584,33 +1582,34 @@ export default function ScanResultScreen() {
               </TouchableOpacity>
             </Animated.View>
           </>
-          <View style={styles.quickFactsCard}>
-            <Text style={styles.quickFactsTitle}>Free Preview</Text>
-            <Text style={styles.quickFactsSubtitle}>Free view includes identification and partial specs. Unlock adds value, listings, and full specs.</Text>
-            <View style={styles.previewGroup}>
-              <Text style={styles.previewGroupLabel}>Identification</Text>
-              {basicPreviewFacts.map((fact) => (
-                <Text key={fact} style={styles.quickFactLine}>{fact}</Text>
-              ))}
-              {basicPreviewFacts.length === 0 ? <Text style={styles.quickFactLine}>Basic vehicle details are still loading.</Text> : null}
-            </View>
-            {showBasicInfoDetails ? (
-              <View style={styles.previewGroup}>
-                <Text style={styles.previewGroupLabel}>{previewSecondaryLabel}</Text>
-                {previewSecondaryFacts.length > 0 ? (
-                  previewSecondaryFacts.map((fact) => (
+          {showFreePreviewCard ? (
+            <View style={styles.quickFactsCard}>
+              <Text style={styles.quickFactsTitle}>Free Preview</Text>
+              <Text style={styles.quickFactsSubtitle}>Free view includes the match, core vehicle details, and any confirmed facts we can show safely right now.</Text>
+              {basicPreviewFacts.length > 0 ? (
+                <View style={styles.previewGroup}>
+                  <Text style={styles.previewGroupLabel}>Identification</Text>
+                  {basicPreviewFacts.map((fact) => (
                     <Text key={fact} style={styles.quickFactLine}>{fact}</Text>
-                  ))
-                ) : (
-                  <View style={styles.previewLoadingState}>
-                    <PremiumSkeleton height={12} radius={999} />
-                    <PremiumSkeleton height={12} radius={999} />
-                    <Text style={styles.previewLoadingCopy}>We’re organizing the first confirmed details from this scan.</Text>
-                  </View>
-                )}
-              </View>
-            ) : null}
-          </View>
+                  ))}
+                </View>
+              ) : null}
+              {showBasicInfoDetails && hasMeaningfulBasicInfo ? (
+                <View style={styles.previewGroup}>
+                  <Text style={styles.previewGroupLabel}>{previewSecondaryLabel}</Text>
+                  {previewSecondaryFacts.map((fact) => (
+                    <Text key={fact} style={styles.quickFactLine}>{fact}</Text>
+                  ))}
+                </View>
+              ) : showBasicInfoDetails ? (
+                <View style={styles.previewLoadingState}>
+                  <PremiumSkeleton height={12} radius={999} />
+                  <PremiumSkeleton height={12} radius={999} />
+                  <Text style={styles.previewLoadingCopy}>Unlock full details to load deeper specs, value, and nearby listings.</Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
           <View style={styles.singleActionCard}>
             <PrimaryButton
               label={hasFullAccess ? "View Vehicle Details" : "Unlock Full Details"}
@@ -1619,11 +1618,13 @@ export default function ScanResultScreen() {
               }}
               disabled={isUnlocking}
             />
-            <PrimaryButton
-              label="View Basic Info"
-              secondary
-              onPress={handleViewBasicInfo}
-            />
+            {hasMeaningfulBasicInfo ? (
+              <PrimaryButton
+                label="View Basic Info"
+                secondary
+                onPress={handleViewBasicInfo}
+              />
+            ) : null}
           </View>
         </Animated.View>
       </ErrorBoundary>

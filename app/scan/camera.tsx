@@ -648,9 +648,6 @@ export default function ScanCameraScreen() {
             {isBusy ? (
               <View style={styles.processingOverlay} pointerEvents="none">
                 <View style={styles.processingCard}>
-                  <View style={styles.processingPill}>
-                    <Text style={styles.processingPillLabel}>Scan in progress</Text>
-                  </View>
                   <Text style={styles.processingTitle}>Scanning your vehicle</Text>
                   <Text style={styles.processingBody}>{stageState.stageLabel}</Text>
                   <View style={styles.processingProgressTrack}>
@@ -817,21 +814,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.24,
     shadowRadius: 24,
     shadowOffset: { width: 0, height: 14 },
-  },
-  processingPill: {
-    alignSelf: "flex-start",
-    backgroundColor: "rgba(10, 20, 34, 0.92)",
-    borderRadius: Radius.pill,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: "rgba(71, 123, 255, 0.26)",
-  },
-  processingPillLabel: {
-    ...Typography.caption,
-    color: Colors.premium,
-    textTransform: "uppercase",
-    letterSpacing: 1.2,
   },
   processingTitle: {
     ...Typography.title,
@@ -1001,7 +983,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.premium,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0, 194, 255, 0.12)",
+    backgroundColor: Colors.cardAlt,
     shadowColor: Colors.accent,
     shadowOpacity: 0.28,
     shadowRadius: 18,

@@ -2,11 +2,9 @@ import { router } from "expo-router";
 import { Alert, Linking, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useCallback, useEffect, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
-import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { AppContainer } from "@/components/AppContainer";
 import { PaywallCard } from "@/components/PaywallCard";
-import { PillBadge } from "@/components/PillBadge";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { useSubscription } from "@/hooks/useSubscription";
@@ -55,9 +53,6 @@ export default function ProfileScreen() {
   return (
     <AppContainer>
       <LinearGradient colors={["rgba(29,140,255,0.18)", "rgba(94,231,255,0.05)", "rgba(4,8,18,0.2)"]} style={styles.heroCard}>
-        <PillBadge tone="brand" label="Driver profile">
-          <Ionicons name="person-circle-outline" size={18} color={Colors.premium} />
-        </PillBadge>
         <Text style={styles.title}>Account and access</Text>
         <Text style={styles.heroBody}>Unlimited free scans stay front and center. Your account adds sync, history, support, and recovery across devices.</Text>
       </LinearGradient>

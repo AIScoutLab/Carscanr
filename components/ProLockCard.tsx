@@ -1,5 +1,4 @@
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { PillBadge } from "@/components/PillBadge";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
 
@@ -11,7 +10,6 @@ export function ProLockCard({ onPress }: Props) {
   return (
     <TouchableOpacity accessibilityRole="button" onPress={onPress} style={styles.card} activeOpacity={0.86}>
       <View style={styles.blur}>
-        <PillBadge tone="brand" label="Pro insights" />
         <Text style={styles.title}>Unlock deeper market context</Text>
         <View style={styles.row}>
           <Text style={styles.item}>Live listings near you</Text>

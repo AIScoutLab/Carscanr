@@ -23,9 +23,10 @@ test("listings refresh hydrates value state from cached listings", () => {
   const screenSource = fs.readFileSync(screenPath, "utf8");
 
   assert.match(screenSource, /\.getListings\([\s\S]*fetchReason:\s*"user_requested_listings_refresh"/);
-  assert.match(screenSource, /VALUE_HYDRATED_FROM_FORSALE_LISTINGS/);
-  assert.match(screenSource, /VALUE_HYDRATED_FROM_SHARED_LISTINGS/);
   assert.match(screenSource, /buildListingsHydratedValuation/);
+  assert.match(screenSource, /VALUE_COMP_SOURCE/);
+  assert.match(screenSource, /VALUE_COMP_DERIVATION_STARTED/);
+  assert.match(screenSource, /VALUE_COMP_DERIVATION_RESULT/);
   assert.match(screenSource, /acceptedListingsAvailable: true/);
   assert.match(screenSource, /listingCacheKeysChecked: \["shared_vehicle_listings"\]/);
 });

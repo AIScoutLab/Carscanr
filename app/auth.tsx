@@ -314,35 +314,35 @@ export default function AuthScreen() {
       </Text>
       <View style={styles.guestNoteCard}>
         <Text style={styles.guestNoteTitle}>Account optional</Text>
-        <Text style={styles.guestNoteBody}>Unlimited basic scans stay free. Accounts are mainly for sync, saved history, and restore.</Text>
-      </View>
-      <View style={styles.quickActions}>
-        <TouchableOpacity
-          style={styles.quickActionButton}
-          activeOpacity={0.86}
-          accessibilityRole="button"
-          onPress={() => switchMode(mode === "sign-in" ? "sign-up" : "sign-in")}
-        >
-          <Text style={styles.quickActionLabel}>
-            {mode === "sign-in" ? "Create Free Account" : "Already Have an Account?"}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.quickActionButton}
-          activeOpacity={0.86}
-          accessibilityRole="button"
-          onPress={() => {
-            console.log("[tap] auth-continue-as-guest");
-            startupPreferences
-              .setHasSeenOnboarding()
-              .catch(() => undefined)
-              .finally(() => {
-                router.replace("/(tabs)/scan");
-              });
-          }}
-        >
-          <Text style={styles.quickActionLabel}>Continue as Guest</Text>
-        </TouchableOpacity>
+        <Text style={styles.guestNoteBody}>Unlimited basic scans stay free. Accounts are mainly for sync, saved history, restore, and Garage continuity across devices.</Text>
+        <View style={styles.guestActionRow}>
+          <TouchableOpacity
+            style={styles.quickActionButton}
+            activeOpacity={0.86}
+            accessibilityRole="button"
+            onPress={() => switchMode(mode === "sign-in" ? "sign-up" : "sign-in")}
+          >
+            <Text style={styles.quickActionLabel}>
+              {mode === "sign-in" ? "Create Free Account" : "Already Have an Account?"}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.quickActionButton}
+            activeOpacity={0.86}
+            accessibilityRole="button"
+            onPress={() => {
+              console.log("[tap] auth-continue-as-guest");
+              startupPreferences
+                .setHasSeenOnboarding()
+                .catch(() => undefined)
+                .finally(() => {
+                  router.replace("/(tabs)/scan");
+                });
+            }}
+          >
+            <Text style={styles.quickActionLabel}>Continue as Guest</Text>
+          </TouchableOpacity>
+        </View>
       </View>
       <View style={styles.card}>
         <View ref={emailFieldRef} collapsable={false}>
@@ -416,15 +416,6 @@ export default function AuthScreen() {
           <Text style={styles.noticeBody}>{authNotice}</Text>
         </View>
       ) : null}
-      <TouchableOpacity
-        activeOpacity={0.86}
-        accessibilityRole="button"
-        onPress={() => {
-          switchMode(mode === "sign-in" ? "sign-up" : "sign-in");
-        }}
-      >
-        <Text style={styles.switchText}>{mode === "sign-in" ? "Need an account? Create one for free." : "Already have an account? Sign in."}</Text>
-      </TouchableOpacity>
       </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -510,14 +501,11 @@ const styles = StyleSheet.create({
   },
   title: { ...Typography.largeTitle, color: Colors.text, marginTop: 10 },
   subtitle: { ...Typography.body, color: Colors.textSoft },
-  quickActions: {
-    gap: 12,
-  },
   guestNoteCard: {
     backgroundColor: Colors.cardAlt,
     borderRadius: Radius.lg,
     padding: 14,
-    gap: 4,
+    gap: 12,
     borderWidth: 1,
     borderColor: Colors.border,
   },
@@ -528,6 +516,9 @@ const styles = StyleSheet.create({
   guestNoteBody: {
     ...Typography.caption,
     color: Colors.textMuted,
+  },
+  guestActionRow: {
+    gap: 10,
   },
   quickActionButton: {
     backgroundColor: Colors.card,
@@ -562,7 +553,6 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: Colors.accent,
   },
-  switchText: { ...Typography.body, color: Colors.accent, textAlign: "center" },
   errorCard: {
     backgroundColor: "#FFF1F2",
     borderWidth: 1,

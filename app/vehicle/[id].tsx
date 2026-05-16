@@ -309,6 +309,12 @@ function buildListingsHydratedValuation(input: {
   vehicle: VehicleRecord;
 }) {
   const believableListings = input.listings.filter(isBelievableListing);
+  console.log("[vehicle-detail] VALUE_COMP_SOURCE", {
+    vehicleId: input.vehicle.id,
+    source: "shared_vehicle_listings",
+    rawListingsCount: input.listings.length,
+    believableListingsCount: believableListings.length,
+  });
   const derived = buildListingDerivedConditionSetFromListings({
     listings: believableListings,
     selectedCondition: input.condition,
@@ -2494,17 +2500,27 @@ export default function VehicleDetailScreen() {
       return;
     }
 
-    console.log("[vehicle-detail] VALUE_HYDRATED_FROM_SHARED_LISTINGS", {
+    console.log("[vehicle-detail] VALUE_COMP_DERIVATION_STARTED", {
       vehicleId: vehicle.id,
       valueRequestSource: "cache_read",
       acceptedListingsAvailable: true,
       acceptedListingsCount: listingsMarketContext.acceptedListingsCount,
+      listingCacheKeysChecked: ["shared_vehicle_listings"],
+      radiiChecked: [listingsMarketContext.radiusMiles],
       derivedValueCreated: true,
       finalValueStatus: derivedValue.status,
       zip: normalizedZip,
       mileage: normalizedMileage,
       zipSource,
-      radiiChecked: [listingsMarketContext.radiusMiles],
+    });
+    console.log("[vehicle-detail] VALUE_COMP_DERIVATION_RESULT", {
+      vehicleId: vehicle.id,
+      valueRequestSource: "cache_read",
+      acceptedListingsCount: listingsMarketContext.acceptedListingsCount,
+      listingCacheKeysChecked: ["shared_vehicle_listings"],
+      derivedValueCreated: true,
+      finalValueStatus: derivedValue.status,
+      compCount: derivedValue.compCount ?? derivedValue.listingCount ?? null,
     });
     const requestKey = buildValueRequestKey(valueLookupInput, normalizedZip, normalizedMileage) ?? null;
     lastValueRequestKeyRef.current = requestKey;
@@ -2541,7 +2557,7 @@ export default function VehicleDetailScreen() {
       displayValuation.status === "ready_to_load" ||
       displayValuation.status === "stale_after_input_change";
 
-    if (!normalizedZip || !normalizedMileage || believableListings.length === 0 || !shouldHydrateUnavailableValue) {
+    if (believableListings.length === 0 || !shouldHydrateUnavailableValue) {
       return;
     }
 
@@ -2554,7 +2570,7 @@ export default function VehicleDetailScreen() {
       return;
     }
 
-    console.log("[vehicle-detail] VALUE_HYDRATED_FROM_SHARED_LISTINGS", {
+    console.log("[vehicle-detail] VALUE_COMP_DERIVATION_STARTED", {
       vehicleId: vehicle.id,
       valueRequestSource: listingsMarketContext ? "for_sale_listing_sync" : "cache_read",
       acceptedListingsAvailable: true,
@@ -2566,6 +2582,15 @@ export default function VehicleDetailScreen() {
       zip: normalizedZip,
       mileage: normalizedMileage,
       zipSource,
+    });
+    console.log("[vehicle-detail] VALUE_COMP_DERIVATION_RESULT", {
+      vehicleId: vehicle.id,
+      valueRequestSource: listingsMarketContext ? "for_sale_listing_sync" : "cache_read",
+      acceptedListingsCount: believableListings.length,
+      listingCacheKeysChecked: ["shared_vehicle_listings"],
+      derivedValueCreated: true,
+      finalValueStatus: derivedValue.status,
+      compCount: derivedValue.compCount ?? derivedValue.listingCount ?? null,
     });
     const requestKey = buildValueRequestKey(valueLookupInput, normalizedZip, normalizedMileage) ?? null;
     lastValueRequestKeyRef.current = requestKey;
@@ -3129,7 +3154,7 @@ export default function VehicleDetailScreen() {
   }
 
   return (
-    <AppContainer>
+    <AppContainer contentContainerStyle={tab === "For Sale" ? styles.listingsPageContent : styles.pageContent}>
       <BackButton fallbackHref="/(tabs)/scan" label="Back" />
       <Animated.View style={{ opacity: heroOpacity, transform: [{ translateY: heroTranslate }] }}>
         <View style={styles.heroShell}>
@@ -3149,25 +3174,13 @@ export default function VehicleDetailScreen() {
             </View>
           </Pressable>
           <View style={styles.heroMetaCard}>
-            <View style={styles.heroMetaTopRow}>
-              {isEstimateMode ? (
+            {isEstimateMode ? (
+              <View style={styles.heroMetaTopRow}>
                 <View style={styles.heroBadge}>
                   <Text style={styles.heroBadgeLabel}>{lockedEyebrow}</Text>
                 </View>
-              ) : (
-                <View />
-              )}
-              <View style={styles.heroTopActions}>
-                <View style={styles.heroTapBadge}>
-                  <Text style={styles.heroTapBadgeLabel}>Open quick view</Text>
-                </View>
-                {!isEstimateMode && hasFullAccess ? (
-                  <View style={styles.heroStatusBadge}>
-                    <Text style={styles.heroStatusBadgeLabel}>Full report unlocked</Text>
-                  </View>
-                ) : null}
               </View>
-            </View>
+            ) : null}
             <Text style={styles.heroTitle}>{resolvedDisplayTitle}</Text>
             <Text style={styles.heroSubtitle}>{estimateSubtitle || unlockedDetailSubtitle}</Text>
             {summaryChips.length > 0 ? (
@@ -3197,13 +3210,10 @@ export default function VehicleDetailScreen() {
         {isEstimateMode ? <Text style={styles.estimateEyebrow}>Vehicle details</Text> : null}
         {feedbackMessage ? <Text style={styles.feedbackNotice}>{feedbackMessage}</Text> : null}
         {errorMessage ? <Text style={styles.errorNotice}>{errorMessage}</Text> : null}
-        <Text style={styles.headerKicker}>{isEstimateMode ? lockedEyebrow : "Performance intelligence summary"}</Text>
+        {!isEstimateMode ? <Text style={styles.headerKicker}>Performance intelligence summary</Text> : null}
         <Text style={styles.subtitle}>{estimateSubtitle || unlockedDetailSubtitle}</Text>
         {isEstimateMode ? (
           <>
-            <View style={styles.estimateBadge}>
-              <Text style={styles.estimateBadgeLabel}>{lockedEyebrow}</Text>
-            </View>
             {__DEV__ ? (
               <TouchableOpacity
                 style={styles.qaResetButton}
@@ -3228,9 +3238,9 @@ export default function VehicleDetailScreen() {
             <View style={styles.sectionCard}>
               <SectionHeader
                 title="Description"
-                subtitle="Grounded in confirmed vehicle identity and available specs."
+                subtitle="A short overview grounded in the vehicle identity and confirmed data available here."
               />
-              <Text style={styles.body}>{vehicleDescription.description}</Text>
+              <Text style={styles.descriptionBody}>{vehicleDescription.description}</Text>
             </View>
           ) : null}
           <View style={styles.sectionCard}>
@@ -3753,21 +3763,23 @@ export default function VehicleDetailScreen() {
           </View>
         </View>
       ) : null}
-      {isLocked ? (
-        <>
+      <View style={styles.bottomActionStack}>
+        {isLocked ? (
+          <>
+            <PrimaryButton
+              label="Scan Another Vehicle"
+              onPress={() => router.push("/(tabs)/scan")}
+            />
+            <PrimaryButton label="View Pro Features" secondary onPress={() => router.push("/paywall")} />
+          </>
+        ) : (
           <PrimaryButton
             label="Scan Another Vehicle"
+            secondary={isTrustedUnlockedEstimate}
             onPress={() => router.push("/(tabs)/scan")}
           />
-          <PrimaryButton label="View Pro Features" secondary onPress={() => router.push("/paywall")} />
-        </>
-      ) : (
-        <PrimaryButton
-          label="Scan Another Vehicle"
-          secondary={isTrustedUnlockedEstimate}
-          onPress={() => router.push("/(tabs)/scan")}
-        />
-      )}
+        )}
+      </View>
       </Animated.View>
       <Modal visible={heroPreviewOpen} transparent animationType="fade" onRequestClose={() => setHeroPreviewOpen(false)}>
         <Pressable style={styles.heroModalBackdrop} onPress={() => setHeroPreviewOpen(false)}>
@@ -3898,58 +3910,22 @@ const styles = StyleSheet.create({
     padding: 18,
   },
   heroMetaTopRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-    flexWrap: "wrap",
-  },
-  heroTopActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    flexWrap: "wrap",
+    marginBottom: 2,
   },
   heroBadge: {
-    backgroundColor: "rgba(0, 194, 255, 0.12)",
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(10, 20, 34, 0.92)",
     borderRadius: Radius.pill,
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderWidth: 1,
-    borderColor: Colors.cyanGlow,
+    borderColor: "rgba(71, 123, 255, 0.26)",
   },
   heroBadgeLabel: {
     ...Typography.caption,
     color: Colors.premium,
     textTransform: "uppercase",
     letterSpacing: 1.1,
-  },
-  heroStatusBadge: {
-    backgroundColor: "rgba(29, 140, 255, 0.14)",
-    borderRadius: Radius.pill,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderWidth: 1,
-    borderColor: Colors.accentGlow,
-  },
-  heroStatusBadgeLabel: {
-    ...Typography.caption,
-    color: Colors.accent,
-    fontWeight: "700",
-  },
-  heroTapBadge: {
-    backgroundColor: "rgba(4, 12, 24, 0.56)",
-    borderRadius: Radius.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderWidth: 1,
-    borderColor: "rgba(142, 212, 255, 0.22)",
-  },
-  heroTapBadgeLabel: {
-    ...Typography.caption,
-    color: Colors.textSoft,
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
   },
   heroPressable: {
     borderRadius: Radius.xl,
@@ -4046,16 +4022,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     fontWeight: "700",
   },
-  estimateBadge: {
-    alignSelf: "flex-start",
-    backgroundColor: "rgba(14, 165, 233, 0.12)",
-    borderRadius: Radius.pill,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderWidth: 1,
-    borderColor: "rgba(94, 231, 255, 0.34)",
-  },
-  estimateBadgeLabel: { ...Typography.caption, color: Colors.premium, fontWeight: "700", letterSpacing: 0.4 },
   estimateNoticeInline: { ...Typography.caption, color: Colors.textMuted, lineHeight: 18 },
   sectionCard: { ...cardStyles.primary, padding: 20, gap: 16 },
   trustedSpecsStack: { gap: 12 },
@@ -4108,6 +4074,7 @@ const styles = StyleSheet.create({
   pageContent: { paddingVertical: 24 },
   listingsPageContent: { paddingVertical: 24, backgroundColor: Colors.backgroundAlt },
   body: { ...Typography.body, color: Colors.textMuted },
+  descriptionBody: { ...Typography.body, color: Colors.textSoft, lineHeight: 24 },
   row: { borderTopWidth: 1, borderTopColor: Colors.borderSoft, paddingTop: 14, gap: 4 },
   rowLabel: { ...Typography.caption, color: Colors.textMuted },
   rowValue: { ...Typography.body, color: Colors.textStrong },
@@ -4171,6 +4138,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.cardAlt,
   },
   photo: { width: "100%", height: "100%" },
+  bottomActionStack: { gap: 12, paddingTop: 6, paddingBottom: 10 },
   loadingPage: { flex: 1, gap: 20 },
   loadingWrap: { flex: 1, justifyContent: "center", gap: 18 },
   loadingHeroCard: { ...cardStyles.primaryTint, gap: 16, padding: 18 },

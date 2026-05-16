@@ -11,7 +11,6 @@ import { EmptyState } from "@/components/EmptyState";
 import { ErrorStateCard } from "@/components/ErrorStateCard";
 import { FeatureRow } from "@/components/FeatureRow";
 import { PaywallCard } from "@/components/PaywallCard";
-import { PillBadge } from "@/components/PillBadge";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { PremiumCard } from "@/components/PremiumCard";
 import { RecentScanCard } from "@/components/RecentScanCard";
@@ -692,7 +691,6 @@ export default function ScanScreen() {
         />
       ) : null}
       <PremiumCard variant="default" glow contentStyle={styles.scanCard}>
-        <PillBadge tone="brand" label="Ready to identify" />
         <Pressable style={({ pressed }) => [styles.cameraButton, pressed && styles.cameraPressed]} onPress={() => beginScan("camera")} disabled={isBusy}>
           <LinearGradient colors={["#0A72E8", "#1D8CFF", "#5EE7FF"]} style={styles.cameraGradient}>
             <Text style={styles.cameraButtonLabel}>{isBusy ? "Analyzing..." : "Scan Vehicle"}</Text>
@@ -713,7 +711,6 @@ export default function ScanScreen() {
             console.log("[tap] scan-upgrade-prompt");
             router.push("/paywall");
           }}
-          showEyebrow={false}
           showCreditBadge={false}
           usageLabelOverride={
             freeUnlocksRemaining > 0
@@ -722,7 +719,7 @@ export default function ScanScreen() {
           }
         />
       ) : null}
-      <SectionHeader kicker="Recent Scans" title="Recent scans" subtitle="Jump back into the vehicles you’ve already scanned." />
+      <SectionHeader title="Recent scans" subtitle="Jump back into the vehicles you’ve already scanned." />
       {recentScans.length === 0 ? (
         <EmptyState
           title="No recent scans yet"

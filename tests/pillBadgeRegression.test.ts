@@ -24,8 +24,10 @@ test("canonical premium badge component does not expose the old aqua/green pill 
 
 test("high-risk screens do not carry the old bright pill colors inline", () => {
   const guardedFiles = [
+    "app/(tabs)/scan.tsx",
     "app/(tabs)/garage.tsx",
     "app/scan/result.tsx",
+    "app/scan/camera.tsx",
     "components/PaywallCard.tsx",
     "components/UpgradePromptCard.tsx",
     "components/ProLockCard.tsx",
@@ -44,3 +46,26 @@ test("high-risk screens do not carry the old bright pill colors inline", () => {
   }
 });
 
+test("banned decorative labels do not return on high-risk production screens", () => {
+  const guardedFiles = [
+    "app/(tabs)/scan.tsx",
+    "app/(tabs)/garage.tsx",
+    "app/scan/camera.tsx",
+    "app/vehicle/[id].tsx",
+    "components/EmptyState.tsx",
+  ];
+
+  for (const filePath of guardedFiles) {
+    const source = read(filePath);
+    for (const forbiddenLabel of [
+      "Ready to identify",
+      "SCAN IN PROGRESS",
+      "Scan in progress",
+      "Garage archive",
+      "VEHICLE DOSSIER",
+      "Vehicle dossier",
+    ]) {
+      assert.equal(source.includes(forbiddenLabel), false, `Decorative label ${forbiddenLabel} leaked back into ${filePath}`);
+    }
+  }
+});
