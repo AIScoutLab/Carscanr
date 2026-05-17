@@ -199,7 +199,7 @@ export type ValuationRecord = {
   generatedAt: string;
   sourceLabel?: string;
   confidenceLabel?: string;
-  valuationSource?: "provider" | "cache" | "listing_comps" | "unavailable" | null;
+  valuationSource?: "provider" | "cache" | "listing_comps" | "modeled_fallback" | "unavailable" | null;
   compCount?: number | null;
   confidence?: "high" | "moderate" | "limited" | "unavailable" | null;
   rangeLow?: number | null;

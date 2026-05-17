@@ -2,7 +2,7 @@ import { formatCurrency } from "@/lib/utils";
 import { buildSpecialtyVehicleOverview, isSpecialtyExoticMake } from "@/lib/specialtyVehicles";
 import { resolveConditionValues } from "@/lib/valueConditionSet";
 import { resolveHorsepower } from "@/lib/vehicleData";
-import { getVehicleImage } from "@/constants/vehicleImages";
+import { getVehicleImage, legacyGenericSportsCarImage, resolveVehicleImageSource } from "@/constants/vehicleImages";
 import { apiRequest, apiRequestEnvelope } from "@/services/apiClient";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { MarketAreaZipSource } from "@/lib/marketAreaZip";
@@ -124,7 +124,7 @@ type BackendValuation = {
   generatedAt: string;
   sourceLabel?: string;
   confidenceLabel?: string;
-  valuationSource?: "provider" | "cache" | "listing_comps" | "unavailable" | null;
+  valuationSource?: "provider" | "cache" | "listing_comps" | "modeled_fallback" | "unavailable" | null;
   compCount?: number | null;
   confidence?: "high" | "moderate" | "limited" | "unavailable" | null;
   rangeLow?: number | null;
@@ -541,7 +541,7 @@ function mapResolvedSpecsVehicle(vehicle: BackendResolvedVehicle): VehicleRecord
     model: vehicle.model,
     trim: vehicle.trim,
     bodyStyle: vehicle.bodyStyle,
-    heroImage: getVehicleImage(vehicle.id, vehicle.vehicleType),
+    heroImage: getVehicleImage(vehicle.id, vehicle.vehicleType, vehicle.bodyStyle),
     overview: defaultOverview({
       ...vehicle,
       imageUrl: null,
@@ -602,22 +602,28 @@ function resolveVehicleHeroImage(
   const liveExactImage = pickFirstNonEmptyString(vehicle.imageUrl, vehicle.heroImage);
   const canonicalExactImage = pickFirstNonEmptyString(fallbackRecord?.heroImage);
   const providerMatchedImage = pickFirstNonEmptyString(vehicle.providerImageUrl, vehicle.defaultImageUrl, listings?.[0]?.imageUrl);
-  const genericImage = getVehicleImage(vehicle.id, vehicle.vehicleType);
+  const genericResolution = resolveVehicleImageSource({
+    vehicleId: vehicle.id,
+    vehicleType: vehicle.vehicleType,
+    bodyStyle: vehicle.bodyStyle ?? fallbackRecord?.bodyStyle ?? null,
+  });
+  const canonicalImageAllowed = canonicalExactImage && canonicalExactImage !== legacyGenericSportsCarImage ? canonicalExactImage : null;
 
-  const heroImage = liveExactImage ?? canonicalExactImage ?? providerMatchedImage ?? genericImage;
+  const heroImage = liveExactImage ?? canonicalImageAllowed ?? providerMatchedImage ?? genericResolution.uri;
   console.log("[vehicle-service] EXACT_HIT_IMAGE_SELECTION", {
     vehicleId: vehicle.id,
     liveExactImage: liveExactImage ?? null,
-    canonicalExactImage: canonicalExactImage ?? null,
+    canonicalExactImage: canonicalImageAllowed ?? null,
     providerMatchedImage: providerMatchedImage ?? null,
+    fallbackType: genericResolution.fallbackType,
     selectedSource:
       heroImage === liveExactImage
         ? "exact-live"
-        : heroImage === canonicalExactImage
+        : heroImage === canonicalImageAllowed
           ? "exact-canonical"
           : heroImage === providerMatchedImage
             ? "exact-provider"
-            : "generic-fallback",
+            : genericResolution.source,
   });
   return heroImage;
 }

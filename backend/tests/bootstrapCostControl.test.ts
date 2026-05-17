@@ -1660,6 +1660,117 @@ describe("bootstrap cost control", () => {
     assert.notEqual(result.data.reason, "no_comps_found");
   });
 
+  test("Load Value first can still return low-confidence fallback when local listings are unavailable", async () => {
+    let valueProviderCalls = 0;
+    let listingsProviderCalls = 0;
+    setRepositories(createTestRepositories({ valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      listingsProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          valueProviderCalls += 1;
+          return null;
+        },
+      },
+      listingsProvider: {
+        async getListings() {
+          listingsProviderCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2020-honda-civic-ex",
+      zip: "60563",
+      mileage: 42000,
+      condition: "good",
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
+
+    assert.equal(valueProviderCalls > 0, true);
+    assert.equal(listingsProviderCalls > 0, true);
+    assert.equal(result.data.status, "loaded_condition_set");
+    assert.equal(result.data.valuationSource, "modeled_fallback");
+    assert.equal(result.data.confidence, "limited");
+    assert.equal(result.data.compCount, 0);
+    assert.match(result.data.sourceLabel ?? "", /estimate/i);
+    assert.match(result.data.confidenceLabel ?? "", /Low market confidence/i);
+    assert.doesNotMatch(result.data.sourceLabel ?? "", /nearby comparable listings|live market|dealer listings/i);
+    assert.doesNotMatch(result.data.confidenceLabel ?? "", /Based on \d+ nearby comparable listings|dealer listings were found/i);
+    assert.notEqual(result.data.reason, "no_comps_found");
+    assert.notEqual(result.data.sourceLabel, "No live market comps found");
+  });
+
+  test("Load Value first stays unavailable when no provider comps and no safe modeled baseline exist", async () => {
+    let valueProviderCalls = 0;
+    let listingsProviderCalls = 0;
+    const unknownVehicle = {
+      id: "2017-example-nomad-base",
+      year: 2017,
+      make: "Example",
+      model: "Nomad",
+      trim: "Base",
+      bodyStyle: "Sedan",
+      vehicleType: "car" as const,
+      msrp: 0,
+      engine: "Unknown",
+      horsepower: null,
+      torque: "Unknown",
+      transmission: "Unknown",
+      drivetrain: "Unknown",
+      mpgOrRange: "Unknown",
+      colors: [],
+    };
+    setRepositories(createTestRepositories({ vehicles: [unknownVehicle], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      listingsProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          valueProviderCalls += 1;
+          return null;
+        },
+      },
+      listingsProvider: {
+        async getListings() {
+          listingsProviderCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: unknownVehicle.id,
+      zip: "60563",
+      mileage: 42000,
+      condition: "good",
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
+
+    assert.equal(valueProviderCalls > 0, true);
+    assert.equal(listingsProviderCalls > 0, true);
+    assert.equal(result.data.status, "no_comps_found");
+    assert.equal(result.data.valuationSource, "unavailable");
+    assert.equal(result.data.confidence, "unavailable");
+    assert.equal(result.data.sourceLabel, "No live market comps found");
+    assert.equal(result.data.reason, "no_comps_found");
+    assert.notEqual(result.data.valuationSource, "modeled_fallback");
+  });
+
   test("explicit listings refresh for non-specialty models broadens from trim/body variant to family model and adjacent year", async () => {
     const testRepositories = createTestRepositories({
       vehicles: [

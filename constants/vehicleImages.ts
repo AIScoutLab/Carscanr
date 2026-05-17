@@ -8,11 +8,84 @@ export const seededVehicleImages = {
   "2023-harley-davidson-street-glide-special": "https://commons.wikimedia.org/wiki/Special:FilePath/2015_Street_Glide_Special.jpg",
 } as const;
 
+export const legacyGenericSportsCarImage =
+  "https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?auto=format&fit=crop&w=1200&q=80";
+
+const bodyStyleVehicleImages = {
+  truck: "https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?auto=format&fit=crop&w=1200&q=80",
+  suv: "https://images.unsplash.com/photo-1519641471654-76ce0107ad1b?auto=format&fit=crop&w=1200&q=80",
+  sedan: seededVehicleImages["2018-kia-optima-ex"],
+  coupe: seededVehicleImages["2019-ford-mustang-gt"],
+  wagon: "https://commons.wikimedia.org/wiki/Special:FilePath/2019_Volvo_V60_Inscription_D4_Automatic_2.0_Front.jpg",
+  hatchback: "https://commons.wikimedia.org/wiki/Special:FilePath/2018_Toyota_Corolla_Icon_Tech_VVT-i_Hybrid_1.8_Front.jpg",
+  convertible: "https://commons.wikimedia.org/wiki/Special:FilePath/2019_Mazda_MX-5_RF_Sport_Nav%2B_2.0_Front.jpg",
+  van: "https://commons.wikimedia.org/wiki/Special:FilePath/2021_Chrysler_Pacifica_Touring_L%2C_front_4.17.21.jpg",
+} as const;
+
 const genericVehicleImages = {
-  car: "https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?auto=format&fit=crop&w=1200&q=80",
+  car: "https://placehold.co/1200x675/e5e7eb/475569.png?text=Vehicle",
   motorcycle: "https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&w=1200&q=80",
 } as const;
 
-export function getVehicleImage(vehicleId: string, vehicleType: "car" | "motorcycle" = "car") {
-  return seededVehicleImages[vehicleId as keyof typeof seededVehicleImages] ?? genericVehicleImages[vehicleType];
+export type VehicleImageFallbackType =
+  | "seeded"
+  | "body-style-truck"
+  | "body-style-suv"
+  | "body-style-sedan"
+  | "body-style-coupe"
+  | "body-style-wagon"
+  | "body-style-hatchback"
+  | "body-style-convertible"
+  | "body-style-van"
+  | "motorcycle-placeholder"
+  | "neutral-placeholder";
+
+export type VehicleImageResolution = {
+  uri: string;
+  source: "vehicle" | "body-style" | "placeholder";
+  fallbackType: VehicleImageFallbackType;
+};
+
+function normalizeBodyStyle(bodyStyle?: string | null): keyof typeof bodyStyleVehicleImages | null {
+  const normalized = bodyStyle?.trim().toLowerCase() ?? "";
+  if (!normalized) return null;
+  if (/\b(pickup|truck)\b/.test(normalized)) return "truck";
+  if (/\b(suv|crossover|utility)\b/.test(normalized)) return "suv";
+  if (/\b(wagon|estate)\b/.test(normalized)) return "wagon";
+  if (/\b(hatch|hatchback)\b/.test(normalized)) return "hatchback";
+  if (/\b(convertible|cabriolet|roadster)\b/.test(normalized)) return "convertible";
+  if (/\b(van|minivan)\b/.test(normalized)) return "van";
+  if (/\b(coupe|2-door|two-door)\b/.test(normalized)) return "coupe";
+  if (/\b(sedan|saloon)\b/.test(normalized)) return "sedan";
+  return null;
+}
+
+export function resolveVehicleImageSource(input: {
+  vehicleId: string;
+  vehicleType?: "car" | "motorcycle";
+  bodyStyle?: string | null;
+}): VehicleImageResolution {
+  const seeded = seededVehicleImages[input.vehicleId as keyof typeof seededVehicleImages];
+  if (seeded) {
+    return { uri: seeded, source: "vehicle", fallbackType: "seeded" };
+  }
+
+  if (input.vehicleType === "motorcycle") {
+    return { uri: genericVehicleImages.motorcycle, source: "placeholder", fallbackType: "motorcycle-placeholder" };
+  }
+
+  const normalizedBodyStyle = normalizeBodyStyle(input.bodyStyle);
+  if (normalizedBodyStyle) {
+    return {
+      uri: bodyStyleVehicleImages[normalizedBodyStyle],
+      source: "body-style",
+      fallbackType: `body-style-${normalizedBodyStyle}` as VehicleImageFallbackType,
+    };
+  }
+
+  return { uri: genericVehicleImages.car, source: "placeholder", fallbackType: "neutral-placeholder" };
+}
+
+export function getVehicleImage(vehicleId: string, vehicleType: "car" | "motorcycle" = "car", bodyStyle?: string | null) {
+  return resolveVehicleImageSource({ vehicleId, vehicleType, bodyStyle }).uri;
 }

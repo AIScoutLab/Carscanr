@@ -76,7 +76,7 @@ export type ValuationResult = {
   median?: string | null;
   confidenceLabel: string;
   sourceLabel: string;
-  valuationSource?: "provider" | "cache" | "listing_comps" | "unavailable" | null;
+  valuationSource?: "provider" | "cache" | "listing_comps" | "modeled_fallback" | "unavailable" | null;
   compCount?: number | null;
   confidence?: "high" | "moderate" | "limited" | "unavailable" | null;
   rangeLow?: string | null;

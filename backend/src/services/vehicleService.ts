@@ -839,7 +839,7 @@ function inferMsrpAnchorFromVehicle(vehicle: VehicleRecord) {
   const engine = normalizeVehicleLookupText(vehicle.engine);
   const family = `${make} ${model} ${trim} ${body} ${engine}`.trim();
 
-  let anchorMsrp = 26000;
+  let anchorMsrp: number | null = null;
   if (vehicle.vehicleType === "motorcycle") {
     anchorMsrp = 14000;
   } else if (/rolls royce|bentley|ferrari|lamborghini|mclaren|aston martin|porsche|maserati/.test(make)) {
@@ -858,6 +858,10 @@ function inferMsrpAnchorFromVehicle(vehicle: VehicleRecord) {
     anchorMsrp = 24000;
   } else if (/camry|accord|altima|malibu|sonata|k5/.test(family)) {
     anchorMsrp = 29000;
+  }
+
+  if (anchorMsrp == null) {
+    return null;
   }
 
   return { anchorMsrp, modelType: "estimated_family_model" as const };
@@ -2509,11 +2513,18 @@ function shapeValuationRecord(input: {
         ? "Estimated from vehicle family data"
         : "Estimated from vehicle data";
 
-  valuation.confidenceLabel = confidenceLabel;
-  valuation.sourceLabel = sourceLabel;
+  const preserveModeledFallbackLabel = valuation.valuationSource === "modeled_fallback";
+  valuation.confidenceLabel = preserveModeledFallbackLabel ? valuation.confidenceLabel ?? confidenceLabel : confidenceLabel;
+  valuation.sourceLabel = preserveModeledFallbackLabel ? valuation.sourceLabel ?? sourceLabel : sourceLabel;
   valuation.confidence =
     valuation.confidence ??
-    (modelType === "provider_range" ? (exactTrimMatch ? "high" : "moderate") : modelType === "listing_derived" ? "limited" : "moderate");
+    (modelType === "provider_range"
+      ? exactTrimMatch
+        ? "high"
+        : "moderate"
+      : modelType === "listing_derived" || preserveModeledFallbackLabel
+        ? "limited"
+        : "moderate");
   logger.info(
     {
       label: "VALUE_CONFIDENCE_COMPUTED",
@@ -3217,6 +3228,24 @@ export class VehicleService {
         },
         "VALUE_REFRESH_STARTED",
       );
+      if (isExplicitValueRefresh) {
+        logger.info(
+          {
+            label: "VALUE_FALLBACK_CHAIN_STARTED",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            make: lookupBaseVehicle?.make ?? descriptor?.make ?? null,
+            model: lookupBaseVehicle?.model ?? descriptor?.model ?? null,
+            trim: lookupBaseVehicle?.trim ?? descriptor?.trim ?? null,
+            year: lookupBaseVehicle?.year ?? descriptor?.year ?? null,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition,
+            specialtySuppressed: isSpecialtyLookupVehicle,
+          },
+          "VALUE_FALLBACK_CHAIN_STARTED",
+        );
+      }
       const shouldBypassNegativeValueCache =
         isExplicitValueRefresh || fetchReason === "cached_listings_value_sync";
       if (isSpecialtyLookupVehicle && isExplicitValueRefresh) {
@@ -4268,6 +4297,18 @@ export class VehicleService {
       }
 
       if (!fallbackValue && lookupBaseVehicle) {
+        if (isExplicitValueRefresh) {
+          logger.info(
+            {
+              label: "VALUE_FALLBACK_STEP",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              step: "local-listing-comps",
+              source: "cached_or_stored_listings",
+            },
+            "VALUE_FALLBACK_STEP",
+          );
+        }
         logger.info(
           {
             label: "VALUE_COMP_SOURCE",
@@ -4290,6 +4331,20 @@ export class VehicleService {
         });
         if (derivedFromListings) {
           fallbackValue = derivedFromListings;
+          if (isExplicitValueRefresh) {
+            logger.info(
+              {
+                label: "VALUE_FALLBACK_RESULT",
+                requestId: input.requestId,
+                vehicleId: lookupVehicleId,
+                step: "local-listing-comps",
+                status: "resolved",
+                source: derivedFromListings.valuationSource ?? derivedFromListings.modelType ?? null,
+                listingCount: derivedFromListings.listingCount ?? null,
+              },
+              "VALUE_FALLBACK_RESULT",
+            );
+          }
           logger.info(
             {
               label: "VALUE_REFRESH_LISTINGS_REUSED",
@@ -4309,9 +4364,9 @@ export class VehicleService {
               vehicleId: lookupVehicleId,
               listingCount: derivedFromListings.listingCount ?? null,
               sourceLabel: derivedFromListings.sourceLabel,
-            },
-            "VALUE_LOOKUP_SUCCESS",
-          );
+          },
+          "VALUE_LOOKUP_SUCCESS",
+        );
         }
       }
 
@@ -4328,6 +4383,16 @@ export class VehicleService {
             reason: "direct-value-unavailable",
           },
           "VALUE_REFRESH_COMP_FETCH_STARTED",
+        );
+        logger.info(
+          {
+            label: "VALUE_FALLBACK_STEP",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            step: "broadened-listing-comps",
+            source: "listings-provider-fallback-chain",
+          },
+          "VALUE_FALLBACK_STEP",
         );
         const listingsForValue = await this.getListings({
           requestId: input.requestId,
@@ -4392,6 +4457,19 @@ export class VehicleService {
             fallbackValue = derivedFromFetchedListings;
             logger.info(
               {
+                label: "VALUE_FALLBACK_RESULT",
+                requestId: input.requestId,
+                vehicleId: lookupVehicleId,
+                step: "broadened-listing-comps",
+                status: "resolved",
+                source: derivedFromFetchedListings.valuationSource ?? derivedFromFetchedListings.modelType ?? null,
+                listingCount: derivedFromFetchedListings.listingCount ?? null,
+                confidence: derivedFromFetchedListings.confidence ?? null,
+              },
+              "VALUE_FALLBACK_RESULT",
+            );
+            logger.info(
+              {
                 label: "VALUE_COMP_DERIVATION_RESULT",
                 requestId: input.requestId,
                 vehicleId: lookupVehicleId,
@@ -4432,7 +4510,19 @@ export class VehicleService {
           : null;
       }
 
-      if (!fallbackValue && lookupBaseVehicle && !isSpecialtyLookupVehicle && !isExplicitValueRefresh) {
+      if (!fallbackValue && lookupBaseVehicle && !isSpecialtyLookupVehicle) {
+        if (isExplicitValueRefresh) {
+          logger.info(
+            {
+              label: "VALUE_FALLBACK_STEP",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              step: "generation-model-family-baseline",
+              source: "canonical_vehicle_model",
+            },
+            "VALUE_FALLBACK_STEP",
+          );
+        }
         fallbackValue = buildEstimatedMarketRangeFromVehicle({
           vehicle: lookupBaseVehicle,
           vehicleId: lookupVehicleId,
@@ -4441,6 +4531,35 @@ export class VehicleService {
           condition: input.condition,
         });
         if (fallbackValue) {
+          if (isExplicitValueRefresh) {
+            fallbackValue = {
+              ...fallbackValue,
+              sourceLabel:
+                fallbackValue.modelType === "estimated_family_model"
+                  ? "Regional model-family estimate"
+                  : "Limited vehicle-data estimate",
+              confidenceLabel:
+                "Low market confidence. Nearby listings were unavailable, so this uses vehicle and model-family data instead of live local comps.",
+              valuationSource: "modeled_fallback",
+              confidence: "limited",
+              sourceBasis: "modeled_condition_adjusted",
+              listingCount: 0,
+              compCount: 0,
+              reason: "modeled_baseline_after_no_local_comps",
+            };
+            logger.info(
+              {
+                label: "VALUE_FALLBACK_RESULT",
+                requestId: input.requestId,
+                vehicleId: lookupVehicleId,
+                step: "generation-model-family-baseline",
+                status: "resolved",
+                source: fallbackValue.valuationSource ?? fallbackValue.modelType ?? null,
+                confidence: fallbackValue.confidence ?? null,
+              },
+              "VALUE_FALLBACK_RESULT",
+            );
+          }
           logger.error(
             {
               label: "VALUE_LOOKUP_SUCCESS",
@@ -4449,6 +4568,18 @@ export class VehicleService {
               vehicleId: lookupVehicleId,
             },
             "VALUE_LOOKUP_SUCCESS",
+          );
+        } else if (isExplicitValueRefresh) {
+          logger.info(
+            {
+              label: "VALUE_FALLBACK_RESULT",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              step: "generation-model-family-baseline",
+              status: "skipped",
+              reason: "no_safe_baseline_data",
+            },
+            "VALUE_FALLBACK_RESULT",
           );
         }
       }
@@ -4539,6 +4670,9 @@ export class VehicleService {
           reason: explicitLiveFailureReason ?? "no_comps_found",
           modelType: "modeled",
           listingCount: 0,
+          valuationSource: "unavailable",
+          confidence: "unavailable",
+          unavailableReason: explicitLiveFailureReason ?? "no_comps_found",
         };
         logger.info(
           {
@@ -4551,6 +4685,18 @@ export class VehicleService {
             reason: explicitLiveFailureReason ?? "no_comps_found",
           },
           "VALUE_UNAVAILABLE_REASON",
+        );
+        logger.info(
+          {
+            label: "VALUE_UNAVAILABLE_FINAL_REASON",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition,
+            reason: explicitLiveFailureReason ?? "no_comps_found",
+          },
+          "VALUE_UNAVAILABLE_FINAL_REASON",
         );
       }
 
@@ -4665,6 +4811,26 @@ export class VehicleService {
               : "fallback_value",
           },
           "VALUE_REFRESH_FINAL_STATE",
+        );
+        logger.info(
+          {
+            label: "VALUE_FALLBACK_CONFIDENCE",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            confidence: normalizedFallbackValue.confidence ?? null,
+            confidenceLabel: normalizedFallbackValue.confidenceLabel ?? null,
+          },
+          "VALUE_FALLBACK_CONFIDENCE",
+        );
+        logger.info(
+          {
+            label: "VALUE_FINAL_SOURCE",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            source: normalizedFallbackValue.valuationSource ?? normalizedFallbackValue.modelType ?? "fallback",
+            sourceLabel: normalizedFallbackValue.sourceLabel ?? null,
+          },
+          "VALUE_FINAL_SOURCE",
         );
         return {
           data: shapeValuationRecord({

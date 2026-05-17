@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { getVehicleImage, legacyGenericSportsCarImage, resolveVehicleImageSource } from "../constants/vehicleImages";
 
 const searchScreenPath = path.join(process.cwd(), "app/(tabs)/search.tsx");
 const offlineCanonicalServicePath = path.join(process.cwd(), "services/offlineCanonicalService.ts");
@@ -75,4 +76,42 @@ test("manual search submit failure renders an error instead of silently doing no
   assert.match(screenSource, /setError\(message\)/);
   assert.match(screenSource, /setSearched\(true\)/);
   assert.match(screenSource, /Search unavailable/);
+});
+
+test("manual search production UI does not expose fallback wording", () => {
+  const screenSource = fs.readFileSync(searchScreenPath, "utf8");
+
+  assert.match(screenSource, /Can't find your vehicle\?/);
+  assert.match(screenSource, /Hide manual entry/);
+  assert.doesNotMatch(screenSource, /Use text fallback|Hide text fallback/);
+  assert.doesNotMatch(screenSource, /manualFallbackButtonText\}>\{[^}]*fallback/i);
+});
+
+test("manual search result images use body-style fallback before neutral placeholder", () => {
+  const truckImage = resolveVehicleImageSource({
+    vehicleId: "unknown-ford-ranger",
+    vehicleType: "car",
+    bodyStyle: "Pickup Truck",
+  });
+  const neutralImage = resolveVehicleImageSource({
+    vehicleId: "unknown-vehicle",
+    vehicleType: "car",
+    bodyStyle: null,
+  });
+  const seededImage = resolveVehicleImageSource({
+    vehicleId: "2021-cadillac-ct4-premium-luxury",
+    vehicleType: "car",
+    bodyStyle: "Sedan",
+  });
+  const screenSource = fs.readFileSync(searchScreenPath, "utf8");
+
+  assert.equal(truckImage.fallbackType, "body-style-truck");
+  assert.notEqual(truckImage.uri, legacyGenericSportsCarImage);
+  assert.equal(getVehicleImage("unknown-ford-ranger", "car", "Pickup Truck"), truckImage.uri);
+  assert.equal(neutralImage.fallbackType, "neutral-placeholder");
+  assert.notEqual(neutralImage.uri, legacyGenericSportsCarImage);
+  assert.equal(seededImage.fallbackType, "seeded");
+  assert.match(screenSource, /SEARCH_RESULT_IMAGE_SOURCE/);
+  assert.match(screenSource, /SEARCH_RESULT_IMAGE_FALLBACK_TYPE/);
+  assert.match(screenSource, /legacyGenericSportsCarImage/);
 });

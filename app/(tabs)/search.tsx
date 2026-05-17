@@ -10,7 +10,7 @@ import { PremiumSkeleton } from "@/components/PremiumSkeleton";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { VehicleCard } from "@/components/VehicleCard";
 import { Colors, Radius, Typography } from "@/constants/theme";
-import { getVehicleImage } from "@/constants/vehicleImages";
+import { getVehicleImage, legacyGenericSportsCarImage, resolveVehicleImageSource } from "@/constants/vehicleImages";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { VehicleRecord } from "@/types";
 
@@ -196,7 +196,7 @@ export default function SearchScreen() {
             pathname: "/vehicle/[id]" as const,
             params: {
               id: localMatch.vehicle.id,
-              imageUri: getVehicleImage(localMatch.vehicle.id, localMatch.vehicle.vehicleType),
+              imageUri: getVehicleImage(localMatch.vehicle.id, localMatch.vehicle.vehicleType, localMatch.vehicle.basicSpecs.bodyStyle),
             },
           }
         : {
@@ -254,10 +254,27 @@ export default function SearchScreen() {
   }, [results]);
 
   const displayedResults = useMemo(() => {
-    if (!selectedTrim) {
-      return results;
-    }
-    return results.filter((vehicle) => vehicle.trim?.trim() === selectedTrim);
+    const candidates = selectedTrim ? results.filter((vehicle) => vehicle.trim?.trim() === selectedTrim) : results;
+    return candidates.map((vehicle) => {
+      const resolvedImage = resolveVehicleImageSource({
+        vehicleId: vehicle.id,
+        vehicleType: "car",
+        bodyStyle: vehicle.bodyStyle,
+      });
+      const providedImage = vehicle.heroImage?.trim();
+      const shouldUseProvidedImage = Boolean(providedImage && providedImage !== legacyGenericSportsCarImage);
+      const heroImage = shouldUseProvidedImage ? providedImage as string : resolvedImage.uri;
+      console.log("[manual-search] SEARCH_RESULT_IMAGE_SOURCE", {
+        vehicleId: vehicle.id,
+        bodyStyle: vehicle.bodyStyle ?? null,
+        source: shouldUseProvidedImage ? "vehicle-record" : resolvedImage.source,
+      });
+      console.log("[manual-search] SEARCH_RESULT_IMAGE_FALLBACK_TYPE", {
+        vehicleId: vehicle.id,
+        fallbackType: shouldUseProvidedImage ? "vehicle-record" : resolvedImage.fallbackType,
+      });
+      return heroImage === vehicle.heroImage ? vehicle : { ...vehicle, heroImage };
+    });
   }, [results, selectedTrim]);
   const requiresTrimSelection = availableTrims.length > 1 && !selectedTrim;
 
@@ -307,7 +324,9 @@ export default function SearchScreen() {
           onPress={() => setManualFallbackVisible((visible) => !visible)}
         >
           <Ionicons name={manualFallbackVisible ? "remove-circle-outline" : "create-outline"} size={17} color={Colors.textSoft} />
-          <Text style={styles.manualFallbackButtonText}>{manualFallbackVisible ? "Hide text fallback" : "Use text fallback"}</Text>
+          <Text style={styles.manualFallbackButtonText}>
+            {manualFallbackVisible ? "Hide manual entry" : "Can't find your vehicle?"}
+          </Text>
         </Pressable>
         {manualFallbackVisible ? (
           <View style={styles.manualFallbackFields}>

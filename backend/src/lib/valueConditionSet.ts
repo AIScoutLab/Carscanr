@@ -150,8 +150,9 @@ export function buildConditionSetValuation(input: {
       null,
     midpoint: input.valuation.midpoint ?? baseSnapshot.median ?? input.valuation.median ?? input.valuation.privateParty ?? null,
     sourceBasis:
-      input.valuation.status === "loaded_listing_range" || input.valuation.modelType === "listing_derived"
+      input.valuation.sourceBasis ??
+      (input.valuation.status === "loaded_listing_range" || input.valuation.modelType === "listing_derived"
         ? "listing_median_adjusted"
-        : "provider_direct",
+        : "provider_direct"),
   };
 }

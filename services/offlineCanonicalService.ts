@@ -446,7 +446,7 @@ function mapOfflineVehicleToRecord(vehicle: OfflineCanonicalVehicle): VehicleRec
     model: vehicle.model,
     trim: vehicle.trim,
     bodyStyle: vehicle.basicSpecs.bodyStyle,
-    heroImage: getVehicleImage(vehicle.id, vehicle.vehicleType),
+    heroImage: getVehicleImage(vehicle.id, vehicle.vehicleType, vehicle.basicSpecs.bodyStyle),
     overview: `${vehicle.year} ${vehicle.make} ${vehicle.model} ${vehicle.trim} from bundled offline canonical data.`,
     specs: {
       engine: vehicle.basicSpecs.engine,
