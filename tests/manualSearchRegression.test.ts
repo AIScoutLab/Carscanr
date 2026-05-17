@@ -19,6 +19,7 @@ test("manual search uses guided canonical pickers as the primary path", () => {
   assert.match(screenSource, /testID="manual-search-trim-picker"/);
   assert.match(screenSource, /disabled=\{!year\}/);
   assert.match(screenSource, /disabled=\{!year \|\| !make\}/);
+  assert.match(screenSource, /const canSearch = year\.trim\(\)\.length > 0 && make\.trim\(\)\.length > 0 && model\.trim\(\)\.length > 0/);
   assert.match(screenSource, /manualFallbackVisible/);
   assert.doesNotMatch(screenSource, /<TextInput[\s\S]{0,180}placeholder="Year"[\s\S]{0,180}keyboardType="number-pad"/);
 });
@@ -47,4 +48,31 @@ test("manual search year options come from a full canonical option index", () =>
   assert.match(serviceSource, /MANUAL_SEARCH_YEAR_INDEX_SIZE/);
   assert.match(serviceSource, /MANUAL_SEARCH_YEAR_OPTIONS_GENERATED/);
   assert.match(serviceSource, /MANUAL_SEARCH_CANONICAL_ROWS_LOADED/);
+});
+
+test("manual search submit navigates from a valid guided selection without requiring trim", () => {
+  const screenSource = fs.readFileSync(searchScreenPath, "utf8");
+
+  assert.match(screenSource, /MANUAL_SEARCH_SUBMIT_STARTED/);
+  assert.match(screenSource, /MANUAL_SEARCH_SELECTION_STATE/);
+  assert.match(screenSource, /MANUAL_SEARCH_LOCAL_MATCH_RESULT/);
+  assert.match(screenSource, /MANUAL_SEARCH_BACKEND_REQUEST_STARTED/);
+  assert.match(screenSource, /MANUAL_SEARCH_BACKEND_REQUEST_RESULT/);
+  assert.match(screenSource, /MANUAL_SEARCH_NAVIGATION_TARGET/);
+  assert.match(screenSource, /MANUAL_SEARCH_SUBMIT_ERROR/);
+  assert.match(screenSource, /offlineCanonicalService\.matchCandidate/);
+  assert.match(screenSource, /buildManualSearchEstimateId/);
+  assert.match(screenSource, /router\.push\(navigationTarget\)/);
+  assert.match(screenSource, /trim: selectedTrimValue \|\| null/);
+  assert.doesNotMatch(screenSource, /vehicleService\.searchVehicles/);
+});
+
+test("manual search submit failure renders an error instead of silently doing nothing", () => {
+  const screenSource = fs.readFileSync(searchScreenPath, "utf8");
+
+  assert.match(screenSource, /catch \(err\)/);
+  assert.match(screenSource, /setResults\(\[\]\)/);
+  assert.match(screenSource, /setError\(message\)/);
+  assert.match(screenSource, /setSearched\(true\)/);
+  assert.match(screenSource, /Search unavailable/);
 });

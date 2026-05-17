@@ -10,8 +10,8 @@ import { PremiumSkeleton } from "@/components/PremiumSkeleton";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { VehicleCard } from "@/components/VehicleCard";
 import { Colors, Radius, Typography } from "@/constants/theme";
+import { getVehicleImage } from "@/constants/vehicleImages";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
-import { vehicleService } from "@/services/vehicleService";
 import { VehicleRecord } from "@/types";
 
 type PickerField = "year" | "make" | "model" | "trim";
@@ -29,6 +29,28 @@ const EMPTY_MANUAL_SEARCH_OPTIONS: ManualSearchOptions = {
   models: [],
   trims: [],
 };
+
+function normalizeRoutePart(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function buildManualSearchEstimateId(input: { year: string; make: string; model: string; trim?: string | null }) {
+  return [
+    "estimate:manual-search",
+    normalizeRoutePart(input.year),
+    normalizeRoutePart(input.make),
+    normalizeRoutePart(input.model),
+    normalizeRoutePart(input.trim ?? "any-trim") || "any-trim",
+  ].join(":");
+}
+
+function buildManualSearchTitle(input: { year: string; make: string; model: string; trim?: string | null }) {
+  return [input.year, input.make, input.model, input.trim].map((value) => value?.trim()).filter(Boolean).join(" ");
+}
 
 export default function SearchScreen() {
   const [year, setYear] = useState("");
@@ -129,6 +151,16 @@ export default function SearchScreen() {
 
   const search = async () => {
     Keyboard.dismiss();
+    console.log("[manual-search] MANUAL_SEARCH_SUBMIT_STARTED", {
+      canSearch,
+      isSearching,
+    });
+    console.log("[manual-search] MANUAL_SEARCH_SELECTION_STATE", {
+      year: year.trim() || null,
+      make: make.trim() || null,
+      model: model.trim() || null,
+      trim: selectedManualTrim.trim() || null,
+    });
     if (!canSearch) {
       setError("Select a year, make, and model before searching.");
       setSearched(false);
@@ -136,16 +168,77 @@ export default function SearchScreen() {
     }
     try {
       setIsSearching(true);
-      setSelectedTrim(selectedManualTrim || null);
-      const data = await vehicleService.searchVehicles({ year, make, model });
-      setResults(data);
+      const selectedYear = Number.parseInt(year, 10);
+      const selectedTrimValue = selectedManualTrim.trim();
+      const localMatch = Number.isFinite(selectedYear)
+        ? await offlineCanonicalService.matchCandidate({
+            year: selectedYear,
+            make,
+            model,
+            trim: selectedTrimValue || null,
+            vehicleType: "car",
+          })
+        : null;
+      console.log("[manual-search] MANUAL_SEARCH_LOCAL_MATCH_RESULT", {
+        matched: Boolean(localMatch?.vehicle),
+        matchType: localMatch?.matchType ?? null,
+        vehicleId: localMatch?.vehicle.id ?? null,
+        datasetVersion: localMatch?.datasetVersion ?? null,
+      });
+
+      setSelectedTrim(selectedTrimValue || null);
+      setResults([]);
       setError(null);
+      setSearched(true);
+
+      const navigationTarget = localMatch?.vehicle
+        ? {
+            pathname: "/vehicle/[id]" as const,
+            params: {
+              id: localMatch.vehicle.id,
+              imageUri: getVehicleImage(localMatch.vehicle.id, localMatch.vehicle.vehicleType),
+            },
+          }
+        : {
+            pathname: "/vehicle/[id]" as const,
+            params: {
+              id: buildManualSearchEstimateId({ year, make, model, trim: selectedTrimValue || null }),
+              estimate: "1",
+              titleLabel: buildManualSearchTitle({ year, make, model, trim: selectedTrimValue || null }),
+              yearLabel: year.trim(),
+              make: make.trim(),
+              model: model.trim(),
+              trimLabel: selectedTrimValue,
+              vehicleType: "car",
+              confidence: "1",
+              resultSource: "manual_search",
+            },
+          };
+
+      console.log("[manual-search] MANUAL_SEARCH_BACKEND_REQUEST_STARTED", {
+        started: false,
+        reason: "manual-search-submit-uses-local-canonical-navigation",
+      });
+      console.log("[manual-search] MANUAL_SEARCH_BACKEND_REQUEST_RESULT", {
+        status: "skipped",
+        reason: localMatch?.vehicle ? "local-offline-match" : "descriptor-navigation",
+      });
+      console.log("[manual-search] MANUAL_SEARCH_NAVIGATION_TARGET", {
+        pathname: navigationTarget.pathname,
+        id: navigationTarget.params.id,
+        mode: localMatch?.vehicle ? "offline-detail" : "estimate-descriptor",
+      });
+      router.push(navigationTarget);
     } catch (err) {
       setResults([]);
-      setError(err instanceof Error ? err.message : "Search unavailable.");
+      const message = err instanceof Error ? err.message : "Search unavailable.";
+      console.log("[manual-search] MANUAL_SEARCH_SUBMIT_ERROR", {
+        message,
+      });
+      setError(message);
+      setSearched(true);
     } finally {
       setIsSearching(false);
-      setSearched(true);
     }
   };
 

@@ -1595,6 +1595,71 @@ describe("bootstrap cost control", () => {
     assert.notEqual(result.data.valuationSource, "unavailable");
   });
 
+  test("Load Value first fetches listings comps without visiting Listings first", async () => {
+    let valueProviderCalls = 0;
+    let listingsProviderCalls = 0;
+    setRepositories(createTestRepositories({ valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      listingsProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          valueProviderCalls += 1;
+          return null;
+        },
+      },
+      listingsProvider: {
+        async getListings(input) {
+          listingsProviderCalls += 1;
+          if (input.vehicle?.make === "Cadillac" && input.vehicle?.model === "CT4") {
+            return [
+              {
+                id: "ct4-value-first-comp-1",
+                vehicleId: input.vehicleId,
+                year: input.vehicle.year,
+                make: input.vehicle.make,
+                model: input.vehicle.model,
+                trim: input.vehicle.trim || "Luxury",
+                title: `${input.vehicle.year} Cadillac CT4 Luxury`,
+                price: 30995,
+                mileage: 22100,
+                dealer: "Naperville Cadillac",
+                distanceMiles: 24,
+                location: "Naperville, IL",
+                imageUrl: "https://images.example.test/ct4.jpg",
+                listedAt: "2026-05-15T00:00:00.000Z",
+              },
+            ];
+          }
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2021-cadillac-ct4-premium-luxury",
+      zip: "60563",
+      mileage: 18400,
+      condition: "good",
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
+
+    assert.equal(valueProviderCalls > 0, true);
+    assert.equal(listingsProviderCalls > 0, true);
+    assert.equal(result.data.status, "loaded_condition_set");
+    assert.equal(result.data.valuationSource, "listing_comps");
+    assert.equal(result.data.compCount, 1);
+    assert.equal(result.data.confidence, "limited");
+    assert.match(result.data.confidenceLabel ?? "", /Very limited market confidence/i);
+    assert.notEqual(result.data.reason, "no_comps_found");
+  });
+
   test("explicit listings refresh for non-specialty models broadens from trim/body variant to family model and adjacent year", async () => {
     const testRepositories = createTestRepositories({
       vehicles: [
