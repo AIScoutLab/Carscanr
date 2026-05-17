@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import bundledDataset from "@/assets/data/offline_canonical.json";
+import bundledManualSearchOptions from "@/assets/data/manual_search_options.json";
 import { getVehicleImage } from "@/constants/vehicleImages";
 import { formatCurrency } from "@/lib/utils";
 import { parseHorsepower } from "@/lib/vehicleData";
@@ -13,12 +14,24 @@ type OfflineCanonicalDataset = {
   vehicles: OfflineCanonicalVehicle[];
 };
 
+type ManualSearchIndex = {
+  source?: string;
+  generatedAt?: string;
+  modelRowCount?: number;
+  trimRowCount?: number;
+  years: string[];
+  makesByYear: Record<string, string[]>;
+  modelsByYearMake: Record<string, string[]>;
+  trimsByYearMakeModel: Record<string, string[]>;
+};
+
 type OfflineCanonicalIndex = {
   dataset: OfflineCanonicalDataset;
   byId: Map<string, OfflineCanonicalVehicle>;
   byCanonicalKey: Map<string, OfflineCanonicalVehicle>;
   byModelFamily: Map<string, OfflineCanonicalVehicle[]>;
   byMakeModelFamily: Map<string, OfflineCanonicalVehicle[]>;
+  manualSearchIndex: ManualSearchIndex;
 };
 
 type ManualSearchOptionsInput = {
@@ -178,11 +191,64 @@ function uniqueDisplayValues(values: Array<string | null | undefined>) {
   return [...displayByKey.values()].sort((left, right) => left.localeCompare(right));
 }
 
+function buildManualOptionKey(parts: Array<string | number | null | undefined>) {
+  return parts
+    .map((part, index) => (index === 0 ? String(part ?? "").trim() : normalizeText(String(part ?? ""))))
+    .join("|");
+}
+
+function getVehicleBackedManualSearchIndex(vehicles: OfflineCanonicalVehicle[]): ManualSearchIndex {
+  const makesByYear = new Map<string, string[]>();
+  const modelsByYearMake = new Map<string, string[]>();
+  const trimsByYearMakeModel = new Map<string, string[]>();
+
+  vehicles.forEach((vehicle) => {
+    const yearKey = String(vehicle.year);
+    makesByYear.set(yearKey, [...(makesByYear.get(yearKey) ?? []), vehicle.make]);
+    modelsByYearMake.set(buildManualOptionKey([vehicle.year, vehicle.make]), [
+      ...(modelsByYearMake.get(buildManualOptionKey([vehicle.year, vehicle.make])) ?? []),
+      vehicle.model,
+    ]);
+    trimsByYearMakeModel.set(buildManualOptionKey([vehicle.year, vehicle.make, vehicle.model]), [
+      ...(trimsByYearMakeModel.get(buildManualOptionKey([vehicle.year, vehicle.make, vehicle.model])) ?? []),
+      vehicle.trim,
+    ]);
+  });
+
+  return {
+    source: "offline-canonical-vehicles-fallback",
+    generatedAt: undefined,
+    modelRowCount: vehicles.length,
+    trimRowCount: vehicles.length,
+    years: [...new Set(vehicles.map((vehicle) => vehicle.year))]
+      .filter((optionYear) => Number.isFinite(optionYear) && optionYear > 0)
+      .sort((left, right) => right - left)
+      .map((optionYear) => String(optionYear)),
+    makesByYear: Object.fromEntries([...makesByYear.entries()].map(([key, values]) => [key, uniqueDisplayValues(values)])),
+    modelsByYearMake: Object.fromEntries([...modelsByYearMake.entries()].map(([key, values]) => [key, uniqueDisplayValues(values)])),
+    trimsByYearMakeModel: Object.fromEntries([...trimsByYearMakeModel.entries()].map(([key, values]) => [key, uniqueDisplayValues(values)])),
+  };
+}
+
+function getManualSearchIndex(dataset: OfflineCanonicalDataset): ManualSearchIndex {
+  const manualSearchIndex = bundledManualSearchOptions as ManualSearchIndex;
+  if (
+    manualSearchIndex &&
+    manualSearchIndex.years?.length > 20 &&
+    Object.keys(manualSearchIndex.makesByYear ?? {}).length > 0 &&
+    Object.keys(manualSearchIndex.modelsByYearMake ?? {}).length > 0
+  ) {
+    return manualSearchIndex;
+  }
+  return getVehicleBackedManualSearchIndex(dataset.vehicles);
+}
+
 function buildDatasetIndex(dataset: OfflineCanonicalDataset): OfflineCanonicalIndex {
   const byId = new Map<string, OfflineCanonicalVehicle>();
   const byCanonicalKey = new Map<string, OfflineCanonicalVehicle>();
   const byModelFamily = new Map<string, OfflineCanonicalVehicle[]>();
   const byMakeModelFamily = new Map<string, OfflineCanonicalVehicle[]>();
+  const manualSearchIndex = getManualSearchIndex(dataset);
 
   dataset.vehicles.forEach((vehicle) => {
     byId.set(vehicle.id, vehicle);
@@ -209,8 +275,20 @@ function buildDatasetIndex(dataset: OfflineCanonicalDataset): OfflineCanonicalIn
     version: dataset.offline_canonical_version,
     vehicleCount: dataset.vehicles.length,
   });
+  console.log("[offline-canonical] MANUAL_SEARCH_CANONICAL_ROWS_LOADED", {
+    detailVehicleCount: dataset.vehicles.length,
+    optionSource: manualSearchIndex.source ?? "unknown",
+    modelRowCount: manualSearchIndex.modelRowCount ?? null,
+    trimRowCount: manualSearchIndex.trimRowCount ?? null,
+    yearCount: manualSearchIndex.years.length,
+  });
+  console.log("[offline-canonical] MANUAL_SEARCH_YEAR_INDEX_SIZE", {
+    yearCount: manualSearchIndex.years.length,
+    firstYears: manualSearchIndex.years.slice(0, 8),
+    lastYears: manualSearchIndex.years.slice(-8),
+  });
 
-  return { dataset, byId, byCanonicalKey, byModelFamily, byMakeModelFamily };
+  return { dataset, byId, byCanonicalKey, byModelFamily, byMakeModelFamily, manualSearchIndex };
 }
 
 function scoreTrimCompatibility(vehicle: OfflineCanonicalVehicle, requestedTrim: string | undefined | null) {
@@ -404,7 +482,11 @@ export const offlineCanonicalService = {
     const selectedMake = normalizeText(input.make);
     const selectedModel = normalizeText(input.model);
     const vehicles = index.dataset.vehicles;
-    const yearScopedVehicles = selectedYear ? vehicles.filter((vehicle) => vehicle.year === selectedYear) : vehicles;
+    const manualSearchIndex = index.manualSearchIndex;
+    const selectedYearKey = selectedYear ? String(selectedYear) : "";
+    const makeKey = selectedYear && selectedMake ? buildManualOptionKey([selectedYear, selectedMake]) : "";
+    const modelKey = selectedYear && selectedMake && selectedModel ? buildManualOptionKey([selectedYear, selectedMake, selectedModel]) : "";
+    const yearScopedVehicles = selectedYear ? vehicles.filter((vehicle) => vehicle.year === selectedYear) : [];
     const makeScopedVehicles = selectedMake
       ? yearScopedVehicles.filter((vehicle) => normalizeText(vehicle.make) === selectedMake)
       : yearScopedVehicles;
@@ -412,14 +494,33 @@ export const offlineCanonicalService = {
       ? makeScopedVehicles.filter((vehicle) => normalizeText(vehicle.model) === selectedModel)
       : makeScopedVehicles;
 
+    const years = manualSearchIndex.years;
+    const makes = selectedYearKey
+      ? manualSearchIndex.makesByYear[selectedYearKey] ?? uniqueDisplayValues(yearScopedVehicles.map((vehicle) => vehicle.make))
+      : [];
+    const models =
+      selectedYear && selectedMake
+        ? manualSearchIndex.modelsByYearMake[makeKey] ?? uniqueDisplayValues(makeScopedVehicles.map((vehicle) => vehicle.model))
+        : [];
+    const trims =
+      selectedYear && selectedMake && selectedModel
+        ? manualSearchIndex.trimsByYearMakeModel[modelKey] ?? uniqueDisplayValues(modelScopedVehicles.map((vehicle) => vehicle.trim))
+        : [];
+
+    console.log("[offline-canonical] MANUAL_SEARCH_YEAR_OPTIONS_GENERATED", {
+      yearCount: years.length,
+      selectedYear: selectedYear ?? null,
+      makeCount: makes.length,
+      modelCount: models.length,
+      trimCount: trims.length,
+      optionSource: manualSearchIndex.source ?? "unknown",
+    });
+
     return {
-      years: [...new Set(vehicles.map((vehicle) => vehicle.year))]
-        .filter((optionYear) => Number.isFinite(optionYear) && optionYear > 0)
-        .sort((left, right) => right - left)
-        .map((optionYear) => String(optionYear)),
-      makes: uniqueDisplayValues(yearScopedVehicles.map((vehicle) => vehicle.make)),
-      models: selectedYear && selectedMake ? uniqueDisplayValues(makeScopedVehicles.map((vehicle) => vehicle.model)) : [],
-      trims: selectedYear && selectedMake && selectedModel ? uniqueDisplayValues(modelScopedVehicles.map((vehicle) => vehicle.trim)) : [],
+      years,
+      makes,
+      models,
+      trims,
     };
   },
 
