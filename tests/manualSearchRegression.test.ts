@@ -6,6 +6,7 @@ import {
   getVehicleImage,
   isGeneratedVehicleFallbackImageUri,
   legacyGenericSportsCarImage,
+  normalizeVehicleIdentityForRendering,
   resolveVehicleImageSource,
 } from "../constants/vehicleImages";
 
@@ -93,6 +94,13 @@ test("manual search production UI does not expose fallback wording", () => {
 });
 
 test("manual search result images avoid unsafe vehicle fallbacks", () => {
+  const rangerIdentity = normalizeVehicleIdentityForRendering({
+    vehicleId: "1998-ford-ranger-xlt",
+    make: "Ford",
+    model: "Ranger",
+    vehicleType: "car",
+    bodyStyle: "car",
+  });
   const truckImage = resolveVehicleImageSource({
     vehicleId: "unknown-ford-ranger",
     vehicleType: "car",
@@ -120,6 +128,8 @@ test("manual search result images avoid unsafe vehicle fallbacks", () => {
   });
   const screenSource = fs.readFileSync(searchScreenPath, "utf8");
 
+  assert.equal(rangerIdentity.vehicleType, "truck");
+  assert.match(rangerIdentity.bodyStyle ?? "", /pickup|truck/i);
   assert.equal(truckImage.fallbackType, "neutral-placeholder");
   assert.equal(inferredTruckImage.fallbackType, "neutral-placeholder");
   assert.equal(rangerWithWrongSuvStyle.fallbackType, "neutral-placeholder");
@@ -138,4 +148,18 @@ test("manual search result images avoid unsafe vehicle fallbacks", () => {
   assert.match(screenSource, /SEARCH_RESULT_IMAGE_SOURCE/);
   assert.match(screenSource, /SEARCH_RESULT_IMAGE_FALLBACK_TYPE/);
   assert.match(screenSource, /isGeneratedVehicleFallbackImageUri/);
+});
+
+test("Ford Ranger identity cannot revert to car before render", () => {
+  const offlineCanonicalSource = fs.readFileSync(offlineCanonicalServicePath, "utf8");
+  const vehicleServiceSource = fs.readFileSync(path.join(process.cwd(), "services/vehicleService.ts"), "utf8");
+  const detailSource = fs.readFileSync(path.join(process.cwd(), "app/vehicle/[id].tsx"), "utf8");
+
+  assert.match(offlineCanonicalSource, /normalizeVehicleIdentityForRendering/);
+  assert.match(offlineCanonicalSource, /RANGER_NORMALIZATION_APPLIED/);
+  assert.match(vehicleServiceSource, /normalizeVehicleIdentityForRendering/);
+  assert.match(vehicleServiceSource, /RANGER_NORMALIZATION_LOST/);
+  assert.match(detailSource, /resolvedDisplayVehicleType/);
+  assert.match(detailSource, /FRONTEND_BODY_STYLE_RENDERED/);
+  assert.match(detailSource, /vehicleType: normalizedIdentity\.vehicleType/);
 });

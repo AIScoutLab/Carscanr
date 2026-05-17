@@ -53,9 +53,13 @@ test("modeled fallback value maps through the frontend as limited value, not una
   assert.match(screenSource, /VALUE_REFRESH_BUTTON_TAPPED/);
   assert.match(screenSource, /VALUE_REFRESH_REQUEST_PAYLOAD/);
   assert.match(screenSource, /VALUE_REFRESH_RESPONSE_RECEIVED/);
+  assert.match(serviceSource, /VALUE_REQUEST_STARTED/);
+  assert.match(serviceSource, /VALUE_REQUEST_PAYLOAD/);
+  assert.match(serviceSource, /VALUE_REQUEST_FAILED/);
+  assert.match(serviceSource, /VALUE_REQUEST_RESPONSE/);
   assert.match(screenSource, /VALUE_RENDER_STATE/);
   assert.match(screenSource, /buildDetailLookupDescriptor\(vehicle\)/);
-  assert.match(screenSource, /bodyStyle: normalizeDetailLookupBodyStyle\(vehicle\)/);
+  assert.match(screenSource, /bodyStyle: normalizedIdentity\.bodyStyle \?\? normalizeDetailLookupBodyStyle\(vehicle\)/);
   assert.match(screenSource, /Pickup Truck/);
 });
 

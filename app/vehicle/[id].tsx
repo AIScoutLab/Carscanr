@@ -15,6 +15,7 @@ import { SegmentedTabBar } from "@/components/SegmentedTabBar";
 import { ValueEstimateCard } from "@/components/ValueEstimateCard";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
+import { isFordRangerIdentity, normalizeVehicleIdentityForRendering } from "@/constants/vehicleImages";
 import { useSubscription } from "@/hooks/useSubscription";
 import { buildListingDerivedConditionSetFromListings, getConditionSourceLabel, normalizeSupportedValueCondition, resolveConditionValues } from "@/lib/valueConditionSet";
 import { formatHorsepowerLabel } from "@/lib/vehicleData";
@@ -91,14 +92,20 @@ function buildEstimateLookupDescriptor(input: {
   if (!input.year || !input.make || !input.model) {
     return null;
   }
+  const normalizedIdentity = normalizeVehicleIdentityForRendering({
+    make: input.make,
+    model: input.model,
+    vehicleType: input.vehicleType,
+    bodyStyle: input.bodyStyle,
+  });
 
   return {
     year: input.year,
     make: input.make,
     model: input.model,
     trim: input.trim ?? null,
-    vehicleType: input.vehicleType === "motorcycle" ? "motorcycle" : "car",
-    bodyStyle: input.bodyStyle ?? null,
+    vehicleType: normalizedIdentity.vehicleType,
+    bodyStyle: normalizedIdentity.bodyStyle ?? input.bodyStyle ?? null,
     normalizedModel: input.model.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim(),
   } satisfies VehicleLookupDescriptor;
 }
@@ -116,14 +123,21 @@ function buildDetailLookupDescriptor(vehicle: VehicleRecord) {
   if (!vehicle.year || !vehicle.make || !vehicle.model) {
     return null;
   }
+  const normalizedIdentity = normalizeVehicleIdentityForRendering({
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: vehicle.vehicleType,
+    bodyStyle: vehicle.bodyStyle,
+  });
 
   return {
     year: vehicle.year,
     make: vehicle.make,
     model: vehicle.model,
     trim: vehicle.trim?.trim() || null,
-    vehicleType: "car",
-    bodyStyle: normalizeDetailLookupBodyStyle(vehicle),
+    vehicleType: normalizedIdentity.vehicleType,
+    bodyStyle: normalizedIdentity.bodyStyle ?? normalizeDetailLookupBodyStyle(vehicle),
     normalizedModel: vehicle.model.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim(),
   } satisfies VehicleLookupDescriptor;
 }
@@ -1183,7 +1197,41 @@ export default function VehicleDetailScreen() {
       .filter(Boolean)
       .join(" ") ||
     `${vehicle?.year ?? ""} ${vehicle?.make ?? ""} ${vehicle?.model ?? ""}`.trim();
-  const resolvedDisplayBodyStyle = vehicle?.bodyStyle || (typeof vehicleType === "string" ? vehicleType : "") || "Vehicle";
+  const normalizedRenderedIdentity = useMemo(
+    () =>
+      normalizeVehicleIdentityForRendering({
+        vehicleId: vehicle?.id ?? (typeof id === "string" ? id : null),
+        make: vehicle?.make ?? (typeof make === "string" ? make : null),
+        model: vehicle?.model ?? (typeof model === "string" ? model : null),
+        vehicleType: vehicle?.vehicleType ?? (typeof vehicleType === "string" ? vehicleType : null),
+        bodyStyle: vehicle?.bodyStyle ?? null,
+      }),
+    [id, make, model, vehicle?.bodyStyle, vehicle?.id, vehicle?.make, vehicle?.model, vehicle?.vehicleType, vehicleType],
+  );
+  const resolvedDisplayBodyStyle = normalizedRenderedIdentity.bodyStyle || vehicle?.bodyStyle || (typeof vehicleType === "string" ? vehicleType : "") || "Vehicle";
+  const resolvedDisplayVehicleType = normalizedRenderedIdentity.vehicleType;
+  if (vehicle) {
+    console.log("[vehicle-detail] FRONTEND_BODY_STYLE_RENDERED", {
+      routeId: id,
+      vehicleId: vehicle.id,
+      make: vehicle.make,
+      model: vehicle.model,
+      bodyStyle: resolvedDisplayBodyStyle,
+      vehicleType: resolvedDisplayVehicleType,
+      rawBodyStyle: vehicle.bodyStyle,
+      rawVehicleType: vehicle.vehicleType ?? null,
+    });
+    if (isFordRangerIdentity(vehicle) && resolvedDisplayVehicleType !== "truck") {
+      console.warn("[vehicle-detail] RANGER_NORMALIZATION_LOST", {
+        routeId: id,
+        vehicleId: vehicle.id,
+        make: vehicle.make,
+        model: vehicle.model,
+        bodyStyle: resolvedDisplayBodyStyle,
+        vehicleType: resolvedDisplayVehicleType,
+      });
+    }
+  }
   const resolvedDisplayTrim = trustedResult ? "" : finalDisplayIdentity.trimLabel || vehicle?.trim || "";
   const estimateSubtitle = isEstimateMode
     ? [
@@ -1211,13 +1259,22 @@ export default function VehicleDetailScreen() {
           ? finalDisplayIdentity.yearLabel || null
           : estimateSupport?.yearRangeLabel || (typeof yearLabel === "string" && yearLabel.trim().length > 0 ? yearLabel : null)
         : finalDisplayIdentity.yearLabel || (vehicle ? `${vehicle.year}` : null),
-      vehicle?.bodyStyle || null,
+      resolvedDisplayBodyStyle || null,
       horsepowerSupport?.value || (vehicle?.specs.horsepower ? formatHorsepowerLabel(vehicle.specs.horsepower) : null),
       vehicle?.specs.drivetrain && vehicle.specs.drivetrain !== "Unavailable" ? vehicle.specs.drivetrain : null,
       vehicle?.specs.msrp && vehicle.specs.msrp > 0 ? formatCurrency(vehicle.specs.msrp) : null,
     ].filter((entry): entry is string => Boolean(entry));
     return chips.slice(0, 4);
-  }, [estimateSupport?.yearRangeLabel, finalDisplayIdentity.yearLabel, horsepowerSupport?.value, isEstimateMode, trustedResult, vehicle, yearLabel]);
+  }, [
+    estimateSupport?.yearRangeLabel,
+    finalDisplayIdentity.yearLabel,
+    horsepowerSupport?.value,
+    isEstimateMode,
+    resolvedDisplayBodyStyle,
+    trustedResult,
+    vehicle,
+    yearLabel,
+  ]);
   const applyValuationUpdate = useCallback(
     (
       next: ValuationResult,
@@ -1555,6 +1612,17 @@ export default function VehicleDetailScreen() {
         void marketAreaZipService.saveLastUsedZip(normalizedZip);
       })
       .catch((error) => {
+        console.error("[vehicle-detail] VALUE_REQUEST_FAILED", {
+          routeId: id,
+          scanId: typeof scanId === "string" ? scanId : null,
+          vehicleId: vehicle.id,
+          lookup: valueLookupInput,
+          zip: normalizedZip,
+          zipSource,
+          mileage: normalizedMileage,
+          condition: normalizedCondition,
+          message: error instanceof Error ? error.message : String(error),
+        });
         const errorValue = buildUnavailableValueResult({
           reason: "provider_error",
           status: "provider_error",
@@ -3164,7 +3232,7 @@ export default function VehicleDetailScreen() {
         make: vehicle.make,
         model: vehicle.model,
         trim: vehicle.trim || null,
-        vehicleType: vehicle.bodyStyle || null,
+        vehicleType: resolvedDisplayVehicleType,
       })
       .then((support) => {
         if (!active) {
@@ -3181,7 +3249,7 @@ export default function VehicleDetailScreen() {
     return () => {
       active = false;
     };
-  }, [vehicle]);
+  }, [resolvedDisplayVehicleType, vehicle]);
 
   const fallbackHeroImageUri = vehicle?.heroImage ?? "";
   const heroUsesResolvedImage = Boolean(resolvedImageUri && heroImagePolicy.useResolvedImageInHero);
@@ -3213,7 +3281,7 @@ export default function VehicleDetailScreen() {
         model: vehicle?.model,
         trim: resolvedDisplayTrim || vehicle?.trim,
         bodyStyle: resolvedDisplayBodyStyle || vehicle?.bodyStyle,
-        vehicleType: typeof vehicleType === "string" ? vehicleType : vehicle?.bodyStyle,
+        vehicleType: resolvedDisplayVehicleType,
         engine: vehicle?.specs.engine,
         horsepower: vehicle?.specs.horsepower ?? null,
         drivetrain: vehicle?.specs.drivetrain,
@@ -3223,7 +3291,7 @@ export default function VehicleDetailScreen() {
       resolvedDisplayBodyStyle,
       resolvedDisplayTrim,
       vehicle,
-      vehicleType,
+      resolvedDisplayVehicleType,
     ],
   );
 

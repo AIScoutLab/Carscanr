@@ -1775,7 +1775,8 @@ describe("bootstrap cost control", () => {
   test("Ford Ranger descriptor lookup can use modeled_fallback even when the client id is not stored", async () => {
     let valueProviderCalls = 0;
     let listingsProviderCalls = 0;
-    setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
+    const testRepositories = createTestRepositories({ vehicles: [], valuations: [], listings: [] });
+    setRepositories(testRepositories.repositories);
     setProviders({
       ...createTestProviders(),
       valueProviderName: "marketcheck",
@@ -1802,8 +1803,8 @@ describe("bootstrap cost control", () => {
         make: "Ford",
         model: "Ranger",
         trim: "XLT",
-        vehicleType: "car",
-        bodyStyle: "Pickup Truck",
+        vehicleType: "truck",
+        bodyStyle: "car",
         normalizedModel: "ranger",
       },
       zip: "60563",
@@ -1823,6 +1824,12 @@ describe("bootstrap cost control", () => {
     assert.equal(result.data.confidence, "limited");
     assert.equal(result.data.reason, "modeled_baseline_after_no_local_comps");
     assert.notEqual(result.data.sourceLabel, "No live market comps found");
+    assert.equal(testRepositories.state.valuesCache.length > 0, true);
+    assert.equal(
+      testRepositories.state.valuesCache.every((entry) => entry.condition === "good"),
+      true,
+      "modeled fallback cache writes must include condition so Supabase does not reject them",
+    );
   });
 
   test("Load Value first stays unavailable when no provider comps and no safe modeled baseline exist", async () => {

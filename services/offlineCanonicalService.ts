@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import bundledDataset from "@/assets/data/offline_canonical.json";
 import bundledManualSearchOptions from "@/assets/data/manual_search_options.json";
-import { getVehicleImage } from "@/constants/vehicleImages";
+import { getVehicleImage, isFordRangerIdentity, normalizeVehicleIdentityForRendering } from "@/constants/vehicleImages";
 import { formatCurrency } from "@/lib/utils";
 import { parseHorsepower } from "@/lib/vehicleData";
 import { OfflineCanonicalVehicle, VehicleRecord } from "@/types";
@@ -396,6 +396,48 @@ async function syncBundledDataset() {
 
 function mapOfflineVehicleToRecord(vehicle: OfflineCanonicalVehicle): VehicleRecord {
   const parsedHorsepower = parseHorsepower(vehicle.basicSpecs.horsepower);
+  console.log("[offline-canonical] FRONTEND_VEHICLE_IDENTITY_RECEIVED", {
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: vehicle.vehicleType,
+    bodyStyle: vehicle.basicSpecs.bodyStyle,
+  });
+  const normalizedIdentity = normalizeVehicleIdentityForRendering({
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: vehicle.vehicleType,
+    bodyStyle: vehicle.basicSpecs.bodyStyle,
+  });
+  if (normalizedIdentity.normalizationApplied) {
+    console.log("[offline-canonical] RANGER_NORMALIZATION_APPLIED", {
+      vehicleId: vehicle.id,
+      make: vehicle.make,
+      model: vehicle.model,
+      originalVehicleType: vehicle.vehicleType,
+      originalBodyStyle: vehicle.basicSpecs.bodyStyle,
+      vehicleType: normalizedIdentity.vehicleType,
+      bodyStyle: normalizedIdentity.bodyStyle,
+      reason: normalizedIdentity.normalizationReason,
+    });
+  }
+  if (isFordRangerIdentity(vehicle) && normalizedIdentity.vehicleType !== "truck") {
+    console.warn("[offline-canonical] RANGER_NORMALIZATION_LOST", {
+      vehicleId: vehicle.id,
+      make: vehicle.make,
+      model: vehicle.model,
+      vehicleType: normalizedIdentity.vehicleType,
+      bodyStyle: normalizedIdentity.bodyStyle,
+    });
+  }
+  console.log("[offline-canonical] FRONTEND_VEHICLE_IDENTITY_MAPPED", {
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: normalizedIdentity.vehicleType,
+    bodyStyle: normalizedIdentity.bodyStyle ?? vehicle.basicSpecs.bodyStyle,
+  });
   console.log("[offline-canonical] HORSEPOWER_MAPPING", {
     vehicleId: vehicle.id,
     rawHorsepower: vehicle.basicSpecs.horsepower ?? null,
@@ -445,8 +487,9 @@ function mapOfflineVehicleToRecord(vehicle: OfflineCanonicalVehicle): VehicleRec
     make: vehicle.make,
     model: vehicle.model,
     trim: vehicle.trim,
-    bodyStyle: vehicle.basicSpecs.bodyStyle,
-    heroImage: getVehicleImage(vehicle.id, vehicle.vehicleType, vehicle.basicSpecs.bodyStyle),
+    bodyStyle: normalizedIdentity.bodyStyle ?? vehicle.basicSpecs.bodyStyle,
+    vehicleType: normalizedIdentity.vehicleType,
+    heroImage: getVehicleImage(vehicle.id, normalizedIdentity.vehicleType, normalizedIdentity.bodyStyle ?? vehicle.basicSpecs.bodyStyle),
     overview: `${vehicle.year} ${vehicle.make} ${vehicle.model} ${vehicle.trim} from bundled offline canonical data.`,
     specs: {
       engine: vehicle.basicSpecs.engine,

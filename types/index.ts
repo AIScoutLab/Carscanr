@@ -108,6 +108,7 @@ export type VehicleRecord = {
   model: string;
   trim: string;
   bodyStyle: string;
+  vehicleType?: "car" | "truck" | "motorcycle";
   heroImage: string;
   overview: string;
   specs: VehicleSpecs;
@@ -122,7 +123,7 @@ export type OfflineCanonicalVehicle = {
   make: string;
   model: string;
   trim: string;
-  vehicleType: "car" | "motorcycle";
+  vehicleType: "car" | "truck" | "motorcycle";
   normalizedMake: string;
   normalizedModel: string;
   normalizedTrim: string;

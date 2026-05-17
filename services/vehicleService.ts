@@ -2,7 +2,14 @@ import { formatCurrency } from "@/lib/utils";
 import { buildSpecialtyVehicleOverview, isSpecialtyExoticMake } from "@/lib/specialtyVehicles";
 import { resolveConditionValues } from "@/lib/valueConditionSet";
 import { resolveHorsepower } from "@/lib/vehicleData";
-import { getVehicleImage, isGeneratedVehicleFallbackImageUri, legacyGenericSportsCarImage, resolveVehicleImageSource } from "@/constants/vehicleImages";
+import {
+  getVehicleImage,
+  isFordRangerIdentity,
+  isGeneratedVehicleFallbackImageUri,
+  legacyGenericSportsCarImage,
+  normalizeVehicleIdentityForRendering,
+  resolveVehicleImageSource,
+} from "@/constants/vehicleImages";
 import { apiRequest, apiRequestEnvelope } from "@/services/apiClient";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { MarketAreaZipSource } from "@/lib/marketAreaZip";
@@ -13,7 +20,7 @@ export type VehicleLookupDescriptor = {
   make: string;
   model: string;
   trim?: string | null;
-  vehicleType?: "car" | "motorcycle" | null;
+  vehicleType?: "car" | "truck" | "motorcycle" | null;
   bodyStyle?: string | null;
   normalizedModel?: string | null;
 };
@@ -32,7 +39,7 @@ type BackendVehicle = {
   model: string;
   trim: string;
   bodyStyle: string;
-  vehicleType: "car" | "motorcycle";
+  vehicleType: "car" | "truck" | "motorcycle";
   msrp: number;
   engine: string;
   horsepower?: number | string | null;
@@ -56,7 +63,7 @@ type BackendResolvedVehicle = {
   model: string;
   trim: string;
   bodyStyle: string;
-  vehicleType: "car" | "motorcycle";
+  vehicleType: "car" | "truck" | "motorcycle";
   msrp: number;
   engine: string;
   horsepower?: number | string | null;
@@ -534,14 +541,57 @@ function createEmptyValuation(): ValuationResult {
 }
 
 function mapResolvedSpecsVehicle(vehicle: BackendResolvedVehicle): VehicleRecord {
+  console.log("[vehicle-service] FRONTEND_VEHICLE_IDENTITY_RECEIVED", {
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: vehicle.vehicleType,
+    bodyStyle: vehicle.bodyStyle,
+  });
+  const normalizedIdentity = normalizeVehicleIdentityForRendering({
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: vehicle.vehicleType,
+    bodyStyle: vehicle.bodyStyle,
+  });
+  if (normalizedIdentity.normalizationApplied) {
+    console.log("[vehicle-service] RANGER_NORMALIZATION_APPLIED", {
+      vehicleId: vehicle.id,
+      make: vehicle.make,
+      model: vehicle.model,
+      originalVehicleType: vehicle.vehicleType,
+      originalBodyStyle: vehicle.bodyStyle,
+      vehicleType: normalizedIdentity.vehicleType,
+      bodyStyle: normalizedIdentity.bodyStyle,
+      reason: normalizedIdentity.normalizationReason,
+    });
+  }
+  if (isFordRangerIdentity(vehicle) && normalizedIdentity.vehicleType !== "truck") {
+    console.warn("[vehicle-service] RANGER_NORMALIZATION_LOST", {
+      vehicleId: vehicle.id,
+      make: vehicle.make,
+      model: vehicle.model,
+      vehicleType: normalizedIdentity.vehicleType,
+      bodyStyle: normalizedIdentity.bodyStyle,
+    });
+  }
+  console.log("[vehicle-service] FRONTEND_VEHICLE_IDENTITY_MAPPED", {
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: normalizedIdentity.vehicleType,
+    bodyStyle: normalizedIdentity.bodyStyle ?? vehicle.bodyStyle,
+  });
   return {
     id: vehicle.id,
     year: vehicle.year,
     make: vehicle.make,
     model: vehicle.model,
     trim: vehicle.trim,
-    bodyStyle: vehicle.bodyStyle,
-    heroImage: getVehicleImage(vehicle.id, vehicle.vehicleType, vehicle.bodyStyle),
+    bodyStyle: normalizedIdentity.bodyStyle ?? vehicle.bodyStyle,
+    vehicleType: normalizedIdentity.vehicleType,
+    heroImage: getVehicleImage(vehicle.id, normalizedIdentity.vehicleType, normalizedIdentity.bodyStyle ?? vehicle.bodyStyle),
     overview: defaultOverview({
       ...vehicle,
       imageUrl: null,
@@ -602,20 +652,26 @@ function resolveVehicleHeroImage(
   const liveExactImage = pickFirstNonEmptyString(vehicle.imageUrl, vehicle.heroImage);
   const canonicalExactImage = pickFirstNonEmptyString(fallbackRecord?.heroImage);
   const providerMatchedImage = pickFirstNonEmptyString(vehicle.providerImageUrl, vehicle.defaultImageUrl, listings?.[0]?.imageUrl);
+  const rangerIdentity = isFordRangerIdentity(vehicle);
   const genericResolution = resolveVehicleImageSource({
     vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
     vehicleType: vehicle.vehicleType,
     bodyStyle: vehicle.bodyStyle ?? fallbackRecord?.bodyStyle ?? null,
   });
   const canonicalImageAllowed =
     canonicalExactImage && !isGeneratedVehicleFallbackImageUri(canonicalExactImage) ? canonicalExactImage : null;
 
-  const heroImage = liveExactImage ?? canonicalImageAllowed ?? providerMatchedImage ?? genericResolution.uri;
+  const heroImage = rangerIdentity ? canonicalImageAllowed ?? genericResolution.uri : liveExactImage ?? canonicalImageAllowed ?? providerMatchedImage ?? genericResolution.uri;
   console.log("[vehicle-service] EXACT_HIT_IMAGE_SELECTION", {
     vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    rangerIdentity,
     liveExactImage: liveExactImage ?? null,
     canonicalExactImage: canonicalImageAllowed ?? null,
-    providerMatchedImage: providerMatchedImage ?? null,
+    providerMatchedImage: rangerIdentity ? null : providerMatchedImage ?? null,
     fallbackType: genericResolution.fallbackType,
     selectedSource:
       heroImage === liveExactImage
@@ -680,13 +736,58 @@ function mapVehicle(
 ): VehicleRecord {
   const mappedListings = listings ? mapListings(listings) : [];
   const parsedHorsepower = resolveVehicleHorsepower(vehicle, fallbackRecord);
+  console.log("[vehicle-service] FRONTEND_VEHICLE_IDENTITY_RECEIVED", {
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: vehicle.vehicleType,
+    bodyStyle: vehicle.bodyStyle,
+    fallbackBodyStyle: fallbackRecord?.bodyStyle ?? null,
+    fallbackVehicleType: fallbackRecord?.vehicleType ?? null,
+  });
+  const normalizedIdentity = normalizeVehicleIdentityForRendering({
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: vehicle.vehicleType ?? fallbackRecord?.vehicleType ?? null,
+    bodyStyle: vehicle.bodyStyle || fallbackRecord?.bodyStyle || null,
+  });
+  if (normalizedIdentity.normalizationApplied) {
+    console.log("[vehicle-service] RANGER_NORMALIZATION_APPLIED", {
+      vehicleId: vehicle.id,
+      make: vehicle.make,
+      model: vehicle.model,
+      originalVehicleType: vehicle.vehicleType,
+      originalBodyStyle: vehicle.bodyStyle,
+      vehicleType: normalizedIdentity.vehicleType,
+      bodyStyle: normalizedIdentity.bodyStyle,
+      reason: normalizedIdentity.normalizationReason,
+    });
+  }
+  if (isFordRangerIdentity(vehicle) && normalizedIdentity.vehicleType !== "truck") {
+    console.warn("[vehicle-service] RANGER_NORMALIZATION_LOST", {
+      vehicleId: vehicle.id,
+      make: vehicle.make,
+      model: vehicle.model,
+      vehicleType: normalizedIdentity.vehicleType,
+      bodyStyle: normalizedIdentity.bodyStyle,
+    });
+  }
+  console.log("[vehicle-service] FRONTEND_VEHICLE_IDENTITY_MAPPED", {
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: normalizedIdentity.vehicleType,
+    bodyStyle: normalizedIdentity.bodyStyle ?? vehicle.bodyStyle,
+  });
   return {
     id: vehicle.id,
     year: vehicle.year,
     make: vehicle.make,
     model: vehicle.model,
     trim: vehicle.trim,
-    bodyStyle: vehicle.bodyStyle,
+    bodyStyle: normalizedIdentity.bodyStyle ?? vehicle.bodyStyle,
+    vehicleType: normalizedIdentity.vehicleType,
     heroImage: resolveVehicleHeroImage(vehicle, fallbackRecord, listings),
     overview: defaultOverview(vehicle),
     specs: {
@@ -767,6 +868,26 @@ export const vehicleService = {
     options?: ValueRequestOptions,
   ): Promise<ValuationResult> {
     const path = buildVehicleValueRequestPath(vehicleLookup, zip, mileage, condition, options);
+    console.log("[vehicle-service] VALUE_REQUEST_STARTED", {
+      vehicleLookup,
+      zip,
+      mileage,
+      condition,
+      options: options ?? null,
+      path,
+    });
+    console.log("[vehicle-service] VALUE_REQUEST_PAYLOAD", {
+      vehicleLookup,
+      zip,
+      mileage,
+      condition,
+      allowLive: options?.allowLive ?? null,
+      fetchReason: options?.fetchReason ?? null,
+      sourceScreen: options?.sourceScreen ?? null,
+      action: options?.action ?? null,
+      forceLive: options?.forceLive ?? null,
+      zipSource: options?.zipSource ?? null,
+    });
     console.log("[vehicle-service] VALUE_REQUEST_PARAMS", {
       vehicleLookup,
       zip,
@@ -788,6 +909,25 @@ export const vehicleService = {
     const response = await apiRequestEnvelope<BackendValuation>({
       path,
       authRequired: false,
+    }).catch((error) => {
+      console.error("[vehicle-service] VALUE_REQUEST_FAILED", {
+        vehicleLookup,
+        zip,
+        mileage,
+        condition,
+        path,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    });
+    console.log("[vehicle-service] VALUE_REQUEST_RESPONSE", {
+      vehicleLookup,
+      condition,
+      source: response.meta?.source,
+      requestId: response.requestId,
+      status: response.data?.status ?? null,
+      valuationSource: response.data?.valuationSource ?? null,
+      unavailableReason: response.data?.unavailableReason ?? response.data?.reason ?? null,
     });
     const mapped = mapValuation(response.data);
     console.log("[vehicle-service] VALUE_RESPONSE_RECEIVED", {

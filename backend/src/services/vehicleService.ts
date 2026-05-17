@@ -578,7 +578,7 @@ function buildLookupVehicleFromDescriptor(descriptor: ReturnType<typeof buildCac
     model: descriptor.model,
     trim: descriptor.trim ?? "",
     bodyStyle: "",
-    vehicleType: descriptor.vehicleType === "motorcycle" ? "motorcycle" : "car",
+    vehicleType: normalizeDescriptorVehicleType(descriptor.vehicleType),
     msrp: 0,
     engine: "",
     horsepower: null,
@@ -602,7 +602,7 @@ function buildLookupVehicleFromRawDescriptor(descriptor: VehicleLookupDescriptor
     model: descriptor.model,
     trim: descriptor.trim ?? "",
     bodyStyle: descriptor.bodyStyle ?? "",
-    vehicleType: descriptor.vehicleType === "motorcycle" ? "motorcycle" : "car",
+    vehicleType: normalizeDescriptorVehicleType(descriptor.vehicleType),
     msrp: 0,
     engine: "",
     horsepower: null,
@@ -685,7 +685,7 @@ async function resolveLookupContext(input: {
           make: effectiveDescriptor.make,
           model: effectiveDescriptor.model,
           trim: effectiveDescriptor.trim ?? undefined,
-          vehicleType: effectiveDescriptor.vehicleType ?? undefined,
+          vehicleType: normalizeDescriptorVehicleType(effectiveDescriptor.vehicleType),
         },
       })
     : null;
@@ -819,8 +819,15 @@ function preferMeaningfulRequiredText(primary: string, fallback: string | null |
   return primary;
 }
 
-function preferVehicleType(primary: VehicleType, fallback: VehicleType | null | undefined) {
-  return primary ?? fallback ?? "car";
+function preferVehicleType(primary: VehicleType, fallback: VehicleLookupDescriptor["vehicleType"] | null | undefined): VehicleType {
+  return primary ?? normalizeDescriptorVehicleType(fallback);
+}
+
+function normalizeDescriptorVehicleType(vehicleType: VehicleLookupDescriptor["vehicleType"] | null | undefined): VehicleType {
+  if (vehicleType === "motorcycle") {
+    return "motorcycle";
+  }
+  return "car";
 }
 
 function inferMsrpAnchorFromVehicle(vehicle: VehicleRecord) {
@@ -3143,6 +3150,36 @@ export class VehicleService {
     forceLive?: boolean | null;
   }): Promise<CachedServiceResult<ValuationRecord>> {
     try {
+      logger.info(
+        {
+          label: "VALUE_PIPELINE_STARTED",
+          requestId: input.requestId,
+          vehicleId: input.vehicleId ?? null,
+          descriptor: input.descriptor ?? null,
+          zip: input.zip,
+          zipSource: input.zipSource ?? null,
+          mileage: input.mileage,
+          condition: input.condition,
+          allowLive: input.allowLive ?? null,
+          fetchReason: input.fetchReason ?? null,
+          sourceScreen: input.sourceScreen ?? null,
+          action: input.action ?? null,
+          forceLive: input.forceLive ?? null,
+        },
+        "VALUE_PIPELINE_STARTED",
+      );
+      logger.info(
+        {
+          label: "VALUE_PIPELINE_INPUT",
+          requestId: input.requestId,
+          vehicleId: input.vehicleId ?? null,
+          descriptor: input.descriptor ?? null,
+          zip: input.zip,
+          mileage: input.mileage,
+          condition: input.condition,
+        },
+        "VALUE_PIPELINE_INPUT",
+      );
       const currentIso = nowIso();
       const lookup = await resolveLookupContext(input);
       const vehicle = lookup.vehicle;
@@ -4068,6 +4105,7 @@ export class VehicleService {
             payload: normalizedLiveValue,
             zip: input.zip,
             mileage: input.mileage,
+            condition: input.condition,
           }),
         );
         if (familyCacheKey) {
@@ -4079,6 +4117,7 @@ export class VehicleService {
               payload: normalizedLiveValue,
               zip: input.zip,
               mileage: input.mileage,
+              condition: input.condition,
             }),
           );
         }
@@ -4721,6 +4760,19 @@ export class VehicleService {
           },
           "VALUE_UNAVAILABLE_FINAL_REASON",
         );
+        logger.info(
+          {
+            label: "VALUE_FALLBACK_FINAL_RESULT",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            status: fallbackValue.status ?? null,
+            valuationSource: fallbackValue.valuationSource ?? fallbackValue.modelType ?? "unavailable",
+            confidence: fallbackValue.confidence ?? null,
+            sourceLabel: fallbackValue.sourceLabel ?? null,
+            unavailableReason: fallbackValue.unavailableReason ?? fallbackValue.reason ?? null,
+          },
+          "VALUE_FALLBACK_FINAL_RESULT",
+        );
       }
 
       const normalizedFallbackValue = fallbackValue
@@ -4748,6 +4800,7 @@ export class VehicleService {
               payload: normalizedFallbackValue,
               zip: input.zip,
               mileage: input.mileage,
+              condition: input.condition,
             }),
           );
         }
@@ -4834,6 +4887,19 @@ export class VehicleService {
               : "fallback_value",
           },
           "VALUE_REFRESH_FINAL_STATE",
+        );
+        logger.info(
+          {
+            label: "VALUE_FALLBACK_FINAL_RESULT",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            status: normalizedFallbackValue.status ?? null,
+            valuationSource: normalizedFallbackValue.valuationSource ?? normalizedFallbackValue.modelType ?? "fallback",
+            confidence: normalizedFallbackValue.confidence ?? null,
+            sourceLabel: normalizedFallbackValue.sourceLabel ?? null,
+            unavailableReason: normalizedFallbackValue.unavailableReason ?? normalizedFallbackValue.reason ?? null,
+          },
+          "VALUE_FALLBACK_FINAL_RESULT",
         );
         logger.info(
           {
@@ -4952,11 +5018,41 @@ export class VehicleService {
       });
       throw new AppError(404, "VALUATION_NOT_FOUND", "Valuation not found for the requested vehicle.");
     } catch (error) {
-      const lookup = await resolveLookupContext(input);
-      const vehicle = lookup.vehicle;
-      const descriptor = lookup.cacheDescriptor;
-      const lookupVehicleId = lookup.lookupVehicleId;
+      let lookup: Awaited<ReturnType<typeof resolveLookupContext>> | null = null;
+      let lookupResolutionError: unknown = null;
+      try {
+        lookup = await resolveLookupContext(input);
+      } catch (lookupError) {
+        lookupResolutionError = lookupError;
+      }
+      const vehicle = lookup?.vehicle ?? null;
+      const descriptor = lookup?.cacheDescriptor ?? null;
+      const lookupVehicleId = lookup?.lookupVehicleId ?? input.vehicleId ?? "descriptor:unresolved";
       const cacheKey = descriptor ? getValuesCacheKey(descriptor, { zip: input.zip, mileage: input.mileage }) : null;
+      logger.error(
+        {
+          label: "VALUE_PIPELINE_ERROR",
+          requestId: input.requestId,
+          vehicleId: lookupVehicleId,
+          descriptor: input.descriptor ?? null,
+          zip: input.zip,
+          mileage: input.mileage,
+          condition: input.condition,
+          lookupResolutionError: lookupResolutionError ? getErrorDetails(lookupResolutionError) : null,
+          ...getErrorDetails(error),
+        },
+        "VALUE_PIPELINE_ERROR",
+      );
+      logger.error(
+        {
+          label: "VALUE_PIPELINE_EXCEPTION_STACK",
+          requestId: input.requestId,
+          vehicleId: lookupVehicleId,
+          stack: error instanceof Error ? error.stack ?? null : null,
+          lookupResolutionStack: lookupResolutionError instanceof Error ? lookupResolutionError.stack ?? null : null,
+        },
+        "VALUE_PIPELINE_EXCEPTION_STACK",
+      );
       logger.error(
         {
           label: "VALUE_LOOKUP_FAILURE",
@@ -5862,6 +5958,7 @@ export class VehicleService {
               payload: derivedConditionSet,
               zip: input.zip,
               mileage: input.mileage,
+              condition: "good",
             }),
           );
           if (familyCacheKey) {
@@ -5874,6 +5971,7 @@ export class VehicleService {
                 payload: derivedConditionSet,
                 zip: input.zip,
                 mileage: input.mileage,
+                condition: "good",
               }),
             );
           }

@@ -1,4 +1,5 @@
 export type VehicleType = "car" | "motorcycle";
+export type VehicleLookupVehicleType = VehicleType | "truck";
 export type UserPlan = "free" | "pro" | "pro_monthly" | "pro_yearly";
 export type VehicleCondition = "excellent" | "very_good" | "good" | "fair" | "poor";
 export type CanonicalVehiclePromotionStatus = "candidate" | "promoted";
@@ -36,7 +37,7 @@ export type VehicleLookupDescriptor = {
     start: number;
     end: number;
   } | null;
-  vehicleType?: VehicleType | null;
+  vehicleType?: VehicleLookupVehicleType | null;
   bodyStyle?: string | null;
   normalizedModel?: string | null;
 };

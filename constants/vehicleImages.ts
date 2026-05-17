@@ -26,8 +26,27 @@ const bodyStyleVehicleImages = {
 
 const genericVehicleImages = {
   car: neutralVehiclePlaceholderImage,
+  truck: neutralVehiclePlaceholderImage,
   motorcycle: "https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&w=1200&q=80",
 } as const;
+
+export type NormalizedVehicleType = "car" | "truck" | "motorcycle";
+
+export type VehicleIdentityInput = {
+  vehicleId?: string | null;
+  make?: string | null;
+  model?: string | null;
+  vehicleType?: string | null;
+  bodyStyle?: string | null;
+};
+
+export type NormalizedVehicleIdentity = {
+  vehicleType: NormalizedVehicleType;
+  bodyStyle: string | null;
+  bodyStyleKey: keyof typeof bodyStyleVehicleImages | null;
+  normalizationApplied: boolean;
+  normalizationReason: string | null;
+};
 
 export type VehicleImageFallbackType =
   | "seeded"
@@ -62,8 +81,22 @@ function normalizeBodyStyle(bodyStyle?: string | null): keyof typeof bodyStyleVe
   return null;
 }
 
-function inferBodyStyleFromIdentity(vehicleId?: string | null): keyof typeof bodyStyleVehicleImages | null {
-  const normalized = vehicleId?.trim().toLowerCase().replace(/[_-]+/g, " ") ?? "";
+function buildVehicleIdentityText(input: VehicleIdentityInput) {
+  return [input.vehicleId, input.make, input.model]
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+}
+
+export function isFordRangerIdentity(input: VehicleIdentityInput) {
+  const normalized = buildVehicleIdentityText(input);
+  return /\bford\b[\s\S]*\branger\b|\branger\b/.test(normalized);
+}
+
+function inferBodyStyleFromIdentity(input: VehicleIdentityInput): keyof typeof bodyStyleVehicleImages | null {
+  const normalized = buildVehicleIdentityText(input);
   if (!normalized) return null;
   if (/\b(ranger|f 150|f150|maverick|frontier|canyon|colorado|ridgeline|tacoma|tundra|silverado|sierra|ram 1500|gladiator|santa cruz)\b/.test(normalized)) {
     return "truck";
@@ -76,14 +109,55 @@ function inferBodyStyleFromIdentity(vehicleId?: string | null): keyof typeof bod
 
 function resolveTrustedBodyStyle(input: {
   vehicleId: string;
+  make?: string | null;
+  model?: string | null;
   bodyStyle?: string | null;
 }): keyof typeof bodyStyleVehicleImages | null {
-  const inferredFromIdentity = inferBodyStyleFromIdentity(input.vehicleId);
+  const inferredFromIdentity = inferBodyStyleFromIdentity(input);
   if (inferredFromIdentity === "truck") {
     return "truck";
   }
 
   return normalizeBodyStyle(input.bodyStyle) ?? inferredFromIdentity;
+}
+
+export function normalizeVehicleIdentityForRendering(input: VehicleIdentityInput): NormalizedVehicleIdentity {
+  const bodyStyleKey = resolveTrustedBodyStyle({
+    vehicleId: input.vehicleId ?? "",
+    make: input.make,
+    model: input.model,
+    bodyStyle: input.bodyStyle,
+  });
+  const incomingVehicleType = String(input.vehicleType ?? "").trim().toLowerCase();
+  const rangerIdentity = isFordRangerIdentity(input);
+
+  if (rangerIdentity || bodyStyleKey === "truck" || incomingVehicleType === "truck") {
+    return {
+      vehicleType: "truck",
+      bodyStyle: "Pickup truck",
+      bodyStyleKey: "truck",
+      normalizationApplied: incomingVehicleType !== "truck" || normalizeBodyStyle(input.bodyStyle) !== "truck",
+      normalizationReason: rangerIdentity ? "ford_ranger_identity" : "truck_body_style",
+    };
+  }
+
+  if (incomingVehicleType === "motorcycle") {
+    return {
+      vehicleType: "motorcycle",
+      bodyStyle: input.bodyStyle?.trim() || null,
+      bodyStyleKey,
+      normalizationApplied: false,
+      normalizationReason: null,
+    };
+  }
+
+  return {
+    vehicleType: "car",
+    bodyStyle: input.bodyStyle?.trim() || null,
+    bodyStyleKey,
+    normalizationApplied: false,
+    normalizationReason: null,
+  };
 }
 
 function shouldUseNeutralPlaceholderForBodyStyle(bodyStyle: keyof typeof bodyStyleVehicleImages) {
@@ -105,7 +179,9 @@ export function isGeneratedVehicleFallbackImageUri(uri?: string | null) {
 
 export function resolveVehicleImageSource(input: {
   vehicleId: string;
-  vehicleType?: "car" | "motorcycle";
+  make?: string | null;
+  model?: string | null;
+  vehicleType?: string | null;
   bodyStyle?: string | null;
 }): VehicleImageResolution {
   const seeded = seededVehicleImages[input.vehicleId as keyof typeof seededVehicleImages];
@@ -113,11 +189,12 @@ export function resolveVehicleImageSource(input: {
     return { uri: seeded, source: "vehicle", fallbackType: "seeded" };
   }
 
-  if (input.vehicleType === "motorcycle") {
+  const normalizedIdentity = normalizeVehicleIdentityForRendering(input);
+  if (normalizedIdentity.vehicleType === "motorcycle") {
     return { uri: genericVehicleImages.motorcycle, source: "placeholder", fallbackType: "motorcycle-placeholder" };
   }
 
-  const inferredBodyStyle = resolveTrustedBodyStyle(input);
+  const inferredBodyStyle = normalizedIdentity.bodyStyleKey;
   if (inferredBodyStyle) {
     if (shouldUseNeutralPlaceholderForBodyStyle(inferredBodyStyle)) {
       return { uri: genericVehicleImages.car, source: "placeholder", fallbackType: "neutral-placeholder" };
@@ -133,6 +210,6 @@ export function resolveVehicleImageSource(input: {
   return { uri: genericVehicleImages.car, source: "placeholder", fallbackType: "neutral-placeholder" };
 }
 
-export function getVehicleImage(vehicleId: string, vehicleType: "car" | "motorcycle" = "car", bodyStyle?: string | null) {
+export function getVehicleImage(vehicleId: string, vehicleType: string | null = "car", bodyStyle?: string | null) {
   return resolveVehicleImageSource({ vehicleId, vehicleType, bodyStyle }).uri;
 }
