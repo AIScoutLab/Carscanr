@@ -93,6 +93,11 @@ test("manual search result images use body-style fallback before neutral placeho
     vehicleType: "car",
     bodyStyle: "Pickup Truck",
   });
+  const inferredTruckImage = resolveVehicleImageSource({
+    vehicleId: "2021-ford-ranger-xl",
+    vehicleType: "car",
+    bodyStyle: null,
+  });
   const neutralImage = resolveVehicleImageSource({
     vehicleId: "unknown-vehicle",
     vehicleType: "car",
@@ -106,10 +111,15 @@ test("manual search result images use body-style fallback before neutral placeho
   const screenSource = fs.readFileSync(searchScreenPath, "utf8");
 
   assert.equal(truckImage.fallbackType, "body-style-truck");
+  assert.equal(inferredTruckImage.fallbackType, "body-style-truck");
   assert.notEqual(truckImage.uri, legacyGenericSportsCarImage);
+  assert.notEqual(inferredTruckImage.uri, legacyGenericSportsCarImage);
+  assert.doesNotMatch(inferredTruckImage.uri, /text=Vehicle|e5e7eb/i);
   assert.equal(getVehicleImage("unknown-ford-ranger", "car", "Pickup Truck"), truckImage.uri);
   assert.equal(neutralImage.fallbackType, "neutral-placeholder");
   assert.notEqual(neutralImage.uri, legacyGenericSportsCarImage);
+  assert.doesNotMatch(neutralImage.uri, /text=Vehicle|e5e7eb/i);
+  assert.match(neutralImage.uri, /111827|CarScanr/i);
   assert.equal(seededImage.fallbackType, "seeded");
   assert.match(screenSource, /SEARCH_RESULT_IMAGE_SOURCE/);
   assert.match(screenSource, /SEARCH_RESULT_IMAGE_FALLBACK_TYPE/);

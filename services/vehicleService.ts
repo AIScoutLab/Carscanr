@@ -788,6 +788,7 @@ export const vehicleService = {
       path,
       authRequired: false,
     });
+    const mapped = mapValuation(response.data);
     console.log("[vehicle-service] VALUE_RESPONSE_RECEIVED", {
       vehicleLookup,
       condition,
@@ -795,7 +796,17 @@ export const vehicleService = {
       requestId: response.requestId,
       value: response.data,
     });
-    return mapValuation(response.data);
+    console.log("[vehicle-service] VALUE_RESPONSE_MAPPED", {
+      vehicleLookup,
+      condition,
+      requestId: response.requestId,
+      status: mapped.status,
+      valuationSource: mapped.valuationSource ?? null,
+      sourceLabel: mapped.sourceLabel ?? null,
+      unavailableReason: mapped.unavailableReason ?? mapped.reason ?? null,
+      confidence: mapped.confidence ?? null,
+    });
+    return mapped;
   },
 
   async getSpecsByLookup(vehicleLookup: VehicleLookupInput): Promise<VehicleRecord | null> {

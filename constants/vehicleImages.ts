@@ -23,7 +23,7 @@ const bodyStyleVehicleImages = {
 } as const;
 
 const genericVehicleImages = {
-  car: "https://placehold.co/1200x675/e5e7eb/475569.png?text=Vehicle",
+  car: "https://placehold.co/1200x675/111827/94a3b8.png?text=CarScanr",
   motorcycle: "https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&w=1200&q=80",
 } as const;
 
@@ -60,6 +60,18 @@ function normalizeBodyStyle(bodyStyle?: string | null): keyof typeof bodyStyleVe
   return null;
 }
 
+function inferBodyStyleFromIdentity(vehicleId?: string | null): keyof typeof bodyStyleVehicleImages | null {
+  const normalized = vehicleId?.trim().toLowerCase().replace(/[_-]+/g, " ") ?? "";
+  if (!normalized) return null;
+  if (/\b(ranger|f 150|f150|maverick|frontier|canyon|colorado|ridgeline|tacoma|tundra|silverado|sierra|ram 1500|gladiator|santa cruz)\b/.test(normalized)) {
+    return "truck";
+  }
+  if (/\b(explorer|escape|bronco|edge|expedition|rav4|cr v|crv|pilot|highlander|4runner|yukon|tahoe|suburban|wrangler|cherokee|grand cherokee)\b/.test(normalized)) {
+    return "suv";
+  }
+  return null;
+}
+
 export function resolveVehicleImageSource(input: {
   vehicleId: string;
   vehicleType?: "car" | "motorcycle";
@@ -75,11 +87,12 @@ export function resolveVehicleImageSource(input: {
   }
 
   const normalizedBodyStyle = normalizeBodyStyle(input.bodyStyle);
-  if (normalizedBodyStyle) {
+  const inferredBodyStyle = normalizedBodyStyle ?? inferBodyStyleFromIdentity(input.vehicleId);
+  if (inferredBodyStyle) {
     return {
-      uri: bodyStyleVehicleImages[normalizedBodyStyle],
+      uri: bodyStyleVehicleImages[inferredBodyStyle],
       source: "body-style",
-      fallbackType: `body-style-${normalizedBodyStyle}` as VehicleImageFallbackType,
+      fallbackType: `body-style-${inferredBodyStyle}` as VehicleImageFallbackType,
     };
   }
 

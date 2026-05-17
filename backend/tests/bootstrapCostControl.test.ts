@@ -1709,6 +1709,69 @@ describe("bootstrap cost control", () => {
     assert.notEqual(result.data.sourceLabel, "No live market comps found");
   });
 
+  test("Ford Ranger can use modeled_fallback when live comps are unavailable and body style is missing", async () => {
+    let valueProviderCalls = 0;
+    let listingsProviderCalls = 0;
+    const rangerVehicle = {
+      id: "2021-ford-ranger-xl",
+      year: 2021,
+      make: "Ford",
+      model: "Ranger",
+      trim: "XL",
+      bodyStyle: "",
+      vehicleType: "car" as const,
+      msrp: 0,
+      engine: "2.3L turbo I4",
+      horsepower: 270,
+      torque: "310 lb-ft",
+      transmission: "10-speed automatic",
+      drivetrain: "4WD",
+      mpgOrRange: "Unknown",
+      colors: [],
+    };
+    setRepositories(createTestRepositories({ vehicles: [rangerVehicle], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      listingsProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          valueProviderCalls += 1;
+          return null;
+        },
+      },
+      listingsProvider: {
+        async getListings() {
+          listingsProviderCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: rangerVehicle.id,
+      zip: "60563",
+      mileage: 42000,
+      condition: "good",
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
+
+    assert.equal(valueProviderCalls > 0, true);
+    assert.equal(listingsProviderCalls > 0, true);
+    assert.equal(result.data.status, "loaded_condition_set");
+    assert.equal(result.data.valuationSource, "modeled_fallback");
+    assert.equal(result.data.confidence, "limited");
+    assert.equal(result.data.compCount, 0);
+    assert.match(result.data.sourceLabel ?? "", /estimate/i);
+    assert.match(result.data.confidenceLabel ?? "", /Low market confidence/i);
+    assert.notEqual(result.data.sourceLabel, "No live market comps found");
+  });
+
   test("Load Value first stays unavailable when no provider comps and no safe modeled baseline exist", async () => {
     let valueProviderCalls = 0;
     let listingsProviderCalls = 0;
@@ -1766,8 +1829,9 @@ describe("bootstrap cost control", () => {
     assert.equal(result.data.status, "no_comps_found");
     assert.equal(result.data.valuationSource, "unavailable");
     assert.equal(result.data.confidence, "unavailable");
-    assert.equal(result.data.sourceLabel, "No live market comps found");
-    assert.equal(result.data.reason, "no_comps_found");
+    assert.equal(result.data.sourceLabel, "No safe baseline data available");
+    assert.equal(result.data.reason, "no_safe_baseline_data");
+    assert.equal(result.data.unavailableReason, "no_safe_baseline_data");
     assert.notEqual(result.data.valuationSource, "modeled_fallback");
   });
 

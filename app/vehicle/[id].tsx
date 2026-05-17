@@ -566,6 +566,15 @@ function buildValueStatusCardCopy(input: {
         supportNote: "Try the live market lookup again in a moment.",
       };
     case "no_comps_found":
+      if (input.valuation.unavailableReason === "no_safe_baseline_data" || input.valuation.reason === "no_safe_baseline_data") {
+        return {
+          title: "No safe baseline data available",
+          body:
+            input.valuation.message ??
+            "No safe baseline data is available after checking live value, cached comps, listings, and modeled fallback data.",
+          supportNote: "Try a nearby ZIP or check again later when more market data is available.",
+        };
+      }
       return {
         title: "No live market comps found",
         body: input.valuation.message ?? "No live market comps found for this ZIP, mileage, and condition.",
@@ -2466,7 +2475,9 @@ export default function VehicleDetailScreen() {
       vehicleId: vehicle.id,
       condition,
       valuation: displayValuation,
+      valuationSource: displayValuation.valuationSource ?? null,
       sourceLabel: displayValuation.sourceLabel ?? null,
+      unavailableReason: displayValuation.unavailableReason ?? displayValuation.reason ?? null,
       fallbackUiChosen: valueTabFinalState === "value_unavailable",
     });
   }, [condition, displayValuation, id, mileage, scanId, tab, valuation, valueTabFinalState, vehicle, zipCode, zipSource]);

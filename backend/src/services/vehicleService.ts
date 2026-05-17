@@ -846,7 +846,10 @@ function inferMsrpAnchorFromVehicle(vehicle: VehicleRecord) {
     anchorMsrp = 95000;
   } else if (/bmw|mercedes|audi|lexus|cadillac|lincoln|genesis|infiniti|acura|volvo|land rover/.test(make)) {
     anchorMsrp = 52000;
-  } else if (/pickup|truck/.test(body) || /\bf 150\b|\bsilverado\b|\bsierra\b|\bram 1500\b|\btacoma\b|\btundra\b/.test(family)) {
+  } else if (
+    /pickup|truck/.test(body) ||
+    /\bf 150\b|\bf150\b|\bsilverado\b|\bsierra\b|\bram 1500\b|\btacoma\b|\btundra\b|\branger\b|\bfrontier\b|\bcanyon\b|\bcolorado\b|\bridgeline\b|\bmaverick\b|\bgladiator\b|\bsanta cruz\b/.test(family)
+  ) {
     anchorMsrp = 42000;
   } else if (/suv|crossover|utility/.test(body) || /\bcr v\b|\brav4\b|\bpilot\b|\bhighlander\b|\bexplorer\b|\bwrangler\b/.test(family)) {
     anchorMsrp = 34000;
@@ -4644,6 +4647,22 @@ export class VehicleService {
         );
       }
 
+      const finalUnavailableReason =
+        explicitLiveFailureReason ??
+        (lookupBaseVehicle && !isSpecialtyLookupVehicle ? "no_safe_baseline_data" : "no_comps_found");
+      const finalUnavailableSourceLabel =
+        finalUnavailableReason === "no_safe_baseline_data"
+          ? "No safe baseline data available"
+          : explicitLiveFailureReason
+            ? "Live market data could not be loaded"
+            : "No live market comps found";
+      const finalUnavailableMessage =
+        finalUnavailableReason === "no_safe_baseline_data"
+          ? "No safe baseline data is available for this vehicle after direct value, cached comps, listings, and modeled fallback checks."
+          : explicitLiveFailureReason
+            ? "Live market data could not be loaded."
+            : "No live market comps found for this ZIP, mileage, and condition.";
+
       if (!fallbackValue && isExplicitValueRefresh && lookupBaseVehicle && !isSpecialtyLookupVehicle) {
         fallbackValue = {
           id: `market-value-unavailable:${lookupVehicleId}:${input.zip}:${input.mileage}`,
@@ -4660,19 +4679,15 @@ export class VehicleService {
           median: null,
           currency: "USD",
           generatedAt: new Date().toISOString(),
-          sourceLabel: explicitLiveFailureReason ? "Live market data could not be loaded" : "No live market comps found",
-          confidenceLabel: explicitLiveFailureReason
-            ? "Live market data could not be loaded."
-            : "No live market comps found for this ZIP, mileage, and condition.",
-          message: explicitLiveFailureReason
-            ? "Live market data could not be loaded."
-            : "No live market comps found for this ZIP, mileage, and condition.",
-          reason: explicitLiveFailureReason ?? "no_comps_found",
+          sourceLabel: finalUnavailableSourceLabel,
+          confidenceLabel: finalUnavailableMessage,
+          message: finalUnavailableMessage,
+          reason: finalUnavailableReason,
           modelType: "modeled",
           listingCount: 0,
           valuationSource: "unavailable",
           confidence: "unavailable",
-          unavailableReason: explicitLiveFailureReason ?? "no_comps_found",
+          unavailableReason: finalUnavailableReason,
         };
         logger.info(
           {
@@ -4682,7 +4697,7 @@ export class VehicleService {
             zip: input.zip,
             mileage: input.mileage,
             condition: input.condition,
-            reason: explicitLiveFailureReason ?? "no_comps_found",
+            reason: finalUnavailableReason,
           },
           "VALUE_UNAVAILABLE_REASON",
         );
@@ -4694,7 +4709,7 @@ export class VehicleService {
             zip: input.zip,
             mileage: input.mileage,
             condition: input.condition,
-            reason: explicitLiveFailureReason ?? "no_comps_found",
+            reason: finalUnavailableReason,
           },
           "VALUE_UNAVAILABLE_FINAL_REASON",
         );
