@@ -21,6 +21,12 @@ type OfflineCanonicalIndex = {
   byMakeModelFamily: Map<string, OfflineCanonicalVehicle[]>;
 };
 
+type ManualSearchOptionsInput = {
+  year?: number | string | null;
+  make?: string | null;
+  model?: string | null;
+};
+
 let loadPromise: Promise<OfflineCanonicalIndex> | null = null;
 
 function normalizeText(value: string | undefined | null) {
@@ -152,6 +158,24 @@ function buildMsrpRangeLabel(values: number[]) {
 
 function createEmptyListings() {
   return [];
+}
+
+function parseOptionYear(value: number | string | null | undefined) {
+  const parsed = typeof value === "number" ? value : Number(String(value ?? "").trim());
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function uniqueDisplayValues(values: Array<string | null | undefined>) {
+  const displayByKey = new Map<string, string>();
+  values.forEach((value) => {
+    const displayValue = String(value ?? "").trim();
+    const key = normalizeText(displayValue);
+    if (!key || displayByKey.has(key)) {
+      return;
+    }
+    displayByKey.set(key, displayValue);
+  });
+  return [...displayByKey.values()].sort((left, right) => left.localeCompare(right));
 }
 
 function buildDatasetIndex(dataset: OfflineCanonicalDataset): OfflineCanonicalIndex {
@@ -372,6 +396,31 @@ export const offlineCanonicalService = {
   async getDatasetVersion() {
     const index = await this.preload();
     return index.dataset.offline_canonical_version;
+  },
+
+  async getManualSearchOptions(input: ManualSearchOptionsInput = {}) {
+    const index = await this.preload();
+    const selectedYear = parseOptionYear(input.year);
+    const selectedMake = normalizeText(input.make);
+    const selectedModel = normalizeText(input.model);
+    const vehicles = index.dataset.vehicles;
+    const yearScopedVehicles = selectedYear ? vehicles.filter((vehicle) => vehicle.year === selectedYear) : vehicles;
+    const makeScopedVehicles = selectedMake
+      ? yearScopedVehicles.filter((vehicle) => normalizeText(vehicle.make) === selectedMake)
+      : yearScopedVehicles;
+    const modelScopedVehicles = selectedModel
+      ? makeScopedVehicles.filter((vehicle) => normalizeText(vehicle.model) === selectedModel)
+      : makeScopedVehicles;
+
+    return {
+      years: [...new Set(vehicles.map((vehicle) => vehicle.year))]
+        .filter((optionYear) => Number.isFinite(optionYear) && optionYear > 0)
+        .sort((left, right) => right - left)
+        .map((optionYear) => String(optionYear)),
+      makes: uniqueDisplayValues(yearScopedVehicles.map((vehicle) => vehicle.make)),
+      models: selectedYear && selectedMake ? uniqueDisplayValues(makeScopedVehicles.map((vehicle) => vehicle.model)) : [],
+      trims: selectedYear && selectedMake && selectedModel ? uniqueDisplayValues(modelScopedVehicles.map((vehicle) => vehicle.trim)) : [],
+    };
   },
 
   async findById(id: string) {

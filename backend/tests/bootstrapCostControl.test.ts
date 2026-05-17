@@ -1439,6 +1439,85 @@ describe("bootstrap cost control", () => {
     assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === "" && attempt.radiusMiles === 250), true);
   });
 
+  test("Cadillac CT4 provider-normalized listing without URL remains usable", async () => {
+    setRepositories(createTestRepositories({ listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          if (input.vehicle?.model === "CT4" && input.vehicle?.year === 2021 && input.vehicle?.trim === "") {
+            return [
+              {
+                id: "listing-ct4-provider-no-url",
+                vehicleId: input.vehicleId,
+                year: 2021,
+                make: "Cadillac",
+                model: "CT4",
+                trim: "Luxury",
+                title: "2021 Cadillac CT4 Luxury",
+                price: 32995,
+                mileage: 21400,
+                dealer: "Provider Normalized Cadillac",
+                distanceMiles: 42,
+                location: "Naperville, IL",
+                imageUrl: "https://dealer.example.test/ct4.jpg",
+                listingUrl: null,
+                listedAt: "2026-05-15T00:00:00.000Z",
+              },
+            ];
+          }
+
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getListings({
+      vehicleId: "2021-cadillac-ct4-premium-luxury",
+      zip: "60563",
+      radiusMiles: 50,
+      mileage: 18400,
+      allowLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+    });
+
+    assert.equal(result.data.length, 1);
+    assert.equal(result.data[0]?.id, "listing-ct4-provider-no-url");
+  });
+
+  test("listings provider skip keeps provider calls at zero when live fetch is not allowed", async () => {
+    let providerCalls = 0;
+    setRepositories(createTestRepositories({ listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings() {
+          providerCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getListings({
+      vehicleId: "2021-cadillac-ct4-premium-luxury",
+      zip: "60563",
+      radiusMiles: 50,
+      mileage: 18400,
+      allowLive: false,
+      fetchReason: "initial_load",
+    });
+
+    assert.equal(providerCalls, 0);
+    assert.equal(result.meta?.fallbackReason, "live-fetch-deferred");
+    assert.equal(result.meta?.liveFetchDeferred, true);
+  });
+
   test("Cadillac CT4 broadened live comps produce listing_comps value instead of unavailable", async () => {
     const attempts: Array<{ model: string; year: number; trim: string | null }> = [];
     setProviders({

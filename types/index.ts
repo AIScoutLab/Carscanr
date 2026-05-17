@@ -2,6 +2,10 @@ export type VehicleCandidate = {
   id: string;
   year: number;
   displayYearLabel?: string;
+  groundedYearRange?: {
+    start: number;
+    end: number;
+  } | null;
   displayTitleLabel?: string;
   make: string;
   model: string;

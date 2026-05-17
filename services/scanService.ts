@@ -73,6 +73,13 @@ type BackendUsageResponse = {
 type BackendScanCandidate = {
   vehicleId: string;
   year: number;
+  displayYearLabel?: string | null;
+  displayTitleLabel?: string | null;
+  displayTrimLabel?: string | null;
+  yearRange?: {
+    start: number;
+    end: number;
+  } | null;
   make: string;
   model: string;
   trim: string;
@@ -277,9 +284,22 @@ function mapUsage(usage: BackendUsageResponse): SubscriptionStatus {
 
 function mapCandidate(candidate: Partial<BackendScanCandidate>): VehicleCandidate {
   const candidateId = safeString(candidate.vehicleId, "");
+  const displayYearLabel = safeString(candidate.displayYearLabel, "");
+  const displayTitleLabel = safeString(candidate.displayTitleLabel, "");
+  const displayTrimLabel = safeString(candidate.displayTrimLabel, "");
   return {
     id: candidateId,
     year: safeNumber(candidate.year, 0) ?? 0,
+    displayYearLabel: displayYearLabel || undefined,
+    displayTitleLabel: displayTitleLabel || undefined,
+    displayTrimLabel: displayTrimLabel || undefined,
+    groundedYearRange:
+      typeof candidate.yearRange?.start === "number" && typeof candidate.yearRange?.end === "number"
+        ? {
+            start: candidate.yearRange.start,
+            end: candidate.yearRange.end,
+          }
+        : null,
     make: safeString(candidate.make, "Unknown"),
     model: safeString(candidate.model, "Vehicle"),
     trim: safeString(candidate.trim, ""),
@@ -309,9 +329,19 @@ function normalizeBackendScanResponse(raw: BackendScanResponse): BackendScanResp
         : [],
     },
     candidates: Array.isArray(raw?.candidates)
-      ? raw.candidates.map((candidate) => ({
+        ? raw.candidates.map((candidate) => ({
           vehicleId: safeString(candidate?.vehicleId, ""),
           year: safeNumber(candidate?.year, 0) ?? 0,
+          displayYearLabel: safeString(candidate?.displayYearLabel, "") || null,
+          displayTitleLabel: safeString(candidate?.displayTitleLabel, "") || null,
+          displayTrimLabel: safeString(candidate?.displayTrimLabel, "") || null,
+          yearRange:
+            typeof candidate?.yearRange?.start === "number" && typeof candidate?.yearRange?.end === "number"
+              ? {
+                  start: candidate.yearRange.start,
+                  end: candidate.yearRange.end,
+                }
+              : null,
           make: safeString(candidate?.make, "Unknown"),
           model: safeString(candidate?.model, "Vehicle"),
           trim: safeString(candidate?.trim, ""),

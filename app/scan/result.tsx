@@ -103,6 +103,15 @@ function safeNumber(value: unknown, fallback: number | null = null) {
 
 function normalizeVehicleForResult(raw: unknown): NormalizedVehicle {
   const input = (raw ?? {}) as Partial<ScanResult["identifiedVehicle"]>;
+  const rawDisplayYearLabel = safeString((input as any).displayYearLabel);
+  const rawYearRange = (input as any).groundedYearRange ?? (input as any).yearRange ?? null;
+  const groundedYearRange =
+    typeof rawYearRange?.start === "number" && typeof rawYearRange?.end === "number"
+      ? {
+          start: rawYearRange.start,
+          end: rawYearRange.end,
+        }
+      : null;
   return {
     id: typeof input.id === "string" ? input.id : null,
     year: safeNumber((input as any).year),
@@ -121,8 +130,8 @@ function normalizeVehicleForResult(raw: unknown): NormalizedVehicle {
     displayTitleLabel: null,
     confidence: safeNumber((input as any).confidence),
     thumbnailUrl: typeof (input as any).thumbnailUrl === "string" ? (input as any).thumbnailUrl : null,
-    displayYearLabel: safeNumber((input as any).year) ? String(safeNumber((input as any).year)) : null,
-    groundedYearRange: null,
+    displayYearLabel: rawDisplayYearLabel || (safeNumber((input as any).year) ? String(safeNumber((input as any).year)) : null),
+    groundedYearRange,
     groundedMatchType: null,
     groundedCandidateCount: null,
     groundedExactYear: null,
@@ -691,13 +700,15 @@ async function enrichVehicleWithCanonicalGrounding(
   if (!grounding?.vehicle) {
     const baseVehicle: NormalizedVehicle = {
       ...vehicle,
-      displayYearLabel: resolveDisplayYearLabel({
-        rawYear: vehicle.year,
-        confidence: vehicle.confidence,
-        yearRange: null,
-        exactGroundedYear: null,
-        vehicle,
-      }),
+      displayYearLabel:
+        vehicle.displayYearLabel ??
+        resolveDisplayYearLabel({
+          rawYear: vehicle.year,
+          confidence: vehicle.confidence,
+          yearRange: vehicle.groundedYearRange,
+          exactGroundedYear: null,
+          vehicle,
+        }),
       displayTrimLabel: resolveDisplayTrimLabel({
         vehicle,
         groundedTrim: null,
@@ -797,7 +808,7 @@ async function enrichVehicleWithCanonicalGrounding(
   const resolvedVehicle = {
     ...vehicleForDisplay,
     displayTrimLabel,
-    displayYearLabel,
+    displayYearLabel: vehicle.displayYearLabel ?? displayYearLabel,
   };
   return {
     ...resolvedVehicle,

@@ -1920,7 +1920,8 @@ function filterDisplayableListings(
       return false;
     }
 
-    if (!hasOpenableListingUrl(listing)) {
+    const rawListingUrl = typeof listing.listingUrl === "string" ? listing.listingUrl.trim() : "";
+    if (!hasOpenableListingUrl(listing) && rawListingUrl.length > 0) {
       if (!sampleRejectedInvalidUrl) {
         sampleRejectedInvalidUrl = {
           listingId: listing.id,
@@ -1941,6 +1942,16 @@ function filterDisplayableListings(
         "LISTING_REJECTED_INVALID_URL",
       );
       return false;
+    }
+    if (!hasOpenableListingUrl(listing)) {
+      logger.info(
+        {
+          label: "LISTING_URL_MISSING_ALLOWED",
+          listingId: listing.id,
+          vehicleId: listing.vehicleId,
+        },
+        "LISTING_URL_MISSING_ALLOWED",
+      );
     }
     afterUrlCount += 1;
 
@@ -5387,6 +5398,21 @@ export class VehicleService {
           fetchReason,
           reason: listingsDecision.reason,
         });
+        logger.info(
+          {
+            label: "LISTINGS_PROVIDER_SKIPPED_REASON",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            provider: providers.listingsProviderName,
+            reason: listingsDecision.reason,
+            allowLive,
+            fetchReason,
+            sourceScreen: input.sourceScreen ?? null,
+            action: input.action ?? null,
+            marketcheckEnabled: isMarketCheckEnabled(),
+          },
+          "LISTINGS_PROVIDER_SKIPPED_REASON",
+        );
         if (listingsDecision.shouldSimulateQuotaExhausted) {
           logger.warn(
             {

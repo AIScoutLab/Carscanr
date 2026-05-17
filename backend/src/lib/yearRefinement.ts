@@ -79,6 +79,17 @@ const YEAR_REFINEMENT_PROFILES: YearRefinementProfile[] = [
       },
     ],
   },
+  {
+    familyKey: "cadillac:ct4",
+    windows: [
+      {
+        start: 2020,
+        end: 2026,
+        preferredYears: [2021, 2022],
+        reasoning: "Cadillac CT4 visual matches are often generation-level; the current CT4 family spans 2020-2026, with 2021-2022 as conservative nearby anchors when exact year proof is missing.",
+      },
+    ],
+  },
 ];
 
 function normalizeText(value: string | undefined | null) {
@@ -130,14 +141,89 @@ function findMatchingProfileWindow(
   );
 }
 
+function findProfileForFamily(familyKey: string) {
+  return YEAR_REFINEMENT_PROFILES.find((entry) => entry.familyKey === familyKey) ?? null;
+}
+
+function buildMissingYearFallback(input: {
+  familyKey: string;
+  canonicalAvailableYears?: number[];
+}): YearRefinementResult | null {
+  const profile = findProfileForFamily(input.familyKey);
+  const profileWindow = profile?.windows[0] ?? null;
+  const canonicalYears = uniqueSortedYears(input.canonicalAvailableYears ?? []);
+  const yearRange = profileWindow
+    ? { start: profileWindow.start, end: profileWindow.end }
+    : canonicalYears.length > 0
+      ? { start: canonicalYears[0], end: canonicalYears[canonicalYears.length - 1] }
+      : null;
+
+  if (!yearRange) {
+    return null;
+  }
+
+  const preferredYears = profileWindow?.preferredYears ?? [];
+  const bestYear =
+    preferredYears.find((year) => year >= yearRange.start && year <= yearRange.end) ??
+    canonicalYears.find((year) => year >= yearRange.start && year <= yearRange.end) ??
+    yearRange.start;
+  const candidateYears = uniqueSortedYears([
+    bestYear,
+    ...preferredYears,
+    ...canonicalYears,
+    ...Array.from({ length: yearRange.end - yearRange.start + 1 }, (_, index) => yearRange.start + index),
+  ]).filter((year) => year >= yearRange.start && year <= yearRange.end);
+
+  const candidates = candidateYears.map((year) => {
+    let score = year === bestYear ? 1 : 0.72;
+    const reasons = ["generation_range_fallback"];
+    if (preferredYears.includes(year)) {
+      score += 0.18;
+      reasons.push("generation_or_facelift_anchor");
+    }
+    if (canonicalYears.includes(year)) {
+      score += 0.08;
+      reasons.push("catalog_available");
+    }
+    return {
+      year,
+      score: Number(score.toFixed(3)),
+      reasons,
+    };
+  });
+
+  candidates.sort((left, right) => right.score - left.score || left.year - right.year);
+
+  return {
+    bestYear,
+    yearRange,
+    yearConfidence: "range",
+    yearReasoning: [
+      profileWindow?.reasoning ?? "The exact model year was missing, so the result is presented as a catalog-supported generation range.",
+      canonicalYears.length > 0
+        ? `Catalog-supported years in this family: ${canonicalYears.join(", ")}.`
+        : "No exact catalog-year proof was required to preserve a visual-only range.",
+      `${bestYear} is used as the routing anchor while the UI displays the safer ${yearRange.start}-${yearRange.end} range.`,
+    ],
+    candidates,
+    overruledAiYear: true,
+    profileApplied: Boolean(profileWindow),
+    rangeWidenedByProfile: Boolean(profileWindow),
+  };
+}
+
 export function refineVehicleYearEstimate(input: {
   normalizedResult: VisionResult;
   canonicalAvailableYears?: number[];
   nowYear?: number;
 }): YearRefinementResult | null {
   const result = input.normalizedResult;
+  const familyKey = familyKeyFor(result.likely_make, result.likely_model);
   if (result.likely_year <= 0) {
-    return null;
+    return buildMissingYearFallback({
+      familyKey,
+      canonicalAvailableYears: input.canonicalAvailableYears,
+    });
   }
   if (result.yearConfidence === "exact" || result.yearEvidence === "visible_text") {
     return {
@@ -158,7 +244,6 @@ export function refineVehicleYearEstimate(input: {
     };
   }
 
-  const familyKey = familyKeyFor(result.likely_make, result.likely_model);
   const alternateYears = result.alternate_candidates.map((candidate: VisionCandidate) => candidate.likely_year);
   const matchedWindow = findMatchingProfileWindow(familyKey, result.likely_year, alternateYears);
   const fallbackStart = Math.max(1980, result.likely_year - 2);

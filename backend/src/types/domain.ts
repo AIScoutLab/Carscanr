@@ -118,6 +118,12 @@ export type VisionProviderResult = {
 export type MatchedVehicleCandidate = {
   vehicleId: string;
   year: number;
+  displayYearLabel?: string | null;
+  yearRange?: {
+    start: number;
+    end: number;
+  } | null;
+  yearConfidence?: VisionResult["yearConfidence"] | null;
   make: string;
   model: string;
   trim: string;
