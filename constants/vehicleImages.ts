@@ -11,6 +11,8 @@ export const seededVehicleImages = {
 export const legacyGenericSportsCarImage =
   "https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?auto=format&fit=crop&w=1200&q=80";
 
+const neutralVehiclePlaceholderImage = "https://placehold.co/1200x675/111827/94a3b8.png?text=CarScanr";
+
 const bodyStyleVehicleImages = {
   truck: "https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?auto=format&fit=crop&w=1200&q=80",
   suv: "https://images.unsplash.com/photo-1519641471654-76ce0107ad1b?auto=format&fit=crop&w=1200&q=80",
@@ -23,7 +25,7 @@ const bodyStyleVehicleImages = {
 } as const;
 
 const genericVehicleImages = {
-  car: "https://placehold.co/1200x675/111827/94a3b8.png?text=CarScanr",
+  car: neutralVehiclePlaceholderImage,
   motorcycle: "https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&w=1200&q=80",
 } as const;
 
@@ -72,6 +74,35 @@ function inferBodyStyleFromIdentity(vehicleId?: string | null): keyof typeof bod
   return null;
 }
 
+function resolveTrustedBodyStyle(input: {
+  vehicleId: string;
+  bodyStyle?: string | null;
+}): keyof typeof bodyStyleVehicleImages | null {
+  const inferredFromIdentity = inferBodyStyleFromIdentity(input.vehicleId);
+  if (inferredFromIdentity === "truck") {
+    return "truck";
+  }
+
+  return normalizeBodyStyle(input.bodyStyle) ?? inferredFromIdentity;
+}
+
+function shouldUseNeutralPlaceholderForBodyStyle(bodyStyle: keyof typeof bodyStyleVehicleImages) {
+  return bodyStyle === "truck";
+}
+
+export function isGeneratedVehicleFallbackImageUri(uri?: string | null) {
+  const normalized = uri?.trim() ?? "";
+  if (!normalized) {
+    return false;
+  }
+  return (
+    normalized === legacyGenericSportsCarImage ||
+    normalized === genericVehicleImages.car ||
+    normalized === genericVehicleImages.motorcycle ||
+    Object.values(bodyStyleVehicleImages).includes(normalized as (typeof bodyStyleVehicleImages)[keyof typeof bodyStyleVehicleImages])
+  );
+}
+
 export function resolveVehicleImageSource(input: {
   vehicleId: string;
   vehicleType?: "car" | "motorcycle";
@@ -86,9 +117,12 @@ export function resolveVehicleImageSource(input: {
     return { uri: genericVehicleImages.motorcycle, source: "placeholder", fallbackType: "motorcycle-placeholder" };
   }
 
-  const normalizedBodyStyle = normalizeBodyStyle(input.bodyStyle);
-  const inferredBodyStyle = normalizedBodyStyle ?? inferBodyStyleFromIdentity(input.vehicleId);
+  const inferredBodyStyle = resolveTrustedBodyStyle(input);
   if (inferredBodyStyle) {
+    if (shouldUseNeutralPlaceholderForBodyStyle(inferredBodyStyle)) {
+      return { uri: genericVehicleImages.car, source: "placeholder", fallbackType: "neutral-placeholder" };
+    }
+
     return {
       uri: bodyStyleVehicleImages[inferredBodyStyle],
       source: "body-style",

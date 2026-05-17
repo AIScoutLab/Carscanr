@@ -103,6 +103,31 @@ function buildEstimateLookupDescriptor(input: {
   } satisfies VehicleLookupDescriptor;
 }
 
+function normalizeDetailLookupBodyStyle(vehicle: VehicleRecord) {
+  const identity = `${vehicle.id} ${vehicle.make} ${vehicle.model}`.toLowerCase().replace(/[_-]+/g, " ");
+  if (/\bford\b[\s\S]*\branger\b|\branger\b/.test(identity)) {
+    return "Pickup Truck";
+  }
+  const bodyStyle = vehicle.bodyStyle?.trim();
+  return bodyStyle && bodyStyle !== "Estimated vehicle" ? bodyStyle : null;
+}
+
+function buildDetailLookupDescriptor(vehicle: VehicleRecord) {
+  if (!vehicle.year || !vehicle.make || !vehicle.model) {
+    return null;
+  }
+
+  return {
+    year: vehicle.year,
+    make: vehicle.make,
+    model: vehicle.model,
+    trim: vehicle.trim?.trim() || null,
+    vehicleType: "car",
+    bodyStyle: normalizeDetailLookupBodyStyle(vehicle),
+    normalizedModel: vehicle.model.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim(),
+  } satisfies VehicleLookupDescriptor;
+}
+
 function isCommonVehicleForDetailCheck(input: {
   make?: string | null;
   model?: string | null;
@@ -525,6 +550,43 @@ function buildApproximateValuation(base: ValuationResult, familyLabel: string, y
   };
 }
 
+function buildUnavailableValueResult(input: {
+  reason: string;
+  sourceLabel: string;
+  message: string;
+  status?: "no_comps_found" | "provider_error";
+}): ValuationResult {
+  return {
+    status: input.status ?? "no_comps_found",
+    selectedCondition: null,
+    baseCondition: null,
+    conditionValues: null,
+    tradeIn: "Unavailable",
+    tradeInRange: "Unavailable",
+    privateParty: "Unavailable",
+    privatePartyRange: "Unavailable",
+    dealerRetail: "Unavailable",
+    dealerRetailRange: "Unavailable",
+    low: null,
+    high: null,
+    median: null,
+    confidenceLabel: input.message,
+    sourceLabel: input.sourceLabel,
+    valuationSource: "unavailable",
+    compCount: null,
+    confidence: "unavailable",
+    rangeLow: null,
+    rangeHigh: null,
+    midpoint: null,
+    unavailableReason: input.reason,
+    message: input.message,
+    reason: input.reason,
+    listingCount: null,
+    sourceBasis: null,
+    modelType: "modeled",
+  };
+}
+
 function buildSpecialtyValueStateCopy(input: {
   make: string;
   model: string;
@@ -566,6 +628,20 @@ function buildValueStatusCardCopy(input: {
         supportNote: "Try the live market lookup again in a moment.",
       };
     case "no_comps_found":
+      if (input.valuation.unavailableReason === "missing_zip_or_mileage" || input.valuation.reason === "missing_zip_or_mileage") {
+        return {
+          title: "ZIP and mileage required",
+          body: input.valuation.message ?? "Enter ZIP, mileage, and condition before loading live market value.",
+          supportNote: "Local value needs a market area and mileage.",
+        };
+      }
+      if (input.valuation.unavailableReason === "missing_required_vehicle_identity" || input.valuation.reason === "missing_required_vehicle_identity") {
+        return {
+          title: "Vehicle identity required",
+          body: input.valuation.message ?? "We need year, make, and model before loading market value.",
+          supportNote: "Try searching again with a complete vehicle selection.",
+        };
+      }
       if (input.valuation.unavailableReason === "no_safe_baseline_data" || input.valuation.reason === "no_safe_baseline_data") {
         return {
           title: "No safe baseline data available",
@@ -1265,7 +1341,10 @@ export default function VehicleDetailScreen() {
       }
       return null;
     }
-    return vehicle.id;
+    return {
+      vehicleId: vehicle.id,
+      descriptor: buildDetailLookupDescriptor(vehicle),
+    };
   }, [estimateSupport?.groundedVehicleDescriptor, estimateSupport?.groundedVehicleId, isEstimateMode, vehicle]);
   const believableListingsCount = (vehicle?.listings ?? []).filter(isBelievableListing).length;
   const valueQaRows = [
@@ -1336,7 +1415,26 @@ export default function VehicleDetailScreen() {
     const normalizedZip = normalizeMarketAreaZip(zipCode);
     const normalizedMileage = mileage.trim();
     const normalizedCondition = normalizeCondition(condition);
+    console.log("[vehicle-detail] VALUE_REFRESH_BUTTON_TAPPED", {
+      routeId: id,
+      scanId: typeof scanId === "string" ? scanId : null,
+      vehicleId: vehicle.id,
+      lookupMode: typeof valueLookupInput === "string" ? "id" : valueLookupInput.descriptor ? "descriptor" : "id",
+      zip: normalizedZip,
+      zipSource,
+      mileage: normalizedMileage,
+      condition: normalizedCondition,
+    });
     if (!isValidMarketAreaZip(normalizedZip) || !normalizedMileage || !normalizedCondition) {
+      const missingInputValue = buildUnavailableValueResult({
+        reason: "missing_zip_or_mileage",
+        sourceLabel: "ZIP and mileage required",
+        message: "Enter a valid ZIP, mileage, and condition before loading live market value.",
+      });
+      applyValuationUpdate(missingInputValue, "value-refresh-invalid-input", {
+        allowReplacement: true,
+      });
+      setVehicle((current) => (current ? { ...current, valuation: missingInputValue } : current));
       setValueDebugStatus("rejected");
       console.log("[vehicle-detail] VALUE_ZIP_SOURCE", {
         routeId: id,
@@ -1346,6 +1444,17 @@ export default function VehicleDetailScreen() {
         previousZip: zipCode,
         requestZip: normalizedZip,
         buildCommit: mobileBuildInfo.gitCommit || "unknown",
+      });
+      console.log("[vehicle-detail] VALUE_REFRESH_REQUEST_PAYLOAD", {
+        routeId: id,
+        scanId: typeof scanId === "string" ? scanId : null,
+        vehicleId: vehicle.id,
+        lookup: valueLookupInput,
+        zip: normalizedZip,
+        zipSource,
+        mileage: normalizedMileage,
+        condition: normalizedCondition,
+        rejectedReason: "missing_zip_or_mileage",
       });
       return;
     }
@@ -1374,6 +1483,18 @@ export default function VehicleDetailScreen() {
       mileage: normalizedMileage,
       condition: normalizedCondition,
     });
+    console.log("[vehicle-detail] VALUE_REFRESH_REQUEST_PAYLOAD", {
+      routeId: id,
+      scanId: typeof scanId === "string" ? scanId : null,
+      vehicleId: vehicle.id,
+      lookup: valueLookupInput,
+      zip: normalizedZip,
+      zipSource,
+      mileage: normalizedMileage,
+      condition: normalizedCondition,
+      allowLive: true,
+      forceLive: true,
+    });
 
     vehicleService
       .getValue(valueLookupInput, normalizedZip, normalizedMileage, normalizedCondition, {
@@ -1389,6 +1510,17 @@ export default function VehicleDetailScreen() {
           isEstimateMode && estimateSupport?.familyLabel
             ? buildApproximateValuation(result, estimateSupport.familyLabel, estimateSupport.yearRangeLabel)
             : result;
+        console.log("[vehicle-detail] VALUE_REFRESH_RESPONSE_RECEIVED", {
+          routeId: id,
+          scanId: typeof scanId === "string" ? scanId : null,
+          vehicleId: vehicle.id,
+          status: nextResult.status,
+          valuationSource: nextResult.valuationSource ?? null,
+          unavailableReason: nextResult.unavailableReason ?? nextResult.reason ?? null,
+          sourceLabel: nextResult.sourceLabel ?? null,
+          confidence: nextResult.confidence ?? null,
+          compCount: nextResult.compCount ?? nextResult.listingCount ?? null,
+        });
         setValueDebugStatus(hasResolvedValueState(nextResult) ? "accepted" : "rejected");
         if (hasStructuredValueEvidence(nextResult)) {
           logValueUiTransition("VALUE_UI_REFRESH_SUCCESS", {
@@ -1423,6 +1555,16 @@ export default function VehicleDetailScreen() {
         void marketAreaZipService.saveLastUsedZip(normalizedZip);
       })
       .catch((error) => {
+        const errorValue = buildUnavailableValueResult({
+          reason: "provider_error",
+          status: "provider_error",
+          sourceLabel: "Live market data could not be loaded",
+          message: "Live market value could not be loaded. Try again after checking your connection.",
+        });
+        applyValuationUpdate(errorValue, "value-refresh-error", {
+          allowReplacement: true,
+        });
+        setVehicle((current) => (current ? { ...current, valuation: errorValue } : current));
         setValueDebugStatus("rejected");
         logValueUiTransition("VALUE_UI_REFRESH_ERROR", {
           routeId: id,
@@ -1431,6 +1573,16 @@ export default function VehicleDetailScreen() {
           zip: normalizedZip,
           zipSource,
           message: error instanceof Error ? error.message : String(error),
+        });
+        console.log("[vehicle-detail] VALUE_REFRESH_RESPONSE_RECEIVED", {
+          routeId: id,
+          scanId: typeof scanId === "string" ? scanId : null,
+          vehicleId: vehicle.id,
+          status: errorValue.status,
+          valuationSource: errorValue.valuationSource,
+          unavailableReason: errorValue.unavailableReason,
+          sourceLabel: errorValue.sourceLabel,
+          error: error instanceof Error ? error.message : String(error),
         });
       })
       .finally(() => {
@@ -2479,6 +2631,15 @@ export default function VehicleDetailScreen() {
       sourceLabel: displayValuation.sourceLabel ?? null,
       unavailableReason: displayValuation.unavailableReason ?? displayValuation.reason ?? null,
       fallbackUiChosen: valueTabFinalState === "value_unavailable",
+    });
+    console.log("[vehicle-detail] VALUE_RENDER_STATE", {
+      vehicleId: vehicle.id,
+      condition,
+      status: displayValuation.status,
+      valuationSource: displayValuation.valuationSource ?? null,
+      sourceLabel: displayValuation.sourceLabel ?? null,
+      unavailableReason: displayValuation.unavailableReason ?? displayValuation.reason ?? null,
+      valueUsefulness: resolveValueUsefulness(displayValuation),
     });
   }, [condition, displayValuation, id, mileage, scanId, tab, valuation, valueTabFinalState, vehicle, zipCode, zipSource]);
 

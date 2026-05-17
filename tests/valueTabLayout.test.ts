@@ -50,6 +50,13 @@ test("modeled fallback value maps through the frontend as limited value, not una
   assert.match(serviceSource, /valuationSource: mapped\.valuationSource \?\? null/);
   assert.match(screenSource, /valuationSource: displayValuation\.valuationSource \?\? null/);
   assert.match(screenSource, /unavailableReason: displayValuation\.unavailableReason \?\? displayValuation\.reason \?\? null/);
+  assert.match(screenSource, /VALUE_REFRESH_BUTTON_TAPPED/);
+  assert.match(screenSource, /VALUE_REFRESH_REQUEST_PAYLOAD/);
+  assert.match(screenSource, /VALUE_REFRESH_RESPONSE_RECEIVED/);
+  assert.match(screenSource, /VALUE_RENDER_STATE/);
+  assert.match(screenSource, /buildDetailLookupDescriptor\(vehicle\)/);
+  assert.match(screenSource, /bodyStyle: normalizeDetailLookupBodyStyle\(vehicle\)/);
+  assert.match(screenSource, /Pickup Truck/);
 });
 
 test("no safe baseline unavailable copy is distinct from no live comps", () => {
@@ -59,4 +66,6 @@ test("no safe baseline unavailable copy is distinct from no live comps", () => {
   assert.match(serviceSource, /unavailableReason: valuation\.unavailableReason \?\? valuation\.reason \?\? null/);
   assert.match(screenSource, /No safe baseline data available/);
   assert.match(screenSource, /unavailableReason === "no_safe_baseline_data"/);
+  assert.match(screenSource, /missing_required_vehicle_identity/);
+  assert.match(screenSource, /missing_zip_or_mileage/);
 });

@@ -4649,21 +4649,29 @@ export class VehicleService {
 
       const finalUnavailableReason =
         explicitLiveFailureReason ??
-        (lookupBaseVehicle && !isSpecialtyLookupVehicle ? "no_safe_baseline_data" : "no_comps_found");
+        (!lookupBaseVehicle
+          ? "missing_required_vehicle_identity"
+          : !isSpecialtyLookupVehicle
+            ? "no_safe_baseline_data"
+            : "no_comps_found");
       const finalUnavailableSourceLabel =
         finalUnavailableReason === "no_safe_baseline_data"
           ? "No safe baseline data available"
+          : finalUnavailableReason === "missing_required_vehicle_identity"
+            ? "Vehicle identity required"
           : explicitLiveFailureReason
             ? "Live market data could not be loaded"
             : "No live market comps found";
       const finalUnavailableMessage =
         finalUnavailableReason === "no_safe_baseline_data"
           ? "No safe baseline data is available for this vehicle after direct value, cached comps, listings, and modeled fallback checks."
+          : finalUnavailableReason === "missing_required_vehicle_identity"
+            ? "Year, make, and model are required before loading market value."
           : explicitLiveFailureReason
             ? "Live market data could not be loaded."
             : "No live market comps found for this ZIP, mileage, and condition.";
 
-      if (!fallbackValue && isExplicitValueRefresh && lookupBaseVehicle && !isSpecialtyLookupVehicle) {
+      if (!fallbackValue && isExplicitValueRefresh && !isSpecialtyLookupVehicle) {
         fallbackValue = {
           id: `market-value-unavailable:${lookupVehicleId}:${input.zip}:${input.mileage}`,
           vehicleId: lookupVehicleId,

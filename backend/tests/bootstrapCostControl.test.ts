@@ -1772,6 +1772,59 @@ describe("bootstrap cost control", () => {
     assert.notEqual(result.data.sourceLabel, "No live market comps found");
   });
 
+  test("Ford Ranger descriptor lookup can use modeled_fallback even when the client id is not stored", async () => {
+    let valueProviderCalls = 0;
+    let listingsProviderCalls = 0;
+    setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      listingsProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          valueProviderCalls += 1;
+          return null;
+        },
+      },
+      listingsProvider: {
+        async getListings() {
+          listingsProviderCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "1998-ford-ranger-xlt",
+      descriptor: {
+        year: 1998,
+        make: "Ford",
+        model: "Ranger",
+        trim: "XLT",
+        vehicleType: "car",
+        bodyStyle: "Pickup Truck",
+        normalizedModel: "ranger",
+      },
+      zip: "60563",
+      mileage: 42000,
+      condition: "good",
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
+
+    assert.equal(valueProviderCalls > 0, true);
+    assert.equal(listingsProviderCalls > 0, true);
+    assert.equal(result.data.status, "loaded_condition_set");
+    assert.equal(result.data.valuationSource, "modeled_fallback");
+    assert.equal(result.data.confidence, "limited");
+    assert.equal(result.data.reason, "modeled_baseline_after_no_local_comps");
+    assert.notEqual(result.data.sourceLabel, "No live market comps found");
+  });
+
   test("Load Value first stays unavailable when no provider comps and no safe modeled baseline exist", async () => {
     let valueProviderCalls = 0;
     let listingsProviderCalls = 0;

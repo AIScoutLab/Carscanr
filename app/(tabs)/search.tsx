@@ -10,7 +10,7 @@ import { PremiumSkeleton } from "@/components/PremiumSkeleton";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { VehicleCard } from "@/components/VehicleCard";
 import { Colors, Radius, Typography } from "@/constants/theme";
-import { getVehicleImage, legacyGenericSportsCarImage, resolveVehicleImageSource } from "@/constants/vehicleImages";
+import { getVehicleImage, isGeneratedVehicleFallbackImageUri, resolveVehicleImageSource } from "@/constants/vehicleImages";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { VehicleRecord } from "@/types";
 
@@ -262,7 +262,7 @@ export default function SearchScreen() {
         bodyStyle: vehicle.bodyStyle,
       });
       const providedImage = vehicle.heroImage?.trim();
-      const shouldUseProvidedImage = Boolean(providedImage && providedImage !== legacyGenericSportsCarImage);
+      const shouldUseProvidedImage = Boolean(providedImage && !isGeneratedVehicleFallbackImageUri(providedImage));
       const heroImage = shouldUseProvidedImage ? providedImage as string : resolvedImage.uri;
       console.log("[manual-search] SEARCH_RESULT_IMAGE_SOURCE", {
         vehicleId: vehicle.id,

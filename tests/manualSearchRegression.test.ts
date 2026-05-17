@@ -2,7 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { getVehicleImage, legacyGenericSportsCarImage, resolveVehicleImageSource } from "../constants/vehicleImages";
+import {
+  getVehicleImage,
+  isGeneratedVehicleFallbackImageUri,
+  legacyGenericSportsCarImage,
+  resolveVehicleImageSource,
+} from "../constants/vehicleImages";
 
 const searchScreenPath = path.join(process.cwd(), "app/(tabs)/search.tsx");
 const offlineCanonicalServicePath = path.join(process.cwd(), "services/offlineCanonicalService.ts");
@@ -87,7 +92,7 @@ test("manual search production UI does not expose fallback wording", () => {
   assert.doesNotMatch(screenSource, /manualFallbackButtonText\}>\{[^}]*fallback/i);
 });
 
-test("manual search result images use body-style fallback before neutral placeholder", () => {
+test("manual search result images avoid unsafe vehicle fallbacks", () => {
   const truckImage = resolveVehicleImageSource({
     vehicleId: "unknown-ford-ranger",
     vehicleType: "car",
@@ -97,6 +102,11 @@ test("manual search result images use body-style fallback before neutral placeho
     vehicleId: "2021-ford-ranger-xl",
     vehicleType: "car",
     bodyStyle: null,
+  });
+  const rangerWithWrongSuvStyle = resolveVehicleImageSource({
+    vehicleId: "1998-ford-ranger-xlt",
+    vehicleType: "car",
+    bodyStyle: "SUV",
   });
   const neutralImage = resolveVehicleImageSource({
     vehicleId: "unknown-vehicle",
@@ -110,18 +120,22 @@ test("manual search result images use body-style fallback before neutral placeho
   });
   const screenSource = fs.readFileSync(searchScreenPath, "utf8");
 
-  assert.equal(truckImage.fallbackType, "body-style-truck");
-  assert.equal(inferredTruckImage.fallbackType, "body-style-truck");
+  assert.equal(truckImage.fallbackType, "neutral-placeholder");
+  assert.equal(inferredTruckImage.fallbackType, "neutral-placeholder");
+  assert.equal(rangerWithWrongSuvStyle.fallbackType, "neutral-placeholder");
   assert.notEqual(truckImage.uri, legacyGenericSportsCarImage);
   assert.notEqual(inferredTruckImage.uri, legacyGenericSportsCarImage);
+  assert.notEqual(rangerWithWrongSuvStyle.uri, legacyGenericSportsCarImage);
   assert.doesNotMatch(inferredTruckImage.uri, /text=Vehicle|e5e7eb/i);
+  assert.doesNotMatch(rangerWithWrongSuvStyle.uri, /explorer|suv|camaro|sports/i);
   assert.equal(getVehicleImage("unknown-ford-ranger", "car", "Pickup Truck"), truckImage.uri);
   assert.equal(neutralImage.fallbackType, "neutral-placeholder");
   assert.notEqual(neutralImage.uri, legacyGenericSportsCarImage);
   assert.doesNotMatch(neutralImage.uri, /text=Vehicle|e5e7eb/i);
   assert.match(neutralImage.uri, /111827|CarScanr/i);
+  assert.equal(isGeneratedVehicleFallbackImageUri(rangerWithWrongSuvStyle.uri), true);
   assert.equal(seededImage.fallbackType, "seeded");
   assert.match(screenSource, /SEARCH_RESULT_IMAGE_SOURCE/);
   assert.match(screenSource, /SEARCH_RESULT_IMAGE_FALLBACK_TYPE/);
-  assert.match(screenSource, /legacyGenericSportsCarImage/);
+  assert.match(screenSource, /isGeneratedVehicleFallbackImageUri/);
 });

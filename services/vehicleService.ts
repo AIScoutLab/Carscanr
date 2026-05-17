@@ -2,7 +2,7 @@ import { formatCurrency } from "@/lib/utils";
 import { buildSpecialtyVehicleOverview, isSpecialtyExoticMake } from "@/lib/specialtyVehicles";
 import { resolveConditionValues } from "@/lib/valueConditionSet";
 import { resolveHorsepower } from "@/lib/vehicleData";
-import { getVehicleImage, legacyGenericSportsCarImage, resolveVehicleImageSource } from "@/constants/vehicleImages";
+import { getVehicleImage, isGeneratedVehicleFallbackImageUri, legacyGenericSportsCarImage, resolveVehicleImageSource } from "@/constants/vehicleImages";
 import { apiRequest, apiRequestEnvelope } from "@/services/apiClient";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { MarketAreaZipSource } from "@/lib/marketAreaZip";
@@ -607,7 +607,8 @@ function resolveVehicleHeroImage(
     vehicleType: vehicle.vehicleType,
     bodyStyle: vehicle.bodyStyle ?? fallbackRecord?.bodyStyle ?? null,
   });
-  const canonicalImageAllowed = canonicalExactImage && canonicalExactImage !== legacyGenericSportsCarImage ? canonicalExactImage : null;
+  const canonicalImageAllowed =
+    canonicalExactImage && !isGeneratedVehicleFallbackImageUri(canonicalExactImage) ? canonicalExactImage : null;
 
   const heroImage = liveExactImage ?? canonicalImageAllowed ?? providerMatchedImage ?? genericResolution.uri;
   console.log("[vehicle-service] EXACT_HIT_IMAGE_SELECTION", {
