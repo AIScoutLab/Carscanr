@@ -130,12 +130,16 @@ test("manual search result images avoid unsafe vehicle fallbacks", () => {
 
   assert.equal(rangerIdentity.vehicleType, "truck");
   assert.match(rangerIdentity.bodyStyle ?? "", /pickup|truck/i);
-  assert.equal(truckImage.fallbackType, "neutral-placeholder");
-  assert.equal(inferredTruckImage.fallbackType, "neutral-placeholder");
-  assert.equal(rangerWithWrongSuvStyle.fallbackType, "neutral-placeholder");
+  assert.equal(truckImage.fallbackType, "pickup-truck-fallback");
+  assert.equal(inferredTruckImage.fallbackType, "pickup-truck-fallback");
+  assert.equal(rangerWithWrongSuvStyle.fallbackType, "pickup-truck-fallback");
+  assert.equal(truckImage.source, "body-style");
+  assert.equal(inferredTruckImage.source, "body-style");
+  assert.notEqual(truckImage.uri, neutralImage.uri);
   assert.notEqual(truckImage.uri, legacyGenericSportsCarImage);
   assert.notEqual(inferredTruckImage.uri, legacyGenericSportsCarImage);
   assert.notEqual(rangerWithWrongSuvStyle.uri, legacyGenericSportsCarImage);
+  assert.doesNotMatch(truckImage.uri, /CarScanr|text=Vehicle|placehold/i);
   assert.doesNotMatch(inferredTruckImage.uri, /text=Vehicle|e5e7eb/i);
   assert.doesNotMatch(rangerWithWrongSuvStyle.uri, /explorer|suv|camaro|sports/i);
   assert.equal(getVehicleImage("unknown-ford-ranger", "car", "Pickup Truck"), truckImage.uri);
@@ -148,6 +152,45 @@ test("manual search result images avoid unsafe vehicle fallbacks", () => {
   assert.match(screenSource, /SEARCH_RESULT_IMAGE_SOURCE/);
   assert.match(screenSource, /SEARCH_RESULT_IMAGE_FALLBACK_TYPE/);
   assert.match(screenSource, /isGeneratedVehicleFallbackImageUri/);
+});
+
+test("vehicle image resolution keeps Ranger on pickup fallback before placeholder", () => {
+  const imageSource = fs.readFileSync(path.join(process.cwd(), "constants/vehicleImages.ts"), "utf8");
+  const rangerTruck = resolveVehicleImageSource({
+    vehicleId: "1998-ford-ranger-xlt",
+    make: "Ford",
+    model: "Ranger",
+    vehicleType: "car",
+    bodyStyle: "car",
+  });
+  const unknownVehicle = resolveVehicleImageSource({
+    vehicleId: "unknown-vehicle",
+    make: "Unknown",
+    model: "Unknown",
+    vehicleType: "car",
+    bodyStyle: null,
+  });
+  const ct4 = resolveVehicleImageSource({
+    vehicleId: "2021-cadillac-ct4-premium-luxury",
+    make: "Cadillac",
+    model: "CT4",
+    vehicleType: "car",
+    bodyStyle: "Sedan",
+  });
+
+  assert.equal(rangerTruck.fallbackType, "pickup-truck-fallback");
+  assert.equal(rangerTruck.source, "body-style");
+  assert.notEqual(rangerTruck.uri, unknownVehicle.uri);
+  assert.doesNotMatch(rangerTruck.uri, /CarScanr|placehold|camaro|sports|suv|explorer/i);
+  assert.equal(unknownVehicle.fallbackType, "neutral-placeholder");
+  assert.equal(ct4.fallbackType, "seeded");
+  assert.match(imageSource, /IMAGE_RESOLUTION_STARTED/);
+  assert.match(imageSource, /IMAGE_RESOLUTION_EXACT_MATCH/);
+  assert.match(imageSource, /IMAGE_RESOLUTION_MODEL_FAMILY_MATCH/);
+  assert.match(imageSource, /IMAGE_RESOLUTION_BODY_STYLE_MATCH/);
+  assert.match(imageSource, /IMAGE_RESOLUTION_PICKUP_FALLBACK/);
+  assert.match(imageSource, /IMAGE_RESOLUTION_PLACEHOLDER/);
+  assert.match(imageSource, /IMAGE_RESOLUTION_REJECTED_UNSAFE_IMAGE/);
 });
 
 test("Ford Ranger identity cannot revert to car before render", () => {

@@ -12,9 +12,11 @@ export const legacyGenericSportsCarImage =
   "https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?auto=format&fit=crop&w=1200&q=80";
 
 const neutralVehiclePlaceholderImage = "https://placehold.co/1200x675/111827/94a3b8.png?text=CarScanr";
+const pickupTruckFallbackImage =
+  "https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?auto=format&fit=crop&w=1200&q=80";
 
 const bodyStyleVehicleImages = {
-  truck: "https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?auto=format&fit=crop&w=1200&q=80",
+  truck: pickupTruckFallbackImage,
   suv: "https://images.unsplash.com/photo-1519641471654-76ce0107ad1b?auto=format&fit=crop&w=1200&q=80",
   sedan: seededVehicleImages["2018-kia-optima-ex"],
   coupe: seededVehicleImages["2019-ford-mustang-gt"],
@@ -23,6 +25,8 @@ const bodyStyleVehicleImages = {
   convertible: "https://commons.wikimedia.org/wiki/Special:FilePath/2019_Mazda_MX-5_RF_Sport_Nav%2B_2.0_Front.jpg",
   van: "https://commons.wikimedia.org/wiki/Special:FilePath/2021_Chrysler_Pacifica_Touring_L%2C_front_4.17.21.jpg",
 } as const;
+
+const modelFamilyVehicleImages: Record<string, string> = {};
 
 const genericVehicleImages = {
   car: neutralVehiclePlaceholderImage,
@@ -50,6 +54,8 @@ export type NormalizedVehicleIdentity = {
 
 export type VehicleImageFallbackType =
   | "seeded"
+  | "model-family"
+  | "pickup-truck-fallback"
   | "body-style-truck"
   | "body-style-suv"
   | "body-style-sedan"
@@ -63,7 +69,7 @@ export type VehicleImageFallbackType =
 
 export type VehicleImageResolution = {
   uri: string;
-  source: "vehicle" | "body-style" | "placeholder";
+  source: "vehicle" | "model-family" | "body-style" | "placeholder";
   fallbackType: VehicleImageFallbackType;
 };
 
@@ -88,6 +94,13 @@ function buildVehicleIdentityText(input: VehicleIdentityInput) {
     .join(" ")
     .toLowerCase()
     .replace(/[_-]+/g, " ");
+}
+
+function normalizeFamilyKey(make?: string | null, model?: string | null) {
+  return [make, model]
+    .map((value) => String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-"))
+    .filter(Boolean)
+    .join("-");
 }
 
 export function isFordRangerIdentity(input: VehicleIdentityInput) {
@@ -160,10 +173,6 @@ export function normalizeVehicleIdentityForRendering(input: VehicleIdentityInput
   };
 }
 
-function shouldUseNeutralPlaceholderForBodyStyle(bodyStyle: keyof typeof bodyStyleVehicleImages) {
-  return bodyStyle === "truck";
-}
-
 export function isGeneratedVehicleFallbackImageUri(uri?: string | null) {
   const normalized = uri?.trim() ?? "";
   if (!normalized) {
@@ -184,22 +193,79 @@ export function resolveVehicleImageSource(input: {
   vehicleType?: string | null;
   bodyStyle?: string | null;
 }): VehicleImageResolution {
+  const logContext = {
+    make: input.make ?? null,
+    model: input.model ?? null,
+    bodyStyle: input.bodyStyle ?? null,
+  };
+  console.log("[vehicle-images] IMAGE_RESOLUTION_STARTED", {
+    ...logContext,
+    vehicleId: input.vehicleId,
+    vehicleType: input.vehicleType ?? null,
+  });
+
   const seeded = seededVehicleImages[input.vehicleId as keyof typeof seededVehicleImages];
   if (seeded) {
+    console.log("[vehicle-images] IMAGE_RESOLUTION_EXACT_MATCH", {
+      ...logContext,
+      vehicleId: input.vehicleId,
+      resolvedImageType: "exact",
+      resolvedImageSource: seeded,
+    });
     return { uri: seeded, source: "vehicle", fallbackType: "seeded" };
   }
 
+  const familyImage = modelFamilyVehicleImages[normalizeFamilyKey(input.make, input.model)];
+  if (familyImage) {
+    console.log("[vehicle-images] IMAGE_RESOLUTION_MODEL_FAMILY_MATCH", {
+      ...logContext,
+      vehicleId: input.vehicleId,
+      resolvedImageType: "model-family",
+      resolvedImageSource: familyImage,
+    });
+    return { uri: familyImage, source: "model-family", fallbackType: "model-family" };
+  }
+
   const normalizedIdentity = normalizeVehicleIdentityForRendering(input);
+  const requestedBodyStyleKey = normalizeBodyStyle(input.bodyStyle);
+  if (isFordRangerIdentity(input) && requestedBodyStyleKey && requestedBodyStyleKey !== "truck") {
+    console.warn("[vehicle-images] IMAGE_RESOLUTION_REJECTED_UNSAFE_IMAGE", {
+      ...logContext,
+      vehicleId: input.vehicleId,
+      rejectedBodyStyle: requestedBodyStyleKey,
+      reason: "ford-ranger-requires-pickup-safe-image",
+    });
+  }
   if (normalizedIdentity.vehicleType === "motorcycle") {
+    console.log("[vehicle-images] IMAGE_RESOLUTION_PLACEHOLDER", {
+      ...logContext,
+      vehicleId: input.vehicleId,
+      resolvedImageType: "motorcycle-placeholder",
+      resolvedImageSource: genericVehicleImages.motorcycle,
+    });
     return { uri: genericVehicleImages.motorcycle, source: "placeholder", fallbackType: "motorcycle-placeholder" };
   }
 
   const inferredBodyStyle = normalizedIdentity.bodyStyleKey;
   if (inferredBodyStyle) {
-    if (shouldUseNeutralPlaceholderForBodyStyle(inferredBodyStyle)) {
-      return { uri: genericVehicleImages.car, source: "placeholder", fallbackType: "neutral-placeholder" };
+    if (inferredBodyStyle === "truck") {
+      console.log("[vehicle-images] IMAGE_RESOLUTION_PICKUP_FALLBACK", {
+        ...logContext,
+        vehicleId: input.vehicleId,
+        normalizedBodyStyle: normalizedIdentity.bodyStyle,
+        resolvedImageType: "pickup-truck-fallback",
+        resolvedImageSource: pickupTruckFallbackImage,
+      });
+      return { uri: pickupTruckFallbackImage, source: "body-style", fallbackType: "pickup-truck-fallback" };
     }
 
+    console.log("[vehicle-images] IMAGE_RESOLUTION_BODY_STYLE_MATCH", {
+      ...logContext,
+      vehicleId: input.vehicleId,
+      normalizedBodyStyle: normalizedIdentity.bodyStyle,
+      resolvedImageType: `body-style-${inferredBodyStyle}`,
+      resolvedImageSource: bodyStyleVehicleImages[inferredBodyStyle],
+    });
     return {
       uri: bodyStyleVehicleImages[inferredBodyStyle],
       source: "body-style",
@@ -207,6 +273,12 @@ export function resolveVehicleImageSource(input: {
     };
   }
 
+  console.log("[vehicle-images] IMAGE_RESOLUTION_PLACEHOLDER", {
+    ...logContext,
+    vehicleId: input.vehicleId,
+    resolvedImageType: "neutral-placeholder",
+    resolvedImageSource: genericVehicleImages.car,
+  });
   return { uri: genericVehicleImages.car, source: "placeholder", fallbackType: "neutral-placeholder" };
 }
 
