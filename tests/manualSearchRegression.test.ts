@@ -2,18 +2,28 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import {
+
+require.extensions[".png"] = (module: NodeJS.Module, filename: string) => {
+  module.exports = filename;
+};
+
+const {
   getVehicleImage,
   isGeneratedVehicleFallbackImageUri,
   isSafeVehicleImageForIdentity,
-  legacyGenericSportsCarImage,
   normalizeVehicleIdentityForRendering,
   resolveVehicleImageSource,
-} from "../constants/vehicleImages";
+  SILHOUETTE_IMAGES,
+} = require("../constants/vehicleImages") as typeof import("../constants/vehicleImages");
 
 const searchScreenPath = path.join(process.cwd(), "app/(tabs)/search.tsx");
 const offlineCanonicalServicePath = path.join(process.cwd(), "services/offlineCanonicalService.ts");
 const manualSearchOptionsPath = path.join(process.cwd(), "assets/data/manual_search_options.json");
+const legacyGenericSportsCarImage = "https://images.example.test/old-generic-sports-car-fallback.jpg";
+
+function imageAssetName(source: string | number) {
+  return path.basename(String(source));
+}
 
 test("manual search uses guided canonical pickers as the primary path", () => {
   const screenSource = fs.readFileSync(searchScreenPath, "utf8");
@@ -140,14 +150,16 @@ test("manual search result images avoid unsafe vehicle fallbacks", () => {
   assert.notEqual(truckImage.uri, legacyGenericSportsCarImage);
   assert.notEqual(inferredTruckImage.uri, legacyGenericSportsCarImage);
   assert.notEqual(rangerWithWrongSuvStyle.uri, legacyGenericSportsCarImage);
-  assert.doesNotMatch(truckImage.uri, /CarScanr|text=Vehicle|expedition|explorer|bronco|suv|crossover/i);
-  assert.doesNotMatch(inferredTruckImage.uri, /text=Vehicle|e5e7eb/i);
-  assert.doesNotMatch(rangerWithWrongSuvStyle.uri, /explorer|suv|camaro|sports/i);
+  assert.equal(truckImage.uri, SILHOUETTE_IMAGES.pickup_truck);
+  assert.doesNotMatch(String(truckImage.uri), /placehold|text=Vehicle|expedition|explorer|bronco|crossover/i);
+  assert.doesNotMatch(imageAssetName(truckImage.uri), /suv|explorer|expedition|bronco/i);
+  assert.doesNotMatch(String(inferredTruckImage.uri), /text=Vehicle|e5e7eb/i);
+  assert.doesNotMatch(imageAssetName(rangerWithWrongSuvStyle.uri), /explorer|suv|camaro|sports/i);
   assert.equal(getVehicleImage("unknown-ford-ranger", "car", "Pickup Truck"), truckImage.uri);
   assert.equal(neutralImage.fallbackType, "neutral-placeholder");
   assert.notEqual(neutralImage.uri, legacyGenericSportsCarImage);
-  assert.doesNotMatch(neutralImage.uri, /text=Vehicle|e5e7eb/i);
-  assert.match(neutralImage.uri, /111827|CarScanr/i);
+  assert.equal(neutralImage.uri, SILHOUETTE_IMAGES.neutral_vehicle);
+  assert.doesNotMatch(imageAssetName(neutralImage.uri), /CarScanr|placehold|text=Vehicle|e5e7eb/i);
   assert.equal(isGeneratedVehicleFallbackImageUri(rangerWithWrongSuvStyle.uri), true);
   assert.equal(seededImage.fallbackType, "seeded");
   assert.match(screenSource, /SEARCH_RESULT_IMAGE_SOURCE/);
@@ -183,16 +195,17 @@ test("vehicle image resolution keeps Ranger on pickup fallback before placeholde
   assert.equal(rangerTruck.fallbackType, "pickup-truck-fallback");
   assert.equal(rangerTruck.source, "body-style");
   assert.notEqual(rangerTruck.uri, unknownVehicle.uri);
-  assert.doesNotMatch(rangerTruck.uri, /CarScanr|camaro|sports|suv|explorer|expedition|bronco/i);
+  assert.doesNotMatch(imageAssetName(rangerTruck.uri), /CarScanr|camaro|sports|explorer|expedition|bronco/i);
+  assert.doesNotMatch(imageAssetName(rangerTruck.uri), /suv|explorer|expedition|bronco/i);
+  assert.equal(rangerTruck.uri, SILHOUETTE_IMAGES.pickup_truck);
   assert.equal(unknownVehicle.fallbackType, "neutral-placeholder");
+  assert.equal(unknownVehicle.uri, SILHOUETTE_IMAGES.neutral_vehicle);
   assert.equal(ct4.fallbackType, "seeded");
   assert.match(imageSource, /IMAGE_RESOLUTION_STARTED/);
   assert.match(imageSource, /IMAGE_RESOLUTION_EXACT_MATCH/);
-  assert.match(imageSource, /IMAGE_RESOLUTION_MODEL_FAMILY_MATCH/);
-  assert.match(imageSource, /IMAGE_RESOLUTION_BODY_STYLE_MATCH/);
-  assert.match(imageSource, /IMAGE_RESOLUTION_PICKUP_FALLBACK/);
-  assert.match(imageSource, /IMAGE_RESOLUTION_PLACEHOLDER/);
   assert.match(imageSource, /IMAGE_RESOLUTION_REJECTED_UNSAFE_IMAGE/);
+  assert.match(imageSource, /IMAGE_RESOLUTION_SILHOUETTE_MATCH/);
+  assert.match(imageSource, /IMAGE_RESOLUTION_NEUTRAL_FALLBACK/);
 });
 
 test("Ranger rejects unsafe Ford family images before rendered cards can use them", () => {
@@ -206,7 +219,7 @@ test("Ranger rejects unsafe Ford family images before rendered cards can use the
     vehicleType: "truck",
     bodyStyle: "Pickup truck",
   };
-  const expeditionImage = "https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?auto=format&fit=crop&w=1200&q=80";
+  const expeditionImage = "https://cdn.example.test/ford-expedition-suv.jpg";
   const explorerImage = "https://cdn.example.test/ford-explorer-suv.jpg";
   const broncoImage = "https://cdn.example.test/ford-bronco-crossover.jpg";
   const rangerResolution = resolveVehicleImageSource(rangerIdentity);
@@ -214,12 +227,36 @@ test("Ranger rejects unsafe Ford family images before rendered cards can use the
   assert.equal(isSafeVehicleImageForIdentity(rangerIdentity, expeditionImage), false);
   assert.equal(isSafeVehicleImageForIdentity(rangerIdentity, explorerImage), false);
   assert.equal(isSafeVehicleImageForIdentity(rangerIdentity, broncoImage), false);
+  assert.equal(isSafeVehicleImageForIdentity(rangerIdentity, "https://placehold.co/1200x675/0b1220/e2e8f0.png?text=Pickup%20truck"), false);
   assert.equal(rangerResolution.fallbackType, "pickup-truck-fallback");
   assert.equal(isSafeVehicleImageForIdentity(rangerIdentity, rangerResolution.uri), true);
-  assert.doesNotMatch(rangerResolution.uri, /expedition|explorer|bronco|suv|crossover/i);
+  assert.equal(rangerResolution.uri, SILHOUETTE_IMAGES.pickup_truck);
+  assert.doesNotMatch(String(rangerResolution.uri), /placehold|text=|expedition|explorer|bronco|crossover/i);
+  assert.doesNotMatch(imageAssetName(rangerResolution.uri), /suv|explorer|expedition|bronco/i);
   assert.match(searchSource, /isSafeVehicleImageForIdentity/);
   assert.match(detailSource, /isSafeVehicleImageForIdentity/);
   assert.match(vehicleServiceSource, /isSafeVehicleImageForIdentity/);
+});
+
+test("production fallback images use bundled silhouette assets instead of text or remote placeholders", () => {
+  const fallbackCases = [
+    [resolveVehicleImageSource({ vehicleId: "unknown-pickup", vehicleType: "truck", bodyStyle: "Pickup truck" }), SILHOUETTE_IMAGES.pickup_truck],
+    [resolveVehicleImageSource({ vehicleId: "unknown-suv", vehicleType: "car", bodyStyle: "SUV" }), SILHOUETTE_IMAGES.suv],
+    [resolveVehicleImageSource({ vehicleId: "unknown-sedan", vehicleType: "car", bodyStyle: "Sedan" }), SILHOUETTE_IMAGES.sedan],
+    [resolveVehicleImageSource({ vehicleId: "unknown-coupe", vehicleType: "car", bodyStyle: "Coupe" }), SILHOUETTE_IMAGES.coupe],
+    [resolveVehicleImageSource({ vehicleId: "unknown-wagon", vehicleType: "car", bodyStyle: "Hatchback" }), SILHOUETTE_IMAGES.hatchback_wagon],
+    [resolveVehicleImageSource({ vehicleId: "unknown-van", vehicleType: "car", bodyStyle: "Van" }), SILHOUETTE_IMAGES.van],
+    [resolveVehicleImageSource({ vehicleId: "unknown-motorcycle", vehicleType: "motorcycle", bodyStyle: null }), SILHOUETTE_IMAGES.motorcycle],
+    [resolveVehicleImageSource({ vehicleId: "unknown-neutral", vehicleType: "car", bodyStyle: null }), SILHOUETTE_IMAGES.neutral_vehicle],
+  ];
+
+  for (const [entry, expectedAsset] of fallbackCases) {
+    assert.equal(entry.uri, expectedAsset);
+    assert.equal(typeof entry.uri, "string");
+    assert.match(String(entry.uri), /carscanr_silhouettes\/.+\.png$/);
+    assert.doesNotMatch(String(entry.uri), /^https?:|^data:image|placehold|base64|text=|unsplash|wikimedia/i);
+    assert.doesNotMatch(imageAssetName(entry.uri), /CarScanr|expedition|explorer|camaro|mustang/i);
+  }
 });
 
 test("Ford Ranger identity cannot revert to car before render", () => {

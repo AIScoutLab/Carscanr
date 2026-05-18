@@ -7,7 +7,6 @@ import {
   isFordRangerIdentity,
   isGeneratedVehicleFallbackImageUri,
   isSafeVehicleImageForIdentity,
-  legacyGenericSportsCarImage,
   normalizeVehicleIdentityForRendering,
   resolveVehicleImageSource,
 } from "@/constants/vehicleImages";
@@ -651,7 +650,7 @@ function resolveVehicleHeroImage(
   listings?: BackendListing[],
 ) {
   const liveExactImage = pickFirstNonEmptyString(vehicle.imageUrl, vehicle.heroImage);
-  const canonicalExactImage = pickFirstNonEmptyString(fallbackRecord?.heroImage);
+  const canonicalExactImage = pickFirstNonEmptyString(typeof fallbackRecord?.heroImage === "string" ? fallbackRecord.heroImage : null);
   const providerMatchedImage = pickFirstNonEmptyString(vehicle.providerImageUrl, vehicle.defaultImageUrl, listings?.[0]?.imageUrl);
   const rangerIdentity = isFordRangerIdentity(vehicle);
   const genericResolution = resolveVehicleImageSource({

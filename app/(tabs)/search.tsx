@@ -191,12 +191,15 @@ export default function SearchScreen() {
       setError(null);
       setSearched(true);
 
+      const localMatchImage = localMatch?.vehicle
+        ? getVehicleImage(localMatch.vehicle.id, localMatch.vehicle.vehicleType, localMatch.vehicle.basicSpecs.bodyStyle)
+        : null;
       const navigationTarget = localMatch?.vehicle
         ? {
             pathname: "/vehicle/[id]" as const,
             params: {
               id: localMatch.vehicle.id,
-              imageUri: getVehicleImage(localMatch.vehicle.id, localMatch.vehicle.vehicleType, localMatch.vehicle.basicSpecs.bodyStyle),
+              ...(typeof localMatchImage === "string" ? { imageUri: localMatchImage } : {}),
             },
           }
         : {
@@ -263,7 +266,7 @@ export default function SearchScreen() {
         vehicleType: vehicle.vehicleType,
         bodyStyle: vehicle.bodyStyle,
       });
-      const providedImage = vehicle.heroImage?.trim();
+      const providedImage = typeof vehicle.heroImage === "string" ? vehicle.heroImage.trim() : null;
       const shouldUseProvidedImage = Boolean(
         providedImage &&
           !isGeneratedVehicleFallbackImageUri(providedImage) &&
@@ -485,7 +488,7 @@ export default function SearchScreen() {
                       pathname: "/vehicle/[id]",
                       params: {
                         id: vehicle.id,
-                        imageUri: vehicle.heroImage,
+                        ...(typeof vehicle.heroImage === "string" ? { imageUri: vehicle.heroImage } : {}),
                       },
                     })
             }

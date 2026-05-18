@@ -13,7 +13,7 @@ export type VehicleCandidate = {
   displayTrimLabel?: string;
   source?: "visual_candidate" | "ocr_override" | "visual_override";
   confidence: number;
-  thumbnailUrl: string;
+  thumbnailUrl: string | number;
 };
 
 export type VehicleSpecs = {
@@ -109,7 +109,7 @@ export type VehicleRecord = {
   trim: string;
   bodyStyle: string;
   vehicleType?: "car" | "truck" | "motorcycle";
-  heroImage: string;
+  heroImage: string | number;
   overview: string;
   specs: VehicleSpecs;
   valuation: ValuationResult;

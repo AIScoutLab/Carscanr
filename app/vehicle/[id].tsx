@@ -15,7 +15,7 @@ import { SegmentedTabBar } from "@/components/SegmentedTabBar";
 import { ValueEstimateCard } from "@/components/ValueEstimateCard";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
-import { isFordRangerIdentity, isSafeVehicleImageForIdentity, normalizeVehicleIdentityForRendering } from "@/constants/vehicleImages";
+import { isFordRangerIdentity, isSafeVehicleImageForIdentity, normalizeVehicleIdentityForRendering, toVehicleImageSource } from "@/constants/vehicleImages";
 import { useSubscription } from "@/hooks/useSubscription";
 import { buildListingDerivedConditionSetFromListings, getConditionSourceLabel, normalizeSupportedValueCondition, resolveConditionValues } from "@/lib/valueConditionSet";
 import { formatHorsepowerLabel } from "@/lib/vehicleData";
@@ -3271,12 +3271,23 @@ export default function VehicleDetailScreen() {
     };
   }, [resolvedDisplayVehicleType, vehicle]);
 
-  const fallbackHeroImageUri = vehicle?.heroImage ?? "";
+  const fallbackHeroImageSource = vehicle?.heroImage ?? null;
+  const fallbackHeroImageUri = typeof fallbackHeroImageSource === "string" ? fallbackHeroImageSource : "";
   const heroUsesResolvedImage = Boolean(resolvedImageUri && heroImagePolicy.useResolvedImageInHero);
   const heroImageUri = heroUsesResolvedImage ? resolvedImageUri ?? "" : fallbackHeroImageUri || resolvedImageUri || "";
+  const heroImageSource = useMemo(() => {
+    if (heroUsesResolvedImage && resolvedImageUri) {
+      return { uri: resolvedImageUri };
+    }
+    if (fallbackHeroImageSource) {
+      return toVehicleImageSource(fallbackHeroImageSource);
+    }
+    return resolvedImageUri ? { uri: resolvedImageUri } : null;
+  }, [fallbackHeroImageSource, heroUsesResolvedImage, resolvedImageUri]);
+  const heroImageLogValue = heroImageUri || (fallbackHeroImageSource ? "static-silhouette-fallback" : "");
   const selectedImageSourceLabel = heroUsesResolvedImage
     ? imageSourceLabel
-    : fallbackHeroImageUri
+    : fallbackHeroImageSource
       ? "clean vehicle image fallback"
       : resolvedImageUri
         ? "cropped scan fallback"
@@ -3316,12 +3327,12 @@ export default function VehicleDetailScreen() {
   );
 
   useEffect(() => {
-    if (!vehicle || !heroImageUri) {
+    if (!vehicle || !heroImageLogValue) {
       return;
     }
     console.log("[vehicle-detail] RESULT_IMAGE_SOURCE_SELECTED", {
       source: selectedImageSourceLabel,
-      imageUri: heroImageUri,
+      imageUri: heroImageLogValue,
       vehicleId: vehicle.id,
       scanId,
     });
@@ -3334,7 +3345,7 @@ export default function VehicleDetailScreen() {
       fitMode: heroImageFitMode,
       vehicleId: vehicle.id,
     });
-  }, [heroImageFitMode, heroImageUri, scanId, selectedImageSourceLabel, vehicle]);
+  }, [heroImageFitMode, heroImageLogValue, scanId, selectedImageSourceLabel, vehicle]);
 
   useEffect(() => {
     if (!vehicle) {
@@ -3427,7 +3438,7 @@ export default function VehicleDetailScreen() {
           >
             <View style={styles.heroFrame}>
               <Image
-                source={{ uri: heroImageUri }}
+                source={heroImageSource ?? toVehicleImageSource(vehicle.heroImage)}
                 style={[styles.hero, heroImagePolicy.artifactRisk && !fallbackHeroImageUri ? styles.heroArtifactCrop : null]}
                 resizeMode={heroImageFitMode}
               />
@@ -4020,7 +4031,7 @@ export default function VehicleDetailScreen() {
         <View style={styles.sectionCard}>
           <Text style={styles.body}>Your saved scan photos live here for each vehicle. Add more photos as the Garage evolves.</Text>
           <View style={styles.photoFrame}>
-            <Image source={{ uri: heroImageUri }} style={styles.photo} resizeMode={heroImageFitMode} />
+            <Image source={heroImageSource ?? toVehicleImageSource(vehicle.heroImage)} style={styles.photo} resizeMode={heroImageFitMode} />
           </View>
         </View>
       ) : null}
@@ -4045,7 +4056,7 @@ export default function VehicleDetailScreen() {
       <Modal visible={heroPreviewOpen} transparent animationType="fade" onRequestClose={() => setHeroPreviewOpen(false)}>
         <Pressable style={styles.heroModalBackdrop} onPress={() => setHeroPreviewOpen(false)}>
           <Pressable style={styles.heroModalCard} onPress={(event) => event.stopPropagation()}>
-            <Image source={{ uri: heroImageUri }} style={styles.heroModalImage} resizeMode={heroImageFitMode} />
+            <Image source={heroImageSource ?? toVehicleImageSource(vehicle.heroImage)} style={styles.heroModalImage} resizeMode={heroImageFitMode} />
             <View style={styles.heroModalBody}>
               <Text style={styles.heroModalTitle}>{resolvedDisplayTitle}</Text>
               <Text style={styles.heroModalSubtitle}>{estimateSubtitle || unlockedDetailSubtitle}</Text>
