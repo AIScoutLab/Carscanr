@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import bundledDataset from "@/assets/data/offline_canonical.json";
 import bundledManualSearchOptions from "@/assets/data/manual_search_options.json";
 import { getVehicleImage, isFordRangerIdentity, normalizeVehicleIdentityForRendering } from "@/constants/vehicleImages";
+import { completeCanonicalSpecs, formatCanonicalModelName, sanitizeSpecValue } from "@/lib/canonicalSpecCompletion";
 import { formatCurrency } from "@/lib/utils";
 import { parseHorsepower } from "@/lib/vehicleData";
 import { OfflineCanonicalVehicle, VehicleRecord } from "@/types";
@@ -134,6 +135,10 @@ function selectPresentationVehicles(
 
 function formatHorsepowerValue(value: number) {
   return `${value} hp`;
+}
+
+function vehicleDisplayModel(vehicle: Pick<OfflineCanonicalVehicle, "make" | "model">) {
+  return formatCanonicalModelName(vehicle.make, vehicle.model);
 }
 
 function getTrustedFamilySpecValue(values: Array<string | null | undefined>, allowDominant = false) {
@@ -396,10 +401,26 @@ async function syncBundledDataset() {
 
 function mapOfflineVehicleToRecord(vehicle: OfflineCanonicalVehicle): VehicleRecord {
   const parsedHorsepower = parseHorsepower(vehicle.basicSpecs.horsepower);
+  const displayModel = vehicleDisplayModel(vehicle);
+  const completedSpecs = completeCanonicalSpecs({
+    year: vehicle.year,
+    make: vehicle.make,
+    model: vehicle.model,
+    specs: {
+      engine: vehicle.basicSpecs.engine,
+      horsepower: parsedHorsepower,
+      torque: vehicle.basicSpecs.torque,
+      transmission: vehicle.basicSpecs.transmission,
+      drivetrain: vehicle.basicSpecs.drivetrain,
+      mpgOrRange: vehicle.basicSpecs.mpgOrRange,
+      exteriorColors: vehicle.basicSpecs.exteriorColors,
+      msrp: vehicle.basicSpecs.msrp,
+    },
+  });
   console.log("[offline-canonical] FRONTEND_VEHICLE_IDENTITY_RECEIVED", {
     vehicleId: vehicle.id,
     make: vehicle.make,
-    model: vehicle.model,
+    model: displayModel,
     vehicleType: vehicle.vehicleType,
     bodyStyle: vehicle.basicSpecs.bodyStyle,
   });
@@ -490,17 +511,8 @@ function mapOfflineVehicleToRecord(vehicle: OfflineCanonicalVehicle): VehicleRec
     bodyStyle: normalizedIdentity.bodyStyle ?? vehicle.basicSpecs.bodyStyle,
     vehicleType: normalizedIdentity.vehicleType,
     heroImage: getVehicleImage(vehicle.id, normalizedIdentity.vehicleType, normalizedIdentity.bodyStyle ?? vehicle.basicSpecs.bodyStyle),
-    overview: `${vehicle.year} ${vehicle.make} ${vehicle.model} ${vehicle.trim} from bundled offline canonical data.`,
-    specs: {
-      engine: vehicle.basicSpecs.engine,
-      horsepower: parsedHorsepower,
-      torque: vehicle.basicSpecs.torque,
-      transmission: vehicle.basicSpecs.transmission,
-      drivetrain: vehicle.basicSpecs.drivetrain,
-      mpgOrRange: vehicle.basicSpecs.mpgOrRange,
-      exteriorColors: vehicle.basicSpecs.exteriorColors,
-      msrp: vehicle.basicSpecs.msrp,
-    },
+    overview: `${vehicle.year} ${vehicle.make} ${displayModel} ${vehicle.trim} from bundled offline canonical data.`,
+    specs: completedSpecs,
     valuation,
     listings: createEmptyListings(),
   };
@@ -803,11 +815,11 @@ export const offlineCanonicalService = {
         typeof input.year === "number" && bestVehicle ? Math.abs(bestVehicle.year - input.year) : null,
       mainstreamFriendly,
       sharedSpecs: {
-        engine: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => vehicle.basicSpecs.engine), mainstreamFriendly),
-        transmission: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => vehicle.basicSpecs.transmission), mainstreamFriendly),
-        drivetrain: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => vehicle.basicSpecs.drivetrain), mainstreamFriendly),
-        mpgOrRange: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => vehicle.basicSpecs.mpgOrRange), mainstreamFriendly),
-        bodyStyle: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => vehicle.basicSpecs.bodyStyle), mainstreamFriendly),
+        engine: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => sanitizeSpecValue(vehicle.basicSpecs.engine, "")), mainstreamFriendly),
+        transmission: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => sanitizeSpecValue(vehicle.basicSpecs.transmission, "")), mainstreamFriendly),
+        drivetrain: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => sanitizeSpecValue(vehicle.basicSpecs.drivetrain, "")), mainstreamFriendly),
+        mpgOrRange: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => sanitizeSpecValue(vehicle.basicSpecs.mpgOrRange, "")), mainstreamFriendly),
+        bodyStyle: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => sanitizeSpecValue(vehicle.basicSpecs.bodyStyle, "")), mainstreamFriendly),
       },
       msrpRangeLabel: buildMsrpRangeLabel(groundedVehicles.map((vehicle) => vehicle.basicSpecs.msrp)),
     };

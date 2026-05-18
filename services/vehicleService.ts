@@ -1,6 +1,7 @@
 import { formatCurrency } from "@/lib/utils";
 import { buildSpecialtyVehicleOverview, isSpecialtyExoticMake } from "@/lib/specialtyVehicles";
 import { resolveConditionValues } from "@/lib/valueConditionSet";
+import { completeCanonicalSpecs, formatCanonicalModelName } from "@/lib/canonicalSpecCompletion";
 import { resolveHorsepower } from "@/lib/vehicleData";
 import {
   getVehicleImage,
@@ -541,6 +542,22 @@ function createEmptyValuation(): ValuationResult {
 }
 
 function mapResolvedSpecsVehicle(vehicle: BackendResolvedVehicle): VehicleRecord {
+  const displayModel = formatCanonicalModelName(vehicle.make, vehicle.model);
+  const completedSpecs = completeCanonicalSpecs({
+    year: vehicle.year,
+    make: vehicle.make,
+    model: vehicle.model,
+    specs: {
+      engine: vehicle.engine || "Unknown",
+      horsepower: resolveHorsepower(vehicle.horsepower, null, null, vehicle.engine, null),
+      torque: vehicle.torque || "Unknown",
+      transmission: vehicle.transmission || "Unknown",
+      drivetrain: vehicle.drivetrain || "Unknown",
+      mpgOrRange: vehicle.mpgOrRange || "Unknown",
+      exteriorColors: vehicle.colors ?? [],
+      msrp: vehicle.msrp || 0,
+    },
+  });
   console.log("[vehicle-service] FRONTEND_VEHICLE_IDENTITY_RECEIVED", {
     vehicleId: vehicle.id,
     make: vehicle.make,
@@ -587,13 +604,14 @@ function mapResolvedSpecsVehicle(vehicle: BackendResolvedVehicle): VehicleRecord
     id: vehicle.id,
     year: vehicle.year,
     make: vehicle.make,
-    model: vehicle.model,
+    model: displayModel,
     trim: vehicle.trim,
     bodyStyle: normalizedIdentity.bodyStyle ?? vehicle.bodyStyle,
     vehicleType: normalizedIdentity.vehicleType,
     heroImage: getVehicleImage(vehicle.id, normalizedIdentity.vehicleType, normalizedIdentity.bodyStyle ?? vehicle.bodyStyle),
     overview: defaultOverview({
       ...vehicle,
+      model: displayModel,
       imageUrl: null,
       heroImage: null,
       defaultImageUrl: null,
@@ -601,16 +619,7 @@ function mapResolvedSpecsVehicle(vehicle: BackendResolvedVehicle): VehicleRecord
       hp: null,
       engine_hp: null,
     } as BackendVehicle),
-    specs: {
-      engine: vehicle.engine || "Unknown",
-      horsepower: resolveHorsepower(vehicle.horsepower, null, null, vehicle.engine, null),
-      torque: vehicle.torque || "Unknown",
-      transmission: vehicle.transmission || "Unknown",
-      drivetrain: vehicle.drivetrain || "Unknown",
-      mpgOrRange: vehicle.mpgOrRange || "Unknown",
-      exteriorColors: vehicle.colors ?? [],
-      msrp: vehicle.msrp || 0,
-    },
+    specs: completedSpecs,
     valuation: createEmptyValuation(),
     listings: [],
   };
@@ -749,6 +758,22 @@ function mapVehicle(
 ): VehicleRecord {
   const mappedListings = listings ? mapListings(listings) : [];
   const parsedHorsepower = resolveVehicleHorsepower(vehicle, fallbackRecord);
+  const displayModel = formatCanonicalModelName(vehicle.make, vehicle.model);
+  const completedSpecs = completeCanonicalSpecs({
+    year: vehicle.year,
+    make: vehicle.make,
+    model: vehicle.model,
+    specs: {
+      engine: vehicle.engine || fallbackRecord?.specs.engine || "Unknown",
+      horsepower: parsedHorsepower,
+      torque: vehicle.torque || fallbackRecord?.specs.torque || "Unknown",
+      transmission: vehicle.transmission || fallbackRecord?.specs.transmission || "Unknown",
+      drivetrain: vehicle.drivetrain || fallbackRecord?.specs.drivetrain || "Unknown",
+      mpgOrRange: vehicle.mpgOrRange || fallbackRecord?.specs.mpgOrRange || "Unknown",
+      exteriorColors: vehicle.colors?.length ? vehicle.colors : fallbackRecord?.specs.exteriorColors ?? [],
+      msrp: vehicle.msrp || fallbackRecord?.specs.msrp || 0,
+    },
+  });
   console.log("[vehicle-service] FRONTEND_VEHICLE_IDENTITY_RECEIVED", {
     vehicleId: vehicle.id,
     make: vehicle.make,
@@ -797,22 +822,13 @@ function mapVehicle(
     id: vehicle.id,
     year: vehicle.year,
     make: vehicle.make,
-    model: vehicle.model,
+    model: displayModel,
     trim: vehicle.trim,
     bodyStyle: normalizedIdentity.bodyStyle ?? vehicle.bodyStyle,
     vehicleType: normalizedIdentity.vehicleType,
     heroImage: resolveVehicleHeroImage(vehicle, fallbackRecord, listings),
-    overview: defaultOverview(vehicle),
-    specs: {
-      engine: vehicle.engine || fallbackRecord?.specs.engine || "Unknown",
-      horsepower: parsedHorsepower,
-      torque: vehicle.torque || fallbackRecord?.specs.torque || "Unknown",
-      transmission: vehicle.transmission || fallbackRecord?.specs.transmission || "Unknown",
-      drivetrain: vehicle.drivetrain || fallbackRecord?.specs.drivetrain || "Unknown",
-      mpgOrRange: vehicle.mpgOrRange || fallbackRecord?.specs.mpgOrRange || "Unknown",
-      exteriorColors: vehicle.colors?.length ? vehicle.colors : fallbackRecord?.specs.exteriorColors ?? [],
-      msrp: vehicle.msrp || fallbackRecord?.specs.msrp || 0,
-    },
+    overview: defaultOverview({ ...vehicle, model: displayModel }),
+    specs: completedSpecs,
     valuation: valuation ? mapValuation(valuation) : createEmptyValuation(),
     listings: mappedListings,
   };

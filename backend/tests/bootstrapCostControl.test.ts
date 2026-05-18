@@ -2363,6 +2363,39 @@ describe("bootstrap cost control", () => {
     assert.equal(result.data?.id, "2021-cadillac-ct4-premium-luxury");
   });
 
+  test("Toyota 4Runner specs complete known 4.0L V6 horsepower", async () => {
+    const toyota4Runner = {
+      id: "2011-toyota-4runner-sr5",
+      year: 2011,
+      make: "Toyota",
+      model: "4Runner",
+      trim: "SR5",
+      bodyStyle: "SUV",
+      vehicleType: "car" as const,
+      msrp: 0,
+      engine: "4.0L V6",
+      horsepower: null,
+      torque: "",
+      transmission: "",
+      drivetrain: "4WD",
+      mpgOrRange: "",
+      colors: [],
+    };
+    setRepositories(createTestRepositories({ vehicles: [toyota4Runner], valuations: [], listings: [] }).repositories);
+
+    const service = new VehicleService();
+    const result = await service.getSpecs({
+      vehicleId: toyota4Runner.id,
+      allowLive: false,
+      fetchReason: "initial_load",
+      sourceScreen: "specsScreen",
+    });
+
+    assert.equal(result.data?.make, "Toyota");
+    assert.equal(result.data?.model, "4Runner");
+    assert.equal(result.data?.horsepower, 270);
+  });
+
   test("user requested value refresh calls MarketCheck valuation at most once", async () => {
     let valueProviderCalls = 0;
     let listingsProviderCalls = 0;

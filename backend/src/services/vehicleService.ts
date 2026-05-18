@@ -1578,6 +1578,11 @@ function inferHorsepowerFromVehicle(vehicle: VehicleRecord): number | null {
     return 190;
   }
 
+  if (make === "toyota" && model === "4runner" && engine.includes("4 0l") && engine.includes("v6")) {
+    if (vehicle.year >= 2010 && vehicle.year <= 2024) return 270;
+    if (vehicle.year >= 2005 && vehicle.year <= 2009) return 236;
+  }
+
   if (engine.includes("1 5l turbo i4")) return 190;
   if (engine.includes("2 0l turbo i4")) return 237;
   if (engine.includes("2 4l i4")) return 185;
@@ -2787,8 +2792,9 @@ export class VehicleService {
     const descriptor = lookup.cacheDescriptor;
 
     if (vehicle) {
+      const enrichedVehicle = applyInferredHorsepower(vehicle);
       return {
-        data: vehicle,
+        data: enrichedVehicle,
         source: "cache",
         fetchedAt: currentIso,
         expiresAt: currentIso,
@@ -2807,9 +2813,10 @@ export class VehicleService {
         if (!canonicalVehicle) {
           // Conservative: only promoted rows with populated specs_json are authoritative.
         } else {
+          const enrichedCanonicalVehicle = applyInferredHorsepower(canonicalVehicle);
           await repositories.canonicalVehicles.incrementPopularity(promotedCanonical.canonicalKey);
           return {
-            data: canonicalVehicle,
+            data: enrichedCanonicalVehicle,
             source: "cache",
             fetchedAt: promotedCanonical.updatedAt,
             expiresAt: promotedCanonical.updatedAt,
@@ -3103,12 +3110,13 @@ export class VehicleService {
       }
 
       const partialSpecFallback = lookup.lookupVehicle ? await buildPartialSpecFallbackVehicle(lookup.lookupVehicle) : null;
-      if (partialSpecFallback && hasUsefulSpecBundle(partialSpecFallback)) {
+      const enrichedPartialSpecFallback = partialSpecFallback ? applyInferredHorsepower(partialSpecFallback) : null;
+      if (enrichedPartialSpecFallback && hasUsefulSpecBundle(enrichedPartialSpecFallback)) {
         logCommonVehicleDetailTrace({
           phase: "specs",
           requestId: request.requestId,
           descriptorResolved: Boolean(lookup.effectiveDescriptor),
-          vehicle: partialSpecFallback,
+          vehicle: enrichedPartialSpecFallback,
           descriptor: lookup.effectiveDescriptor,
           specsCandidateCount: specAttempts.length,
           valueCandidateCount: 0,
@@ -3116,7 +3124,7 @@ export class VehicleService {
           thinReason: "partial-spec-fallback",
         });
         return {
-          data: partialSpecFallback,
+          data: enrichedPartialSpecFallback,
           source: "cache",
           fetchedAt: currentIso,
           expiresAt: currentIso,

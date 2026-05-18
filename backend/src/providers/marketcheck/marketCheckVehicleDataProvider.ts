@@ -248,6 +248,11 @@ function mapOperationToSummaryEndpoint(operation: InventoryOperation): "specs" |
 }
 
 function titleCase(value: string) {
+  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (normalized === "4runner") return "4Runner";
+  if (normalized === "ct4") return "CT4";
+  if (normalized === "ct5") return "CT5";
+  if (normalized === "f 150" || normalized === "f150") return "F-150";
   return value
     .split(" ")
     .filter(Boolean)
@@ -531,10 +536,10 @@ function mapListingToVehicle(listing: MarketCheckListing): VehicleRecord | null 
   const colors = compact([listing.base_ext_color, listing.exterior_color]).map(titleCase);
   const cityMpg = listing.city_mpg ?? listing.build?.city_mpg;
   const highwayMpg = listing.highway_mpg ?? listing.build?.highway_mpg;
-  const mpg = cityMpg && highwayMpg ? `${cityMpg} city / ${highwayMpg} hwy` : "See live listing";
-  const engine = listing.engine ?? listing.build?.engine ?? "See live listing";
-  const drivetrain = listing.drivetrain ?? listing.build?.drivetrain ?? "See live listing";
-  const transmission = listing.transmission ?? listing.build?.transmission ?? "See live listing";
+  const mpg = cityMpg && highwayMpg ? `${cityMpg} city / ${highwayMpg} hwy` : "Unknown";
+  const engine = listing.engine ?? listing.build?.engine ?? "Unknown";
+  const drivetrain = listing.drivetrain ?? listing.build?.drivetrain ?? "Unknown";
+  const transmission = listing.transmission ?? listing.build?.transmission ?? "Unknown";
   const parsedHorsepower = resolveHorsepower(
     listing.horsepower,
     listing.engine_hp,
@@ -577,7 +582,7 @@ function mapListingToVehicle(listing: MarketCheckListing): VehicleRecord | null 
     msrp: listing.msrp ?? listing.price ?? 0,
     engine,
     horsepower: parsedHorsepower,
-    torque: "See live listing",
+    torque: "Unknown",
     transmission,
     drivetrain,
     mpgOrRange: mpg,

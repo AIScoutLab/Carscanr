@@ -18,6 +18,7 @@ import { cardStyles } from "@/design/patterns";
 import { isFordRangerIdentity, isSafeVehicleImageForIdentity, normalizeVehicleIdentityForRendering, toVehicleImageSource } from "@/constants/vehicleImages";
 import { useSubscription } from "@/hooks/useSubscription";
 import { buildListingDerivedConditionSetFromListings, getConditionSourceLabel, normalizeSupportedValueCondition, resolveConditionValues } from "@/lib/valueConditionSet";
+import { completeCanonicalSpecs, formatCanonicalModelName, sanitizeSpecValue } from "@/lib/canonicalSpecCompletion";
 import { formatHorsepowerLabel } from "@/lib/vehicleData";
 import { mobileBuildInfo, mobileEnv } from "@/lib/env";
 import { isProPlan } from "@/lib/subscription";
@@ -420,6 +421,54 @@ function formatYearRangeLabel(start?: number | null, end?: number | null) {
     return start === end ? `${start}` : `${start}-${end}`;
   }
   return `${start ?? end}`;
+}
+
+function parseYearRangeLabel(value?: string | null) {
+  const match = String(value ?? "").match(/\b(\d{4})\s*[-–—]\s*(\d{4})\b/);
+  if (!match) {
+    return null;
+  }
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return null;
+  }
+  return { start: Math.min(start, end), end: Math.max(start, end) };
+}
+
+function isOverbroadYearRangeLabel(value?: string | null) {
+  const range = parseYearRangeLabel(value);
+  return Boolean(range && range.end - range.start > 4);
+}
+
+function buildProductionDisplayTitle(input: {
+  routeTitle?: string | null;
+  yearLabel?: string | null;
+  make: string;
+  model: string;
+  trustedResult: boolean;
+  estimateMode: boolean;
+}) {
+  const makeModel = [input.make, formatCanonicalModelName(input.make, input.model)].filter(Boolean).join(" ").trim();
+  const routeTitle = String(input.routeTitle ?? "").trim();
+  const polishedRouteTitle = routeTitle
+    .replace(/\b4runner\b/gi, "4Runner")
+    .replace(/\bct4\b/gi, "CT4")
+    .replace(/\bct5\b/gi, "CT5");
+  const routeTitleLeaksFamilyRange = isOverbroadYearRangeLabel(routeTitle);
+  if (input.estimateMode && (!input.trustedResult || routeTitleLeaksFamilyRange)) {
+    return makeModel || routeTitle;
+  }
+  if (polishedRouteTitle) {
+    const range = parseYearRangeLabel(polishedRouteTitle);
+    if (range && range.start === range.end) {
+      return polishedRouteTitle.replace(/\b\d{4}\s*[-–—]\s*\d{4}\b/, `${range.start}`);
+    }
+    if (!routeTitleLeaksFamilyRange) {
+      return polishedRouteTitle;
+    }
+  }
+  return [input.yearLabel && !isOverbroadYearRangeLabel(input.yearLabel) ? input.yearLabel : null, makeModel].filter(Boolean).join(" ").trim();
 }
 
 function isUnavailableValue(value: string | undefined | null) {
@@ -1009,20 +1058,27 @@ function isStrongListingsFallback(input: {
 function mergeApproximateSpecs(
   groundedRecord: VehicleRecord | null,
   approximateSupport: Awaited<ReturnType<typeof offlineCanonicalService.resolveApproximateFamilySupport>> | null,
+  identity?: { year?: number | null; make?: string | null; model?: string | null },
 ) {
-  return {
-    engine: approximateSupport?.sharedSpecs.engine ?? groundedRecord?.specs.engine ?? "Unavailable",
+  const engine = sanitizeSpecValue(approximateSupport?.sharedSpecs.engine, "") || sanitizeSpecValue(groundedRecord?.specs.engine, "") || "Unknown";
+  return completeCanonicalSpecs({
+    year: identity?.year ?? groundedRecord?.year ?? null,
+    make: identity?.make ?? groundedRecord?.make ?? "",
+    model: identity?.model ?? groundedRecord?.model ?? "",
+    specs: {
+    engine,
     horsepower: groundedRecord?.specs.horsepower ?? null,
-    torque: groundedRecord?.specs.torque ?? "Unavailable",
-    transmission: approximateSupport?.sharedSpecs.transmission ?? groundedRecord?.specs.transmission ?? "Unavailable",
-    drivetrain: approximateSupport?.sharedSpecs.drivetrain ?? groundedRecord?.specs.drivetrain ?? "Unavailable",
-    mpgOrRange: approximateSupport?.sharedSpecs.mpgOrRange ?? groundedRecord?.specs.mpgOrRange ?? "Unavailable",
+    torque: groundedRecord?.specs.torque ?? "Unknown",
+    transmission: approximateSupport?.sharedSpecs.transmission ?? groundedRecord?.specs.transmission ?? "Unknown",
+    drivetrain: approximateSupport?.sharedSpecs.drivetrain ?? groundedRecord?.specs.drivetrain ?? "Unknown",
+    mpgOrRange: approximateSupport?.sharedSpecs.mpgOrRange ?? groundedRecord?.specs.mpgOrRange ?? "Unknown",
     exteriorColors: groundedRecord?.specs.exteriorColors ?? [],
     msrp:
       approximateSupport?.msrpRangeLabel && approximateSupport.msrpRangeLabel.includes(" - ")
         ? 0
         : groundedRecord?.specs.msrp ?? 0,
-  };
+    },
+  });
 }
 
 function shouldShowEstimatedTrim(input: {
@@ -1174,29 +1230,34 @@ export default function VehicleDetailScreen() {
       })),
   );
   const finalDisplayIdentity = {
-    titleLabel:
-      typeof titleLabel === "string" && titleLabel.trim().length > 0
-        ? titleLabel
-        : [vehicle?.year ? `${vehicle.year}` : null, vehicle?.make ?? null, vehicle?.model ?? null].filter(Boolean).join(" "),
+    titleLabel: "",
     yearLabel:
       typeof yearLabel === "string" && yearLabel.trim().length > 0
-        ? yearLabel.replace(/\s*\(est\.\)\s*/i, "").trim()
+        ? isOverbroadYearRangeLabel(yearLabel)
+          ? ""
+          : yearLabel.replace(/\s*\(est\.\)\s*/i, "").trim()
         : vehicle?.year
           ? `${vehicle.year}`
           : "",
     make: typeof make === "string" && make.trim().length > 0 ? make : vehicle?.make ?? "",
-    model: typeof model === "string" && model.trim().length > 0 ? model : vehicle?.model ?? "",
+    model: formatCanonicalModelName(
+      typeof make === "string" && make.trim().length > 0 ? make : vehicle?.make ?? "",
+      typeof model === "string" && model.trim().length > 0 ? model : vehicle?.model ?? "",
+    ),
     trimLabel: typeof trimLabel === "string" && trimLabel.trim().length > 0 ? trimLabel : vehicle?.trim ?? "",
     confidence: typeof confidence === "string" ? confidence : "",
     trustedCase: trustedResult,
     source: typeof resultSource === "string" ? resultSource : "",
   };
-  const resolvedDisplayTitle =
-    finalDisplayIdentity.titleLabel ||
-    [finalDisplayIdentity.yearLabel || null, finalDisplayIdentity.make || null, finalDisplayIdentity.model || null]
-      .filter(Boolean)
-      .join(" ") ||
-    `${vehicle?.year ?? ""} ${vehicle?.make ?? ""} ${vehicle?.model ?? ""}`.trim();
+  finalDisplayIdentity.titleLabel = buildProductionDisplayTitle({
+    routeTitle: typeof titleLabel === "string" ? titleLabel : null,
+    yearLabel: finalDisplayIdentity.yearLabel,
+    make: finalDisplayIdentity.make || vehicle?.make || "",
+    model: finalDisplayIdentity.model || vehicle?.model || "",
+    trustedResult,
+    estimateMode: isEstimateMode,
+  });
+  const resolvedDisplayTitle = finalDisplayIdentity.titleLabel || `${vehicle?.year ?? ""} ${vehicle?.make ?? ""} ${formatCanonicalModelName(vehicle?.make, vehicle?.model)}`.trim();
   const normalizedRenderedIdentity = useMemo(
     () =>
       normalizeVehicleIdentityForRendering({
@@ -1257,7 +1318,7 @@ export default function VehicleDetailScreen() {
       isEstimateMode
         ? trustedResult
           ? finalDisplayIdentity.yearLabel || null
-          : estimateSupport?.yearRangeLabel || (typeof yearLabel === "string" && yearLabel.trim().length > 0 ? yearLabel : null)
+          : null
         : finalDisplayIdentity.yearLabel || (vehicle ? `${vehicle.year}` : null),
       resolvedDisplayBodyStyle || null,
       horsepowerSupport?.value || (vehicle?.specs.horsepower ? formatHorsepowerLabel(vehicle.specs.horsepower) : null),
@@ -2025,12 +2086,13 @@ export default function VehicleDetailScreen() {
                 approximateFamilySupport?.yearRange?.end ?? groundedPresentation?.yearRange?.end,
               )
             : null;
+        const safeGroundedYearRangeLabel = isOverbroadYearRangeLabel(groundedYearRangeLabel) ? null : groundedYearRangeLabel;
         const groundedFamilyLabel = groundedVehicle
           && strongFamilyFallback
           ? `${groundedVehicle.make} ${groundedVehicle.model}`.trim()
           : null;
-        const displayFamilyLabel = `${resolvedMake} ${resolvedModel}`.trim();
-        const displayYearLabel = Number.isFinite(parsedYear) ? `${parsedYear}` : groundedYearRangeLabel;
+        const displayFamilyLabel = `${resolvedMake} ${formatCanonicalModelName(resolvedMake, resolvedModel)}`.trim();
+        const displayYearLabel = Number.isFinite(parsedYear) ? `${parsedYear}` : safeGroundedYearRangeLabel;
         const resolvedBodyStyle =
           approximateFamilySupport?.sharedSpecs.bodyStyle ||
           groundedRecord?.bodyStyle ||
@@ -2078,12 +2140,16 @@ export default function VehicleDetailScreen() {
             : [
                 highConfidenceTrustedCase ? "High-confidence vehicle identification." : "Vehicle identification from photo analysis.",
                 resolvedConfidence ? `Confidence: ${Math.round(Number(resolvedConfidence) * 100)}%.` : null,
-                groundedYearRangeLabel && !highConfidenceTrustedCase ? `Likely production range: ${groundedYearRangeLabel}.` : null,
+                safeGroundedYearRangeLabel && !highConfidenceTrustedCase ? `Likely production range: ${safeGroundedYearRangeLabel}.` : null,
                 highConfidenceTrustedCase ? null : specsSourceLabel,
               ]
                 .filter(Boolean)
                 .join(" "),
-          specs: mergeApproximateSpecs(groundedRecord, approximateFamilySupport),
+          specs: mergeApproximateSpecs(groundedRecord, approximateFamilySupport, {
+            year: Number.isFinite(parsedYear) ? parsedYear : null,
+            make: resolvedMake,
+            model: resolvedModel,
+          }),
           valuation:
             groundedRecord && strongMarketFallback
               ? buildApproximateValuation(groundedRecord.valuation, displayFamilyLabel, displayYearLabel)
@@ -4079,10 +4145,11 @@ export default function VehicleDetailScreen() {
 }
 
 function DetailRow({ label, value }: { label: string; value: string }) {
+  const displayValue = sanitizeSpecValue(value);
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
-      <Text style={styles.rowValue}>{value}</Text>
+      <Text style={styles.rowValue}>{displayValue}</Text>
     </View>
   );
 }
@@ -4092,9 +4159,12 @@ function SpecGrid({
 }: {
   items: Array<{ label: string; value: string }>;
 }) {
+  const displayItems = items
+    .map((item) => ({ ...item, value: sanitizeSpecValue(item.value) }))
+    .filter((item) => item.value !== "Unknown");
   return (
     <View style={styles.specGrid}>
-      {items.map((item) => (
+      {displayItems.map((item) => (
         <View key={`${item.label}-${item.value}`} style={styles.specCard}>
           <Text style={styles.specCardLabel}>{item.label}</Text>
           <Text style={styles.specCardValue}>{item.value}</Text>

@@ -6,6 +6,9 @@ import path from "node:path";
 const screenPath = path.join(process.cwd(), "app/vehicle/[id].tsx");
 const cardPath = path.join(process.cwd(), "components/ValueEstimateCard.tsx");
 const vehicleServicePath = path.join(process.cwd(), "services/vehicleService.ts");
+const canonicalSpecCompletionPath = path.join(process.cwd(), "lib/canonicalSpecCompletion.ts");
+const offlineCanonicalServicePath = path.join(process.cwd(), "services/offlineCanonicalService.ts");
+const marketCheckProviderPath = path.join(process.cwd(), "backend/src/providers/marketcheck/marketCheckVehicleDataProvider.ts");
 
 test("value results keep the live market button grouped with the card", () => {
   const screenSource = fs.readFileSync(screenPath, "utf8");
@@ -72,4 +75,24 @@ test("no safe baseline unavailable copy is distinct from no live comps", () => {
   assert.match(screenSource, /unavailableReason === "no_safe_baseline_data"/);
   assert.match(screenSource, /missing_required_vehicle_identity/);
   assert.match(screenSource, /missing_zip_or_mileage/);
+});
+
+test("vehicle detail title and specs do not leak family ranges or provider CTAs", () => {
+  const screenSource = fs.readFileSync(screenPath, "utf8");
+  const completionSource = fs.readFileSync(canonicalSpecCompletionPath, "utf8");
+  const offlineSource = fs.readFileSync(offlineCanonicalServicePath, "utf8");
+  const marketCheckSource = fs.readFileSync(marketCheckProviderPath, "utf8");
+
+  assert.match(screenSource, /buildProductionDisplayTitle/);
+  assert.match(screenSource, /isOverbroadYearRangeLabel/);
+  assert.match(screenSource, /formatCanonicalModelName/);
+  assert.match(completionSource, /"toyota\|4runner", "4Runner"/);
+  assert.match(completionSource, /horsepower:\s*270/);
+  assert.match(completionSource, /horsepower:\s*236/);
+  assert.match(screenSource, /sanitizeSpecValue/);
+  assert.match(offlineSource, /completeCanonicalSpecs/);
+  assert.doesNotMatch(screenSource, /Performance Intelligence Summary/);
+  assert.doesNotMatch(screenSource, /See live listing/);
+  assert.doesNotMatch(marketCheckSource, /torque:\s*"See live listing"/);
+  assert.doesNotMatch(marketCheckSource, /mpgOrRange:\s*"See live listing"/);
 });
