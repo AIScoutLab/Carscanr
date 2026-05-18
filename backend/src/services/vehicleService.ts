@@ -772,10 +772,22 @@ function isGenerationSensitiveVehicle(vehicle: VehicleRecord) {
   const body = normalizeVehicleLookupText(vehicle.bodyStyle);
   const combined = `${make} ${model}`.trim();
   return (
+    isHighRetentionOffRoadVehicle(vehicle) ||
     /wrangler|gladiator/.test(combined) ||
     /f 150|f150|silverado|sierra|ram|tacoma|tundra|ranger|colorado|canyon/.test(combined) ||
     /mustang|camaro|challenger|charger|corvette/.test(combined) ||
     /truck|pickup/.test(body)
+  );
+}
+
+function isHighRetentionOffRoadVehicle(vehicle: VehicleRecord) {
+  const make = normalizeVehicleLookupText(vehicle.make);
+  const model = normalizeVehicleLookupText(vehicle.model);
+  const combined = `${make} ${model}`.trim();
+  return (
+    /\btoyota 4runner\b|\btoyota tacoma\b|\btoyota land cruiser\b/.test(combined) ||
+    /\bjeep wrangler\b|\bjeep gladiator\b/.test(combined) ||
+    /\blexus gx\b|\blexus lx\b/.test(combined)
   );
 }
 
@@ -832,6 +844,9 @@ function normalizeDescriptorVehicleType(vehicleType: VehicleLookupDescriptor["ve
 
 function inferMsrpAnchorFromVehicle(vehicle: VehicleRecord) {
   if (isSpecialtyExoticMake(vehicle.make)) {
+    return null;
+  }
+  if (isHighRetentionOffRoadVehicle(vehicle)) {
     return null;
   }
   const directMsrp = typeof vehicle.msrp === "number" && Number.isFinite(vehicle.msrp) && vehicle.msrp > 0 ? vehicle.msrp : null;
@@ -3979,7 +3994,6 @@ export class VehicleService {
                   forceLive: input.forceLive ?? null,
                   action: input.action ?? "valueRefresh",
                   vehicleId: lookupVehicleId,
-                  cacheKey,
                   year: attempt.vehicle.year,
                   yearRangeStart: input.descriptor?.yearRange?.start ?? null,
                   yearRangeEnd: input.descriptor?.yearRange?.end ?? null,
@@ -5701,7 +5715,6 @@ export class VehicleService {
                   allowLive,
                   action: input.action ?? "listingsRefresh",
                   vehicleId: lookupVehicleId,
-                  cacheKey,
                   year: attempt.vehicle.year,
                   make: attempt.vehicle.make,
                   model: attempt.vehicle.model,

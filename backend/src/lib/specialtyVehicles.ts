@@ -32,6 +32,25 @@ function normalizeCompactModel(value: string | null | undefined) {
     .replace(/[^a-z0-9]+/g, "");
 }
 
+const PROTECTED_ATOMIC_MODEL_KEYS = new Set([
+  "toyota:4runner",
+  "toyota:86",
+  "fiat:500",
+  "porsche:911",
+  "ford:f150",
+  "cadillac:ct4",
+  "cadillac:ct5",
+]);
+
+function isProtectedAtomicModel(make: string | null | undefined, model: string | null | undefined) {
+  const normalizedMake = normalizeMake(make);
+  const compactModel = normalizeCompactModel(model);
+  return [...PROTECTED_ATOMIC_MODEL_KEYS].some((key) => {
+    const [protectedMake, protectedModel] = key.split(":");
+    return protectedMake === normalizedMake && Boolean(protectedModel) && (compactModel === protectedModel || compactModel.startsWith(protectedModel));
+  });
+}
+
 export function isSpecialtyExoticMake(make: string | null | undefined) {
   return SPECIALTY_EXOTIC_MAKES.has(normalizeMake(make));
 }
@@ -43,7 +62,7 @@ export function getSpecialtyModelAliases(make: string | null | undefined, model:
     aliases.add(compactModel);
   }
   const leadingDigits = compactModel.match(/^\d+/)?.[0] ?? "";
-  if (leadingDigits) {
+  if (leadingDigits && !isProtectedAtomicModel(make, model)) {
     aliases.add(leadingDigits);
   }
   if (!isSpecialtyExoticMake(make)) {

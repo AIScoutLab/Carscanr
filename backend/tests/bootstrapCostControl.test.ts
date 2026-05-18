@@ -15,6 +15,7 @@ import { trendingVehicleService } from "../src/services/trendingVehicleService.j
 import { UsageService } from "../src/services/usageService.js";
 import { ScanService } from "../src/services/scanService.js";
 import { VehicleService } from "../src/services/vehicleService.js";
+import { MarketCheckVehicleDataProvider } from "../src/providers/marketcheck/marketCheckVehicleDataProvider.js";
 import { createTestProviders, createTestRepositories, createVisionProviderResult } from "./helpers/testData.js";
 
 const TEST_IMAGE_BUFFER = Buffer.from(
@@ -1893,6 +1894,260 @@ describe("bootstrap cost control", () => {
     assert.equal(result.data.reason, "no_safe_baseline_data");
     assert.equal(result.data.unavailableReason, "no_safe_baseline_data");
     assert.notEqual(result.data.valuationSource, "modeled_fallback");
+  });
+
+  test("Toyota 4Runner listing fallback attempts keep atomic model name", async () => {
+    const attempts: Array<{ model: string; year: number; radiusMiles: number | null; trim: string | null }> = [];
+    setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            radiusMiles: input.radiusMiles ?? input.requestMeta?.radiusMiles ?? null,
+            trim: input.vehicle?.trim ?? null,
+          });
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    await service.getListings({
+      vehicleId: "2011-toyota-4runner-sr5",
+      descriptor: {
+        year: 2011,
+        make: "Toyota",
+        model: "4Runner",
+        trim: "SR5",
+        vehicleType: "car",
+        bodyStyle: "SUV",
+        normalizedModel: "4runner",
+      },
+      zip: "60563",
+      radiusMiles: 100,
+      mileage: 98000,
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+    });
+
+    assert.equal(attempts.length > 0, true);
+    assert.equal(attempts.every((attempt) => attempt.model === "4Runner"), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "4"), false);
+    assert.equal(attempts.some((attempt) => attempt.year === 2011 && attempt.radiusMiles === 100), true);
+    assert.equal(attempts.some((attempt) => attempt.radiusMiles === 250), true);
+  });
+
+  test("Toyota 4Runner value prefers real listing comps over modeled_fallback", async () => {
+    const attempts: Array<{ model: string; year: number; radiusMiles: number | null }> = [];
+    setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      listingsProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          return null;
+        },
+      },
+      listingsProvider: {
+        async getListings(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            radiusMiles: input.radiusMiles ?? input.requestMeta?.radiusMiles ?? null,
+          });
+          if (input.vehicle?.make === "Toyota" && input.vehicle?.model === "4Runner" && input.vehicle?.year === 2011) {
+            return [
+              {
+                id: "4runner-comp-1",
+                vehicleId: input.vehicleId,
+                year: 2011,
+                make: "Toyota",
+                model: "4Runner",
+                trim: "SR5",
+                title: "2011 Toyota 4Runner SR5",
+                price: 21995,
+                mileage: 105000,
+                dealer: "Naperville Toyota",
+                distanceMiles: 18,
+                location: "Naperville, IL",
+                imageUrl: "https://dealer.example.test/4runner-1.jpg",
+                listingUrl: "https://dealer.example.test/4runner-1",
+                listedAt: "2026-05-14T00:00:00.000Z",
+              },
+              {
+                id: "4runner-comp-2",
+                vehicleId: input.vehicleId,
+                year: 2011,
+                make: "Toyota",
+                model: "4Runner",
+                trim: "Limited",
+                title: "2011 Toyota 4Runner Limited",
+                price: 23995,
+                mileage: 92000,
+                dealer: "Aurora Toyota",
+                distanceMiles: 29,
+                location: "Aurora, IL",
+                imageUrl: "https://dealer.example.test/4runner-2.jpg",
+                listingUrl: "https://dealer.example.test/4runner-2",
+                listedAt: "2026-05-13T00:00:00.000Z",
+              },
+            ];
+          }
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2011-toyota-4runner-sr5",
+      descriptor: {
+        year: 2011,
+        make: "Toyota",
+        model: "4Runner",
+        trim: "SR5",
+        vehicleType: "car",
+        bodyStyle: "SUV",
+        normalizedModel: "4runner",
+      },
+      zip: "60563",
+      mileage: 98000,
+      condition: "good",
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
+
+    assert.equal(attempts.length > 0, true);
+    assert.equal(attempts.every((attempt) => attempt.model === "4Runner"), true);
+    assert.equal(result.data.status, "loaded_condition_set");
+    assert.equal(result.data.valuationSource, "listing_comps");
+    assert.notEqual(result.data.valuationSource, "modeled_fallback");
+    assert.notEqual(result.data.sourceLabel, "No live market comps found");
+  });
+
+  test("Toyota 4Runner skips uncalibrated modeled_fallback when comps are unavailable", async () => {
+    let valueProviderCalls = 0;
+    let listingsProviderCalls = 0;
+    setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      listingsProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          valueProviderCalls += 1;
+          return null;
+        },
+      },
+      listingsProvider: {
+        async getListings() {
+          listingsProviderCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2011-toyota-4runner-sr5",
+      descriptor: {
+        year: 2011,
+        make: "Toyota",
+        model: "4Runner",
+        trim: "SR5",
+        vehicleType: "car",
+        bodyStyle: "SUV",
+        normalizedModel: "4runner",
+      },
+      zip: "60563",
+      mileage: 98000,
+      condition: "good",
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
+
+    assert.equal(valueProviderCalls > 0, true);
+    assert.equal(listingsProviderCalls > 0, true);
+    assert.equal(result.data.valuationSource, "unavailable");
+    assert.equal(result.data.reason, "no_safe_baseline_data");
+    assert.equal(result.data.unavailableReason, "no_safe_baseline_data");
+    assert.notEqual(result.data.valuationSource, "modeled_fallback");
+    assert.notEqual(result.data.privateParty, 7000);
+  });
+
+  test("MarketCheck explicit listings refresh bypasses zero cache responses", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalApiKey = env.MARKETCHECK_API_KEY;
+    const originalBaseUrl = env.MARKETCHECK_BASE_URL;
+    env.MARKETCHECK_API_KEY = "test-marketcheck-key";
+    env.MARKETCHECK_BASE_URL = "https://marketcheck.example.test";
+    let fetchCalls = 0;
+    globalThis.fetch = (async () => {
+      fetchCalls += 1;
+      return new Response(JSON.stringify({ listings: [], stats: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    try {
+      const provider = new MarketCheckVehicleDataProvider();
+      const vehicle = {
+        id: "2011-toyota-4runner-sr5",
+        year: 2011,
+        make: "Toyota",
+        model: "4Runner",
+        trim: "SR5",
+        bodyStyle: "SUV",
+        vehicleType: "car" as const,
+        msrp: 0,
+        engine: "4.0L V6",
+        horsepower: 270,
+        torque: "278 lb-ft",
+        transmission: "5-speed automatic",
+        drivetrain: "4WD",
+        mpgOrRange: "Unknown",
+        colors: [],
+      };
+      const requestMeta = {
+        requestId: "zero-cache-bypass-test",
+        allowLive: true,
+        forceLive: true,
+        action: "listingsRefresh",
+        reason: "user_requested_listings_refresh",
+        sourceScreen: "listingsScreen",
+        vehicleId: vehicle.id,
+        year: vehicle.year,
+        make: vehicle.make,
+        model: vehicle.model,
+        trim: vehicle.trim,
+        zip: "60563",
+        radiusMiles: 100,
+      };
+
+      await provider.getListings({ vehicleId: vehicle.id, vehicle, zip: "60563", radiusMiles: 100, requestMeta });
+      await provider.getListings({ vehicleId: vehicle.id, vehicle, zip: "60563", radiusMiles: 100, requestMeta });
+
+      assert.equal(fetchCalls, 2);
+    } finally {
+      globalThis.fetch = originalFetch;
+      env.MARKETCHECK_API_KEY = originalApiKey;
+      env.MARKETCHECK_BASE_URL = originalBaseUrl;
+    }
   });
 
   test("explicit listings refresh for non-specialty models broadens from trim/body variant to family model and adjacent year", async () => {

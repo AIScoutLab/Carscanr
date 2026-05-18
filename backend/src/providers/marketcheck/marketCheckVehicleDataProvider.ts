@@ -790,31 +790,47 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
     const blockedSourceDecision = shouldBlockExternalMarketCheckForSource(requestMeta);
     const cached = this.responseCache.get(cacheKey);
     if (cached && cached.expiresAtMs > Date.now()) {
-      logger.info(
-        {
-          label: "MARKETCHECK_API_CACHE_HIT",
-          ...requestContext,
-          cacheHit: true,
-          statusCode: cached.statusCode,
-          resultCount: Array.isArray(cached.payload.listings) ? cached.payload.listings.length : 0,
-        },
-        "MARKETCHECK_API_CACHE_HIT",
-      );
-      await this.writeUsageEvent({
-        endpointType: mapOperationToSummaryEndpoint(typedOperation) === "value" ? "values" : mapOperationToSummaryEndpoint(typedOperation) === "listings" ? "listings" : "specs",
-        eventType: "cache_hit",
-        cacheKey,
-        requestMeta,
-        requestSummary: requestContext,
-        responseSummary: {
-          statusCode: cached.statusCode,
-          resultCount: Array.isArray(cached.payload.listings) ? cached.payload.listings.length : 0,
-          cacheHit: true,
-        },
-      });
-      this.invalidateMonthlySummaryCache();
-      await this.logMarketCheckSummary("cache-hit");
-      return cached.payload;
+      const cachedResultCount = Array.isArray(cached.payload.listings) ? cached.payload.listings.length : 0;
+      const shouldBypassZeroCache = cachedResultCount === 0 && isExplicitMarketCheckActionAllowed(typedOperation, requestMeta);
+      if (shouldBypassZeroCache) {
+        logger.info(
+          {
+            label: "MARKETCHECK_ZERO_CACHE_BYPASSED",
+            ...requestContext,
+            cacheHit: true,
+            statusCode: cached.statusCode,
+            resultCount: cachedResultCount,
+            reason: "explicit-refresh-zero-result-cache",
+          },
+          "MARKETCHECK_ZERO_CACHE_BYPASSED",
+        );
+      } else {
+        logger.info(
+          {
+            label: "MARKETCHECK_API_CACHE_HIT",
+            ...requestContext,
+            cacheHit: true,
+            statusCode: cached.statusCode,
+            resultCount: cachedResultCount,
+          },
+          "MARKETCHECK_API_CACHE_HIT",
+        );
+        await this.writeUsageEvent({
+          endpointType: mapOperationToSummaryEndpoint(typedOperation) === "value" ? "values" : mapOperationToSummaryEndpoint(typedOperation) === "listings" ? "listings" : "specs",
+          eventType: "cache_hit",
+          cacheKey,
+          requestMeta,
+          requestSummary: requestContext,
+          responseSummary: {
+            statusCode: cached.statusCode,
+            resultCount: cachedResultCount,
+            cacheHit: true,
+          },
+        });
+        this.invalidateMonthlySummaryCache();
+        await this.logMarketCheckSummary("cache-hit");
+        return cached.payload;
+      }
     }
 
     const inflight = this.inflightRequests.get(cacheKey);
