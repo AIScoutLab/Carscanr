@@ -12,8 +12,10 @@ export const legacyGenericSportsCarImage =
   "https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?auto=format&fit=crop&w=1200&q=80";
 
 const neutralVehiclePlaceholderImage = "https://placehold.co/1200x675/111827/94a3b8.png?text=CarScanr";
-const pickupTruckFallbackImage =
+const unsafeFordExpeditionFallbackImage =
   "https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?auto=format&fit=crop&w=1200&q=80";
+const pickupTruckFallbackImage =
+  "https://placehold.co/1200x675/0b1220/e2e8f0.png?text=Pickup%20truck";
 
 const bodyStyleVehicleImages = {
   truck: pickupTruckFallbackImage,
@@ -73,6 +75,11 @@ export type VehicleImageResolution = {
   fallbackType: VehicleImageFallbackType;
 };
 
+type ImageDescriptor = {
+  model: string | null;
+  category: "pickup" | "suv" | "crossover" | "sports" | "sedan" | "motorcycle" | "placeholder" | "unknown";
+};
+
 function normalizeBodyStyle(bodyStyle?: string | null): keyof typeof bodyStyleVehicleImages | null {
   const normalized = bodyStyle?.trim().toLowerCase() ?? "";
   if (!normalized) return null;
@@ -103,9 +110,95 @@ function normalizeFamilyKey(make?: string | null, model?: string | null) {
     .join("-");
 }
 
+function normalizeRequestedModel(input: VehicleIdentityInput) {
+  const modelText = String(input.model ?? input.vehicleId ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+  if (/\branger\b/.test(modelText)) return "ranger";
+  if (/\bct4\b/.test(modelText)) return "ct4";
+  return modelText || null;
+}
+
+function describeImageUri(uri?: string | null): ImageDescriptor {
+  const normalized = String(uri ?? "").trim().toLowerCase();
+  if (!normalized) return { model: null, category: "unknown" };
+  if (normalized === pickupTruckFallbackImage.toLowerCase()) return { model: "pickup-fallback", category: "pickup" };
+  if (normalized === neutralVehiclePlaceholderImage.toLowerCase()) return { model: "neutral-placeholder", category: "placeholder" };
+  if (normalized === unsafeFordExpeditionFallbackImage.toLowerCase()) return { model: "expedition", category: "suv" };
+  if (/expedition/.test(normalized)) return { model: "expedition", category: "suv" };
+  if (/explorer/.test(normalized)) return { model: "explorer", category: "suv" };
+  if (/bronco/.test(normalized)) return { model: "bronco", category: "suv" };
+  if (/(suv|crossover|utility)/.test(normalized)) return { model: null, category: "suv" };
+  if (/(camaro|mustang|corvette|sports)/.test(normalized)) return { model: null, category: "sports" };
+  if (/ct4/.test(normalized)) return { model: "ct4", category: "sedan" };
+  if (/ranger/.test(normalized)) return { model: "ranger", category: "pickup" };
+  return { model: null, category: "unknown" };
+}
+
 export function isFordRangerIdentity(input: VehicleIdentityInput) {
   const normalized = buildVehicleIdentityText(input);
   return /\bford\b[\s\S]*\branger\b|\branger\b/.test(normalized);
+}
+
+function shouldRejectImageForIdentity(input: VehicleIdentityInput, uri?: string | null) {
+  const requestedModel = normalizeRequestedModel(input);
+  const resolvedImage = describeImageUri(uri);
+  const rangerIdentity = isFordRangerIdentity(input);
+  const unsafeForRanger =
+    rangerIdentity &&
+    (resolvedImage.category === "suv" ||
+      resolvedImage.category === "crossover" ||
+      resolvedImage.category === "sports" ||
+      (resolvedImage.model !== null &&
+        resolvedImage.model !== "ranger" &&
+        resolvedImage.model !== "pickup-fallback" &&
+        resolvedImage.model !== "neutral-placeholder"));
+  const modelMismatchWithUnsafeCategory =
+    requestedModel !== null &&
+    resolvedImage.model !== null &&
+    resolvedImage.model !== requestedModel &&
+    (resolvedImage.category === "suv" || resolvedImage.category === "crossover");
+
+  if (unsafeForRanger || modelMismatchWithUnsafeCategory) {
+    console.warn("[vehicle-images] IMAGE_RESOLUTION_REJECTED_UNSAFE_IMAGE", {
+      make: input.make ?? null,
+      model: input.model ?? null,
+      bodyStyle: input.bodyStyle ?? null,
+      vehicleId: input.vehicleId ?? null,
+      label: "IMAGE_RESOLUTION_REJECTED_UNSAFE_IMAGE",
+      requestedModel,
+      resolvedImageModel: resolvedImage.model,
+      resolvedImageCategory: resolvedImage.category,
+      resolvedImageSource: uri ?? null,
+      IMAGE_MODEL_REQUESTED: requestedModel,
+      IMAGE_MODEL_RESOLVED: resolvedImage.model,
+      IMAGE_REJECT_REASON: unsafeForRanger ? "ranger-unsafe-ford-family-or-suv-image" : "model-mismatch-unsafe-category",
+    });
+    return true;
+  }
+
+  return false;
+}
+
+export function isSafeVehicleImageForIdentity(input: VehicleIdentityInput, uri?: string | null) {
+  if (!uri?.trim()) return false;
+  const rejected = shouldRejectImageForIdentity(input, uri);
+  if (!rejected) {
+    const resolvedImage = describeImageUri(uri);
+    console.log("[vehicle-images] IMAGE_SAFE_MATCH_ACCEPTED", {
+      make: input.make ?? null,
+      model: input.model ?? null,
+      bodyStyle: input.bodyStyle ?? null,
+      vehicleId: input.vehicleId ?? null,
+      resolvedImageModel: resolvedImage.model,
+      resolvedImageCategory: resolvedImage.category,
+      resolvedImageSource: uri,
+      IMAGE_MODEL_REQUESTED: normalizeRequestedModel(input),
+      IMAGE_MODEL_RESOLVED: resolvedImage.model,
+    });
+  }
+  return !rejected;
 }
 
 function inferBodyStyleFromIdentity(input: VehicleIdentityInput): keyof typeof bodyStyleVehicleImages | null {
@@ -206,24 +299,74 @@ export function resolveVehicleImageSource(input: {
 
   const seeded = seededVehicleImages[input.vehicleId as keyof typeof seededVehicleImages];
   if (seeded) {
-    console.log("[vehicle-images] IMAGE_RESOLUTION_EXACT_MATCH", {
-      ...logContext,
-      vehicleId: input.vehicleId,
-      resolvedImageType: "exact",
-      resolvedImageSource: seeded,
-    });
-    return { uri: seeded, source: "vehicle", fallbackType: "seeded" };
+    if (shouldRejectImageForIdentity(input, seeded)) {
+      console.warn("[vehicle-images] IMAGE_REJECT_REASON", {
+        ...logContext,
+        vehicleId: input.vehicleId,
+        reason: "exact-image-rejected",
+      });
+    } else {
+      const resolvedImage = describeImageUri(seeded);
+      console.log("[vehicle-images] IMAGE_MODEL_REQUESTED", {
+        ...logContext,
+        vehicleId: input.vehicleId,
+        requestedModel: normalizeRequestedModel(input),
+      });
+      console.log("[vehicle-images] IMAGE_MODEL_RESOLVED", {
+        ...logContext,
+        vehicleId: input.vehicleId,
+        resolvedImageModel: resolvedImage.model,
+      });
+      console.log("[vehicle-images] IMAGE_SAFE_MATCH_ACCEPTED", {
+        ...logContext,
+        vehicleId: input.vehicleId,
+        resolvedImageModel: resolvedImage.model,
+        resolvedImageSource: seeded,
+      });
+      console.log("[vehicle-images] IMAGE_RESOLUTION_EXACT_MATCH", {
+        ...logContext,
+        vehicleId: input.vehicleId,
+        resolvedImageType: "exact",
+        resolvedImageSource: seeded,
+      });
+      return { uri: seeded, source: "vehicle", fallbackType: "seeded" };
+    }
   }
 
   const familyImage = modelFamilyVehicleImages[normalizeFamilyKey(input.make, input.model)];
   if (familyImage) {
-    console.log("[vehicle-images] IMAGE_RESOLUTION_MODEL_FAMILY_MATCH", {
-      ...logContext,
-      vehicleId: input.vehicleId,
-      resolvedImageType: "model-family",
-      resolvedImageSource: familyImage,
-    });
-    return { uri: familyImage, source: "model-family", fallbackType: "model-family" };
+    if (shouldRejectImageForIdentity(input, familyImage)) {
+      console.warn("[vehicle-images] IMAGE_REJECT_REASON", {
+        ...logContext,
+        vehicleId: input.vehicleId,
+        reason: "model-family-image-rejected",
+      });
+    } else {
+      const resolvedImage = describeImageUri(familyImage);
+      console.log("[vehicle-images] IMAGE_MODEL_REQUESTED", {
+        ...logContext,
+        vehicleId: input.vehicleId,
+        requestedModel: normalizeRequestedModel(input),
+      });
+      console.log("[vehicle-images] IMAGE_MODEL_RESOLVED", {
+        ...logContext,
+        vehicleId: input.vehicleId,
+        resolvedImageModel: resolvedImage.model,
+      });
+      console.log("[vehicle-images] IMAGE_SAFE_MATCH_ACCEPTED", {
+        ...logContext,
+        vehicleId: input.vehicleId,
+        resolvedImageModel: resolvedImage.model,
+        resolvedImageSource: familyImage,
+      });
+      console.log("[vehicle-images] IMAGE_RESOLUTION_MODEL_FAMILY_MATCH", {
+        ...logContext,
+        vehicleId: input.vehicleId,
+        resolvedImageType: "model-family",
+        resolvedImageSource: familyImage,
+      });
+      return { uri: familyImage, source: "model-family", fallbackType: "model-family" };
+    }
   }
 
   const normalizedIdentity = normalizeVehicleIdentityForRendering(input);
@@ -249,6 +392,22 @@ export function resolveVehicleImageSource(input: {
   const inferredBodyStyle = normalizedIdentity.bodyStyleKey;
   if (inferredBodyStyle) {
     if (inferredBodyStyle === "truck") {
+      console.log("[vehicle-images] IMAGE_MODEL_REQUESTED", {
+        ...logContext,
+        vehicleId: input.vehicleId,
+        requestedModel: normalizeRequestedModel(input),
+      });
+      console.log("[vehicle-images] IMAGE_MODEL_RESOLVED", {
+        ...logContext,
+        vehicleId: input.vehicleId,
+        resolvedImageModel: "pickup-fallback",
+      });
+      console.log("[vehicle-images] IMAGE_SAFE_MATCH_ACCEPTED", {
+        ...logContext,
+        vehicleId: input.vehicleId,
+        resolvedImageModel: "pickup-fallback",
+        resolvedImageSource: pickupTruckFallbackImage,
+      });
       console.log("[vehicle-images] IMAGE_RESOLUTION_PICKUP_FALLBACK", {
         ...logContext,
         vehicleId: input.vehicleId,

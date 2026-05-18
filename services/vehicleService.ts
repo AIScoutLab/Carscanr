@@ -6,6 +6,7 @@ import {
   getVehicleImage,
   isFordRangerIdentity,
   isGeneratedVehicleFallbackImageUri,
+  isSafeVehicleImageForIdentity,
   legacyGenericSportsCarImage,
   normalizeVehicleIdentityForRendering,
   resolveVehicleImageSource,
@@ -661,7 +662,20 @@ function resolveVehicleHeroImage(
     bodyStyle: vehicle.bodyStyle ?? fallbackRecord?.bodyStyle ?? null,
   });
   const canonicalImageAllowed =
-    canonicalExactImage && !isGeneratedVehicleFallbackImageUri(canonicalExactImage) ? canonicalExactImage : null;
+    canonicalExactImage &&
+    !isGeneratedVehicleFallbackImageUri(canonicalExactImage) &&
+    isSafeVehicleImageForIdentity(
+      {
+        vehicleId: vehicle.id,
+        make: vehicle.make,
+        model: vehicle.model,
+        vehicleType: vehicle.vehicleType,
+        bodyStyle: vehicle.bodyStyle ?? fallbackRecord?.bodyStyle ?? null,
+      },
+      canonicalExactImage,
+    )
+      ? canonicalExactImage
+      : null;
 
   const heroImage = rangerIdentity ? canonicalImageAllowed ?? genericResolution.uri : liveExactImage ?? canonicalImageAllowed ?? providerMatchedImage ?? genericResolution.uri;
   console.log("[vehicle-service] EXACT_HIT_IMAGE_SELECTION", {

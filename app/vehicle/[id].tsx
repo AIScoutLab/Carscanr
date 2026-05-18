@@ -15,7 +15,7 @@ import { SegmentedTabBar } from "@/components/SegmentedTabBar";
 import { ValueEstimateCard } from "@/components/ValueEstimateCard";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
-import { isFordRangerIdentity, normalizeVehicleIdentityForRendering } from "@/constants/vehicleImages";
+import { isFordRangerIdentity, isSafeVehicleImageForIdentity, normalizeVehicleIdentityForRendering } from "@/constants/vehicleImages";
 import { useSubscription } from "@/hooks/useSubscription";
 import { buildListingDerivedConditionSetFromListings, getConditionSourceLabel, normalizeSupportedValueCondition, resolveConditionValues } from "@/lib/valueConditionSet";
 import { formatHorsepowerLabel } from "@/lib/vehicleData";
@@ -2476,6 +2476,26 @@ export default function VehicleDetailScreen() {
 
   useEffect(() => {
     if (typeof imageUri === "string" && imageUri.trim().length > 0) {
+      const routeImageSafe = isSafeVehicleImageForIdentity(
+        {
+          vehicleId: typeof id === "string" ? id : vehicle?.id,
+          make: typeof make === "string" ? make : vehicle?.make,
+          model: typeof model === "string" ? model : vehicle?.model,
+          vehicleType: typeof vehicleType === "string" ? vehicleType : vehicle?.vehicleType,
+          bodyStyle: vehicle?.bodyStyle ?? null,
+        },
+        imageUri,
+      );
+      if (!routeImageSafe) {
+        console.warn("[vehicle-detail] IMAGE_REJECT_REASON", {
+          vehicleId: id,
+          imageUri,
+          reason: "route-image-rejected-for-requested-identity",
+        });
+        setResolvedImageUri(null);
+        setImageSourceLabel("clean vehicle image fallback");
+        return;
+      }
       console.log("[vehicle-detail] image source selected", {
         source: "route-image-uri",
         imageUri,
@@ -2504,7 +2524,7 @@ export default function VehicleDetailScreen() {
         setImageSourceLabel("saved scan image");
       }
     }).catch(() => undefined);
-  }, [id, imageUri, scanId]);
+  }, [id, imageUri, make, model, scanId, vehicle, vehicleType]);
 
   useEffect(() => {
     if (!resolvedImageUri) {
