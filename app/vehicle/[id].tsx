@@ -295,6 +295,30 @@ function shouldDisplayCurrentValuationState(result: ValuationResult | null | und
   );
 }
 
+function isModeledFallbackValuation(result: ValuationResult | null | undefined) {
+  if (!result) {
+    return false;
+  }
+  return result.valuationSource === "modeled_fallback" || (result.modelType === "modeled" && hasStructuredValueEvidence(result));
+}
+
+function shouldReplaceValueFromListings(result: ValuationResult | null | undefined) {
+  if (!result) {
+    return true;
+  }
+  if (result.valuationSource === "listing_comps" || result.modelType === "listing_derived") {
+    return false;
+  }
+  return (
+    isModeledFallbackValuation(result) ||
+    result.status === "no_comps_found" ||
+    result.status === "provider_error" ||
+    result.status === "specialty_unavailable" ||
+    result.status === "ready_to_load" ||
+    result.status === "stale_after_input_change"
+  );
+}
+
 function choosePreferredValuation(
   current: ValuationResult,
   next: ValuationResult,
@@ -1785,12 +1809,36 @@ export default function VehicleDetailScreen() {
           source: "listingsScreen",
         });
         if (believableListings.length > 0 && normalizedMileage && normalizedCondition) {
+          const wasModeledFallback = isModeledFallbackValuation(displayValuation);
+          const shouldReplaceStaleValue = shouldReplaceValueFromListings(displayValuation);
+          console.log("[vehicle-detail] VALUE_QUERY_INVALIDATED_FROM_LISTINGS", {
+            routeId: id,
+            scanId: typeof scanId === "string" ? scanId : null,
+            vehicleId: vehicle.id,
+            previousStatus: displayValuation.status,
+            previousValuationSource: displayValuation.valuationSource ?? null,
+            previousModelType: displayValuation.modelType ?? null,
+            believableCount: believableListings.length,
+            shouldReplaceStaleValue,
+            zip: normalizedZip,
+            mileage: normalizedMileage,
+            zipSource,
+          });
+          console.log("[vehicle-detail] VALUE_REFRESH_TRIGGERED_FROM_LISTINGS", {
+            routeId: id,
+            scanId: typeof scanId === "string" ? scanId : null,
+            vehicleId: vehicle.id,
+            strategy: "shared_listing_comps",
+            providerCall: false,
+            believableCount: believableListings.length,
+            existingValueResolved: hasResolvedValueState(displayValuation),
+          });
           const derivedValue = buildListingsHydratedValuation({
             listings: result.listings,
             condition: normalizedCondition,
             vehicle,
           });
-          if (derivedValue) {
+          if (derivedValue && shouldReplaceStaleValue) {
             console.log("[vehicle-detail] VALUE_HYDRATED_FROM_FORSALE_LISTINGS", {
               vehicleId: vehicle.id,
               valueRequestSource: "for_sale_listing_sync",
@@ -1809,6 +1857,37 @@ export default function VehicleDetailScreen() {
             });
             setVehicle((current) => (current ? { ...current, valuation: derivedValue } : current));
             setValueDebugStatus(hasResolvedValueState(derivedValue) ? "accepted" : "idle");
+            console.log("[vehicle-detail] VALUE_UI_STATE_REPLACED_AFTER_LISTINGS", {
+              routeId: id,
+              scanId: typeof scanId === "string" ? scanId : null,
+              vehicleId: vehicle.id,
+              previousStatus: displayValuation.status,
+              previousValuationSource: displayValuation.valuationSource ?? null,
+              nextStatus: derivedValue.status,
+              nextValuationSource: derivedValue.valuationSource ?? null,
+              compCount: derivedValue.compCount ?? derivedValue.listingCount ?? null,
+            });
+            if (wasModeledFallback) {
+              console.log("[vehicle-detail] VALUE_STALE_MODELED_FALLBACK_REPLACED", {
+                routeId: id,
+                scanId: typeof scanId === "string" ? scanId : null,
+                vehicleId: vehicle.id,
+                previousSourceLabel: displayValuation.sourceLabel ?? null,
+                nextSourceLabel: derivedValue.sourceLabel ?? null,
+                compCount: derivedValue.compCount ?? derivedValue.listingCount ?? null,
+              });
+            }
+          } else if (derivedValue) {
+            console.log("[vehicle-detail] VALUE_UI_STATE_REPLACED_AFTER_LISTINGS", {
+              routeId: id,
+              scanId: typeof scanId === "string" ? scanId : null,
+              vehicleId: vehicle.id,
+              skipped: true,
+              reason: "current_value_already_listing_derived",
+              currentValuationSource: displayValuation.valuationSource ?? null,
+              currentModelType: displayValuation.modelType ?? null,
+              compCount: derivedValue.compCount ?? derivedValue.listingCount ?? null,
+            });
           }
         }
         void marketAreaZipService.saveLastUsedZip(normalizedZip);
@@ -1816,7 +1895,7 @@ export default function VehicleDetailScreen() {
       .finally(() => {
         setListingsRefreshLoading(false);
       });
-  }, [applyValuationUpdate, condition, id, mileage, scanId, valueLookupInput, vehicle, zipCode, zipSource]);
+  }, [applyValuationUpdate, condition, displayValuation, id, mileage, scanId, valueLookupInput, vehicle, zipCode, zipSource]);
 
   useEffect(() => {
     if (__DEV__) {
@@ -2807,14 +2886,9 @@ export default function VehicleDetailScreen() {
     const normalizedCondition = normalizeCondition(condition);
     const sameMarketContext =
       listingsMarketContext.zip === normalizedZip && listingsMarketContext.mileage === normalizedMileage;
-    const shouldHydrateUnavailableValue =
-      displayValuation.status === "no_comps_found" ||
-      displayValuation.status === "provider_error" ||
-      displayValuation.status === "specialty_unavailable" ||
-      displayValuation.status === "ready_to_load" ||
-      displayValuation.status === "stale_after_input_change";
+    const shouldHydrateFromListings = shouldReplaceValueFromListings(displayValuation);
 
-    if (!sameMarketContext || !shouldHydrateUnavailableValue) {
+    if (!sameMarketContext || !shouldHydrateFromListings) {
       return;
     }
 
@@ -2827,6 +2901,25 @@ export default function VehicleDetailScreen() {
       return;
     }
 
+    const wasModeledFallback = isModeledFallbackValuation(displayValuation);
+    console.log("[vehicle-detail] VALUE_QUERY_INVALIDATED_FROM_LISTINGS", {
+      vehicleId: vehicle.id,
+      valueRequestSource: "cache_read",
+      previousStatus: displayValuation.status,
+      previousValuationSource: displayValuation.valuationSource ?? null,
+      previousModelType: displayValuation.modelType ?? null,
+      acceptedListingsCount: listingsMarketContext.acceptedListingsCount,
+      zip: normalizedZip,
+      mileage: normalizedMileage,
+      zipSource,
+    });
+    console.log("[vehicle-detail] VALUE_REFRESH_TRIGGERED_FROM_LISTINGS", {
+      vehicleId: vehicle.id,
+      valueRequestSource: "cache_read",
+      strategy: "shared_listing_comps",
+      providerCall: false,
+      acceptedListingsCount: listingsMarketContext.acceptedListingsCount,
+    });
     console.log("[vehicle-detail] VALUE_COMP_DERIVATION_STARTED", {
       vehicleId: vehicle.id,
       valueRequestSource: "cache_read",
@@ -2856,10 +2949,28 @@ export default function VehicleDetailScreen() {
     });
     setVehicle((current) => (current ? { ...current, valuation: derivedValue } : current));
     setValueDebugStatus(hasResolvedValueState(derivedValue) ? "accepted" : "idle");
+    console.log("[vehicle-detail] VALUE_UI_STATE_REPLACED_AFTER_LISTINGS", {
+      vehicleId: vehicle.id,
+      valueRequestSource: "cache_read",
+      previousStatus: displayValuation.status,
+      previousValuationSource: displayValuation.valuationSource ?? null,
+      nextStatus: derivedValue.status,
+      nextValuationSource: derivedValue.valuationSource ?? null,
+      compCount: derivedValue.compCount ?? derivedValue.listingCount ?? null,
+    });
+    if (wasModeledFallback) {
+      console.log("[vehicle-detail] VALUE_STALE_MODELED_FALLBACK_REPLACED", {
+        vehicleId: vehicle.id,
+        valueRequestSource: "cache_read",
+        previousSourceLabel: displayValuation.sourceLabel ?? null,
+        nextSourceLabel: derivedValue.sourceLabel ?? null,
+        compCount: derivedValue.compCount ?? derivedValue.listingCount ?? null,
+      });
+    }
   }, [
     applyValuationUpdate,
     condition,
-    displayValuation.status,
+    displayValuation,
     mileage,
     listingsMarketContext,
     valueLookupInput,
@@ -2877,14 +2988,9 @@ export default function VehicleDetailScreen() {
     const normalizedMileage = mileage.trim();
     const normalizedCondition = normalizeCondition(condition);
     const believableListings = vehicle.listings.filter(isBelievableListing);
-    const shouldHydrateUnavailableValue =
-      displayValuation.status === "no_comps_found" ||
-      displayValuation.status === "provider_error" ||
-      displayValuation.status === "specialty_unavailable" ||
-      displayValuation.status === "ready_to_load" ||
-      displayValuation.status === "stale_after_input_change";
+    const shouldHydrateFromListings = shouldReplaceValueFromListings(displayValuation);
 
-    if (believableListings.length === 0 || !shouldHydrateUnavailableValue) {
+    if (believableListings.length === 0 || !shouldHydrateFromListings) {
       return;
     }
 
@@ -2897,6 +3003,25 @@ export default function VehicleDetailScreen() {
       return;
     }
 
+    const wasModeledFallback = isModeledFallbackValuation(displayValuation);
+    console.log("[vehicle-detail] VALUE_QUERY_INVALIDATED_FROM_LISTINGS", {
+      vehicleId: vehicle.id,
+      valueRequestSource: listingsMarketContext ? "for_sale_listing_sync" : "cache_read",
+      previousStatus: displayValuation.status,
+      previousValuationSource: displayValuation.valuationSource ?? null,
+      previousModelType: displayValuation.modelType ?? null,
+      believableListingsCount: believableListings.length,
+      zip: normalizedZip,
+      mileage: normalizedMileage,
+      zipSource,
+    });
+    console.log("[vehicle-detail] VALUE_REFRESH_TRIGGERED_FROM_LISTINGS", {
+      vehicleId: vehicle.id,
+      valueRequestSource: listingsMarketContext ? "for_sale_listing_sync" : "cache_read",
+      strategy: "shared_listing_comps",
+      providerCall: false,
+      believableListingsCount: believableListings.length,
+    });
     console.log("[vehicle-detail] VALUE_COMP_DERIVATION_STARTED", {
       vehicleId: vehicle.id,
       valueRequestSource: listingsMarketContext ? "for_sale_listing_sync" : "cache_read",
@@ -2926,10 +3051,28 @@ export default function VehicleDetailScreen() {
     });
     setVehicle((current) => (current ? { ...current, valuation: derivedValue } : current));
     setValueDebugStatus(hasResolvedValueState(derivedValue) ? "accepted" : "idle");
+    console.log("[vehicle-detail] VALUE_UI_STATE_REPLACED_AFTER_LISTINGS", {
+      vehicleId: vehicle.id,
+      valueRequestSource: listingsMarketContext ? "for_sale_listing_sync" : "cache_read",
+      previousStatus: displayValuation.status,
+      previousValuationSource: displayValuation.valuationSource ?? null,
+      nextStatus: derivedValue.status,
+      nextValuationSource: derivedValue.valuationSource ?? null,
+      compCount: derivedValue.compCount ?? derivedValue.listingCount ?? null,
+    });
+    if (wasModeledFallback) {
+      console.log("[vehicle-detail] VALUE_STALE_MODELED_FALLBACK_REPLACED", {
+        vehicleId: vehicle.id,
+        valueRequestSource: listingsMarketContext ? "for_sale_listing_sync" : "cache_read",
+        previousSourceLabel: displayValuation.sourceLabel ?? null,
+        nextSourceLabel: derivedValue.sourceLabel ?? null,
+        compCount: derivedValue.compCount ?? derivedValue.listingCount ?? null,
+      });
+    }
   }, [
     applyValuationUpdate,
     condition,
-    displayValuation.status,
+    displayValuation,
     listingsMarketContext,
     mileage,
     valueLookupInput,

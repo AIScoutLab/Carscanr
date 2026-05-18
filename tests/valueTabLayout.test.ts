@@ -28,11 +28,33 @@ test("listings refresh hydrates value state from cached listings", () => {
 
   assert.match(screenSource, /\.getListings\([\s\S]*fetchReason:\s*"user_requested_listings_refresh"/);
   assert.match(screenSource, /buildListingsHydratedValuation/);
+  assert.match(screenSource, /shouldReplaceValueFromListings/);
+  assert.match(screenSource, /isModeledFallbackValuation/);
   assert.match(screenSource, /VALUE_COMP_SOURCE/);
   assert.match(screenSource, /VALUE_COMP_DERIVATION_STARTED/);
   assert.match(screenSource, /VALUE_COMP_DERIVATION_RESULT/);
+  assert.match(screenSource, /VALUE_QUERY_INVALIDATED_FROM_LISTINGS/);
+  assert.match(screenSource, /VALUE_REFRESH_TRIGGERED_FROM_LISTINGS/);
+  assert.match(screenSource, /VALUE_UI_STATE_REPLACED_AFTER_LISTINGS/);
+  assert.match(screenSource, /VALUE_STALE_MODELED_FALLBACK_REPLACED/);
   assert.match(screenSource, /acceptedListingsAvailable: true/);
   assert.match(screenSource, /listingCacheKeysChecked: \["shared_vehicle_listings"\]/);
+  assert.match(screenSource, /strategy: "shared_listing_comps"/);
+  assert.match(screenSource, /providerCall: false/);
+});
+
+test("believable listings replace stale modeled fallback without tab navigation", () => {
+  const screenSource = fs.readFileSync(screenPath, "utf8");
+
+  assert.match(screenSource, /function shouldReplaceValueFromListings/);
+  assert.match(screenSource, /isModeledFallbackValuation\(result\)/);
+  assert.match(screenSource, /result\.valuationSource === "listing_comps" \|\| result\.modelType === "listing_derived"/);
+  assert.match(screenSource, /believableListings\.length > 0 && normalizedMileage && normalizedCondition/);
+  assert.match(screenSource, /shouldReplaceStaleValue = shouldReplaceValueFromListings\(displayValuation\)/);
+  assert.match(screenSource, /derivedValue && shouldReplaceStaleValue/);
+  assert.match(screenSource, /applyValuationUpdate\(derivedValue, "listings-cache-sync", \{\s*allowReplacement: true/s);
+  assert.match(screenSource, /setVehicle\(\(current\) => \(current \? \{ \.\.\.current, valuation: derivedValue \} : current\)\)/);
+  assert.doesNotMatch(screenSource, /VALUE_REFRESH_TRIGGERED_FROM_LISTINGS[\s\S]*\.getValue\(/);
 });
 
 test("vehicle detail tabs keep shared vertical spacing around cards and bottom actions", () => {
