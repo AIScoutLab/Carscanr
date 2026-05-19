@@ -1057,12 +1057,25 @@ function providerApiUsageLogToRow(entry: ProviderApiUsageLogRecord) {
     id: entry.id,
     provider: entry.provider,
     endpoint_type: entry.endpointType,
-    event_type: entry.eventType,
+    event_type: mapProviderApiUsageLogEventToSupabaseRow(entry.eventType),
     cache_key: entry.cacheKey,
     request_summary: entry.requestSummary,
     response_summary: entry.responseSummary,
     created_at: entry.createdAt,
   };
+}
+
+function mapProviderApiUsageLogEventToSupabaseRow(eventType: ProviderApiUsageLogRecord["eventType"]) {
+  switch (eventType) {
+    case "provider_request":
+      return "stale_refresh";
+    case "inflight_dedupe":
+      return "cache_hit";
+    case "skipped_rate_guard":
+      return "empty_hit";
+    default:
+      return eventType;
+  }
 }
 
 function mapProviderApiUsageLogRow(row: any): ProviderApiUsageLogRecord {
@@ -2390,13 +2403,13 @@ export class SupabaseProviderApiUsageLogsRepository implements ProviderApiUsageL
       const eventType = String(row.event_type ?? "unknown");
       byEvent[eventType] = (byEvent[eventType] ?? 0) + 1;
       const endpointType = row.endpoint_type as ProviderEndpointType | undefined;
-      if (eventType === "provider_request" && (endpointType === "specs" || endpointType === "values" || endpointType === "listings")) {
+      if ((eventType === "provider_request" || eventType === "stale_refresh") && (endpointType === "specs" || endpointType === "values" || endpointType === "listings")) {
         byEndpoint[endpointType] += 1;
       }
     }
 
     return {
-      total: byEvent.provider_request ?? 0,
+      total: (byEvent.provider_request ?? 0) + (byEvent.stale_refresh ?? 0),
       byEndpoint,
       byEvent,
     };

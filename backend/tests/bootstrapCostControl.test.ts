@@ -331,7 +331,7 @@ describe("bootstrap cost control", () => {
       action: "valueRefresh",
     });
 
-    assert.equal(providerCalls >= 1, true);
+    assert.equal(providerCalls, 1);
     assert.equal(result.data.modelType, "provider_range");
     assert.ok((result.data.privateParty ?? 0) >= 150000);
   });
@@ -641,7 +641,7 @@ describe("bootstrap cost control", () => {
         request.reason === "user_requested_value_refresh" &&
         request.sourceScreen === "valueScreen" &&
         request.action === "valueRefresh" &&
-        request.forceLive === true,
+        request.forceLive === false,
       ),
       true,
     );
@@ -703,7 +703,7 @@ describe("bootstrap cost control", () => {
     assert.equal(result.data.privateParty, null);
   });
 
-  test("Ferrari 812 explicit refresh widens from exact model to family-model fallback before giving up", async () => {
+  test("normal value refresh does not fan out into live family-model fallback calls", async () => {
     const testRepositories = createTestRepositories({
       vehicles: [
         {
@@ -740,28 +740,6 @@ describe("bootstrap cost control", () => {
             trim: input.vehicle?.trim ?? null,
             year: input.vehicle?.year ?? 0,
           });
-          if (input.vehicle?.model === "812") {
-            return {
-              id: "ferrari-812-live",
-              vehicleId: input.vehicleId,
-              zip: input.zip,
-              mileage: input.mileage,
-              condition: "good",
-              status: "loaded_listing_range",
-              tradeIn: 312000,
-              privateParty: 339995,
-              dealerRetail: 356000,
-              low: 325000,
-              median: 339995,
-              high: 355000,
-              currency: "USD",
-              generatedAt: "2026-05-14T00:00:00.000Z",
-              sourceLabel: "Based on live MarketCheck listings",
-              confidenceLabel: "Limited comps",
-              modelType: "listing_derived",
-              listingCount: 2,
-            };
-          }
           return null;
         },
       },
@@ -780,9 +758,8 @@ describe("bootstrap cost control", () => {
       forceLive: true,
     });
 
-    assert.equal(result.data.status, "loaded_condition_set");
-    assert.equal(attemptedModels.some((attempt) => attempt.model === "812 Superfast" && attempt.trim === "Base"), true);
-    assert.equal(attemptedModels.some((attempt) => attempt.model === "812" && attempt.trim === ""), true);
+    assert.equal(result.data.status, "no_comps_found");
+    assert.deepEqual(attemptedModels, [{ model: "812 Superfast", trim: "Base", year: 2021 }]);
   });
 
   test("explicit value refresh bypasses cached no-comps state and retries provider", async () => {
@@ -1519,7 +1496,7 @@ describe("bootstrap cost control", () => {
     assert.equal(result.meta?.liveFetchDeferred, true);
   });
 
-  test("Cadillac CT4 broadened live comps produce listing_comps value instead of unavailable", async () => {
+  test("Cadillac CT4 value refresh uses one exact live valuation attempt", async () => {
     const attempts: Array<{ model: string; year: number; trim: string | null }> = [];
     setProviders({
       ...createTestProviders(),
@@ -1532,7 +1509,7 @@ describe("bootstrap cost control", () => {
             trim: input.vehicle?.trim ?? null,
           });
 
-          if (input.vehicle?.model === "CT4" && input.vehicle?.year === 2021 && input.vehicle?.trim === "") {
+          if (input.vehicle?.model === "CT4" && input.vehicle?.year === 2021 && input.vehicle?.trim === "Premium Luxury") {
             return {
               id: "ct4-broadened-live-value",
               vehicleId: input.vehicleId,
@@ -1587,7 +1564,8 @@ describe("bootstrap cost control", () => {
     });
 
     assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === "Premium Luxury"), true);
-    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === ""), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === ""), false);
+    assert.equal(attempts.length, 1);
     assert.equal(result.data.status, "loaded_condition_set");
     assert.equal(result.data.valuationSource, "listing_comps");
     assert.equal(result.data.sourceBasis, "listing_median_adjusted");
@@ -2039,14 +2017,21 @@ describe("bootstrap cost control", () => {
   test("Toyota 4Runner skips uncalibrated modeled_fallback when comps are unavailable", async () => {
     let valueProviderCalls = 0;
     let listingsProviderCalls = 0;
+    const valueAttempts: Array<{ model: string; year: number; trim: string | null; forceLive: boolean | null | undefined }> = [];
     setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
     setProviders({
       ...createTestProviders(),
       valueProviderName: "marketcheck",
       listingsProviderName: "marketcheck",
       valueProvider: {
-        async getValuation() {
+        async getValuation(input) {
           valueProviderCalls += 1;
+          valueAttempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            trim: input.vehicle?.trim ?? null,
+            forceLive: input.requestMeta?.forceLive,
+          });
           return null;
         },
       },
@@ -2080,7 +2065,8 @@ describe("bootstrap cost control", () => {
       action: "valueRefresh",
     });
 
-    assert.equal(valueProviderCalls > 0, true);
+    assert.equal(valueProviderCalls, 1);
+    assert.deepEqual(valueAttempts, [{ model: "4Runner", year: 2011, trim: "SR5", forceLive: false }]);
     assert.equal(listingsProviderCalls > 0, true);
     assert.equal(result.data.valuationSource, "unavailable");
     assert.equal(result.data.reason, "no_safe_baseline_data");

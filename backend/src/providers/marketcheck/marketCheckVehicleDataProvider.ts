@@ -184,7 +184,7 @@ function shouldBlockExternalMarketCheckForSource(requestMeta?: MarketCheckReques
 function isExplicitMarketCheckActionAllowed(operation: InventoryOperation, requestMeta?: MarketCheckRequestMeta) {
   const sourceScreen = normalizeSourceScreen(requestMeta?.sourceScreen);
   const action = requestMeta?.action ?? null;
-  const forceLive = requestMeta?.forceLive === true;
+  const forceLive = isDeveloperForceLiveMarketCheckRequest(requestMeta);
   const allowLive = requestMeta?.allowLive === true;
   const reason = requestMeta?.reason ?? null;
 
@@ -197,6 +197,33 @@ function isExplicitMarketCheckActionAllowed(operation: InventoryOperation, reque
   }
 
   return false;
+}
+
+function isDeveloperForceLiveMarketCheckRequest(requestMeta?: MarketCheckRequestMeta) {
+  if (requestMeta?.forceLive !== true) {
+    return false;
+  }
+  const sourceScreen = String(requestMeta.sourceScreen ?? "").toLowerCase();
+  const action = String(requestMeta.action ?? "").toLowerCase();
+  const reason = String(requestMeta.reason ?? "").toLowerCase();
+  return (
+    sourceScreen.includes("admin") ||
+    sourceScreen.includes("debug") ||
+    sourceScreen.includes("developer") ||
+    action.includes("admin") ||
+    action.includes("debug") ||
+    action.includes("force") ||
+    reason.includes("admin") ||
+    reason.includes("debug") ||
+    reason.includes("force")
+  );
+}
+
+function shouldBypassZeroResultCache(operation: InventoryOperation, requestMeta?: MarketCheckRequestMeta) {
+  if (operation === "values") {
+    return isDeveloperForceLiveMarketCheckRequest(requestMeta);
+  }
+  return isExplicitMarketCheckActionAllowed(operation, requestMeta);
 }
 
 function normalizeMarketCheckKeyPart(value: string | number | undefined | null) {
@@ -796,7 +823,7 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
     const cached = this.responseCache.get(cacheKey);
     if (cached && cached.expiresAtMs > Date.now()) {
       const cachedResultCount = Array.isArray(cached.payload.listings) ? cached.payload.listings.length : 0;
-      const shouldBypassZeroCache = cachedResultCount === 0 && isExplicitMarketCheckActionAllowed(typedOperation, requestMeta);
+      const shouldBypassZeroCache = cachedResultCount === 0 && shouldBypassZeroResultCache(typedOperation, requestMeta);
       if (shouldBypassZeroCache) {
         logger.info(
           {
@@ -810,6 +837,20 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
           "MARKETCHECK_ZERO_CACHE_BYPASSED",
         );
       } else {
+        if (typedOperation === "values" && cachedResultCount === 0) {
+          logger.info(
+            {
+              label: "VALUE_ZERO_CACHE_RESPECTED",
+              ...requestContext,
+              cacheHit: true,
+              statusCode: cached.statusCode,
+              resultCount: cachedResultCount,
+              requestedForceLive: requestMeta?.forceLive ?? null,
+              reason: "normal-value-refresh-zero-result-cache",
+            },
+            "VALUE_ZERO_CACHE_RESPECTED",
+          );
+        }
         logger.info(
           {
             label: "MARKETCHECK_API_CACHE_HIT",

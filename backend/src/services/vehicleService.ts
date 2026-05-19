@@ -75,11 +75,64 @@ function isExplicitUserRequestedValueRefresh(input: {
   const action = input.action ?? null;
   const fetchReason = input.fetchReason ?? null;
   return (
-    input.forceLive === true ||
+    isDeveloperForceLiveValueRefresh(input) ||
     action === "valueRefresh" ||
     (input.allowLive === true && fetchReason === "user_requested_value_refresh") ||
     (input.allowLive === true && sourceScreen === "valueScreen")
   );
+}
+
+function isNormalValueScreenRefresh(input: {
+  allowLive?: boolean;
+  fetchReason?: string | null;
+  sourceScreen?: string | null;
+  action?: string | null;
+}) {
+  const sourceScreen = input.sourceScreen ?? "valueScreen";
+  const action = input.action ?? null;
+  const fetchReason = input.fetchReason ?? null;
+  return (
+    sourceScreen === "valueScreen" &&
+    (action === "valueRefresh" || fetchReason === "user_requested_value_refresh" || input.allowLive === true)
+  );
+}
+
+function isDeveloperForceLiveValueRefresh(input: {
+  fetchReason?: string | null;
+  sourceScreen?: string | null;
+  action?: string | null;
+  forceLive?: boolean | null;
+}) {
+  if (input.forceLive !== true) {
+    return false;
+  }
+  const sourceScreen = String(input.sourceScreen ?? "").toLowerCase();
+  const action = String(input.action ?? "").toLowerCase();
+  const fetchReason = String(input.fetchReason ?? "").toLowerCase();
+  return (
+    sourceScreen.includes("admin") ||
+    sourceScreen.includes("debug") ||
+    sourceScreen.includes("developer") ||
+    action.includes("admin") ||
+    action.includes("debug") ||
+    action.includes("force") ||
+    fetchReason.includes("admin") ||
+    fetchReason.includes("debug") ||
+    fetchReason.includes("force")
+  );
+}
+
+function isAdjacentYearValueStrategy(strategy: ValueLookupAttempt["strategy"]) {
+  return strategy.startsWith("adjacent-year");
+}
+
+function selectMarketCheckValueProviderAttempts(input: {
+  attempts: ValueLookupAttempt[];
+  normalValueScreenRefresh: boolean;
+}) {
+  const nonAdjacentAttempts = input.attempts.filter((attempt) => !isAdjacentYearValueStrategy(attempt.strategy));
+  const liveSafeAttempts = nonAdjacentAttempts.length > 0 ? nonAdjacentAttempts : input.attempts;
+  return input.normalValueScreenRefresh ? liveSafeAttempts.slice(0, 1) : liveSafeAttempts;
 }
 
 function isExplicitUserRequestedListingsRefresh(input: {
@@ -3812,18 +3865,73 @@ export class VehicleService {
       let liveValueStrategy: ValueLookupAttempt["strategy"] | null = null;
       let valueWasSimulated = false;
       let providerFailureReason: string | null = null;
+      const normalValueScreenRefresh = isNormalValueScreenRefresh({
+        allowLive,
+        fetchReason,
+        sourceScreen: input.sourceScreen,
+        action: input.action,
+      });
+      const effectiveForceLive = isDeveloperForceLiveValueRefresh({
+        fetchReason,
+        sourceScreen: input.sourceScreen,
+        action: input.action,
+        forceLive: input.forceLive,
+      });
       const providerValueAttempts =
         providers.valueProviderName === "marketcheck"
-          ? isExplicitValueRefresh
-            ? valueAttempts
-            : valueAttempts.slice(0, 1)
+          ? selectMarketCheckValueProviderAttempts({
+              attempts: isExplicitValueRefresh ? valueAttempts : valueAttempts.slice(0, 1),
+              normalValueScreenRefresh,
+            })
           : valueAttempts;
+      const blockedAdjacentValueAttempts =
+        providers.valueProviderName === "marketcheck" ? valueAttempts.filter((attempt) => isAdjacentYearValueStrategy(attempt.strategy)) : [];
+      if (providers.valueProviderName === "marketcheck" && blockedAdjacentValueAttempts.length > 0) {
+        logger.info(
+          {
+            label: "VALUE_ADJACENT_YEAR_LIVE_BLOCKED",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            blockedCount: blockedAdjacentValueAttempts.length,
+            blockedAttempts: blockedAdjacentValueAttempts.map((attempt) => ({
+              strategy: attempt.strategy,
+              year: attempt.vehicle.year,
+              make: attempt.vehicle.make,
+              model: attempt.vehicle.model,
+              trim: attempt.vehicle.trim || null,
+            })),
+          },
+          "VALUE_ADJACENT_YEAR_LIVE_BLOCKED",
+        );
+      }
+      if (providers.valueProviderName === "marketcheck" && providerValueAttempts.length < valueAttempts.length) {
+        logger.info(
+          {
+            label: "VALUE_LIVE_ATTEMPT_CAPPED",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            originalAttemptCount: valueAttempts.length,
+            cappedAttemptCount: providerValueAttempts.length,
+            normalValueScreenRefresh,
+            requestedForceLive: input.forceLive ?? null,
+            effectiveForceLive,
+            selectedAttempts: providerValueAttempts.map((attempt) => ({
+              strategy: attempt.strategy,
+              year: attempt.vehicle.year,
+              make: attempt.vehicle.make,
+              model: attempt.vehicle.model,
+              trim: attempt.vehicle.trim || null,
+            })),
+          },
+          "VALUE_LIVE_ATTEMPT_CAPPED",
+        );
+      }
       const valueDecision = isValueLiveFetchAllowed({
         allowLive,
         fetchReason,
         sourceScreen: input.sourceScreen,
         action: input.action,
-        forceLive: input.forceLive,
+        forceLive: effectiveForceLive,
       })
         ? providerBudgetService.evaluate({
             provider: providers.valueProviderName,
@@ -3864,6 +3972,20 @@ export class VehicleService {
           })),
         },
         "VALUE_REFRESH_DIRECT_ATTEMPT",
+      );
+      logger.info(
+        {
+          label: "VALUE_LIVE_ATTEMPT_COUNT",
+          requestId: input.requestId,
+          vehicleId: lookupVehicleId,
+          provider: providers.valueProviderName,
+          liveAttemptCount: providerValueAttempts.length,
+          candidateAttemptCount: valueAttempts.length,
+          normalValueScreenRefresh,
+          requestedForceLive: input.forceLive ?? null,
+          effectiveForceLive,
+        },
+        "VALUE_LIVE_ATTEMPT_COUNT",
       );
       if (isExplicitValueRefresh && !valueDecision.allowLiveProvider && !valueDecision.shouldSimulateSuccess) {
         const blockedReason = env.MARKETCHECK_DISABLE_EXTERNAL_CALLS ? "external-calls-disabled" : valueDecision.reason;
@@ -3962,7 +4084,7 @@ export class VehicleService {
                 requestMeta: {
                   requestId: input.requestId,
                   allowLive,
-                  forceLive: input.forceLive ?? null,
+                  forceLive: effectiveForceLive,
                   action: input.action ?? "valueRefresh",
                   vehicleId: lookupVehicleId,
                   cacheKey,
@@ -3999,7 +4121,7 @@ export class VehicleService {
                   requestId: input.requestId,
                   reason: fetchReason,
                   allowLive,
-                  forceLive: input.forceLive ?? null,
+                  forceLive: effectiveForceLive,
                   action: input.action ?? "valueRefresh",
                   vehicleId: lookupVehicleId,
                   year: attempt.vehicle.year,
