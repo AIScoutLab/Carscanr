@@ -7,7 +7,8 @@ import { buildCanonicalKey, normalizeLookupText } from "../lib/providerCache.js"
 import { repositories } from "../lib/repositoryRegistry.js";
 import { providerBudgetService } from "./providerBudgetService.js";
 
-const TRENDING_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+const TRENDING_DEFAULT_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+const TRENDING_PRODUCTION_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const TRENDING_PRESEED_THRESHOLD = env.TRENDING_PRESEED_SCORE_THRESHOLD;
 const PRELOAD_BATCH_LIMIT = env.TRENDING_PRELOAD_BATCH_LIMIT;
 const POPULAR_BRANDS = new Set(["ford", "toyota", "honda", "bmw", "chevrolet", "chevy", "nissan", "hyundai", "kia", "gmc", "ram", "jeep", "subaru", "lexus", "tesla"]);
@@ -43,6 +44,14 @@ function computePriorityBoost(input: { normalizedMake: string; normalizedModel: 
   return boost;
 }
 
+function shouldLogIndividualPriorityBoosts() {
+  return env.APP_ENV !== "production" || env.LOG_LEVEL === "debug";
+}
+
+function getTrendingRefreshIntervalMs() {
+  return env.APP_ENV === "production" ? TRENDING_PRODUCTION_REFRESH_INTERVAL_MS : TRENDING_DEFAULT_REFRESH_INTERVAL_MS;
+}
+
 function isRateLimitError(error: unknown) {
   return error instanceof AppError && error.statusCode === 429;
 }
@@ -75,6 +84,15 @@ function describeTrendingFailure(error: unknown) {
 export class TrendingVehicleService {
   async refreshGlobalTrending() {
     const popularityRows = await repositories.vehicleScanPopularity.listTop(500);
+    let boostedCount = 0;
+    let totalBoost = 0;
+    const boostSample: Array<{
+      normalizedKey: string;
+      normalizedMake: string;
+      normalizedModel: string;
+      boost: number;
+    }> = [];
+    const logIndividualBoosts = shouldLogIndividualPriorityBoosts();
     for (const row of popularityRows) {
       const recentScanCount = computeRecentScanCount(row.scanCount, row.lastSeenAt);
       const priorityBoost = computePriorityBoost({
@@ -82,16 +100,28 @@ export class TrendingVehicleService {
         normalizedModel: row.normalizedModel,
       });
       if (priorityBoost > 0) {
-        logger.info(
-          {
-            label: "TREND_PRIORITY_BOOST_APPLIED",
+        boostedCount += 1;
+        totalBoost += priorityBoost;
+        if (boostSample.length < 8) {
+          boostSample.push({
             normalizedKey: row.normalizedKey,
             normalizedMake: row.normalizedMake,
             normalizedModel: row.normalizedModel,
             boost: priorityBoost,
-          },
-          "TREND_PRIORITY_BOOST_APPLIED",
-        );
+          });
+        }
+        if (logIndividualBoosts) {
+          logger.info(
+            {
+              label: "TREND_PRIORITY_BOOST_APPLIED",
+              normalizedKey: row.normalizedKey,
+              normalizedMake: row.normalizedMake,
+              normalizedModel: row.normalizedModel,
+              boost: priorityBoost,
+            },
+            "TREND_PRIORITY_BOOST_APPLIED",
+          );
+        }
       }
       const trendScore = (recentScanCount * 2) + row.scanCount + priorityBoost;
       await repositories.vehicleGlobalTrending.upsert({
@@ -109,10 +139,23 @@ export class TrendingVehicleService {
         updatedAt: new Date().toISOString(),
       });
     }
+    if (boostedCount > 0) {
+      logger.info(
+        {
+          label: "TREND_PRIORITY_BOOST_SUMMARY",
+          boostedCount,
+          totalBoost,
+          sample: boostSample,
+        },
+        "TREND_PRIORITY_BOOST_SUMMARY",
+      );
+    }
     logger.info(
       {
         label: "GLOBAL_TRENDING_UPDATED",
         rowCount: popularityRows.length,
+        boostedCount,
+        totalBoost,
       },
       "GLOBAL_TRENDING_UPDATED",
     );
@@ -405,56 +448,96 @@ export class TrendingVehicleService {
   }
 
   startScheduler() {
-    const run = async () => {
-      try {
-        await this.refreshGlobalTrending();
-      } catch (error) {
-        const failure = describeTrendingFailure(error);
-        logger.error(
-          {
-            label: "GLOBAL_TRENDING_REFRESH_FAILED",
-            message: failure.message,
-            code: failure.code,
-            probableCause: failure.probableCause,
-            details: failure.details,
-            stack: error instanceof Error ? error.stack : undefined,
-          },
-          "GLOBAL_TRENDING_REFRESH_FAILED",
-        );
-      }
-
-      const preloadDisabledInProduction = env.APP_ENV === "production";
-      if (preloadDisabledInProduction || !env.ALLOW_PRELOAD) {
+    let running = false;
+    const intervalMs = getTrendingRefreshIntervalMs();
+    const run = async (trigger: "startup" | "interval") => {
+      if (running) {
         logger.info(
           {
-            label: "PRELOAD_SKIPPED_PRODUCTION",
-            appEnv: env.APP_ENV,
-            allowPreload: env.ALLOW_PRELOAD,
-            reason: preloadDisabledInProduction ? "production-app-env" : "allow-preload-disabled",
+            label: "TRENDING_JOB_SKIPPED",
+            trigger,
+            reason: "already-running",
+            intervalMs,
           },
-          "PRELOAD_SKIPPED_PRODUCTION",
+          "TRENDING_JOB_SKIPPED",
         );
         return;
       }
-
+      running = true;
+      logger.info(
+        {
+          label: "TRENDING_JOB_STARTED",
+          trigger,
+          intervalMs,
+          appEnv: env.APP_ENV,
+          allowPreload: env.ALLOW_PRELOAD,
+        },
+        "TRENDING_JOB_STARTED",
+      );
       try {
-        await this.preloadTrendingCanonicalBatch();
-      } catch (error) {
-        const failure = describeTrendingFailure(error);
-        logger.error(
-          {
-            label: "GLOBAL_TRENDING_PRELOAD_FAILED",
-            message: failure.message,
-            code: failure.code,
-            probableCause: failure.probableCause,
-            details: failure.details,
-            stack: error instanceof Error ? error.stack : undefined,
-          },
-          "GLOBAL_TRENDING_PRELOAD_FAILED",
-        );
+        try {
+          await this.refreshGlobalTrending();
+        } catch (error) {
+          const failure = describeTrendingFailure(error);
+          logger.error(
+            {
+              label: "GLOBAL_TRENDING_REFRESH_FAILED",
+              message: failure.message,
+              code: failure.code,
+              probableCause: failure.probableCause,
+              details: failure.details,
+              stack: error instanceof Error ? error.stack : undefined,
+            },
+            "GLOBAL_TRENDING_REFRESH_FAILED",
+          );
+        }
+
+        const preloadDisabledInProduction = env.APP_ENV === "production";
+        if (preloadDisabledInProduction || !env.ALLOW_PRELOAD) {
+          const reason = preloadDisabledInProduction ? "production-app-env" : "allow-preload-disabled";
+          logger.info(
+            {
+              label: "TRENDING_JOB_PROVIDER_CALLS_BLOCKED",
+              appEnv: env.APP_ENV,
+              allowPreload: env.ALLOW_PRELOAD,
+              reason,
+              marketCheckBackgroundRefreshEnabled: isMarketCheckBackgroundRefreshEnabled(),
+            },
+            "TRENDING_JOB_PROVIDER_CALLS_BLOCKED",
+          );
+          logger.info(
+            {
+              label: "PRELOAD_SKIPPED_PRODUCTION",
+              appEnv: env.APP_ENV,
+              allowPreload: env.ALLOW_PRELOAD,
+              reason,
+            },
+            "PRELOAD_SKIPPED_PRODUCTION",
+          );
+          return;
+        }
+
+        try {
+          await this.preloadTrendingCanonicalBatch();
+        } catch (error) {
+          const failure = describeTrendingFailure(error);
+          logger.error(
+            {
+              label: "GLOBAL_TRENDING_PRELOAD_FAILED",
+              message: failure.message,
+              code: failure.code,
+              probableCause: failure.probableCause,
+              details: failure.details,
+              stack: error instanceof Error ? error.stack : undefined,
+            },
+            "GLOBAL_TRENDING_PRELOAD_FAILED",
+          );
+        }
+      } finally {
+        running = false;
       }
     };
-    run().catch((error) => {
+    run("startup").catch((error) => {
       logger.error(
         {
           label: "GLOBAL_TRENDING_SCHEDULER_FAILED",
@@ -465,7 +548,7 @@ export class TrendingVehicleService {
       );
     });
     return setInterval(() => {
-      run().catch((error) => {
+      run("interval").catch((error) => {
         logger.error(
           {
             label: "GLOBAL_TRENDING_SCHEDULER_FAILED",
@@ -475,10 +558,10 @@ export class TrendingVehicleService {
           "GLOBAL_TRENDING_SCHEDULER_FAILED",
         );
       });
-    }, TRENDING_REFRESH_INTERVAL_MS);
+    }, intervalMs);
   }
 }
 
 export const trendingVehicleService = new TrendingVehicleService();
-export const TRENDING_JOB_INTERVAL_MS = TRENDING_REFRESH_INTERVAL_MS;
+export const TRENDING_JOB_INTERVAL_MS = getTrendingRefreshIntervalMs();
 export const TRENDING_PRESEED_SCORE_THRESHOLD = TRENDING_PRESEED_THRESHOLD;
