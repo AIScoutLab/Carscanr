@@ -135,6 +135,31 @@ function selectMarketCheckValueProviderAttempts(input: {
   return input.normalValueScreenRefresh ? liveSafeAttempts.slice(0, 1) : liveSafeAttempts;
 }
 
+function isDeveloperForceLiveListingsRefresh(input: {
+  fetchReason?: string | null;
+  sourceScreen?: string | null;
+  action?: string | null;
+  forceLive?: boolean | null;
+}) {
+  if (input.forceLive !== true) {
+    return false;
+  }
+  const sourceScreen = String(input.sourceScreen ?? "").toLowerCase();
+  const action = String(input.action ?? "").toLowerCase();
+  const fetchReason = String(input.fetchReason ?? "").toLowerCase();
+  return (
+    sourceScreen.includes("admin") ||
+    sourceScreen.includes("debug") ||
+    sourceScreen.includes("developer") ||
+    action.includes("admin") ||
+    action.includes("debug") ||
+    action.includes("force") ||
+    fetchReason.includes("admin") ||
+    fetchReason.includes("debug") ||
+    fetchReason.includes("force")
+  );
+}
+
 function isExplicitUserRequestedListingsRefresh(input: {
   allowLive?: boolean;
   fetchReason?: string | null;
@@ -146,11 +171,80 @@ function isExplicitUserRequestedListingsRefresh(input: {
   const action = input.action ?? null;
   const fetchReason = input.fetchReason ?? null;
   return (
-    input.forceLive === true ||
+    isDeveloperForceLiveListingsRefresh(input) ||
     action === "listingsRefresh" ||
     (input.allowLive === true && fetchReason === "user_requested_listings_refresh") ||
     (input.allowLive === true && sourceScreen === "listingsScreen")
   );
+}
+
+function isNormalListingsRefresh(input: {
+  allowLive?: boolean;
+  fetchReason?: string | null;
+  sourceScreen?: string | null;
+  action?: string | null;
+  forceLive?: boolean | null;
+}) {
+  if (isDeveloperForceLiveListingsRefresh(input)) {
+    return false;
+  }
+  const sourceScreen = input.sourceScreen ?? "listingsScreen";
+  const action = input.action ?? null;
+  const fetchReason = input.fetchReason ?? null;
+  return (
+    action === "listingsRefresh" ||
+    fetchReason === "user_requested_listings_refresh" ||
+    (input.allowLive === true && (sourceScreen === "listingsScreen" || sourceScreen === "valueScreen"))
+  );
+}
+
+function isGenericListingsTrimValue(value: string | null | undefined) {
+  const normalized = normalizeVehicleLookupText(value);
+  return (
+    normalized.length === 0 ||
+    normalized === "base" ||
+    normalized === "standard" ||
+    normalized === "unknown" ||
+    normalized === "unspecified" ||
+    normalized === "visual only" ||
+    normalized === "visual" ||
+    normalized === "estimated"
+  );
+}
+
+function isAdjacentOrExpandedListingsStrategy(strategy: ListingsLookupAttempt["strategy"]) {
+  return (
+    strategy === "adjacent-year-previous" ||
+    strategy === "adjacent-year-next" ||
+    strategy === "adjacent-year-previous-2" ||
+    strategy === "adjacent-year-next-2" ||
+    strategy === "adjacent-year-family-model" ||
+    strategy === "wider-radius-250" ||
+    strategy === "wider-radius-500"
+  );
+}
+
+function selectMarketCheckListingsProviderAttempts(input: {
+  attempts: ListingsLookupAttempt[];
+  normalListingsRefresh: boolean;
+  requestedTrim?: string | null;
+}) {
+  if (!input.normalListingsRefresh) {
+    return input.attempts;
+  }
+
+  const liveSafeAttempts = input.attempts.filter((attempt) => !isAdjacentOrExpandedListingsStrategy(attempt.strategy));
+  const genericTrim = isGenericListingsTrimValue(input.requestedTrim);
+  const preferredAttempt =
+    genericTrim
+      ? liveSafeAttempts.find((attempt) => attempt.strategy === "same-year-any-trim") ??
+        liveSafeAttempts.find((attempt) => attempt.strategy === "same-year-family-model") ??
+        liveSafeAttempts.find((attempt) => attempt.strategy === "exact-year-make-model")
+      : liveSafeAttempts.find((attempt) => attempt.strategy === "exact-year-make-model") ??
+        liveSafeAttempts.find((attempt) => attempt.strategy === "same-year-any-trim") ??
+        liveSafeAttempts.find((attempt) => attempt.strategy === "same-year-family-model");
+
+  return preferredAttempt ? [preferredAttempt] : liveSafeAttempts.slice(0, 1);
 }
 
 function isMissingSupabaseRelationError(error: unknown, relationName: string) {
@@ -5236,6 +5330,7 @@ export class VehicleService {
     fetchReason?: string;
     sourceScreen?: string | null;
     action?: string | null;
+    forceLive?: boolean | null;
   }): Promise<CachedServiceResult<ListingRecord[], ListingsDebugMeta>> {
     try {
       const currentIso = nowIso();
@@ -5260,6 +5355,7 @@ export class VehicleService {
           fetchReason: input.fetchReason ?? null,
           sourceScreen: input.sourceScreen ?? null,
           action: input.action ?? null,
+          forceLive: input.forceLive ?? null,
         },
         "LISTINGS_LOAD_REQUESTED",
       );
@@ -5658,23 +5754,92 @@ export class VehicleService {
         believableCount: number;
       }> = [];
       let listingsWereSimulated = false;
+      let liveListingsProviderAttempted = false;
       const isExplicitListingsRefresh = isExplicitUserRequestedListingsRefresh({
         allowLive,
         fetchReason,
         sourceScreen: input.sourceScreen,
         action: input.action,
-        forceLive: null,
+        forceLive: input.forceLive,
+      });
+      const normalListingsRefresh = isNormalListingsRefresh({
+        allowLive,
+        fetchReason,
+        sourceScreen: input.sourceScreen,
+        action: input.action,
+        forceLive: input.forceLive,
       });
       const providerListingsAttempts =
         providers.listingsProviderName === "marketcheck"
           ? isExplicitListingsRefresh
-            ? fallbackAttempts
+            ? selectMarketCheckListingsProviderAttempts({
+                attempts: fallbackAttempts,
+                normalListingsRefresh,
+                requestedTrim: lookupBaseVehicle?.trim ?? descriptor?.trim ?? null,
+              })
             : [
                 fallbackAttempts.find((attempt) => attempt.strategy === "same-year-any-trim") ??
                   fallbackAttempts.find((attempt) => attempt.strategy === "same-year-family-model") ??
-                  fallbackAttempts[0],
+                fallbackAttempts[0],
               ].filter((attempt): attempt is ListingsLookupAttempt => Boolean(attempt))
           : fallbackAttempts;
+      const blockedLiveListingsAttempts =
+        providers.listingsProviderName === "marketcheck"
+          ? fallbackAttempts.filter((attempt) => !providerListingsAttempts.some((entry) => listingsAttemptKey(entry) === listingsAttemptKey(attempt)))
+          : [];
+      if (providers.listingsProviderName === "marketcheck" && normalListingsRefresh && isGenericListingsTrimValue(lookupBaseVehicle?.trim ?? descriptor?.trim ?? null)) {
+        const selectedAttempt = providerListingsAttempts[0] ?? null;
+        if (selectedAttempt && selectedAttempt.strategy !== "exact-year-make-model") {
+          logger.info(
+            {
+              label: "LISTINGS_GENERIC_TRIM_DROPPED",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              requestedTrim: lookupBaseVehicle?.trim ?? descriptor?.trim ?? null,
+              selectedStrategy: selectedAttempt.strategy,
+              year: selectedAttempt.vehicle.year,
+              make: selectedAttempt.vehicle.make,
+              model: selectedAttempt.vehicle.model,
+              trim: selectedAttempt.vehicle.trim || null,
+            },
+            "LISTINGS_GENERIC_TRIM_DROPPED",
+          );
+        }
+      }
+      if (providers.listingsProviderName === "marketcheck" && normalListingsRefresh && blockedLiveListingsAttempts.length > 0) {
+        logger.info(
+          {
+            label: "LISTINGS_LIVE_ATTEMPT_CAPPED",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            liveAttemptCount: providerListingsAttempts.length,
+            requestedAttemptCount: fallbackAttempts.length,
+            blockedStrategies: blockedLiveListingsAttempts.map((attempt) => attempt.strategy),
+            sourceScreen: input.sourceScreen ?? null,
+            action: input.action ?? null,
+            fetchReason,
+            requestedForceLive: input.forceLive ?? null,
+          },
+          "LISTINGS_LIVE_ATTEMPT_CAPPED",
+        );
+        const adjacentOrExpandedBlocked = blockedLiveListingsAttempts.filter((attempt) =>
+          isAdjacentOrExpandedListingsStrategy(attempt.strategy),
+        );
+        if (adjacentOrExpandedBlocked.length > 0) {
+          logger.info(
+            {
+              label: "LISTINGS_ADJACENT_YEAR_LIVE_BLOCKED",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              blockedStrategies: adjacentOrExpandedBlocked.map((attempt) => attempt.strategy),
+              sourceScreen: input.sourceScreen ?? null,
+              action: input.action ?? null,
+              fetchReason,
+            },
+            "LISTINGS_ADJACENT_YEAR_LIVE_BLOCKED",
+          );
+        }
+      }
       logMarketGateEvaluated({
         label: "LISTINGS_LIVE_FETCH_GATE_EVALUATED",
         requestId: input.requestId,
@@ -5683,7 +5848,7 @@ export class VehicleService {
         fetchReason,
         sourceScreen: input.sourceScreen ?? null,
         action: input.action ?? null,
-        forceLive: null,
+        forceLive: input.forceLive ?? null,
         cacheKey,
         familyCacheKey,
         explicitRefresh: isExplicitListingsRefresh,
@@ -5693,7 +5858,7 @@ export class VehicleService {
         fetchReason,
         sourceScreen: input.sourceScreen,
         action: input.action,
-        forceLive: null,
+        forceLive: input.forceLive,
       })
         ? providerBudgetService.evaluate({
             provider: providers.listingsProviderName,
@@ -5737,8 +5902,68 @@ export class VehicleService {
           vehicleId: lookupVehicleId,
           fetchReason,
         });
+        logger.info(
+          {
+            label: "LISTINGS_LIVE_ATTEMPT_COUNT",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            liveAttemptCount: providerListingsAttempts.length,
+            requestedAttemptCount: fallbackAttempts.length,
+            normalListingsRefresh,
+            sourceScreen: input.sourceScreen ?? null,
+            action: input.action ?? null,
+            fetchReason,
+            requestedForceLive: input.forceLive ?? null,
+          },
+          "LISTINGS_LIVE_ATTEMPT_COUNT",
+        );
         listingsWereSimulated = listingsDecision.shouldSimulateSuccess;
         for (const attempt of providerListingsAttempts) {
+          const attemptDescriptor = buildCacheDescriptor({ vehicle: attempt.vehicle });
+          const attemptCacheKey = attemptDescriptor
+            ? getListingsCacheKey(attemptDescriptor, { zip: input.zip, radiusMiles: attempt.radiusMiles })
+            : cacheKey;
+          if (normalListingsRefresh && attemptCacheKey && providers.listingsProviderName === "marketcheck") {
+            const cachedAttempt = await repositories.listingsCache.findByCacheKey(attemptCacheKey).catch(() => null);
+            if (cachedAttempt && isFresh(cachedAttempt.expiresAt, currentIso) && cachedAttempt.responseJson.isEmpty) {
+              await repositories.listingsCache.markAccessed(attemptCacheKey, currentIso).catch(() => undefined);
+              await writeUsageLog({
+                provider: cachedAttempt.provider,
+                endpointType: "listings",
+                eventType: "empty_hit",
+                cacheKey: attemptCacheKey,
+                requestSummary: {
+                  ...input,
+                  selectedLiveStrategy: attempt.strategy,
+                  selectedTrim: attempt.vehicle.trim || null,
+                },
+                responseSummary: { count: 0, expiresAt: cachedAttempt.expiresAt },
+              });
+              logger.info(
+                {
+                  label: "LISTINGS_ZERO_CACHE_RESPECTED",
+                  requestId: input.requestId,
+                  vehicleId: lookupVehicleId,
+                  cacheKey: attemptCacheKey,
+                  strategy: attempt.strategy,
+                  year: attempt.vehicle.year,
+                  make: attempt.vehicle.make,
+                  model: attempt.vehicle.model,
+                  trim: attempt.vehicle.trim || null,
+                  zip: input.zip,
+                  radiusMiles: attempt.radiusMiles,
+                  reason: "normal-listings-refresh-zero-result-cache",
+                },
+                "LISTINGS_ZERO_CACHE_RESPECTED",
+              );
+              liveListingsAttempts.push({
+                strategy: attempt.strategy,
+                returnedCount: 0,
+                believableCount: 0,
+              });
+              continue;
+            }
+          }
           logger.info(
             {
               label: "LISTINGS_FALLBACK_ATTEMPT",
@@ -5758,7 +5983,7 @@ export class VehicleService {
             requestId: input.requestId,
             endpointType: "listings",
             vehicleId: lookupVehicleId,
-            cacheKey,
+            cacheKey: attemptCacheKey,
             strategy: attempt.strategy,
             reason: fetchReason,
             year: attempt.vehicle.year,
@@ -5814,7 +6039,7 @@ export class VehicleService {
                   allowLive,
                   action: input.action ?? "listingsRefresh",
                   vehicleId: lookupVehicleId,
-                  cacheKey,
+                  cacheKey: attemptCacheKey,
                   year: attempt.vehicle.year,
                   make: attempt.vehicle.make,
                   model: attempt.vehicle.model,
@@ -5843,8 +6068,10 @@ export class VehicleService {
                   requestId: input.requestId,
                   reason: fetchReason,
                   allowLive,
+                  forceLive: input.forceLive ?? null,
                   action: input.action ?? "listingsRefresh",
                   vehicleId: lookupVehicleId,
+                  cacheKey: attemptCacheKey,
                   year: attempt.vehicle.year,
                   make: attempt.vehicle.make,
                   model: attempt.vehicle.model,
@@ -5871,6 +6098,7 @@ export class VehicleService {
                 }
                 throw error;
               });
+          liveListingsProviderAttempted = true;
           logger.info(
             {
               label: "LISTINGS_PROVIDER_RESULT_COUNT",
@@ -6033,7 +6261,7 @@ export class VehicleService {
           "FALLBACK_USED",
         );
       }
-      if (listingsDecision.allowLiveProvider && descriptor && cacheKey && providers.listingsProviderName === "marketcheck") {
+      if (liveListingsProviderAttempted && listingsDecision.allowLiveProvider && descriptor && cacheKey && providers.listingsProviderName === "marketcheck") {
         await repositories.listingsCache.upsert(
           createListingsCacheRow({
             descriptor,

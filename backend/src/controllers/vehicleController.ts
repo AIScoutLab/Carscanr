@@ -338,6 +338,7 @@ export class VehicleController {
   getListings = async (req: Request, res: Response) => {
     try {
       const descriptor = readLookupDescriptor(req.query);
+      const forceLive = readOptionalBoolean(req.query.forceLive);
       logger.info(
         {
           label: "FORSALE_PIPELINE_START",
@@ -396,6 +397,7 @@ export class VehicleController {
         fetchReason: typeof req.query.fetchReason === "string" ? req.query.fetchReason : undefined,
         sourceScreen: typeof req.query.sourceScreen === "string" ? req.query.sourceScreen : undefined,
         action: typeof req.query.action === "string" ? req.query.action : undefined,
+        forceLive: forceLive ?? null,
       });
       return sendSuccess(res, result.data, {
         count: result.data.length,

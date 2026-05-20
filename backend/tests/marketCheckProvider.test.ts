@@ -434,6 +434,58 @@ describe("MarketCheck provider request guards", () => {
     assert.equal(fetchCalls, 1);
   });
 
+  test("normal listings refresh respects zero-result cache even when forceLive is sent", async () => {
+    let fetchCalls = 0;
+    global.fetch = (async () => {
+      fetchCalls += 1;
+      return createJsonResponse({
+        listings: [],
+        stats: {},
+      });
+    }) as typeof fetch;
+
+    const provider = new MarketCheckVehicleDataProvider();
+    const input = {
+      vehicleId: "2014-toyota-4runner-base",
+      vehicle: {
+        id: "2014-toyota-4runner-base",
+        vin: null,
+        year: 2014,
+        make: "Toyota",
+        model: "4Runner",
+        trim: "",
+        bodyStyle: "SUV",
+        vehicleType: "car" as const,
+        msrp: 0,
+        engine: "",
+        horsepower: null,
+        torque: "",
+        transmission: "",
+        drivetrain: "",
+        mpgOrRange: "",
+        colors: [],
+      },
+      zip: "60563",
+      radiusMiles: 100,
+      requestMeta: {
+        requestId: "req-zero-listings-cache",
+        cacheKey: "listings:2014:toyota:4runner:any:60563:100",
+        allowLive: true,
+        forceLive: true,
+        reason: "user_requested_listings_refresh",
+        sourceScreen: "listingsScreen",
+        action: "listingsRefresh",
+      },
+    };
+
+    const first = await provider.getListings(input);
+    const second = await provider.getListings(input);
+
+    assert.equal(first.length, 0);
+    assert.equal(second.length, 0);
+    assert.equal(fetchCalls, 1);
+  });
+
   test("scan-tagged requests never make outbound MarketCheck calls", async () => {
     let fetchCalls = 0;
     global.fetch = (async () => {

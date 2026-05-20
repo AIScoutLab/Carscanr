@@ -7,6 +7,7 @@ import {
   createListingsCacheRow,
   getFamilyValuesCacheKey,
   getFamilyListingsCacheKey,
+  getListingsCacheKey,
 } from "../src/lib/providerCache.js";
 import { setProviders } from "../src/lib/providerRegistry.js";
 import { setRepositories } from "../src/lib/repositoryRegistry.js";
@@ -1345,9 +1346,10 @@ describe("bootstrap cost control", () => {
       radiusMiles: 50,
       mileage: 18400,
       allowLive: true,
-      fetchReason: "user_requested_listings_refresh",
-      sourceScreen: "listingsScreen",
-      action: "listingsRefresh",
+      forceLive: true,
+      fetchReason: "debug_force_listings_refresh",
+      sourceScreen: "debugListings",
+      action: "forceListingsRefresh",
     });
 
     assert.equal(result.data.length, 1);
@@ -1404,9 +1406,10 @@ describe("bootstrap cost control", () => {
       radiusMiles: 50,
       mileage: 18400,
       allowLive: true,
-      fetchReason: "user_requested_listings_refresh",
-      sourceScreen: "listingsScreen",
-      action: "listingsRefresh",
+      forceLive: true,
+      fetchReason: "debug_force_listings_refresh",
+      sourceScreen: "debugListings",
+      action: "forceListingsRefresh",
     });
 
     assert.equal(result.data.length, 1);
@@ -1915,11 +1918,127 @@ describe("bootstrap cost control", () => {
       action: "listingsRefresh",
     });
 
-    assert.equal(attempts.length > 0, true);
+    assert.equal(attempts.length, 1);
     assert.equal(attempts.every((attempt) => attempt.model === "4Runner"), true);
     assert.equal(attempts.some((attempt) => attempt.model === "4"), false);
     assert.equal(attempts.some((attempt) => attempt.year === 2011 && attempt.radiusMiles === 100), true);
-    assert.equal(attempts.some((attempt) => attempt.radiusMiles === 250), true);
+    assert.equal(attempts.some((attempt) => attempt.radiusMiles === 250), false);
+  });
+
+  test("normal listings refresh drops generic Base trim and caps live provider calls", async () => {
+    const attempts: Array<{ model: string; year: number; radiusMiles: number | null; trim: string | null }> = [];
+    setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            radiusMiles: input.radiusMiles ?? input.requestMeta?.radiusMiles ?? null,
+            trim: input.vehicle?.trim ?? null,
+          });
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    await service.getListings({
+      vehicleId: "2011-toyota-4runner-base",
+      descriptor: {
+        year: 2011,
+        make: "Toyota",
+        model: "4Runner",
+        trim: "Base",
+        vehicleType: "car",
+        bodyStyle: "SUV",
+        normalizedModel: "4runner",
+      },
+      zip: "60563",
+      radiusMiles: 100,
+      mileage: 98000,
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+    });
+
+    assert.deepEqual(attempts, [
+      {
+        model: "4Runner",
+        year: 2011,
+        radiusMiles: 100,
+        trim: "",
+      },
+    ]);
+  });
+
+  test("normal listings refresh respects cached zero-result listing response", async () => {
+    const descriptor = {
+      year: 2011,
+      make: "Toyota",
+      model: "4Runner",
+      trim: "",
+      vehicleType: "car" as const,
+      normalizedMake: "toyota",
+      normalizedModel: "4runner",
+      normalizedTrim: "",
+    };
+    const testRepositories = createTestRepositories({ vehicles: [], valuations: [], listings: [] });
+    testRepositories.state.listingsCache.push(
+      createListingsCacheRow({
+        descriptor,
+        cacheKey: getListingsCacheKey(descriptor, {
+          zip: "60563",
+          radiusMiles: 100,
+        }),
+        provider: "marketcheck",
+        zip: "60563",
+        radiusMiles: 100,
+        payload: [],
+      }),
+    );
+    setRepositories(testRepositories.repositories);
+
+    let providerCalls = 0;
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings() {
+          providerCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getListings({
+      vehicleId: "2011-toyota-4runner-base",
+      descriptor: {
+        year: 2011,
+        make: "Toyota",
+        model: "4Runner",
+        trim: "Base",
+        vehicleType: "car",
+        bodyStyle: "SUV",
+        normalizedModel: "4runner",
+      },
+      zip: "60563",
+      radiusMiles: 100,
+      mileage: 98000,
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+    });
+
+    assert.equal(providerCalls, 0);
+    assert.equal(result.data.length, 0);
   });
 
   test("Toyota 4Runner value prefers real listing comps over modeled_fallback", async () => {
@@ -2075,7 +2194,7 @@ describe("bootstrap cost control", () => {
     assert.notEqual(result.data.privateParty, 7000);
   });
 
-  test("MarketCheck explicit listings refresh bypasses zero cache responses", async () => {
+  test("MarketCheck normal listings refresh respects zero cache responses", async () => {
     const originalFetch = globalThis.fetch;
     const originalApiKey = env.MARKETCHECK_API_KEY;
     const originalBaseUrl = env.MARKETCHECK_BASE_URL;
@@ -2128,7 +2247,7 @@ describe("bootstrap cost control", () => {
       await provider.getListings({ vehicleId: vehicle.id, vehicle, zip: "60563", radiusMiles: 100, requestMeta });
       await provider.getListings({ vehicleId: vehicle.id, vehicle, zip: "60563", radiusMiles: 100, requestMeta });
 
-      assert.equal(fetchCalls, 2);
+      assert.equal(fetchCalls, 1);
     } finally {
       globalThis.fetch = originalFetch;
       env.MARKETCHECK_API_KEY = originalApiKey;
@@ -2136,7 +2255,7 @@ describe("bootstrap cost control", () => {
     }
   });
 
-  test("explicit listings refresh for non-specialty models broadens from trim/body variant to family model and adjacent year", async () => {
+  test("developer listings refresh can broaden from trim/body variant to family model and adjacent year", async () => {
     const testRepositories = createTestRepositories({
       vehicles: [
         {
@@ -2207,9 +2326,10 @@ describe("bootstrap cost control", () => {
       radiusMiles: 50,
       mileage: 32000,
       allowLive: true,
-      fetchReason: "user_requested_listings_refresh",
-      sourceScreen: "listingsScreen",
-      action: "listingsRefresh",
+      forceLive: true,
+      fetchReason: "debug_force_listings_refresh",
+      sourceScreen: "debugListings",
+      action: "forceListingsRefresh",
     });
 
     assert.equal(result.data.length, 1);
@@ -2450,7 +2570,7 @@ describe("bootstrap cost control", () => {
     assert.equal(second.data.conditionValues?.excellent.privateParty != null, true);
   });
 
-  test("user requested listings refresh keeps provider traffic in listings only while broadening through fallback attempts", async () => {
+  test("user requested listings refresh keeps provider traffic in listings only and caps live fallback attempts", async () => {
     env.ENABLE_LIVE_PROVIDER_CALLS = true;
     let listingsProviderCalls = 0;
     let valueProviderCalls = 0;
@@ -2511,11 +2631,10 @@ describe("bootstrap cost control", () => {
       action: "listingsRefresh",
     });
 
-    assert.ok(listingsProviderCalls >= 2);
+    assert.equal(listingsProviderCalls, 1);
     assert.equal(valueProviderCalls, 0);
     assert.equal(specsProviderCalls, 0);
-    assert.equal(providerTrims[0], "Base");
-    assert.ok(providerTrims.slice(1).every((trim) => trim === "" || trim == null));
+    assert.equal(providerTrims[0], "");
   });
 
   test("scanning 3 cars makes 0 MarketCheck calls by default", async () => {

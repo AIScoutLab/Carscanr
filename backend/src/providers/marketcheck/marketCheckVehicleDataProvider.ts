@@ -223,6 +223,9 @@ function shouldBypassZeroResultCache(operation: InventoryOperation, requestMeta?
   if (operation === "values") {
     return isDeveloperForceLiveMarketCheckRequest(requestMeta);
   }
+  if (operation === "listings") {
+    return isDeveloperForceLiveMarketCheckRequest(requestMeta);
+  }
   return isExplicitMarketCheckActionAllowed(operation, requestMeta);
 }
 
@@ -849,6 +852,20 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
               reason: "normal-value-refresh-zero-result-cache",
             },
             "VALUE_ZERO_CACHE_RESPECTED",
+          );
+        }
+        if (typedOperation === "listings" && cachedResultCount === 0) {
+          logger.info(
+            {
+              label: "LISTINGS_ZERO_CACHE_RESPECTED",
+              ...requestContext,
+              cacheHit: true,
+              statusCode: cached.statusCode,
+              resultCount: cachedResultCount,
+              requestedForceLive: requestMeta?.forceLive ?? null,
+              reason: "normal-listings-refresh-zero-result-cache",
+            },
+            "LISTINGS_ZERO_CACHE_RESPECTED",
           );
         }
         logger.info(
