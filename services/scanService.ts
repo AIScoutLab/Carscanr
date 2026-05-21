@@ -3,7 +3,7 @@ import { FREE_PRO_UNLOCKS_TOTAL, normalizeFreeUnlockCounter } from "@/constants/
 import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { getVehicleImage } from "@/constants/vehicleImages";
 import { applyPlanOverride } from "@/features/subscription/planOverride";
-import { sampleScanPhotos } from "@/features/scan/samplePhotos";
+import { findSampleScanPhoto, getSampleVehicleRouteId } from "@/features/scan/samplePhotos";
 import { getApiBaseUrlOrThrow } from "@/lib/env";
 import { isProPlan } from "@/lib/subscription";
 import { authService } from "@/services/authService";
@@ -91,7 +91,7 @@ type BackendScanResponse = {
   id: string;
   userId: string;
   imageUrl: string;
-  detectedVehicleType: "car" | "motorcycle";
+  detectedVehicleType: "car" | "truck" | "motorcycle";
   confidence: number;
   createdAt: string;
   normalizedResult: {
@@ -194,45 +194,42 @@ function getRecentScanDisplayName(scan: ScanResult) {
 }
 
 function createInMemorySampleResult(sampleId: string): ScanResult {
-  const sample = sampleScanPhotos.find((entry) => entry.id === sampleId);
+  const sample = findSampleScanPhoto(sampleId);
   if (!sample) {
     throw new Error("Sample photo not found.");
   }
 
-  const titleMatch = sample.title.match(/^(\d{4})\s+(.+)$/);
-  const year = titleMatch ? Number(titleMatch[1]) : 0;
-  const label = titleMatch ? titleMatch[2] : sample.title;
-  const parts = label.split(" ");
-  const make = parts[0] ?? "Unknown";
-  const model = parts.slice(1).join(" ") || "Vehicle";
-  const vehicleId = `${sample.id}-sample`;
+  const vehicleId = getSampleVehicleRouteId(sample.id);
+  const thumbnailUrl = sample.previewUrl;
 
   return {
     id: `sample-${sample.id}`,
     imageUri: sample.previewUrl,
     identifiedVehicle: {
       id: vehicleId,
-      year,
-      make,
-      model,
-      trim: "",
+      year: sample.year,
+      make: sample.make,
+      model: sample.model,
+      trim: sample.trim,
+      source: "sample_vehicle",
       confidence: 0.92,
-      thumbnailUrl: getVehicleImage(vehicleId),
+      thumbnailUrl,
     },
     candidates: [
       {
         id: vehicleId,
-        year,
-        make,
-        model,
-        trim: "",
+        year: sample.year,
+        make: sample.make,
+        model: sample.model,
+        trim: sample.trim,
+        source: "sample_vehicle",
         confidence: 0.92,
-        thumbnailUrl: getVehicleImage(vehicleId),
+        thumbnailUrl,
       },
     ],
-    source: "visual_candidate",
+    source: "sample_vehicle",
     confidenceScore: 0.92,
-    detectedVehicleType: model.toLowerCase().includes("glide") ? "motorcycle" : "car",
+    detectedVehicleType: sample.specs.vehicleType,
     limitedPreview: true,
     scannedAt: new Date().toISOString(),
     quickResult: true,
@@ -242,8 +239,9 @@ function createInMemorySampleResult(sampleId: string): ScanResult {
     dataConfidence: 0.7,
     payloadStrength: "usable",
     enrichmentMode: "fallback_only",
-    unlockEligible: true,
-    unlockRecommendationReason: null,
+    unlockEligible: false,
+    unlockRecommendationReason: "sample_vehicle_demo",
+    isSampleVehicle: true,
   };
 }
 

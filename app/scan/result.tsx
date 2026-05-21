@@ -40,7 +40,7 @@ type NormalizedVehicle = {
   make: string;
   model: string;
   trim: string | null;
-  source: "visual_candidate" | "ocr_override" | "visual_override" | null;
+  source: "visual_candidate" | "ocr_override" | "visual_override" | "sample_vehicle" | null;
   displayTrimLabel: string | null;
   displayTitleLabel: string | null;
   confidence: number | null;
@@ -60,9 +60,9 @@ type RenderCandidate = NormalizedVehicle & { renderKey: string };
 type NormalizedScan = {
   id: string | null;
   imageUri: string | null;
-  source: "visual_candidate" | "ocr_override" | "visual_override" | null;
+  source: "visual_candidate" | "ocr_override" | "visual_override" | "sample_vehicle" | null;
   confidenceScore: number | null;
-  detectedVehicleType: "car" | "motorcycle" | null;
+  detectedVehicleType: "car" | "truck" | "motorcycle" | null;
   candidates: NormalizedVehicle[];
   identifiedVehicle: NormalizedVehicle;
   scannedAt: string | null;
@@ -75,6 +75,7 @@ type NormalizedScan = {
   enrichmentMode: "exact" | "adjacent_year" | "generation_fallback" | "fallback_only" | null;
   unlockEligible: boolean | null;
   unlockRecommendationReason: string | null;
+  isSampleVehicle: boolean;
   previewSpecFacts: string[];
   visibleClues: string[];
 };
@@ -150,15 +151,24 @@ function normalizeScanForResult(raw: ScanResult): NormalizedScan {
     id: typeof raw.id === "string" ? raw.id : null,
     imageUri: typeof raw.imageUri === "string" ? raw.imageUri : null,
     source:
-      raw.source === "ocr_override"
-        ? "ocr_override"
-        : raw.source === "visual_override"
-          ? "visual_override"
-          : raw.source === "visual_candidate"
-            ? "visual_candidate"
-            : null,
+      raw.source === "sample_vehicle"
+        ? "sample_vehicle"
+        : raw.source === "ocr_override"
+          ? "ocr_override"
+          : raw.source === "visual_override"
+            ? "visual_override"
+            : raw.source === "visual_candidate"
+              ? "visual_candidate"
+              : null,
     confidenceScore: safeNumber(raw.confidenceScore),
-    detectedVehicleType: raw.detectedVehicleType === "motorcycle" ? "motorcycle" : raw.detectedVehicleType === "car" ? "car" : null,
+    detectedVehicleType:
+      raw.detectedVehicleType === "motorcycle"
+        ? "motorcycle"
+        : raw.detectedVehicleType === "truck"
+          ? "truck"
+          : raw.detectedVehicleType === "car"
+            ? "car"
+            : null,
     candidates,
     identifiedVehicle: identified,
     scannedAt: typeof raw.scannedAt === "string" ? raw.scannedAt : null,
@@ -183,6 +193,7 @@ function normalizeScanForResult(raw: ScanResult): NormalizedScan {
         : null,
     unlockEligible: typeof raw.unlockEligible === "boolean" ? raw.unlockEligible : null,
     unlockRecommendationReason: typeof raw.unlockRecommendationReason === "string" ? raw.unlockRecommendationReason : null,
+    isSampleVehicle: raw.isSampleVehicle === true || raw.source === "sample_vehicle",
     previewSpecFacts: [],
     visibleClues: Array.isArray((raw as any)?.normalizedResult?.visible_clues)
       ? (raw as any).normalizedResult.visible_clues.filter((clue: unknown): clue is string => typeof clue === "string" && clue.trim().length > 0)
@@ -192,7 +203,7 @@ function normalizeScanForResult(raw: ScanResult): NormalizedScan {
 
 async function buildPreviewSpecFacts(
   vehicle: NormalizedVehicle,
-  detectedVehicleType: "car" | "motorcycle" | null,
+  detectedVehicleType: "car" | "truck" | "motorcycle" | null,
 ): Promise<string[]> {
   const [horsepowerSupport, familySupport] = await Promise.all([
     offlineCanonicalService.resolveHorsepowerSupport({
@@ -686,7 +697,7 @@ function resolveDisplayTrimLabel(input: {
 
 async function enrichVehicleWithCanonicalGrounding(
   vehicle: NormalizedVehicle,
-  detectedVehicleType: "car" | "motorcycle" | null,
+  detectedVehicleType: "car" | "truck" | "motorcycle" | null,
 ): Promise<NormalizedVehicle> {
   const grounding = await offlineCanonicalService.resolveVehiclePresentation({
     id: vehicle.id,
@@ -1141,6 +1152,7 @@ export default function ScanResultScreen() {
   let insightLine = "Solid all-around vehicle.";
   const isCatalogMatched = Boolean(bestMatch.id);
   const isQuickResult = normalized?.quickResult === true;
+  const isSampleScan = normalized?.isSampleVehicle === true || normalized?.source === "sample_vehicle";
   const isPro = isProPlan(usage?.plan);
   const displayConfidenceScore = safeNumber(normalized?.confidenceScore, 0) ?? 0;
   const isVisualOverride = normalized?.source === "visual_override" || bestMatch.source === "visual_override";
@@ -1169,7 +1181,9 @@ export default function ScanResultScreen() {
   const unlockedForApproximateDetail = approximateUnlockId
     ? isVehicleUnlocked(approximateUnlockId) || (bestMatchSoftUnlockId ? isVehicleUnlocked(bestMatchSoftUnlockId) : false)
     : false;
-  const hasFullAccess = isCatalogMatched
+  const hasFullAccess = isSampleScan
+    ? true
+    : isCatalogMatched
     ? isPro || unlockedForVehicle
     : isHighConfidenceVisualOverride
       ? isPro || unlockedForApproximateDetail
@@ -1223,6 +1237,8 @@ export default function ScanResultScreen() {
     confidence: `${vehicle.confidence ?? displayConfidenceScore}`,
     trustedCase: isHighConfidenceTrustedVisualOverride ? "1" : "0",
     resultSource: vehicle.source ?? normalized?.source ?? "",
+    isSampleVehicle: isSampleScan ? "1" : "0",
+    source: isSampleScan ? "sample_vehicle" : (vehicle.source ?? normalized?.source ?? ""),
   });
   const buildEstimateDetailParams = (vehicle: NormalizedVehicle) => ({
     id: buildEstimateDetailId(normalized?.id, vehicle),
@@ -1237,7 +1253,7 @@ export default function ScanResultScreen() {
         kind: "grounded" as const,
         params: {
           id: vehicle.id,
-          unlockId: buildVehicleUnlockId({ vehicleId: vehicle.id }),
+          unlockId: isSampleScan ? "" : buildVehicleUnlockId({ vehicleId: vehicle.id }),
           imageUri: normalized?.imageUri ?? "",
           scanId: normalized?.id ?? "",
           ...buildDisplayIdentityParams(vehicle),
@@ -1269,7 +1285,7 @@ export default function ScanResultScreen() {
       params: null,
     };
   };
-  const requiresApproximateUnlock = !isCatalogMatched && isHighConfidenceVisualOverride;
+  const requiresApproximateUnlock = !isSampleScan && !isCatalogMatched && isHighConfidenceVisualOverride;
   const openVehicleDetail = (vehicle: NormalizedVehicle, source: string) => {
     const target = getDetailTarget(vehicle);
     console.log("[tap] result-open-request", {
@@ -1375,7 +1391,7 @@ export default function ScanResultScreen() {
     openVehicleDetail(bestMatch, "open-full-detail");
   };
   const handlePrimaryResultAction = async () => {
-    if (hasFullAccess) {
+    if (isSampleScan || hasFullAccess) {
       handleOpenFullDetail();
       return;
     }

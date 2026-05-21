@@ -69,7 +69,7 @@ test("modeled fallback value maps through the frontend as limited value, not una
   const serviceSource = fs.readFileSync(vehicleServicePath, "utf8");
   const screenSource = fs.readFileSync(screenPath, "utf8");
 
-  assert.match(serviceSource, /valuationSource\?: "provider" \| "cache" \| "listing_comps" \| "modeled_fallback" \| "unavailable" \| null;/);
+  assert.match(serviceSource, /valuationSource\?: "provider" \| "cache" \| "listing_comps" \| "modeled_fallback" \| "sample_demo" \| "unavailable" \| null;/);
   assert.match(serviceSource, /valuationSource: valuation\.valuationSource \?\? "provider"/);
   assert.match(serviceSource, /VALUE_RESPONSE_MAPPED/);
   assert.match(serviceSource, /valuationSource: mapped\.valuationSource \?\? null/);

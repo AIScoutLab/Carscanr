@@ -1130,7 +1130,7 @@ function shouldShowEstimatedTrim(input: {
 }
 
 export default function VehicleDetailScreen() {
-  const { id, imageUri, scanId, estimate, titleLabel, yearLabel, make, model, trimLabel, vehicleType, confidence, unlockId, garageSource, reopenedSource, trustedCase, resultSource } = useLocalSearchParams<{
+  const { id, imageUri, scanId, estimate, titleLabel, yearLabel, make, model, trimLabel, vehicleType, confidence, unlockId, garageSource, reopenedSource, trustedCase, resultSource, isSampleVehicle: sampleVehicleParam, source: routeSource } = useLocalSearchParams<{
     id: string;
     imageUri?: string;
     scanId?: string;
@@ -1147,6 +1147,8 @@ export default function VehicleDetailScreen() {
     reopenedSource?: string;
     trustedCase?: string;
     resultSource?: string;
+    isSampleVehicle?: string;
+    source?: string;
   }>();
   const [vehicle, setVehicle] = useState<VehicleRecord | null>(null);
   const [valuation, setValuation] = useState<ValuationResult>(createEmptyValuation());
@@ -1200,6 +1202,12 @@ export default function VehicleDetailScreen() {
   } = useSubscription();
   const unlockFailureTitle = (reason?: string) => (reason === "payload_too_thin" ? "Unlock protected" : "Unlock unavailable");
   const isEstimateMode = estimate === "1" || id.startsWith("estimate:");
+  const isSampleDetail =
+    sampleVehicleParam === "1" ||
+    routeSource === "sample_vehicle" ||
+    resultSource === "sample_vehicle" ||
+    id.endsWith("-sample") ||
+    vehicle?.isSampleVehicle === true;
   const showQaDebugStrip = mobileEnv.appEnv !== "production" || mobileEnv.showQaDebug === "1";
   const isPro = isProPlan(usage?.plan);
   const resolvedUnlockId =
@@ -1239,7 +1247,7 @@ export default function VehicleDetailScreen() {
     : resolvedSoftUnlockId
       ? isVehicleUnlocked(resolvedSoftUnlockId)
       : false;
-  const accessState: "locked" | "unlocked" = isPro || unlockedForVehicle ? "unlocked" : "locked";
+  const accessState: "locked" | "unlocked" = isSampleDetail || isPro || unlockedForVehicle ? "unlocked" : "locked";
   const hasFullAccess = accessState === "unlocked";
   const isLocked = accessState === "locked";
   const trustedResult = Boolean(
@@ -1521,7 +1529,7 @@ export default function VehicleDetailScreen() {
   const marketAreaZipHint = zipCode
     ? "Local market pricing depends on ZIP."
     : "Enter ZIP code for local market pricing.";
-  const canRequestLiveValue = isValidMarketAreaZip(normalizeMarketAreaZip(zipCode)) && mileage.trim().length > 0 && normalizeCondition(condition).length > 0;
+  const canRequestLiveValue = !isSampleDetail && isValidMarketAreaZip(normalizeMarketAreaZip(zipCode)) && mileage.trim().length > 0 && normalizeCondition(condition).length > 0;
   const valueStatusCardCopy = buildValueStatusCardCopy({
     valuation: displayValuation,
     specialtyValueCopy,
@@ -1551,6 +1559,19 @@ export default function VehicleDetailScreen() {
   }, [id, scanId, zipCode, zipStorageDebug?.storageKey, zipStorageDebug?.storageVersion, zipStorageDebug?.wasLegacy60610Ignored]);
   const requestExplicitLiveValue = useCallback(() => {
     if (!vehicle || !valueLookupInput || valuationLoading) {
+      return;
+    }
+    if (isSampleDetail) {
+      console.log("[vehicle-detail] SAMPLE_VEHICLE_LIVE_REFRESH_BLOCKED", {
+        routeId: id,
+        scanId: typeof scanId === "string" ? scanId : null,
+        vehicleId: vehicle.id,
+        section: "value",
+        providerCall: false,
+      });
+      applyValuationUpdate(vehicle.valuation ?? displayValuation, "sample-vehicle-value-refresh", {
+        allowReplacement: true,
+      });
       return;
     }
 
@@ -1747,9 +1768,11 @@ export default function VehicleDetailScreen() {
   }, [
     applyValuationUpdate,
     condition,
+    displayValuation,
     estimateSupport?.familyLabel,
     estimateSupport?.yearRangeLabel,
     isEstimateMode,
+    isSampleDetail,
     mileage,
     valueLookupInput,
     vehicle,
@@ -1759,6 +1782,23 @@ export default function VehicleDetailScreen() {
   ]);
   const requestExplicitLiveListings = useCallback(() => {
     if (!vehicle || !valueLookupInput || listingsRefreshLoading) {
+      return;
+    }
+    if (isSampleDetail) {
+      console.log("[vehicle-detail] SAMPLE_VEHICLE_LIVE_REFRESH_BLOCKED", {
+        routeId: id,
+        scanId: typeof scanId === "string" ? scanId : null,
+        vehicleId: vehicle.id,
+        section: "listings",
+        providerCall: false,
+      });
+      setListingsDebugMeta({
+        sourceLabel: "Sample listings",
+        rawCount: vehicle.listings.length,
+        believableCount: vehicle.listings.filter(isBelievableListing).length,
+        mode: "none",
+        fallbackReason: "sample_vehicle_demo",
+      });
       return;
     }
 
@@ -1895,7 +1935,7 @@ export default function VehicleDetailScreen() {
       .finally(() => {
         setListingsRefreshLoading(false);
       });
-  }, [applyValuationUpdate, condition, displayValuation, id, mileage, scanId, valueLookupInput, vehicle, zipCode, zipSource]);
+  }, [applyValuationUpdate, condition, displayValuation, id, isSampleDetail, mileage, scanId, valueLookupInput, vehicle, zipCode, zipSource]);
 
   useEffect(() => {
     if (__DEV__) {
@@ -2029,6 +2069,81 @@ export default function VehicleDetailScreen() {
     setHorsepowerSupport(null);
     setError(null);
     let active = true;
+
+    if (isSampleDetail) {
+      const hydrateSampleVehicle = async () => {
+        const sampleVehicle = vehicleService.getSampleVehicleById(id) ?? await vehicleService.getOfflineVehicleById(id);
+        if (!active) {
+          return;
+        }
+        if (!sampleVehicle) {
+          console.warn("[vehicle-detail] SAMPLE_VEHICLE_MISSING_LOCAL_DATA", {
+            routeId: id,
+            scanId: typeof scanId === "string" ? scanId : null,
+            backendLookupRequired: false,
+          });
+          setVehicle(null);
+          setError("Sample vehicle data is unavailable.");
+          setLoading(false);
+          return;
+        }
+        console.log("[vehicle-detail] SAMPLE_VEHICLE_LOCAL_RENDERED", {
+          routeId: id,
+          scanId: typeof scanId === "string" ? scanId : null,
+          vehicleId: sampleVehicle.id,
+          source: sampleVehicle.source ?? "sample_vehicle",
+          backendLookupRequired: false,
+          unlockRequired: false,
+          providerCallsBlocked: true,
+        });
+        setVehicle(sampleVehicle);
+        applyValuationUpdate(sampleVehicle.valuation ?? createEmptyValuation(), "sample-vehicle-local", {
+          allowReplacement: true,
+        });
+        setValueDebugStatus(hasStructuredValueEvidence(sampleVehicle.valuation) ? "accepted" : "idle");
+        setMileage(String(sampleVehicle.valuation?.listingCount ? sampleVehicle.listings[0]?.mileage?.replace(/[^\d]/g, "") || defaultMileage : defaultMileage));
+        setCondition(defaultCondition);
+        setListingsDebugMeta({
+          sourceLabel: "Sample listings",
+          rawCount: sampleVehicle.listings.length,
+          believableCount: sampleVehicle.listings.filter(isBelievableListing).length,
+          mode: "none",
+          fallbackReason: "sample_vehicle_demo",
+        });
+        setEstimateSupport({
+          groundedVehicleId: null,
+          groundedVehicleDescriptor: buildDetailLookupDescriptor(sampleVehicle),
+          groundedYear: sampleVehicle.year,
+          familyLabel: `${sampleVehicle.make} ${sampleVehicle.model}`.trim(),
+          yearRangeLabel: `${sampleVehicle.year}`,
+          specsSourceLabel: "Specs from bundled sample catalog.",
+          marketSourceLabel: "Demo data — not live market data.",
+          groundedMatchType: "sample_vehicle",
+          candidateCount: 1,
+          msrpRangeLabel: null,
+          hasSpecsData: true,
+          hasMarketData: true,
+          hasListingsData: true,
+          trustedResult: true,
+        });
+        previousConditionRef.current = normalizeCondition(defaultCondition);
+        previousValueRef.current = JSON.stringify(sampleVehicle.valuation ?? createEmptyValuation());
+        setError(null);
+        setLoading(false);
+      };
+
+      hydrateSampleVehicle().catch((err) => {
+        if (!active) {
+          return;
+        }
+        setVehicle(null);
+        setError(err instanceof Error ? err.message : "Sample vehicle data is unavailable.");
+        setLoading(false);
+      });
+      return () => {
+        active = false;
+      };
+    }
 
     if (isEstimateMode) {
       const hydrateEstimateVehicle = async () => {
@@ -2617,7 +2732,7 @@ export default function VehicleDetailScreen() {
     return () => {
       active = false;
     };
-  }, [accessState, confidence, id, isEstimateMode, make, model, scanId, titleLabel, trimLabel, vehicleType, yearLabel]);
+  }, [accessState, applyValuationUpdate, confidence, id, isEstimateMode, isSampleDetail, make, model, scanId, titleLabel, trimLabel, vehicleType, yearLabel]);
 
   useEffect(() => {
     if (typeof imageUri === "string" && imageUri.trim().length > 0) {
@@ -3678,7 +3793,7 @@ export default function VehicleDetailScreen() {
       </Animated.View>
       {__DEV__ ? <Text style={styles.imageDebug}>Image source: {selectedImageSourceLabel}</Text> : null}
       <Animated.View style={[styles.contentStack, { opacity: contentOpacity, transform: [{ translateY: contentTranslate }] }]}>
-      {usage ? (
+      {usage && !isSampleDetail ? (
         <ScanUsageMeter
           status={usage}
           mode="unlocks"
@@ -3691,7 +3806,7 @@ export default function VehicleDetailScreen() {
         {isEstimateMode ? <Text style={styles.estimateEyebrow}>Vehicle details</Text> : null}
         {feedbackMessage ? <Text style={styles.feedbackNotice}>{feedbackMessage}</Text> : null}
         {errorMessage ? <Text style={styles.errorNotice}>{errorMessage}</Text> : null}
-        {!isEstimateMode ? <Text style={styles.headerKicker}>Performance intelligence summary</Text> : null}
+        {!isEstimateMode ? <Text style={styles.headerKicker}>{isSampleDetail ? "Vehicle summary" : "Vehicle summary"}</Text> : null}
         <Text style={styles.subtitle}>{estimateSubtitle || unlockedDetailSubtitle}</Text>
         {isEstimateMode ? (
           <>
@@ -4006,49 +4121,62 @@ export default function VehicleDetailScreen() {
         ) : (
         <>
           <View style={styles.sectionCard}>
-            <SectionHeader title="Value inputs" subtitle="Tune the estimate to your market and condition. Local market pricing depends on ZIP." />
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Market area ZIP</Text>
-              <TextInput
-                style={styles.input}
-                value={zipCode}
-                onChangeText={handleZipCodeChange}
-                autoCapitalize="characters"
-                keyboardType="number-pad"
-                maxLength={5}
-                placeholder="Enter ZIP code"
-                placeholderTextColor={Colors.textMuted}
-              />
-              <Text style={styles.inputHint}>{marketAreaZipHint}</Text>
-            </View>
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Mileage</Text>
-              <TextInput
-                style={styles.input}
-                value={mileage}
-                onChangeText={setMileage}
-                keyboardType="number-pad"
-                placeholder="Mileage"
-                placeholderTextColor={Colors.textMuted}
-              />
-            </View>
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Condition</Text>
-              <View style={styles.conditionGrid}>
-                {conditionOptions.map((option) => {
-                  const active = option === condition;
-                  return (
-                    <Pressable
-                      key={option}
-                      style={[styles.conditionChip, active && styles.conditionChipActive]}
-                      onPress={() => setCondition(option)}
-                    >
-                      <Text style={[styles.conditionChipLabel, active && styles.conditionChipLabelActive]}>{option}</Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
+            <SectionHeader
+              title={isSampleDetail ? "Sample value estimate" : "Value inputs"}
+              subtitle={
+                isSampleDetail
+                  ? "Demo data — not live market data."
+                  : "Tune the estimate to your market and condition. Local market pricing depends on ZIP."
+              }
+            />
+            {isSampleDetail ? (
+              <Text style={styles.body}>This sample uses local demo value data so it never calls live valuation providers or consumes unlocks.</Text>
+            ) : (
+              <>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Market area ZIP</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={zipCode}
+                    onChangeText={handleZipCodeChange}
+                    autoCapitalize="characters"
+                    keyboardType="number-pad"
+                    maxLength={5}
+                    placeholder="Enter ZIP code"
+                    placeholderTextColor={Colors.textMuted}
+                  />
+                  <Text style={styles.inputHint}>{marketAreaZipHint}</Text>
+                </View>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Mileage</Text>
+                  <TextInput
+                    style={styles.input}
+                    value={mileage}
+                    onChangeText={setMileage}
+                    keyboardType="number-pad"
+                    placeholder="Mileage"
+                    placeholderTextColor={Colors.textMuted}
+                  />
+                </View>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Condition</Text>
+                  <View style={styles.conditionGrid}>
+                    {conditionOptions.map((option) => {
+                      const active = option === condition;
+                      return (
+                        <Pressable
+                          key={option}
+                          style={[styles.conditionChip, active && styles.conditionChipActive]}
+                          onPress={() => setCondition(option)}
+                        >
+                          <Text style={[styles.conditionChipLabel, active && styles.conditionChipLabelActive]}>{option}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
+              </>
+            )}
           </View>
           {valuationLoading ? (
             <ApproximateDataState
@@ -4087,8 +4215,8 @@ export default function VehicleDetailScreen() {
           ) : (
             <ValueEstimateCard
               result={displayValuation}
-              actionLabel="Load live market value"
-              onAction={requestExplicitLiveValue}
+              actionLabel={isSampleDetail ? null : "Load live market value"}
+              onAction={isSampleDetail ? null : requestExplicitLiveValue}
               actionDisabled={!canRequestLiveValue}
             />
           )}
@@ -4168,8 +4296,13 @@ export default function VehicleDetailScreen() {
         ) : (
         <>
           <View style={styles.sectionCard}>
+            {isSampleDetail ? (
+              <SectionHeader title="Sample listings" subtitle="Demo data — not live market data." />
+            ) : null}
             <Text style={styles.body}>
-              {isLocked
+              {isSampleDetail
+                ? "These listings are local sample comps for the showcase vehicle. They are not live market results."
+                : isLocked
                 ? "Nearby listings are shown as a preview in free mode and fully unlocked in Pro."
                 : "Nearby listings help you compare local pricing, mileage, and dealer context at a glance."}
             </Text>

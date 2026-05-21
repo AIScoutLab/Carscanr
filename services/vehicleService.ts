@@ -11,6 +11,7 @@ import {
   normalizeVehicleIdentityForRendering,
   resolveVehicleImageSource,
 } from "@/constants/vehicleImages";
+import { findSampleScanPhoto, getSampleVehicleRouteId, isSampleVehicleRouteId } from "@/features/scan/samplePhotos";
 import { apiRequest, apiRequestEnvelope } from "@/services/apiClient";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { MarketAreaZipSource } from "@/lib/marketAreaZip";
@@ -132,7 +133,7 @@ type BackendValuation = {
   generatedAt: string;
   sourceLabel?: string;
   confidenceLabel?: string;
-  valuationSource?: "provider" | "cache" | "listing_comps" | "modeled_fallback" | "unavailable" | null;
+  valuationSource?: "provider" | "cache" | "listing_comps" | "modeled_fallback" | "sample_demo" | "unavailable" | null;
   compCount?: number | null;
   confidence?: "high" | "moderate" | "limited" | "unavailable" | null;
   rangeLow?: number | null;
@@ -541,6 +542,129 @@ function createEmptyValuation(): ValuationResult {
   };
 }
 
+function buildSampleRange(value: number, spread = 0.06) {
+  const low = Math.round((value * (1 - spread)) / 50) * 50;
+  const high = Math.round((value * (1 + spread)) / 50) * 50;
+  return `${formatCurrency(low)} - ${formatCurrency(high)}`;
+}
+
+function buildSampleConditionValues(sample: NonNullable<ReturnType<typeof findSampleScanPhoto>>["demoValue"]): NonNullable<ValuationResult["conditionValues"]> {
+  const build = (multiplier: number) => {
+    const tradeIn = Math.round((sample.tradeIn * multiplier) / 50) * 50;
+    const privateParty = Math.round((sample.privateParty * multiplier) / 50) * 50;
+    const dealerRetail = Math.round((sample.dealerRetail * multiplier) / 50) * 50;
+    return {
+      tradeIn: formatCurrency(tradeIn),
+      privateParty: formatCurrency(privateParty),
+      dealerRetail: formatCurrency(dealerRetail),
+      low: formatCurrency(tradeIn),
+      median: formatCurrency(privateParty),
+      high: formatCurrency(dealerRetail),
+    };
+  };
+  return {
+    fair: build(0.92),
+    good: build(1),
+    excellent: build(1.07),
+  };
+}
+
+function buildSampleDemoValuation(sample: NonNullable<ReturnType<typeof findSampleScanPhoto>>): ValuationResult {
+  return {
+    status: "loaded_condition_set",
+    selectedCondition: "good",
+    baseCondition: "good",
+    conditionValues: buildSampleConditionValues(sample.demoValue),
+    tradeIn: formatCurrency(sample.demoValue.tradeIn),
+    tradeInRange: buildSampleRange(sample.demoValue.tradeIn),
+    privateParty: formatCurrency(sample.demoValue.privateParty),
+    privatePartyRange: buildSampleRange(sample.demoValue.privateParty),
+    dealerRetail: formatCurrency(sample.demoValue.dealerRetail),
+    dealerRetailRange: buildSampleRange(sample.demoValue.dealerRetail),
+    low: formatCurrency(sample.demoValue.tradeIn),
+    high: formatCurrency(sample.demoValue.dealerRetail),
+    median: formatCurrency(sample.demoValue.privateParty),
+    confidenceLabel: "Demo data — not live market data.",
+    sourceLabel: "Sample value estimate",
+    valuationSource: "sample_demo",
+    compCount: sample.demoListings.length,
+    confidence: "limited",
+    rangeLow: formatCurrency(sample.demoValue.tradeIn),
+    rangeHigh: formatCurrency(sample.demoValue.dealerRetail),
+    midpoint: formatCurrency(sample.demoValue.privateParty),
+    unavailableReason: null,
+    message: "Sample value estimate uses local demo data for this showcase vehicle.",
+    reason: null,
+    listingCount: sample.demoListings.length,
+    sourceBasis: "modeled_condition_adjusted",
+    modelType: "modeled",
+  };
+}
+
+function buildSampleDemoListings(sample: NonNullable<ReturnType<typeof findSampleScanPhoto>>): ListingResult[] {
+  const imageUrl = sample.previewUrl;
+
+  return sample.demoListings.map((listing) => ({
+    id: listing.id,
+    title: listing.title,
+    price: formatCurrency(listing.price),
+    mileage: `${listing.mileage.toLocaleString("en-US")} mi`,
+    dealer: listing.dealer,
+    distance: `${listing.distanceMiles} mi`,
+    location: listing.location,
+    imageUrl,
+    isSampleListing: true,
+    sourceLabel: "Sample listings",
+  }));
+}
+
+function buildSampleVehicleRecord(id: string): VehicleRecord | undefined {
+  const sample = findSampleScanPhoto(id);
+  if (!sample) {
+    return undefined;
+  }
+  const routeId = getSampleVehicleRouteId(sample.id);
+  const completedSpecs = completeCanonicalSpecs({
+    year: sample.year,
+    make: sample.make,
+    model: sample.model,
+    specs: {
+      engine: sample.specs.engine,
+      horsepower: sample.specs.horsepower,
+      torque: sample.specs.torque,
+      transmission: sample.specs.transmission,
+      drivetrain: sample.specs.drivetrain,
+      mpgOrRange: sample.specs.mpgOrRange,
+      exteriorColors: [...sample.specs.exteriorColors],
+      msrp: sample.specs.msrp,
+    },
+  });
+  console.log("[vehicle-service] SAMPLE_VEHICLE_LOCAL_DETAIL_USED", {
+    routeId: id,
+    sampleId: sample.id,
+    vehicleId: routeId,
+    source: "sample_vehicle",
+    backendLookupRequired: false,
+  });
+  return {
+    id: routeId,
+    year: sample.year,
+    make: sample.make,
+    model: formatCanonicalModelName(sample.make, sample.model),
+    trim: sample.trim,
+    bodyStyle: sample.specs.bodyStyle,
+    vehicleType: sample.specs.vehicleType,
+    heroImage: sample.previewUrl,
+    overview: `${sample.year} ${sample.make} ${formatCanonicalModelName(sample.make, sample.model)} ${sample.trim}`.trim() +
+      " is local sample showcase content. Specs come from the bundled sample catalog; value and listings are demo data.",
+    specs: completedSpecs,
+    valuation: buildSampleDemoValuation(sample),
+    listings: buildSampleDemoListings(sample),
+    isSampleVehicle: true,
+    source: "sample_vehicle",
+  };
+}
+
 function mapResolvedSpecsVehicle(vehicle: BackendResolvedVehicle): VehicleRecord {
   const displayModel = formatCanonicalModelName(vehicle.make, vehicle.model);
   const completedSpecs = completeCanonicalSpecs({
@@ -835,12 +959,28 @@ function mapVehicle(
 }
 
 export const vehicleService = {
+  isSampleVehicleId(id: string | null | undefined): boolean {
+    return isSampleVehicleRouteId(id);
+  },
+
+  getSampleVehicleById(id: string): VehicleRecord | undefined {
+    return buildSampleVehicleRecord(id);
+  },
+
   async getOfflineVehicleById(id: string): Promise<VehicleRecord | undefined> {
+    const sample = buildSampleVehicleRecord(id);
+    if (sample) {
+      return sample;
+    }
     const offline = await offlineCanonicalService.findById(id);
     return offline ? offlineCanonicalService.mapToVehicleRecord(offline) : undefined;
   },
 
   async getVehicleById(id: string): Promise<VehicleRecord | undefined> {
+    const sample = buildSampleVehicleRecord(id);
+    if (sample) {
+      return sample;
+    }
     const offlineVehicleById = await this.getOfflineVehicleById(id);
     try {
       const vehicle = await apiRequest<BackendVehicle>({

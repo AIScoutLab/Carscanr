@@ -11,7 +11,7 @@ export type VehicleCandidate = {
   model: string;
   trim?: string;
   displayTrimLabel?: string;
-  source?: "visual_candidate" | "ocr_override" | "visual_override";
+  source?: "visual_candidate" | "ocr_override" | "visual_override" | "sample_vehicle";
   confidence: number;
   thumbnailUrl: string | number;
 };
@@ -76,7 +76,7 @@ export type ValuationResult = {
   median?: string | null;
   confidenceLabel: string;
   sourceLabel: string;
-  valuationSource?: "provider" | "cache" | "listing_comps" | "modeled_fallback" | "unavailable" | null;
+  valuationSource?: "provider" | "cache" | "listing_comps" | "modeled_fallback" | "sample_demo" | "unavailable" | null;
   compCount?: number | null;
   confidence?: "high" | "moderate" | "limited" | "unavailable" | null;
   rangeLow?: string | null;
@@ -99,6 +99,8 @@ export type ListingResult = {
   distance: string;
   location: string;
   imageUrl: string;
+  isSampleListing?: boolean;
+  sourceLabel?: string;
 };
 
 export type VehicleRecord = {
@@ -114,6 +116,8 @@ export type VehicleRecord = {
   specs: VehicleSpecs;
   valuation: ValuationResult;
   listings: ListingResult[];
+  isSampleVehicle?: boolean;
+  source?: "sample_vehicle" | "offline_canonical" | "backend" | "manual_search";
 };
 
 export type OfflineCanonicalVehicle = {
@@ -158,9 +162,9 @@ export type ScanResult = {
   imageUri: string;
   identifiedVehicle: VehicleCandidate;
   candidates: VehicleCandidate[];
-  source?: "visual_candidate" | "ocr_override" | "visual_override";
+  source?: "visual_candidate" | "ocr_override" | "visual_override" | "sample_vehicle";
   confidenceScore: number;
-  detectedVehicleType?: "car" | "motorcycle";
+  detectedVehicleType?: "car" | "truck" | "motorcycle";
   limitedPreview?: boolean;
   scannedAt: string;
   quickResult?: boolean;
@@ -172,6 +176,7 @@ export type ScanResult = {
   enrichmentMode?: "exact" | "adjacent_year" | "generation_fallback" | "fallback_only" | null;
   unlockEligible?: boolean | null;
   unlockRecommendationReason?: string | null;
+  isSampleVehicle?: boolean;
 };
 
 export type GarageItem = {
