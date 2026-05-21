@@ -4251,7 +4251,23 @@ export default function VehicleDetailScreen() {
       ) : null}
 
       {tab === "For Sale" ? (
-        isEstimateMode ? (
+        isSampleDetail ? (
+          <>
+            <View style={styles.sectionCard}>
+              <SectionHeader title="Sample listings" subtitle="Demo data — not live market data." />
+              <Text style={styles.body}>
+                These static showcase listings let you explore the For Sale experience without using live MarketCheck data,
+                provider calls, or unlocks.
+              </Text>
+            </View>
+            <View style={styles.listingsWrap}>
+              {vehicle.listings.map((listing, index) => (
+                <ListingCard key={listing.id} listing={listing} isBest={index === 0} />
+              ))}
+            </View>
+            {showQaDebugStrip ? <QaDebugStrip title="QA Listings Debug" rows={listingsQaRows} /> : null}
+          </>
+        ) : isEstimateMode ? (
           forSaleTabFinalState === "listings_available_strong" || forSaleTabFinalState === "listings_available_light" ? (
             <>
               <View style={styles.sectionCard}>
@@ -4296,13 +4312,8 @@ export default function VehicleDetailScreen() {
         ) : (
         <>
           <View style={styles.sectionCard}>
-            {isSampleDetail ? (
-              <SectionHeader title="Sample listings" subtitle="Demo data — not live market data." />
-            ) : null}
             <Text style={styles.body}>
-              {isSampleDetail
-                ? "These listings are local sample comps for the showcase vehicle. They are not live market results."
-                : isLocked
+              {isLocked
                 ? "Nearby listings are shown as a preview in free mode and fully unlocked in Pro."
                 : "Nearby listings help you compare local pricing, mileage, and dealer context at a glance."}
             </Text>

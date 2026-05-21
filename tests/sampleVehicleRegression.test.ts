@@ -8,6 +8,7 @@ const scanServiceSource = fs.readFileSync(path.join(process.cwd(), "services/sca
 const scanResultSource = fs.readFileSync(path.join(process.cwd(), "app/scan/result.tsx"), "utf8");
 const detailSource = fs.readFileSync(path.join(process.cwd(), "app/vehicle/[id].tsx"), "utf8");
 const vehicleServiceSource = fs.readFileSync(path.join(process.cwd(), "services/vehicleService.ts"), "utf8");
+const listingCardSource = fs.readFileSync(path.join(process.cwd(), "components/ListingCard.tsx"), "utf8");
 
 test("sample scan results are marked as demo vehicles and cannot spend unlocks", () => {
   assert.match(sampleSource, /demoValue/);
@@ -64,4 +65,19 @@ test("sample vehicles show labeled demo value and listings without live refresh"
   assert.match(detailSource, /SAMPLE_VEHICLE_LIVE_REFRESH_BLOCKED/);
   assert.match(detailSource, /const canRequestLiveValue = !isSampleDetail/);
   assert.match(detailSource, /actionLabel=\{isSampleDetail \? null : "Load live market value"\}/);
+});
+
+test("sample vehicle For Sale tab renders demo listings as an enabled local experience", () => {
+  assert.match(detailSource, /tab === "For Sale" \? \(\s*isSampleDetail \?/s);
+  assert.match(detailSource, /These static showcase listings let you explore the For Sale experience/);
+  assert.match(detailSource, /provider calls, or unlocks/);
+  assert.match(detailSource, /vehicle\.listings\.map\(\(listing, index\) => \(/);
+  assert.match(detailSource, /<ListingCard key=\{listing\.id\} listing=\{listing\} isBest=\{index === 0\} \/>/);
+  assert.doesNotMatch(detailSource, /isSampleDetail[\s\S]{0,900}Load live listings/);
+
+  const sampleForSaleIndex = detailSource.indexOf('tab === "For Sale" ? (');
+  const lockedPreviewIndex = detailSource.indexOf("Nearby listings preview", sampleForSaleIndex);
+  assert.ok(sampleForSaleIndex > -1 && lockedPreviewIndex > -1 && sampleForSaleIndex < lockedPreviewIndex);
+  assert.match(listingCardSource, /listing\.sourceLabel/);
+  assert.match(listingCardSource, /demo data, not live market data/);
 });

@@ -39,6 +39,7 @@ export function ListingCard({ listing, isBest = false }: { listing: ListingResul
             <Text style={styles.matchLabel}>Match</Text>
             <Text style={styles.matchValue}>{matchLabel}</Text>
           </View>
+          {listing.sourceLabel ? <Text style={styles.sourceLabel}>{listing.sourceLabel} — demo data, not live market data</Text> : null}
         </View>
       </View>
     </Animated.View>
@@ -67,4 +68,5 @@ const styles = StyleSheet.create({
   matchRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   matchLabel: { ...Typography.caption, color: Colors.textFaint },
   matchValue: { ...Typography.caption, color: Colors.accent, fontWeight: "700" },
+  sourceLabel: { ...Typography.caption, color: Colors.textMuted },
 });
