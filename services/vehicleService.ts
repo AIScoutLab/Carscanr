@@ -570,6 +570,7 @@ function buildSampleConditionValues(sample: NonNullable<ReturnType<typeof findSa
 }
 
 function buildSampleDemoValuation(sample: NonNullable<ReturnType<typeof findSampleScanPhoto>>): ValuationResult {
+  const sampleListings = getSampleDemoListingSeeds(sample);
   return {
     status: "loaded_condition_set",
     selectedCondition: "good",
@@ -587,7 +588,7 @@ function buildSampleDemoValuation(sample: NonNullable<ReturnType<typeof findSamp
     confidenceLabel: "Demo data — not live market data.",
     sourceLabel: "Sample value estimate",
     valuationSource: "sample_demo",
-    compCount: sample.demoListings.length,
+    compCount: sampleListings.length,
     confidence: "limited",
     rangeLow: formatCurrency(sample.demoValue.tradeIn),
     rangeHigh: formatCurrency(sample.demoValue.dealerRetail),
@@ -595,7 +596,7 @@ function buildSampleDemoValuation(sample: NonNullable<ReturnType<typeof findSamp
     unavailableReason: null,
     message: "Sample value estimate uses local demo data for this showcase vehicle.",
     reason: null,
-    listingCount: sample.demoListings.length,
+    listingCount: sampleListings.length,
     sourceBasis: "modeled_condition_adjusted",
     modelType: "modeled",
   };
@@ -604,18 +605,62 @@ function buildSampleDemoValuation(sample: NonNullable<ReturnType<typeof findSamp
 function buildSampleDemoListings(sample: NonNullable<ReturnType<typeof findSampleScanPhoto>>): ListingResult[] {
   const imageUrl = sample.previewUrl;
 
-  return sample.demoListings.map((listing) => ({
-    id: listing.id,
-    title: listing.title,
-    price: formatCurrency(listing.price),
-    mileage: `${listing.mileage.toLocaleString("en-US")} mi`,
-    dealer: listing.dealer,
-    distance: `${listing.distanceMiles} mi`,
-    location: listing.location,
+  return getSampleDemoListingSeeds(sample).map((listing, index) => ({
+    id: safeSampleListingText(listing.id, `sample-listing-${sample.id}-${index + 1}`),
+    title: safeSampleListingText(listing.title, `${sample.year} ${sample.make} ${formatCanonicalModelName(sample.make, sample.model)} ${sample.trim}`.trim()),
+    price: formatSampleListingPrice(listing.price, sample.demoValue.dealerRetail),
+    mileage: formatSampleListingMileage(listing.mileage, sample.demoValue.mileage),
+    dealer: safeSampleListingText(listing.dealer, "Sample seller"),
+    distance: formatSampleListingDistance(listing.distanceMiles),
+    location: safeSampleListingText(listing.location, "Demo City, ST"),
     imageUrl,
     isSampleListing: true,
     sourceLabel: "Sample listings",
   }));
+}
+
+function getSampleDemoListingSeeds(sample: NonNullable<ReturnType<typeof findSampleScanPhoto>>) {
+  const listings = Array.isArray(sample.demoListings)
+    ? sample.demoListings.filter((listing) => listing && typeof listing === "object")
+    : [];
+  if (listings.length > 0) {
+    return listings;
+  }
+  console.warn("[vehicle-service] SAMPLE_LISTINGS_RENDER_FALLBACK_USED", {
+    sampleId: sample.id,
+    make: sample.make,
+    model: sample.model,
+    reason: "missing_explicit_demo_listings",
+    providerCall: false,
+  });
+  return [
+    {
+      id: `sample-listing-${sample.id}-fallback`,
+      title: `${sample.year} ${sample.make} ${formatCanonicalModelName(sample.make, sample.model)} ${sample.trim}`.trim(),
+      price: sample.demoValue.dealerRetail,
+      mileage: sample.demoValue.mileage,
+      dealer: "Sample seller",
+      distanceMiles: 0,
+      location: "Demo City, ST",
+    },
+  ];
+}
+
+function safeSampleListingText(value: unknown, fallback: string) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+function formatSampleListingPrice(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? formatCurrency(value) : formatCurrency(fallback);
+}
+
+function formatSampleListingMileage(value: unknown, fallback: number) {
+  const mileage = typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
+  return `${mileage.toLocaleString("en-US")} mi`;
+}
+
+function formatSampleListingDistance(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? `${value} mi` : "Distance unavailable";
 }
 
 function buildSampleVehicleRecord(id: string): VehicleRecord | undefined {

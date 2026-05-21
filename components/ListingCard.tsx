@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Animated, Image, StyleSheet, Text, View } from "react-native";
+import { SILHOUETTE_IMAGES, toVehicleImageSource } from "@/constants/vehicleImages";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
 import { ListingResult } from "@/types";
@@ -15,7 +16,17 @@ export function ListingCard({ listing, isBest = false }: { listing: ListingResul
     ]).start();
   }, [opacity, translateY]);
 
-  const distanceNumber = Number(listing.distance.replace(/[^\d.]/g, ""));
+  const title = safeListingText(listing.title, "Sample vehicle listing");
+  const price = safeListingText(listing.price, "Price unavailable");
+  const mileage = safeListingText(listing.mileage, "Mileage unavailable");
+  const distance = safeListingText(listing.distance, "Distance unavailable");
+  const dealer = safeListingText(listing.dealer, listing.isSampleListing ? "Sample seller" : "Seller unavailable");
+  const location = safeListingText(listing.location, "Location unavailable");
+  const imageSource =
+    typeof listing.imageUrl === "string" && listing.imageUrl.trim().length > 0
+      ? { uri: listing.imageUrl.trim() }
+      : toVehicleImageSource(SILHOUETTE_IMAGES.neutral_vehicle);
+  const distanceNumber = Number(distance.replace(/[^\d.]/g, ""));
   const matchLabel =
     Number.isFinite(distanceNumber) && distanceNumber <= 10
       ? "High"
@@ -27,14 +38,14 @@ export function ListingCard({ listing, isBest = false }: { listing: ListingResul
     <Animated.View style={{ opacity, transform: [{ translateY }] }}>
       <View style={[styles.card, isBest && styles.bestCard]}>
         <View style={styles.imageWrap}>
-          <Image source={{ uri: listing.imageUrl }} style={styles.image} />
+          <Image source={imageSource} style={styles.image} />
           <View style={styles.imageOverlay} />
         </View>
         <View style={styles.body}>
-          <Text style={styles.title}>{listing.title}</Text>
-          <Text style={styles.price}>{listing.price}</Text>
-          <Text style={styles.meta}>{listing.mileage} • {listing.distance}</Text>
-          <Text style={styles.meta}>{listing.dealer} • {listing.location}</Text>
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.price}>{price}</Text>
+          <Text style={styles.meta}>{mileage} • {distance}</Text>
+          <Text style={styles.meta}>{dealer} • {location}</Text>
           <View style={styles.matchRow}>
             <Text style={styles.matchLabel}>Match</Text>
             <Text style={styles.matchValue}>{matchLabel}</Text>
@@ -44,6 +55,10 @@ export function ListingCard({ listing, isBest = false }: { listing: ListingResul
       </View>
     </Animated.View>
   );
+}
+
+function safeListingText(value: unknown, fallback: string) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
 }
 
 const styles = StyleSheet.create({

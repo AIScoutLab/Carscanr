@@ -23,11 +23,11 @@ type SampleValuationSeed = {
 type SampleListingSeed = {
   id: string;
   title: string;
-  price: number;
-  mileage: number;
-  dealer: string;
-  distanceMiles: number;
-  location: string;
+  price?: number | null;
+  mileage?: number | null;
+  dealer?: string | null;
+  distanceMiles?: number | null;
+  location?: string | null;
 };
 
 export const sampleScanPhotos = [

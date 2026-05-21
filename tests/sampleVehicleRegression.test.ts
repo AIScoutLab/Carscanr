@@ -81,3 +81,40 @@ test("sample vehicle For Sale tab renders demo listings as an enabled local expe
   assert.match(listingCardSource, /listing\.sourceLabel/);
   assert.match(listingCardSource, /demo data, not live market data/);
 });
+
+test("all shipped sample vehicles have explicit demo listings", () => {
+  assert.match(sampleSource, /id:\s*"2022-tesla-model-3-long-range"[\s\S]*demoListings:\s*\[[\s\S]*sample-listing-model3-1/);
+  assert.match(sampleSource, /id:\s*"2019-ford-mustang-gt"[\s\S]*demoListings:\s*\[[\s\S]*sample-listing-mustang-1/);
+  assert.match(sampleSource, /id:\s*"2023-harley-davidson-street-glide-special"[\s\S]*demoListings:\s*\[[\s\S]*sample-listing-street-glide-1/);
+});
+
+test("sample listings have safe fallback and render diagnostics", () => {
+  assert.match(vehicleServiceSource, /function getSampleDemoListingSeeds/);
+  assert.match(vehicleServiceSource, /SAMPLE_LISTINGS_RENDER_FALLBACK_USED/);
+  assert.match(vehicleServiceSource, /missing_explicit_demo_listings/);
+  assert.match(vehicleServiceSource, /formatSampleListingPrice/);
+  assert.match(vehicleServiceSource, /formatSampleListingMileage/);
+  assert.match(vehicleServiceSource, /formatSampleListingDistance/);
+
+  assert.match(detailSource, /SAMPLE_LISTINGS_RENDER_START/);
+  assert.match(detailSource, /SAMPLE_LISTINGS_RENDER_FALLBACK_USED/);
+  assert.match(detailSource, /SAMPLE_LISTINGS_RENDER_ERROR/);
+  assert.match(detailSource, /Sample listings unavailable/);
+  assert.match(detailSource, /Demo data only — no live provider was called/);
+});
+
+test("listing cards tolerate missing sample listing fields", () => {
+  assert.match(listingCardSource, /safeListingText\(listing\.title, "Sample vehicle listing"\)/);
+  assert.match(listingCardSource, /safeListingText\(listing\.mileage, "Mileage unavailable"\)/);
+  assert.match(listingCardSource, /safeListingText\(listing\.distance, "Distance unavailable"\)/);
+  assert.match(listingCardSource, /safeListingText\(listing\.dealer, listing\.isSampleListing \? "Sample seller" : "Seller unavailable"\)/);
+  assert.match(listingCardSource, /safeListingText\(listing\.location, "Location unavailable"\)/);
+  assert.match(listingCardSource, /SILHOUETTE_IMAGES\.neutral_vehicle/);
+});
+
+test("sample For Sale keeps back navigation outside the listings branch", () => {
+  const backButtonIndex = detailSource.indexOf("<BackButton fallbackHref=");
+  const forSaleIndex = detailSource.indexOf('tab === "For Sale" ? (');
+  assert.ok(backButtonIndex > -1 && forSaleIndex > -1 && backButtonIndex < forSaleIndex);
+  assert.match(detailSource, /Back navigation and the rest of the sample vehicle tabs remain available/);
+});

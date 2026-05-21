@@ -2062,6 +2062,39 @@ export default function VehicleDetailScreen() {
   }, [forSaleTabFinalState, isLocked, tab, trustedListingsAvailable, trustedUnlockedCase, trustedUnlockedConfidence]);
 
   useEffect(() => {
+    if (tab !== "For Sale" || !isSampleDetail || !vehicle) {
+      return;
+    }
+    try {
+      const count = Array.isArray(vehicle.listings) ? vehicle.listings.length : 0;
+      console.log("[vehicle-detail] SAMPLE_LISTINGS_RENDER_START", {
+        routeId: id,
+        scanId: typeof scanId === "string" ? scanId : null,
+        vehicleId: vehicle.id,
+        count,
+        providerCall: false,
+        unlockRequired: false,
+      });
+      if (count === 0) {
+        console.warn("[vehicle-detail] SAMPLE_LISTINGS_RENDER_FALLBACK_USED", {
+          routeId: id,
+          scanId: typeof scanId === "string" ? scanId : null,
+          vehicleId: vehicle.id,
+          reason: "empty_sample_listings",
+          providerCall: false,
+        });
+      }
+    } catch (err) {
+      console.error("[vehicle-detail] SAMPLE_LISTINGS_RENDER_ERROR", {
+        routeId: id,
+        scanId: typeof scanId === "string" ? scanId : null,
+        vehicleId: vehicle?.id ?? null,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [id, isSampleDetail, scanId, tab, vehicle]);
+
+  useEffect(() => {
     setLoading(true);
     setVehicle(null);
     setValuation(createEmptyValuation());
@@ -4261,9 +4294,18 @@ export default function VehicleDetailScreen() {
               </Text>
             </View>
             <View style={styles.listingsWrap}>
-              {vehicle.listings.map((listing, index) => (
-                <ListingCard key={listing.id} listing={listing} isBest={index === 0} />
-              ))}
+              {vehicle.listings.length > 0 ? (
+                vehicle.listings.map((listing, index) => (
+                  <ListingCard key={listing.id || `sample-listing-${index}`} listing={listing} isBest={index === 0} />
+                ))
+              ) : (
+                <ApproximateDataState
+                  title="Sample listings unavailable"
+                  body="Demo data only — no live provider was called."
+                  supportNote="Back navigation and the rest of the sample vehicle tabs remain available."
+                  badgeLabel={null}
+                />
+              )}
             </View>
             {showQaDebugStrip ? <QaDebugStrip title="QA Listings Debug" rows={listingsQaRows} /> : null}
           </>
