@@ -120,6 +120,7 @@ describe("RevenueCat purchase security", () => {
 
     assert.equal(response.statusCode, 401);
     assert.equal(body.success, false);
+    assert.equal(body.error.code, "REVENUECAT_WEBHOOK_UNAUTHORIZED");
     assert.equal(state.subscriptions.some((subscription) => subscription.plan === "pro_yearly"), false);
   });
 

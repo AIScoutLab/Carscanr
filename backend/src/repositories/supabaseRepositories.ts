@@ -2274,7 +2274,19 @@ export class SupabaseRevenueCatEventsRepository implements RevenueCatEventsRepos
       .insert(revenueCatEventToRow(record))
       .select("*")
       .single();
-    if (error) throw new AppError(500, "SUPABASE_INSERT_FAILED", "Failed to persist RevenueCat event.", error);
+    if (error) {
+      logger.error(
+        {
+          eventId: record.id,
+          eventType: record.eventType,
+          supabaseCode: error.code,
+          supabaseMessage: error.message,
+          supabaseDetails: error.details,
+        },
+        "REVENUECAT_EVENT_INSERT_FAILED",
+      );
+      throw new AppError(500, "SUPABASE_INSERT_FAILED", "Failed to persist RevenueCat event.", error);
+    }
     return mapRevenueCatEventRow(requireData(data, "RevenueCat event insert returned no row."));
   }
 
@@ -2302,7 +2314,19 @@ export class SupabaseRevenueCatEventsRepository implements RevenueCatEventsRepos
       .eq("id", id)
       .select("*")
       .single();
-    if (error) throw new AppError(500, "SUPABASE_UPDATE_FAILED", "Failed to mark RevenueCat event processed.", error);
+    if (error) {
+      logger.error(
+        {
+          eventId: id,
+          processedAction: updates.processedAction,
+          supabaseCode: error.code,
+          supabaseMessage: error.message,
+          supabaseDetails: error.details,
+        },
+        "REVENUECAT_EVENT_UPDATE_FAILED",
+      );
+      throw new AppError(500, "SUPABASE_UPDATE_FAILED", "Failed to mark RevenueCat event processed.", error);
+    }
     return mapRevenueCatEventRow(requireData(data, "RevenueCat event update returned no row."));
   }
 }

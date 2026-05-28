@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { env } from "../config/env.js";
 import { AppError } from "../errors/appError.js";
 import { isProPlan, normalizePlan } from "../lib/subscription.js";
+import { logger } from "../lib/logger.js";
 import { repositories } from "../lib/repositoryRegistry.js";
 import { RevenueCatEventRecord, SubscriptionRecord, UserPlan } from "../types/domain.js";
 
@@ -124,18 +125,23 @@ export class SubscriptionService {
   private verifyRevenueCatAuthorization(authorizationHeader?: string | null) {
     const expected = env.REVENUECAT_WEBHOOK_AUTH_TOKEN;
     if (!expected) {
+      logger.error({ reason: "token_not_configured" }, "REVENUECAT_WEBHOOK_AUTH_FAILED");
       throw new AppError(500, "REVENUECAT_WEBHOOK_NOT_CONFIGURED", "RevenueCat webhook authorization is not configured.");
     }
 
     const actual = authorizationHeader?.trim();
     if (!actual) {
+      logger.warn({ reason: "missing_authorization_header" }, "REVENUECAT_WEBHOOK_AUTH_FAILED");
       throw new AppError(401, "REVENUECAT_WEBHOOK_UNAUTHORIZED", "RevenueCat webhook authorization is required.");
     }
 
     const acceptedValues = [`Bearer ${expected}`, expected];
     if (!acceptedValues.some((accepted) => timingSafeEqualText(actual, accepted))) {
+      logger.warn({ reason: "invalid_authorization_header" }, "REVENUECAT_WEBHOOK_AUTH_FAILED");
       throw new AppError(401, "REVENUECAT_WEBHOOK_UNAUTHORIZED", "RevenueCat webhook authorization is invalid.");
     }
+
+    logger.info({ authorizationHeaderPresent: true }, "REVENUECAT_WEBHOOK_AUTH_PASSED");
   }
 
   async getCurrentSubscription(userId: string): Promise<SubscriptionRecord> {
@@ -175,6 +181,15 @@ export class SubscriptionService {
     authorizationHeader?: string | null;
     payload: unknown;
   }): Promise<RevenueCatProcessResult> {
+    logger.info(
+      {
+        authorizationHeaderPresent: Boolean(input.authorizationHeader),
+        payloadObject: Boolean(input.payload && typeof input.payload === "object"),
+        eventEnvelopePresent: Boolean(input.payload && typeof input.payload === "object" && "event" in input.payload),
+      },
+      "REVENUECAT_WEBHOOK_RECEIVED",
+    );
+
     this.verifyRevenueCatAuthorization(input.authorizationHeader);
 
     const event = extractRevenueCatEvent(input.payload);
@@ -187,32 +202,47 @@ export class SubscriptionService {
       throw new AppError(400, "REVENUECAT_EVENT_TYPE_MISSING", "RevenueCat webhook event type is required.");
     }
 
+    const productId = asString(event.product_id) ?? asString(event.new_product_id);
+    const transactionId = asString(event.transaction_id);
+    const originalTransactionId = asString(event.original_transaction_id);
+    const appUserId = getAppUserId(event);
+    const userId = appUserId;
+
+    logger.info(
+      {
+        eventId,
+        eventType,
+        productId,
+        appUserIdPresent: Boolean(appUserId),
+        transactionIdPresent: Boolean(transactionId),
+      },
+      "REVENUECAT_WEBHOOK_EVENT_PARSED",
+    );
+
     const existingEvent = await repositories.revenueCatEvents.findById(eventId);
     if (existingEvent?.processed) {
+      logger.info({ eventId, eventType, processedAction: existingEvent.processedAction }, "REVENUECAT_WEBHOOK_DUPLICATE");
       return { eventId, action: "duplicate" };
     }
     if (!existingEvent) {
-      await repositories.revenueCatEvents.create({
+      logger.info({ eventId, eventType }, "REVENUECAT_EVENT_INSERT_ATTEMPT");
+      const createdEvent = await repositories.revenueCatEvents.create({
         id: eventId,
-        appUserId: getAppUserId(event),
-        userId: getAppUserId(event),
+        appUserId,
+        userId,
         eventType,
-        productId: asString(event.product_id) ?? asString(event.new_product_id),
-        transactionId: asString(event.transaction_id),
-        originalTransactionId: asString(event.original_transaction_id),
+        productId,
+        transactionId,
+        originalTransactionId,
         processed: false,
         processedAction: null,
         payloadSummary: summarizeEvent(event),
         createdAt: new Date().toISOString(),
         processedAt: null,
       });
+      logger.info({ eventId: createdEvent.id, eventType: createdEvent.eventType }, "REVENUECAT_EVENT_INSERT_SUCCEEDED");
     }
 
-    const productId = asString(event.product_id) ?? asString(event.new_product_id);
-    const transactionId = asString(event.transaction_id);
-    const originalTransactionId = asString(event.original_transaction_id);
-    const appUserId = getAppUserId(event);
-    const userId = appUserId;
     let action: RevenueCatProcessResult["action"] = "ignored";
     let plan: UserPlan | undefined;
 
@@ -248,6 +278,8 @@ export class SubscriptionService {
       processedAction: action,
       processedAt: new Date().toISOString(),
     });
+
+    logger.info({ eventId, eventType, action, plan }, "REVENUECAT_WEBHOOK_PROCESSED");
 
     return { eventId, action, plan };
   }

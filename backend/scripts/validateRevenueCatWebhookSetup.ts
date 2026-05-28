@@ -58,6 +58,15 @@ function validateRouteRegistration() {
   if (!routes.includes('"/revenuecat/webhook"')) {
     fail("POST /api/revenuecat/webhook is not registered in src/routes/index.ts.");
   }
+  const webhookRouteIndex = routes.indexOf('"/revenuecat/webhook"');
+  const optionalAuthIndex = routes.indexOf("router.use(optionalAuthMiddleware)");
+  const requiredAuthIndex = routes.indexOf("router.use(authMiddleware)");
+  if (optionalAuthIndex !== -1 && optionalAuthIndex < webhookRouteIndex) {
+    fail("POST /api/revenuecat/webhook must be registered before optionalAuthMiddleware so RevenueCat Authorization is not treated as app auth.");
+  }
+  if (requiredAuthIndex !== -1 && requiredAuthIndex < webhookRouteIndex) {
+    fail("POST /api/revenuecat/webhook must be registered before authMiddleware so RevenueCat Authorization is not treated as app auth.");
+  }
   if (!controller.includes("processRevenueCatWebhook")) {
     fail("subscription controller is not wired to process RevenueCat webhooks.");
   }
