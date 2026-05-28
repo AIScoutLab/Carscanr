@@ -48,6 +48,8 @@ const usageController = new UsageController(usageService);
 export function buildApiRouter() {
   const router = express.Router();
 
+  router.post("/revenuecat/webhook", asyncHandler(subscriptionController.revenueCatWebhook));
+
   router.use(optionalAuthMiddleware);
   router.post(
     "/scan/identify",

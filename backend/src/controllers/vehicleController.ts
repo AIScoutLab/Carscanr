@@ -1,9 +1,14 @@
 import { Request, Response } from "express";
+import { AppError } from "../errors/appError.js";
+import { buildUnlockKey, buildVehicleKey } from "../lib/cacheKeys.js";
+import { resolveStoredVehicleRecordById } from "../lib/canonicalVehicleCatalog.js";
 import { sendSuccess } from "../lib/http.js";
 import { logger } from "../lib/logger.js";
 import { repositories } from "../lib/repositoryRegistry.js";
+import { isProPlan } from "../lib/subscription.js";
 import { normalizeVehicleBadgeAlias } from "../lib/vehicleAliases.js";
 import { env, getStartupDiagnostics } from "../config/env.js";
+import { SubscriptionService } from "../services/subscriptionService.js";
 import { VehicleService } from "../services/vehicleService.js";
 import { VehicleLookupDescriptor, VehicleType } from "../types/domain.js";
 
@@ -74,7 +79,97 @@ function readOptionalBoolean(queryValue: unknown): boolean | undefined {
 }
 
 export class VehicleController {
-  constructor(private readonly vehicleService: VehicleService) {}
+  constructor(
+    private readonly vehicleService: VehicleService,
+    private readonly subscriptionService = new SubscriptionService(),
+  ) {}
+
+  private isLiveMarketRequest(input: {
+    allowLive?: boolean;
+    forceLive?: boolean;
+    fetchReason?: string | null;
+    sourceScreen?: string | null;
+    action?: string | null;
+    kind: "value" | "listings";
+  }) {
+    const fetchReason = String(input.fetchReason ?? "");
+    const sourceScreen = String(input.sourceScreen ?? "");
+    const action = String(input.action ?? "");
+    const userRequestedReason =
+      input.kind === "value" ? "user_requested_value_refresh" : "user_requested_listings_refresh";
+    const refreshAction = input.kind === "value" ? "valueRefresh" : "listingsRefresh";
+    const refreshScreen = input.kind === "value" ? "valueScreen" : "listingsScreen";
+    return (
+      input.forceLive === true ||
+      action === refreshAction ||
+      fetchReason === userRequestedReason ||
+      (input.allowLive === true && sourceScreen === refreshScreen)
+    );
+  }
+
+  private async resolveUnlockKeyForRequest(input: {
+    vehicleId?: string | null;
+    descriptor: VehicleLookupDescriptor | null;
+  }) {
+    const descriptorVehicleKey = input.descriptor
+      ? buildVehicleKey({
+          year: input.descriptor.year,
+          make: input.descriptor.make,
+          model: input.descriptor.model,
+          trim: input.descriptor.trim,
+          vehicleType: input.descriptor.vehicleType,
+        })
+      : null;
+    const storedVehicle = !descriptorVehicleKey && input.vehicleId ? await resolveStoredVehicleRecordById(input.vehicleId) : null;
+    const storedVehicleKey = storedVehicle
+      ? buildVehicleKey({
+          year: storedVehicle.year,
+          make: storedVehicle.make,
+          model: storedVehicle.model,
+          trim: storedVehicle.trim,
+          vehicleType: storedVehicle.vehicleType,
+        })
+      : null;
+    const unlock = buildUnlockKey({ vehicleKey: descriptorVehicleKey ?? storedVehicleKey });
+    return unlock.key;
+  }
+
+  private async assertLiveMarketAccess(input: {
+    req: Request;
+    vehicleId?: string | null;
+    descriptor: VehicleLookupDescriptor | null;
+  }) {
+    const auth = input.req.auth;
+    if (!auth || auth.isGuest) {
+      throw new AppError(
+        401,
+        "AUTH_REQUIRED",
+        "Sign in and unlock this vehicle before loading live market value and nearby listings.",
+      );
+    }
+
+    const plan = await this.subscriptionService.getActivePlan(auth.userId);
+    if (isProPlan(plan)) {
+      return;
+    }
+
+    const unlockKey = await this.resolveUnlockKeyForRequest({
+      vehicleId: input.vehicleId,
+      descriptor: input.descriptor,
+    });
+    if (!unlockKey) {
+      throw new AppError(400, "UNLOCK_KEY_MISSING", "Unable to verify vehicle unlock for this market request.");
+    }
+
+    const existingUnlock = await repositories.vehicleUnlocks.findByUserAndKey(auth.userId, unlockKey);
+    if (!existingUnlock) {
+      throw new AppError(
+        403,
+        "PREMIUM_ACCESS_REQUIRED",
+        "Unlock Value & Listings for this vehicle before loading live market data.",
+      );
+    }
+  }
 
   getMarketCheckDebugSummary = async (_req: Request, res: Response) => {
     const sinceIso = new Date(Date.now() - 10 * 60 * 1000).toISOString();
@@ -266,20 +361,36 @@ export class VehicleController {
       );
       if (allowLive || forceLive || fetchReason === "user_requested_value_refresh" || sourceScreen === "valueScreen") {
         logger.info(
-        {
-          label: "VALUE_LIVE_REFRESH_REQUESTED",
-          requestId: res.locals.requestId,
-          rawQuery: req.query,
-          vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
+          {
+            label: "VALUE_LIVE_REFRESH_REQUESTED",
+            requestId: res.locals.requestId,
+            rawQuery: req.query,
+            vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
             allowLive: allowLive ?? null,
-          fetchReason: fetchReason ?? null,
-          sourceScreen: sourceScreen ?? null,
-          action: action ?? null,
-          forceLive: forceLive ?? null,
-          zipSource: zipSource ?? null,
+            fetchReason: fetchReason ?? null,
+            sourceScreen: sourceScreen ?? null,
+            action: action ?? null,
+            forceLive: forceLive ?? null,
+            zipSource: zipSource ?? null,
           },
           "VALUE_LIVE_REFRESH_REQUESTED",
         );
+      }
+      if (
+        this.isLiveMarketRequest({
+          kind: "value",
+          allowLive,
+          forceLive,
+          fetchReason,
+          sourceScreen,
+          action,
+        })
+      ) {
+        await this.assertLiveMarketAccess({
+          req,
+          vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
+          descriptor,
+        });
       }
       logger.info(
         {
@@ -339,6 +450,10 @@ export class VehicleController {
     try {
       const descriptor = readLookupDescriptor(req.query);
       const forceLive = readOptionalBoolean(req.query.forceLive);
+      const allowLive = readOptionalBoolean(req.query.allowLive);
+      const fetchReason = typeof req.query.fetchReason === "string" ? req.query.fetchReason : undefined;
+      const sourceScreen = typeof req.query.sourceScreen === "string" ? req.query.sourceScreen : undefined;
+      const action = typeof req.query.action === "string" ? req.query.action : undefined;
       logger.info(
         {
           label: "FORSALE_PIPELINE_START",
@@ -386,6 +501,22 @@ export class VehicleController {
         },
         "LISTINGS_API_INPUTS",
       );
+      if (
+        this.isLiveMarketRequest({
+          kind: "listings",
+          allowLive,
+          forceLive: forceLive ?? undefined,
+          fetchReason,
+          sourceScreen,
+          action,
+        })
+      ) {
+        await this.assertLiveMarketAccess({
+          req,
+          vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
+          descriptor,
+        });
+      }
       const result = await this.vehicleService.getListings({
         requestId: res.locals.requestId,
         vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
@@ -393,10 +524,10 @@ export class VehicleController {
         zip: req.query.zip as string,
         radiusMiles: Number(req.query.radiusMiles),
         mileage: typeof req.query.mileage === "number" ? req.query.mileage : req.query.mileage != null ? Number(req.query.mileage) : undefined,
-        allowLive: readOptionalBoolean(req.query.allowLive),
-        fetchReason: typeof req.query.fetchReason === "string" ? req.query.fetchReason : undefined,
-        sourceScreen: typeof req.query.sourceScreen === "string" ? req.query.sourceScreen : undefined,
-        action: typeof req.query.action === "string" ? req.query.action : undefined,
+        allowLive,
+        fetchReason,
+        sourceScreen,
+        action,
         forceLive: forceLive ?? null,
       });
       return sendSuccess(res, result.data, {

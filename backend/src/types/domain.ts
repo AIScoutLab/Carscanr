@@ -263,6 +263,21 @@ export type SubscriptionRecord = {
   verifiedAt: string;
 };
 
+export type RevenueCatEventRecord = {
+  id: string;
+  appUserId?: string | null;
+  userId?: string | null;
+  eventType: string;
+  productId?: string | null;
+  transactionId?: string | null;
+  originalTransactionId?: string | null;
+  processed: boolean;
+  processedAction?: string | null;
+  payloadSummary?: Record<string, unknown> | null;
+  createdAt: string;
+  processedAt?: string | null;
+};
+
 export type UsageCounterRecord = {
   id: string;
   userId: string;

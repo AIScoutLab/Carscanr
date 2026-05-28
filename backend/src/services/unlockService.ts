@@ -4,6 +4,7 @@ import { buildUnlockKey, buildVehicleKey } from "../lib/cacheKeys.js";
 import { resolveStoredVehicleRecordById } from "../lib/canonicalVehicleCatalog.js";
 import { logger } from "../lib/logger.js";
 import { repositories } from "../lib/repositoryRegistry.js";
+import { isProPlan } from "../lib/subscription.js";
 import { VehicleRecord } from "../types/domain.js";
 import { SubscriptionService } from "./subscriptionService.js";
 import { VehicleService } from "./vehicleService.js";
@@ -53,7 +54,7 @@ export class UnlockService {
 
   async canRequestPremium(userId: string) {
     const plan = await this.subscriptionService.getActivePlan(userId);
-    if (plan === "pro") {
+    if (isProPlan(plan)) {
       return { isPro: true, remainingUnlocks: Number.POSITIVE_INFINITY };
     }
     const balance = await repositories.unlockBalances.getOrCreate(userId);
@@ -70,7 +71,7 @@ export class UnlockService {
     requested: boolean;
   }): Promise<UnlockEntitlementResult> {
     const plan = await this.subscriptionService.getActivePlan(input.userId);
-    if (plan === "pro") {
+    if (isProPlan(plan)) {
       return {
         isPro: true,
         alreadyUnlocked: true,

@@ -1,31 +1,158 @@
 import crypto from "node:crypto";
-import { normalizePlan } from "../lib/subscription.js";
+import { env } from "../config/env.js";
+import { AppError } from "../errors/appError.js";
+import { isProPlan, normalizePlan } from "../lib/subscription.js";
 import { repositories } from "../lib/repositoryRegistry.js";
-import { SubscriptionRecord, UserPlan } from "../types/domain.js";
+import { RevenueCatEventRecord, SubscriptionRecord, UserPlan } from "../types/domain.js";
+
+const REVENUECAT_PRODUCT_IDS = {
+  monthlyPro: "com.carscanr.pro.monthly",
+  yearlyPro: "com.carscanr.pro.yearly",
+  unlockPack5: "com.carscanr.unlock_pack_5",
+} as const;
+
+const UNLOCK_PACK_CREDITS = 5;
+
+type RevenueCatWebhookEvent = {
+  id?: unknown;
+  type?: unknown;
+  app_user_id?: unknown;
+  original_app_user_id?: unknown;
+  aliases?: unknown;
+  product_id?: unknown;
+  new_product_id?: unknown;
+  transaction_id?: unknown;
+  original_transaction_id?: unknown;
+  event_timestamp_ms?: unknown;
+  expiration_at_ms?: unknown;
+  purchased_at_ms?: unknown;
+  cancel_reason?: unknown;
+  expiration_reason?: unknown;
+  environment?: unknown;
+  store?: unknown;
+};
+
+type RevenueCatProcessResult = {
+  eventId: string;
+  action:
+    | "duplicate"
+    | "ignored"
+    | "pro_granted"
+    | "pro_revoked"
+    | "unlock_pack_credited"
+    | "unlock_pack_revoked";
+  plan?: UserPlan;
+};
+
+function asString(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function asNumber(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function dateFromMs(value: unknown) {
+  const ms = asNumber(value);
+  return ms ? new Date(ms).toISOString() : undefined;
+}
+
+function timingSafeEqualText(left: string, right: string) {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  if (leftBuffer.length !== rightBuffer.length) return false;
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function buildFreeSubscription(userId: string): SubscriptionRecord {
+  return {
+    id: crypto.randomUUID(),
+    userId,
+    plan: "free",
+    status: "active",
+    verifiedAt: new Date().toISOString(),
+  };
+}
+
+function extractRevenueCatEvent(payload: unknown): RevenueCatWebhookEvent {
+  if (!payload || typeof payload !== "object") {
+    throw new AppError(400, "REVENUECAT_PAYLOAD_INVALID", "RevenueCat webhook payload must be a JSON object.");
+  }
+  const event = (payload as { event?: unknown }).event ?? payload;
+  if (!event || typeof event !== "object") {
+    throw new AppError(400, "REVENUECAT_EVENT_INVALID", "RevenueCat webhook event is missing.");
+  }
+  return event as RevenueCatWebhookEvent;
+}
+
+function getProductPlan(productId: string | null): UserPlan | null {
+  if (productId === REVENUECAT_PRODUCT_IDS.yearlyPro) return "pro_yearly";
+  if (productId === REVENUECAT_PRODUCT_IDS.monthlyPro) return "pro_monthly";
+  return null;
+}
+
+function getAppUserId(event: RevenueCatWebhookEvent) {
+  const direct = asString(event.app_user_id);
+  if (direct) return direct;
+  const original = asString(event.original_app_user_id);
+  if (original) return original;
+  if (Array.isArray(event.aliases)) {
+    return event.aliases.map(asString).find((alias): alias is string => Boolean(alias)) ?? null;
+  }
+  return null;
+}
+
+function summarizeEvent(event: RevenueCatWebhookEvent) {
+  return {
+    type: asString(event.type),
+    environment: asString(event.environment),
+    store: asString(event.store),
+    cancelReason: asString(event.cancel_reason),
+    expirationReason: asString(event.expiration_reason),
+    eventTimestampMs: asNumber(event.event_timestamp_ms),
+    purchasedAtMs: asNumber(event.purchased_at_ms),
+    expirationAtMs: asNumber(event.expiration_at_ms),
+  };
+}
 
 export class SubscriptionService {
-  private isUnlockPackProduct(productId: string) {
-    const normalized = productId.toLowerCase();
-    return normalized.includes("unlock");
+  private verifyRevenueCatAuthorization(authorizationHeader?: string | null) {
+    const expected = env.REVENUECAT_WEBHOOK_AUTH_TOKEN;
+    if (!expected) {
+      throw new AppError(500, "REVENUECAT_WEBHOOK_NOT_CONFIGURED", "RevenueCat webhook authorization is not configured.");
+    }
+
+    const actual = authorizationHeader?.trim();
+    if (!actual) {
+      throw new AppError(401, "REVENUECAT_WEBHOOK_UNAUTHORIZED", "RevenueCat webhook authorization is required.");
+    }
+
+    const acceptedValues = [`Bearer ${expected}`, expected];
+    if (!acceptedValues.some((accepted) => timingSafeEqualText(actual, accepted))) {
+      throw new AppError(401, "REVENUECAT_WEBHOOK_UNAUTHORIZED", "RevenueCat webhook authorization is invalid.");
+    }
+  }
+
+  async getCurrentSubscription(userId: string): Promise<SubscriptionRecord> {
+    const active = await repositories.subscriptions.findActiveByUser(userId);
+    if (!active) {
+      return buildFreeSubscription(userId);
+    }
+
+    if (isProPlan(active.plan) && active.expiresAt && new Date(active.expiresAt).getTime() <= Date.now()) {
+      return repositories.subscriptions.replaceActiveForUser(buildFreeSubscription(userId));
+    }
+
+    return { ...active, plan: normalizePlan(active.plan) };
   }
 
   async getActivePlan(userId: string): Promise<UserPlan> {
-    return normalizePlan((await repositories.subscriptions.findActiveByUser(userId))?.plan ?? "free");
-  }
-
-  private resolvePlanFromProductId(productId: string, receiptData: string): UserPlan {
-    const normalizedProductId = productId.toLowerCase();
-    const normalizedReceipt = receiptData.toLowerCase();
-
-    if (normalizedProductId.includes("year") || normalizedProductId.includes("annual") || normalizedReceipt.includes("year")) {
-      return "pro_yearly";
-    }
-
-    if (normalizedProductId.includes("month") || normalizedReceipt.includes("pro")) {
-      return "pro_monthly";
-    }
-
-    return "free";
+    return (await this.getCurrentSubscription(userId)).plan;
   }
 
   async verifySubscription(input: {
@@ -34,54 +161,177 @@ export class SubscriptionService {
     receiptData: string;
     productId: string;
   }): Promise<SubscriptionRecord> {
-    if (this.isUnlockPackProduct(input.productId)) {
-      const balance = await repositories.unlockBalances.getOrCreate(input.userId);
-      await repositories.unlockBalances.update({
-        ...balance,
-        unlockCredits: balance.unlockCredits + 5,
-        updatedAt: new Date().toISOString(),
-      });
-      return (
-        (await repositories.subscriptions.findActiveByUser(input.userId)) ?? {
-          id: crypto.randomUUID(),
-          userId: input.userId,
-          plan: "free",
-          status: "active",
-          productId: input.productId,
-          expiresAt: undefined,
-          verifiedAt: new Date().toISOString(),
-        }
-      );
-    }
-
-    const status = this.resolvePlanFromProductId(input.productId, input.receiptData);
-    const record: SubscriptionRecord = {
-      id: crypto.randomUUID(),
-      userId: input.userId,
-      plan: normalizePlan(status),
-      status: "active",
-      productId: input.productId,
-      expiresAt:
-        status === "pro_yearly"
-          ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
-          : status === "pro_monthly"
-            ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
-            : undefined,
-      verifiedAt: new Date().toISOString(),
-    };
-    return repositories.subscriptions.replaceActiveForUser(record);
+    void input.platform;
+    void input.receiptData;
+    void input.productId;
+    return this.getCurrentSubscription(input.userId);
   }
 
   async cancelSubscription(userId: string): Promise<SubscriptionRecord> {
+    return this.getCurrentSubscription(userId);
+  }
+
+  async processRevenueCatWebhook(input: {
+    authorizationHeader?: string | null;
+    payload: unknown;
+  }): Promise<RevenueCatProcessResult> {
+    this.verifyRevenueCatAuthorization(input.authorizationHeader);
+
+    const event = extractRevenueCatEvent(input.payload);
+    const eventId = asString(event.id);
+    const eventType = asString(event.type);
+    if (!eventId) {
+      throw new AppError(400, "REVENUECAT_EVENT_ID_MISSING", "RevenueCat webhook event id is required.");
+    }
+    if (!eventType) {
+      throw new AppError(400, "REVENUECAT_EVENT_TYPE_MISSING", "RevenueCat webhook event type is required.");
+    }
+
+    const existingEvent = await repositories.revenueCatEvents.findById(eventId);
+    if (existingEvent?.processed) {
+      return { eventId, action: "duplicate" };
+    }
+    if (!existingEvent) {
+      await repositories.revenueCatEvents.create({
+        id: eventId,
+        appUserId: getAppUserId(event),
+        userId: getAppUserId(event),
+        eventType,
+        productId: asString(event.product_id) ?? asString(event.new_product_id),
+        transactionId: asString(event.transaction_id),
+        originalTransactionId: asString(event.original_transaction_id),
+        processed: false,
+        processedAction: null,
+        payloadSummary: summarizeEvent(event),
+        createdAt: new Date().toISOString(),
+        processedAt: null,
+      });
+    }
+
+    const productId = asString(event.product_id) ?? asString(event.new_product_id);
+    const transactionId = asString(event.transaction_id);
+    const originalTransactionId = asString(event.original_transaction_id);
+    const appUserId = getAppUserId(event);
+    const userId = appUserId;
+    let action: RevenueCatProcessResult["action"] = "ignored";
+    let plan: UserPlan | undefined;
+
+    if (productId === REVENUECAT_PRODUCT_IDS.unlockPack5) {
+      action = await this.processUnlockPackEvent({
+        userId,
+        eventType,
+        transactionId,
+      });
+    } else {
+      const mappedPlan = getProductPlan(productId);
+      const mappedProductId = productId;
+      if (mappedPlan && userId && mappedProductId) {
+        action = await this.processSubscriptionEvent({
+          userId,
+          eventType,
+          productId: mappedProductId,
+          plan: mappedPlan,
+          expiresAt: dateFromMs(event.expiration_at_ms),
+          verifiedAt: dateFromMs(event.event_timestamp_ms) ?? new Date().toISOString(),
+          cancelReason: asString(event.cancel_reason),
+        });
+        plan = action === "pro_granted" ? mappedPlan : "free";
+      }
+    }
+
+    await repositories.revenueCatEvents.markProcessed(eventId, {
+      userId,
+      productId,
+      transactionId,
+      originalTransactionId,
+      payloadSummary: summarizeEvent(event),
+      processedAction: action,
+      processedAt: new Date().toISOString(),
+    });
+
+    return { eventId, action, plan };
+  }
+
+  private async processUnlockPackEvent(input: {
+    userId: string | null;
+    eventType: string;
+    transactionId: string | null;
+  }): Promise<RevenueCatProcessResult["action"]> {
+    if (!input.userId) return "ignored";
+
+    if (input.eventType === "NON_RENEWING_PURCHASE") {
+      if (input.transactionId) {
+        const duplicateTransaction = await repositories.revenueCatEvents.findProcessedByTransactionId(input.transactionId);
+        if (duplicateTransaction?.processedAction === "unlock_pack_credited") {
+          return "duplicate";
+        }
+      }
+      const balance = await repositories.unlockBalances.getOrCreate(input.userId);
+      await repositories.unlockBalances.update({
+        ...balance,
+        unlockCredits: balance.unlockCredits + UNLOCK_PACK_CREDITS,
+        updatedAt: new Date().toISOString(),
+      });
+      return "unlock_pack_credited";
+    }
+
+    if (input.eventType === "CANCELLATION") {
+      const balance = await repositories.unlockBalances.getOrCreate(input.userId);
+      await repositories.unlockBalances.update({
+        ...balance,
+        unlockCredits: Math.max(0, balance.unlockCredits - UNLOCK_PACK_CREDITS),
+        updatedAt: new Date().toISOString(),
+      });
+      return "unlock_pack_revoked";
+    }
+
+    return "ignored";
+  }
+
+  private async processSubscriptionEvent(input: {
+    userId: string;
+    eventType: string;
+    productId: string;
+    plan: UserPlan;
+    expiresAt?: string;
+    verifiedAt: string;
+    cancelReason: string | null;
+  }): Promise<RevenueCatProcessResult["action"]> {
+    const shouldRevoke =
+      input.eventType === "EXPIRATION" ||
+      (input.eventType === "CANCELLATION" &&
+        (input.cancelReason === "CUSTOMER_SUPPORT" ||
+          input.cancelReason === "DEVELOPER_INITIATED" ||
+          (input.expiresAt ? new Date(input.expiresAt).getTime() <= Date.now() : false)));
+
+    if (shouldRevoke) {
+      await repositories.subscriptions.replaceActiveForUser(buildFreeSubscription(input.userId));
+      return "pro_revoked";
+    }
+
+    const activeEvents = new Set([
+      "INITIAL_PURCHASE",
+      "RENEWAL",
+      "UNCANCELLATION",
+      "SUBSCRIPTION_EXTENDED",
+      "TEMPORARY_ENTITLEMENT_GRANT",
+    ]);
+    if (!activeEvents.has(input.eventType)) {
+      return "ignored";
+    }
+
     const record: SubscriptionRecord = {
       id: crypto.randomUUID(),
-      userId,
-      plan: "free",
+      userId: input.userId,
+      plan: normalizePlan(input.plan),
       status: "active",
-      productId: undefined,
-      expiresAt: undefined,
-      verifiedAt: new Date().toISOString(),
+      productId: input.productId,
+      expiresAt: input.expiresAt,
+      verifiedAt: input.verifiedAt,
     };
-    return repositories.subscriptions.replaceActiveForUser(record);
+    await repositories.subscriptions.replaceActiveForUser(record);
+    return "pro_granted";
   }
 }
+
+export const revenueCatProductIds = REVENUECAT_PRODUCT_IDS;

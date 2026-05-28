@@ -8,6 +8,7 @@ import {
   GarageItemRecord,
   ListingRecord,
   ListingClickRecord,
+  RevenueCatEventRecord,
   VehiclePhotoClusterMemberRecord,
   VehiclePhotoClusterRecord,
   ScanRecord,
@@ -36,6 +37,7 @@ import {
   ImageCacheRepository,
   ListingResultsRepository,
   ProviderApiUsageLogsRepository,
+  RevenueCatEventsRepository,
   ScansRepository,
   SpecsCacheRepository,
   SubscriptionsRepository,
@@ -747,6 +749,55 @@ export class MockSubscriptionsRepository implements SubscriptionsRepository {
     );
     db.subscriptions.unshift(record);
     return record;
+  }
+}
+
+export class MockRevenueCatEventsRepository implements RevenueCatEventsRepository {
+  async findById(id: string): Promise<RevenueCatEventRecord | null> {
+    return db.revenueCatEvents.find((event) => event.id === id) ?? null;
+  }
+
+  async findProcessedByTransactionId(transactionId: string): Promise<RevenueCatEventRecord | null> {
+    return (
+      db.revenueCatEvents.find((event) => event.transactionId === transactionId && event.processed) ?? null
+    );
+  }
+
+  async create(record: RevenueCatEventRecord): Promise<RevenueCatEventRecord> {
+    const existing = await this.findById(record.id);
+    if (existing) {
+      throw Object.assign(new Error("revenuecat_events unique constraint"), { code: "23505" });
+    }
+    db.revenueCatEvents.unshift(record);
+    return record;
+  }
+
+  async markProcessed(id: string, updates: {
+    processedAction: string;
+    userId?: string | null;
+    productId?: string | null;
+    transactionId?: string | null;
+    originalTransactionId?: string | null;
+    payloadSummary?: Record<string, unknown> | null;
+    processedAt: string;
+  }): Promise<RevenueCatEventRecord> {
+    const index = db.revenueCatEvents.findIndex((event) => event.id === id);
+    if (index === -1) {
+      throw Object.assign(new Error("RevenueCat event not found"), { code: "PGRST116" });
+    }
+    const updated: RevenueCatEventRecord = {
+      ...db.revenueCatEvents[index],
+      userId: updates.userId ?? db.revenueCatEvents[index].userId ?? null,
+      productId: updates.productId ?? db.revenueCatEvents[index].productId ?? null,
+      transactionId: updates.transactionId ?? db.revenueCatEvents[index].transactionId ?? null,
+      originalTransactionId: updates.originalTransactionId ?? db.revenueCatEvents[index].originalTransactionId ?? null,
+      payloadSummary: updates.payloadSummary ?? db.revenueCatEvents[index].payloadSummary ?? null,
+      processed: true,
+      processedAction: updates.processedAction,
+      processedAt: updates.processedAt,
+    };
+    db.revenueCatEvents[index] = updated;
+    return updated;
   }
 }
 

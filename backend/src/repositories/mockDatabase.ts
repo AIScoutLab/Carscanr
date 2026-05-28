@@ -6,6 +6,7 @@ import {
   CanonicalVehicleImageRecord,
   GarageItemRecord,
   ListingRecord,
+  RevenueCatEventRecord,
   VehiclePhotoClusterMemberRecord,
   VehiclePhotoClusterRecord,
   ScanRecord,
@@ -59,6 +60,7 @@ class MockDatabase {
   valuesCache: VehicleValuesCacheRow[] = [];
   listingsCache: VehicleListingsCacheRow[] = [];
   providerApiUsageLogs: ProviderApiUsageLogRecord[] = [];
+  revenueCatEvents: RevenueCatEventRecord[] = [];
   canonicalVehicles: CanonicalVehicleRecord[] = [];
   canonicalGapQueue: CanonicalGapQueueRecord[] = [];
   vehicleScanPopularity: VehicleScanPopularityRecord[] = [];

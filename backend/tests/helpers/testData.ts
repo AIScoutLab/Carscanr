@@ -6,6 +6,7 @@ import {
   ListingRecord,
   MarketListingsCacheRecord,
   MarketValueCacheRecord,
+  RevenueCatEventRecord,
   ScanRecord,
   SubscriptionRecord,
   UnlockBalanceRecord,
@@ -86,6 +87,7 @@ export function createTestRepositories(seed?: {
   valuations?: ValuationRecord[];
   listings?: ListingRecord[];
   subscriptions?: SubscriptionRecord[];
+  revenueCatEvents?: RevenueCatEventRecord[];
   usageCounters?: UsageCounterRecord[];
   garageItems?: GarageItemRecord[];
   scans?: ScanRecord[];
@@ -126,6 +128,7 @@ export function createTestRepositories(seed?: {
       ]),
     ],
     subscriptions: [...(seed?.subscriptions ?? [])],
+    revenueCatEvents: [...(seed?.revenueCatEvents ?? [])],
     usageCounters: [...(seed?.usageCounters ?? [])],
     garageItems: [...(seed?.garageItems ?? [])],
     scans: [...(seed?.scans ?? [])],
@@ -279,6 +282,7 @@ export function createTestRepositories(seed?: {
           userId,
           freeUnlocksTotal: FREE_PRO_UNLOCKS_TOTAL,
           freeUnlocksUsed: 0,
+          unlockCredits: 0,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
@@ -395,6 +399,41 @@ export function createTestRepositories(seed?: {
         const remaining = state.subscriptions.filter((subscription) => subscription.userId !== record.userId);
         state.subscriptions = [...remaining, record];
         return record;
+      },
+    },
+    revenueCatEvents: {
+      async findById(id) {
+        return state.revenueCatEvents.find((event) => event.id === id) ?? null;
+      },
+      async findProcessedByTransactionId(transactionId) {
+        return state.revenueCatEvents.find((event) => event.transactionId === transactionId && event.processed) ?? null;
+      },
+      async create(record) {
+        const existing = state.revenueCatEvents.find((event) => event.id === record.id);
+        if (existing) {
+          throw Object.assign(new Error("revenuecat_events unique constraint"), { code: "23505" });
+        }
+        state.revenueCatEvents.unshift(record);
+        return record;
+      },
+      async markProcessed(id, updates) {
+        const index = state.revenueCatEvents.findIndex((event) => event.id === id);
+        if (index === -1) {
+          throw new Error(`RevenueCat event ${id} not found`);
+        }
+        const updated = {
+          ...state.revenueCatEvents[index],
+          userId: updates.userId ?? state.revenueCatEvents[index].userId ?? null,
+          productId: updates.productId ?? state.revenueCatEvents[index].productId ?? null,
+          transactionId: updates.transactionId ?? state.revenueCatEvents[index].transactionId ?? null,
+          originalTransactionId: updates.originalTransactionId ?? state.revenueCatEvents[index].originalTransactionId ?? null,
+          payloadSummary: updates.payloadSummary ?? state.revenueCatEvents[index].payloadSummary ?? null,
+          processed: true,
+          processedAction: updates.processedAction,
+          processedAt: updates.processedAt,
+        };
+        state.revenueCatEvents[index] = updated;
+        return updated;
       },
     },
     usageCounters: {

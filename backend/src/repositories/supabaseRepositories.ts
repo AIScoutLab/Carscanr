@@ -22,6 +22,7 @@ import {
   ImageCacheRecord,
   ListingClickRecord,
   ListingRecord,
+  RevenueCatEventRecord,
   VehiclePhotoClusterMemberRecord,
   VehiclePhotoClusterRecord,
   ScanRecord,
@@ -41,6 +42,7 @@ import {
   UnlockBalanceRepository,
   ListingsCacheRepository,
   ListingClicksRepository,
+  RevenueCatEventsRepository,
   VehiclePhotoClustersRepository,
   GarageItemsRepository,
   ImageCacheRepository,
@@ -825,6 +827,40 @@ function subscriptionToRow(record: SubscriptionRecord) {
     product_id: record.productId ?? null,
     expires_at: record.expiresAt ?? null,
     verified_at: record.verifiedAt,
+  };
+}
+
+function mapRevenueCatEventRow(row: any): RevenueCatEventRecord {
+  return {
+    id: row.id,
+    appUserId: row.app_user_id ?? null,
+    userId: row.user_id ?? null,
+    eventType: row.event_type,
+    productId: row.product_id ?? null,
+    transactionId: row.transaction_id ?? null,
+    originalTransactionId: row.original_transaction_id ?? null,
+    processed: Boolean(row.processed),
+    processedAction: row.processed_action ?? null,
+    payloadSummary: row.payload_summary ?? null,
+    createdAt: row.created_at,
+    processedAt: row.processed_at ?? null,
+  };
+}
+
+function revenueCatEventToRow(record: RevenueCatEventRecord) {
+  return {
+    id: record.id,
+    app_user_id: record.appUserId ?? null,
+    user_id: record.userId ?? null,
+    event_type: record.eventType,
+    product_id: record.productId ?? null,
+    transaction_id: record.transactionId ?? null,
+    original_transaction_id: record.originalTransactionId ?? null,
+    processed: record.processed,
+    processed_action: record.processedAction ?? null,
+    payload_summary: record.payloadSummary ?? {},
+    created_at: record.createdAt,
+    processed_at: record.processedAt ?? null,
   };
 }
 
@@ -2204,6 +2240,70 @@ export class SupabaseSubscriptionsRepository implements SubscriptionsRepository 
       .single();
     if (error) throw new AppError(500, "SUPABASE_INSERT_FAILED", "Failed to persist subscription.", error);
     return mapSubscriptionRow(requireData(data, "Subscription insert returned no row."));
+  }
+}
+
+export class SupabaseRevenueCatEventsRepository implements RevenueCatEventsRepository {
+  constructor(private readonly client: DbClient) {}
+
+  async findById(id: string): Promise<RevenueCatEventRecord | null> {
+    const { data, error } = await this.client
+      .from("revenuecat_events")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load RevenueCat event.", error);
+    return data ? mapRevenueCatEventRow(data) : null;
+  }
+
+  async findProcessedByTransactionId(transactionId: string): Promise<RevenueCatEventRecord | null> {
+    const { data, error } = await this.client
+      .from("revenuecat_events")
+      .select("*")
+      .eq("transaction_id", transactionId)
+      .eq("processed", true)
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load RevenueCat transaction.", error);
+    return data ? mapRevenueCatEventRow(data) : null;
+  }
+
+  async create(record: RevenueCatEventRecord): Promise<RevenueCatEventRecord> {
+    const { data, error } = await this.client
+      .from("revenuecat_events")
+      .insert(revenueCatEventToRow(record))
+      .select("*")
+      .single();
+    if (error) throw new AppError(500, "SUPABASE_INSERT_FAILED", "Failed to persist RevenueCat event.", error);
+    return mapRevenueCatEventRow(requireData(data, "RevenueCat event insert returned no row."));
+  }
+
+  async markProcessed(id: string, updates: {
+    processedAction: string;
+    userId?: string | null;
+    productId?: string | null;
+    transactionId?: string | null;
+    originalTransactionId?: string | null;
+    payloadSummary?: Record<string, unknown> | null;
+    processedAt: string;
+  }): Promise<RevenueCatEventRecord> {
+    const { data, error } = await this.client
+      .from("revenuecat_events")
+      .update({
+        user_id: updates.userId ?? null,
+        product_id: updates.productId ?? null,
+        transaction_id: updates.transactionId ?? null,
+        original_transaction_id: updates.originalTransactionId ?? null,
+        payload_summary: updates.payloadSummary ?? {},
+        processed: true,
+        processed_action: updates.processedAction,
+        processed_at: updates.processedAt,
+      })
+      .eq("id", id)
+      .select("*")
+      .single();
+    if (error) throw new AppError(500, "SUPABASE_UPDATE_FAILED", "Failed to mark RevenueCat event processed.", error);
+    return mapRevenueCatEventRow(requireData(data, "RevenueCat event update returned no row."));
   }
 }
 

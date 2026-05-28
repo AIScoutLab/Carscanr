@@ -9,6 +9,7 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "validate:supabase-security": "node --import tsx scripts/validateSupabaseSecurity.ts",
+    "validate:revenuecat-webhook": "node --import tsx scripts/validateRevenueCatWebhookSetup.ts",
     "smoke:ocr": "tsx scripts/smokeGoogleVisionOcr.ts",
     "smoke:scan-route": "tsx scripts/smokeScanRouteOcr.ts",
     "export:offline-canonical": "tsx scripts/exportOfflineCanonical.ts",

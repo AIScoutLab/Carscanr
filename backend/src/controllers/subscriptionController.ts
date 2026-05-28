@@ -21,4 +21,12 @@ export class SubscriptionController {
     req.auth!.plan = result.plan;
     return sendSuccess(res, result);
   };
+
+  revenueCatWebhook = async (req: Request, res: Response) => {
+    const result = await this.subscriptionService.processRevenueCatWebhook({
+      authorizationHeader: req.header("authorization"),
+      payload: req.body,
+    });
+    return sendSuccess(res, result);
+  };
 }

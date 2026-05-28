@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { AppError } from "../errors/appError.js";
 import { buildCanonicalKey } from "../lib/providerCache.js";
 import { repositories } from "../lib/repositoryRegistry.js";
 import { logger } from "../lib/logger.js";
@@ -118,6 +119,19 @@ function getMatchStrengthLabel(matchStrength: "exact" | "strong" | "possible" | 
   return matchStrength === "none" ? "rejected" : matchStrength;
 }
 
+function isMissingPhotoClusterRelationError(error: unknown) {
+  if (!(error instanceof AppError) || error.code !== "SUPABASE_QUERY_FAILED") {
+    return false;
+  }
+  const details = error.details as { code?: string; message?: string } | undefined;
+  return (
+    details?.code === "PGRST205" &&
+    typeof details.message === "string" &&
+    (details.message.includes("public.vehicle_photo_clusters") ||
+      details.message.includes("public.vehicle_photo_cluster_members"))
+  );
+}
+
 function hasHintConflict(normalizedResult: VisionResult, hint: PhotoClusterHint) {
   return hasVehicleIdentityConflict(
     {
@@ -172,12 +186,29 @@ export class PhotoClusterService {
     }
 
     const identity = buildIdentityFromNormalizedResult(input.normalizedResult);
-    const candidates = await repositories.vehiclePhotoClusters.findRecentCandidates({
-      normalizedMake: identity.normalizedMake || null,
-      normalizedModel: identity.normalizedModel || null,
-      normalizedTrim: identity.normalizedTrim || null,
-      limit: 20,
-    });
+    let candidates: VehiclePhotoClusterRecord[] = [];
+    try {
+      candidates = await repositories.vehiclePhotoClusters.findRecentCandidates({
+        normalizedMake: identity.normalizedMake || null,
+        normalizedModel: identity.normalizedModel || null,
+        normalizedTrim: identity.normalizedTrim || null,
+        limit: 20,
+      });
+    } catch (error) {
+      if (isMissingPhotoClusterRelationError(error)) {
+        logger.warn(
+          {
+            label: "PHOTO_CLUSTER_FEATURE_DISABLED_MISSING_TABLE",
+            scanId: input.scanId,
+            phase: "hint_lookup",
+            reason: "missing-supabase-photo-cluster-table",
+          },
+          "PHOTO_CLUSTER_FEATURE_DISABLED_MISSING_TABLE",
+        );
+        return null;
+      }
+      throw error;
+    }
     logger.info(
       {
         label: "PHOTO_CLUSTER_LOOKUP_START",
@@ -279,12 +310,29 @@ export class PhotoClusterService {
     }
 
     const identity = buildIdentityFromNormalizedResult(input.normalizedResult);
-    const candidates = await repositories.vehiclePhotoClusters.findRecentCandidates({
-      normalizedMake: identity.normalizedMake || null,
-      normalizedModel: identity.normalizedModel || null,
-      normalizedTrim: identity.normalizedTrim || null,
-      limit: 25,
-    });
+    let candidates: VehiclePhotoClusterRecord[] = [];
+    try {
+      candidates = await repositories.vehiclePhotoClusters.findRecentCandidates({
+        normalizedMake: identity.normalizedMake || null,
+        normalizedModel: identity.normalizedModel || null,
+        normalizedTrim: identity.normalizedTrim || null,
+        limit: 25,
+      });
+    } catch (error) {
+      if (isMissingPhotoClusterRelationError(error)) {
+        logger.warn(
+          {
+            label: "PHOTO_CLUSTER_FEATURE_DISABLED_MISSING_TABLE",
+            scanId: input.scanId,
+            phase: "record",
+            reason: "missing-supabase-photo-cluster-table",
+          },
+          "PHOTO_CLUSTER_FEATURE_DISABLED_MISSING_TABLE",
+        );
+        return;
+      }
+      throw error;
+    }
     logger.info(
       {
         label: "PHOTO_CLUSTER_LOOKUP_START",

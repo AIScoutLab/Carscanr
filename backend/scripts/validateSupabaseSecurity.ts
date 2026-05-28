@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
-type TableClass = "public_read" | "user_owned" | "internal";
+type TableClass = "public_read" | "user_owned" | "server_owned_user_read" | "internal";
 type PolicyAction = "select" | "insert" | "update" | "delete";
 type RoleName = "anon" | "authenticated" | "service_role" | "public";
 
@@ -40,9 +40,11 @@ const publicReadTables = new Set(["vehicles", "canonical_vehicles"]);
 const userOwnedTables = new Set([
   "scans",
   "garage_items",
+  "vision_debug_logs",
+]);
+const serverOwnedUserReadTables = new Set([
   "subscriptions",
   "usage_counters",
-  "vision_debug_logs",
   "user_unlock_balances",
   "user_vehicle_unlocks",
 ]);
@@ -56,6 +58,7 @@ const internalTables = new Set([
   "provider_vehicle_values_cache",
   "provider_vehicle_listings_cache",
   "provider_api_usage_logs",
+  "revenuecat_events",
   "cached_analysis",
   "image_cache",
   "vehicle_scan_popularity",
@@ -91,6 +94,9 @@ function classifyTable(name: string): TableClass {
   }
   if (userOwnedTables.has(name)) {
     return "user_owned";
+  }
+  if (serverOwnedUserReadTables.has(name)) {
+    return "server_owned_user_read";
   }
   if (internalTables.has(name)) {
     return "internal";
@@ -214,9 +220,15 @@ function collectTablesAndFunctions(files: string[]): {
         const roles = match[2].split(",").map((role) => role.trim());
         if (roles.includes("anon")) {
           table.revokes.anonAll = true;
+          table.grants.anonSelect = false;
         }
         if (roles.includes("authenticated")) {
           table.revokes.authenticatedAll = true;
+          table.grants.authenticatedSelect = false;
+          table.grants.authenticatedCrud = false;
+        }
+        if (roles.includes("service_role")) {
+          table.grants.serviceRoleCrud = false;
         }
       }
 
@@ -290,6 +302,27 @@ function main() {
         if (!table.policies.has(action)) {
           findings.push(`${table.name}: user_owned table missing ${action.toUpperCase()} policy`);
         }
+      }
+    }
+
+    if (table.className === "server_owned_user_read") {
+      if (table.grants.anonSelect) {
+        findings.push(`${table.name}: server_owned_user_read table should not grant anon SELECT`);
+      }
+      if (!table.revokes.anonAll) {
+        findings.push(`${table.name}: server_owned_user_read table missing anon revoke-all statement`);
+      }
+      if (!table.revokes.authenticatedAll) {
+        findings.push(`${table.name}: server_owned_user_read table missing authenticated revoke-all statement`);
+      }
+      if (!table.grants.authenticatedSelect) {
+        findings.push(`${table.name}: server_owned_user_read table missing authenticated SELECT grant`);
+      }
+      if (table.grants.authenticatedCrud) {
+        findings.push(`${table.name}: server_owned_user_read table must not grant authenticated INSERT/UPDATE/DELETE`);
+      }
+      if (!table.policies.has("select")) {
+        findings.push(`${table.name}: server_owned_user_read table missing SELECT policy`);
       }
     }
 
