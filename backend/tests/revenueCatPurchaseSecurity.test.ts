@@ -8,7 +8,7 @@ import { setProviders } from "../src/lib/providerRegistry.js";
 import { setRepositories } from "../src/lib/repositoryRegistry.js";
 import { createTestProviders, createTestRepositories } from "./helpers/testData.js";
 
-const WEBHOOK_AUTH = "Bearer local-dev-revenuecat-webhook-token";
+const WEBHOOK_AUTH = `Bearer ${process.env.REVENUECAT_WEBHOOK_AUTH_TOKEN ?? "local-dev-revenuecat-webhook-token"}`;
 
 function parseJson<T>(response: Response): T {
   return JSON.parse(response.payload) as T;

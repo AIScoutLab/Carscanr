@@ -824,7 +824,7 @@ export const subscriptionService = {
       return {
         outcome: "verified",
         status,
-        message: "Unlock pack purchase verified. Five unlock credits were added to this account.",
+        message: "Unlock pack purchase complete. Credits will appear after RevenueCat verifies the purchase.",
       };
     }
     console.log("[subscription] PURCHASE_ATTEMPT_FAILURE", { stage: purchase.outcome, message: purchase.message });
