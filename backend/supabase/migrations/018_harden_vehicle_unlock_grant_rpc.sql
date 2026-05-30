@@ -1,8 +1,14 @@
+begin;
+
 alter table public.user_unlock_balances
   add column if not exists unlock_credits integer not null default 0;
 
 alter table public.user_unlock_balances
   alter column free_unlocks_total set default 3;
+
+-- Postgres cannot CREATE OR REPLACE a function when the return table shape
+-- changes, so drop only the conflicting RPC signature before recreating it.
+drop function if exists public.grant_user_vehicle_unlock(text, text, text, text, text, text, text, text, uuid);
 
 create or replace function public.grant_user_vehicle_unlock(
   p_user_id text,
@@ -27,7 +33,7 @@ returns table (
 )
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, pg_temp
 as $$
 declare
   balance record;
@@ -151,3 +157,5 @@ from public, anon, authenticated;
 
 grant execute on function public.grant_user_vehicle_unlock(text, text, text, text, text, text, text, text, uuid)
 to service_role;
+
+commit;
