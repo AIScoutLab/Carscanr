@@ -42,6 +42,14 @@ type ManualSearchOptionsInput = {
 };
 
 let loadPromise: Promise<OfflineCanonicalIndex> | null = null;
+let localReferenceValueMap: Map<string, LocalReferenceValueRow> | null = null;
+
+type LocalReferenceValueRow = {
+  low: number;
+  high: number;
+  reference: number;
+  trimCount: number;
+};
 
 function normalizeText(value: string | undefined | null) {
   return String(value ?? "")
@@ -57,6 +65,14 @@ function normalizeText(value: string | undefined | null) {
 function normalizeModelFamily(value: string | undefined | null) {
   return normalizeText(value)
     .replace(/\b(competition|comp|lariat|eddie bauer|platinum|limited|premium|luxury|sport|touring|special|standard|base|xlt|gt|ex|lx|se|sel|xle|le)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+function normalizeReferenceModelFamily(value: string | undefined | null) {
+  return normalizeText(value)
+    .replace(/\b(\d+dr|\d+ door|sedan|coupe|convertible|hatchback|wagon|suv|truck|van|awd|rwd|fwd)\b/g, " ")
+    .replace(/\b(base|premium|limited|sport|touring|special|standard|edition|package|trim)\b/g, " ")
     .replace(/[^a-z0-9]+/g, "")
     .trim();
 }
@@ -84,6 +100,49 @@ function buildFamilyKey(input: { year: number; make: string; model: string }) {
 
 function buildMakeModelFamilyKey(input: { make: string; model: string }) {
   return `${normalizeText(input.make)}:${normalizeModelFamily(input.model)}`;
+}
+
+function buildLocalReferenceValueKey(input: { year: number; make: string; model: string }) {
+  return `${input.year}:${normalizeText(input.make)}:${normalizeReferenceModelFamily(input.model)}`;
+}
+
+function getLocalReferenceValueMap() {
+  if (localReferenceValueMap) {
+    return localReferenceValueMap;
+  }
+
+  const rows = new Map<string, number[]>();
+  (bundledDataset as OfflineCanonicalDataset).vehicles.forEach((vehicle) => {
+    const msrp = Number(vehicle.basicSpecs?.msrp);
+    if (!Number.isFinite(msrp) || msrp <= 0) {
+      return;
+    }
+    const key = buildLocalReferenceValueKey({
+      year: vehicle.year,
+      make: vehicle.make,
+      model: vehicle.model,
+    });
+    rows.set(key, [...(rows.get(key) ?? []), msrp]);
+  });
+
+  localReferenceValueMap = new Map(
+    [...rows.entries()].map(([key, values]) => {
+      const sortedValues = values.filter((value) => Number.isFinite(value) && value > 0).sort((left, right) => left - right);
+      const uniqueValues = [...new Set(sortedValues)];
+      const reference = Math.round(sortedValues.reduce((sum, value) => sum + value, 0) / sortedValues.length);
+      return [
+        key,
+        {
+          low: uniqueValues[0],
+          high: uniqueValues[uniqueValues.length - 1],
+          reference,
+          trimCount: sortedValues.length,
+        },
+      ] as const;
+    }),
+  );
+
+  return localReferenceValueMap;
 }
 
 function isWranglerVehicle(vehicle: Pick<OfflineCanonicalVehicle, "make" | "model">) {
@@ -822,6 +881,38 @@ export const offlineCanonicalService = {
         bodyStyle: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => sanitizeSpecValue(vehicle.basicSpecs.bodyStyle, "")), mainstreamFriendly),
       },
       msrpRangeLabel: buildMsrpRangeLabel(groundedVehicles.map((vehicle) => vehicle.basicSpecs.msrp)),
+    };
+  },
+
+  resolveLocalReferenceValue(input: {
+    year?: number | null;
+    make: string;
+    model: string;
+  }) {
+    if (typeof input.year !== "number" || !Number.isFinite(input.year) || input.year <= 0) {
+      return null;
+    }
+
+    const referenceRow = getLocalReferenceValueMap().get(
+      buildLocalReferenceValueKey({
+        year: input.year,
+        make: input.make,
+        model: input.model,
+      }),
+    );
+
+    if (!referenceRow) {
+      return null;
+    }
+
+    return {
+      value: referenceRow.reference,
+      rangeLabel: referenceRow.low === referenceRow.high
+        ? formatCurrency(referenceRow.reference)
+        : `${formatCurrency(referenceRow.low)} - ${formatCurrency(referenceRow.high)}`,
+      sourceLabel: "Local canonical MSRP reference",
+      matchType: "exact-year-model" as const,
+      trimCount: referenceRow.trimCount,
     };
   },
 

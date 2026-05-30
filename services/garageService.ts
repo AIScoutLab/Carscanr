@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { apiRequest } from "@/services/apiClient";
 import { authService } from "@/services/authService";
+import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { getVehicleImage } from "@/constants/vehicleImages";
 import { resolveHorsepower } from "@/lib/vehicleData";
 import { GarageItem, VehicleRecord } from "@/types";
@@ -214,12 +215,98 @@ function mapLocalEstimateGarageItem(item: LocalEstimateGarageItem): GarageItem {
   };
 }
 
+function parseReferenceCurrencyValue(value?: string | number | null) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value > 0 ? Math.round(value) : null;
+  }
+  if (!value) {
+    return null;
+  }
+  const matches = String(value).match(/\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{4,}(?:\.\d+)?/g) ?? [];
+  const values = matches
+    .map((match) => Number(match.replace(/,/g, "")))
+    .filter((parsed) => Number.isFinite(parsed) && parsed > 0);
+  if (values.length === 0) {
+    return null;
+  }
+  const referenceValue = values.length === 1
+    ? values[0]
+    : values.reduce((sum, parsed) => sum + parsed, 0) / values.length;
+  return Math.round(referenceValue);
+}
+
+async function resolveLocalEstimateReferenceMsrp(item: LocalEstimateGarageItem) {
+  const existingReferenceValue = parseReferenceCurrencyValue(item.vehicle.specs?.msrp);
+  if (existingReferenceValue) {
+    return existingReferenceValue;
+  }
+
+  const support = await offlineCanonicalService.resolveApproximateFamilySupport({
+    year: item.estimateMeta.year,
+    make: item.estimateMeta.make,
+    model: item.estimateMeta.model,
+    trim: item.estimateMeta.trim,
+    vehicleType: item.estimateMeta.vehicleType,
+  });
+  const canonicalReferenceValue = parseReferenceCurrencyValue(support?.vehicle?.basicSpecs?.msrp);
+  if (canonicalReferenceValue) {
+    return canonicalReferenceValue;
+  }
+
+  const localReference = offlineCanonicalService.resolveLocalReferenceValue({
+    year: item.estimateMeta.year,
+    make: item.estimateMeta.make,
+    model: item.estimateMeta.model,
+  });
+  if (localReference?.value) {
+    return localReference.value;
+  }
+
+  return parseReferenceCurrencyValue(support?.msrpRangeLabel);
+}
+
+async function enrichLocalEstimateGarageItems(items: LocalEstimateGarageItem[]) {
+  let changed = false;
+  const enriched = await Promise.all(
+    items.map(async (item) => {
+      const existingReferenceValue = parseReferenceCurrencyValue(item.vehicle.specs?.msrp);
+      if (existingReferenceValue) {
+        return item;
+      }
+
+      const resolvedReferenceValue = await resolveLocalEstimateReferenceMsrp(item);
+      if (!resolvedReferenceValue) {
+        return item;
+      }
+
+      changed = true;
+      return {
+        ...item,
+        vehicle: {
+          ...item.vehicle,
+          specs: {
+            ...item.vehicle.specs,
+            msrp: resolvedReferenceValue,
+          },
+        },
+      };
+    }),
+  );
+
+  if (changed) {
+    await saveLocalEstimateGarageItems(enriched);
+  }
+
+  return enriched;
+}
+
 export const garageService = {
   async list(): Promise<GarageItem[]> {
     const [localEstimateItems, token] = await Promise.all([
       loadLocalEstimateGarageItems(),
       authService.getAccessToken(),
     ]);
+    const enrichedLocalEstimateItems = await enrichLocalEstimateGarageItems(localEstimateItems);
 
     let backendItems: GarageItem[] = [];
     if (token) {
@@ -234,7 +321,7 @@ export const garageService = {
     }
 
     const merged = [
-      ...localEstimateItems.map(mapLocalEstimateGarageItem),
+      ...enrichedLocalEstimateItems.map(mapLocalEstimateGarageItem),
       ...backendItems,
     ].sort((left, right) => right.savedAt.localeCompare(left.savedAt));
 
@@ -300,6 +387,53 @@ export const garageService = {
     });
     const mapped = mapLocalEstimateGarageItem(nextItem);
     mutableGarage = [mapped, ...mutableGarage.filter((entry) => entry.unlockId !== input.unlockId)];
+    return mapped;
+  },
+
+  async getLocalEstimateByUnlockId(unlockId: string): Promise<GarageItem | null> {
+    const localItems = await loadLocalEstimateGarageItems();
+    const enrichedLocalItems = await enrichLocalEstimateGarageItems(localItems);
+    const matchedItem = enrichedLocalItems.find((item) => item.unlockId === unlockId) ?? null;
+    return matchedItem ? mapLocalEstimateGarageItem(matchedItem) : null;
+  },
+
+  async updateLocalEstimateMarketSnapshot(input: {
+    unlockId: string;
+    valuation?: VehicleRecord["valuation"] | null;
+    listings?: VehicleRecord["listings"] | null;
+    source: "live_value" | "live_listings";
+  }): Promise<GarageItem | null> {
+    const localItems = await loadLocalEstimateGarageItems();
+    const itemIndex = localItems.findIndex((item) => item.unlockId === input.unlockId || item.vehicleId === input.unlockId);
+    if (itemIndex < 0) {
+      return null;
+    }
+
+    const existingItem = localItems[itemIndex];
+    const updatedItem: LocalEstimateGarageItem = {
+      ...existingItem,
+      notes: input.source === "live_listings"
+        ? "Saved from scan. Live listing-derived market context loaded."
+        : "Saved from scan. Live market value loaded.",
+      vehicle: {
+        ...existingItem.vehicle,
+        valuation: input.valuation ?? existingItem.vehicle.valuation,
+        listings: input.listings ?? existingItem.vehicle.listings,
+      },
+    };
+    const nextItems = [...localItems];
+    nextItems[itemIndex] = updatedItem;
+    await saveLocalEstimateGarageItems(nextItems);
+    const mapped = mapLocalEstimateGarageItem(updatedItem);
+    mutableGarage = mutableGarage.map((item) =>
+      item.id === mapped.id || item.unlockId === mapped.unlockId ? mapped : item,
+    );
+    console.log("[garage] GARAGE_MARKET_SNAPSHOT_UPDATED", {
+      unlockId: input.unlockId,
+      source: input.source,
+      hasValuation: Boolean(input.valuation),
+      listingCount: input.listings?.length ?? null,
+    });
     return mapped;
   },
 
