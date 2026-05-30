@@ -9,6 +9,7 @@ import { authService } from "@/services/authService";
 import { purchaseService } from "@/services/purchaseService";
 import { scanService } from "@/services/scanService";
 import { wait } from "@/lib/utils";
+import type { VehicleLookupDescriptor } from "@/services/vehicleService";
 import { FreeUnlockReason, SubscriptionActionResult, SubscriptionProduct, SubscriptionStatus, SubscriptionVerifyPayload, UserPlan } from "@/types";
 
 type BackendSubscriptionRecord = {
@@ -48,6 +49,11 @@ type FreeUnlockActionResult = {
   alreadyUnlocked: boolean;
   reason: FreeUnlockReason;
   message: string;
+};
+
+type FreeUnlockVehicleLookup = {
+  vehicleId?: string | null;
+  descriptor?: VehicleLookupDescriptor | null;
 };
 
 const FREE_UNLOCKS_LIMIT = FREE_PRO_UNLOCKS_TOTAL;
@@ -363,6 +369,35 @@ async function loadFreeUnlockState(userId: string): Promise<FreeUnlockState> {
   }
 }
 
+async function loadFreeUnlockStateForUser(userId: string | null | undefined): Promise<FreeUnlockState> {
+  if (!userId || userId === "guest") {
+    return loadFreeUnlockState("guest");
+  }
+
+  const [userState, guestState] = await Promise.all([loadFreeUnlockState(userId), loadFreeUnlockState("guest")]);
+  const mergedState = {
+    used: Math.max(userState.localUsed ?? userState.used, guestState.localUsed ?? guestState.used),
+    localUsed: Math.max(userState.localUsed ?? userState.used, guestState.localUsed ?? guestState.used),
+    unlockedVehicleIds: dedupeUnlockIds([...userState.unlockedVehicleIds, ...guestState.unlockedVehicleIds]),
+  };
+
+  if (
+    mergedState.localUsed !== (userState.localUsed ?? userState.used) ||
+    mergedState.unlockedVehicleIds.length !== userState.unlockedVehicleIds.length
+  ) {
+    await saveFreeUnlockState(userId, mergedState);
+    if (__DEV__) {
+      console.log("[subscription] GUEST_UNLOCK_STATE_MIGRATED", {
+        userId,
+        localUsed: mergedState.localUsed,
+        unlockedVehicleCount: mergedState.unlockedVehicleIds.length,
+      });
+    }
+  }
+
+  return mergedState;
+}
+
 async function saveFreeUnlockState(userId: string, state: FreeUnlockState) {
   const key = `${FREE_UNLOCK_STORAGE_KEY}:${userId}`;
   const normalizedState = normalizeUnlockState(state);
@@ -374,6 +409,24 @@ async function saveFreeUnlockState(userId: string, state: FreeUnlockState) {
       unlockedVehicleIds: normalizedState.unlockedVehicleIds,
     }),
   );
+}
+
+function buildBackendUnlockRequestBody(vehicleId: string, lookup?: FreeUnlockVehicleLookup | null) {
+  const descriptor = lookup?.descriptor ?? null;
+  return {
+    vehicleId: lookup?.vehicleId ?? vehicleId,
+    ...(descriptor
+      ? {
+          year: descriptor.year,
+          make: descriptor.make,
+          model: descriptor.model,
+          trim: descriptor.trim ?? undefined,
+          vehicleType: descriptor.vehicleType ?? undefined,
+          bodyStyle: descriptor.bodyStyle ?? undefined,
+          normalizedModel: descriptor.normalizedModel ?? undefined,
+        }
+      : {}),
+  };
 }
 
 function isEstimatedUnlockId(vehicleId: string) {
@@ -537,7 +590,7 @@ export const subscriptionService = {
     });
     const user = await authService.getCurrentUser();
     const token = await authService.getAccessToken();
-    const localState = await loadFreeUnlockState(user?.id ?? "guest");
+    const localState = await loadFreeUnlockStateForUser(user?.id ?? "guest");
     if (!token) {
       if (__DEV__) {
         console.log("[subscription] unlock status skipped (no auth token)");
@@ -599,12 +652,16 @@ export const subscriptionService = {
     }
   },
 
-  async useFreeUnlockForVehicle(vehicleId: string, linkedVehicleIds: string[] = []): Promise<FreeUnlockActionResult> {
+  async useFreeUnlockForVehicle(
+    vehicleId: string,
+    linkedVehicleIds: string[] = [],
+    lookup?: FreeUnlockVehicleLookup | null,
+  ): Promise<FreeUnlockActionResult> {
     const user = await authService.getCurrentUser();
     const token = await authService.getAccessToken();
     const localUserId = user?.id ?? "guest";
-    if (!token || isEstimatedUnlockId(vehicleId)) {
-      const unlockState = await loadFreeUnlockState(localUserId);
+    if (!token) {
+      const unlockState = await loadFreeUnlockStateForUser(localUserId);
       const candidateIds = dedupeUnlockIds([vehicleId, ...linkedVehicleIds]);
       const alreadyUnlocked = candidateIds.some((id) => unlockState.unlockedVehicleIds.includes(id));
       if (alreadyUnlocked) {
@@ -655,7 +712,7 @@ export const subscriptionService = {
       };
     }
     if (!user?.id) {
-      const unlockState = await loadFreeUnlockState("guest");
+      const unlockState = await loadFreeUnlockStateForUser("guest");
       return {
         ok: false,
         state: unlockState,
@@ -667,17 +724,23 @@ export const subscriptionService = {
       };
     }
     try {
+      console.log("[subscription] BACKEND_UNLOCK_REQUEST_START", {
+        vehicleId,
+        linkedVehicleCount: linkedVehicleIds.length,
+        hasDescriptor: Boolean(lookup?.descriptor),
+        estimatedUnlockId: isEstimatedUnlockId(vehicleId) || isEstimatedSoftUnlockId(vehicleId),
+      });
       const response = await apiRequest<BackendUnlockUseResponse>({
         path: "/api/unlocks/use",
         method: "POST",
-        body: { vehicleId },
+        body: buildBackendUnlockRequestBody(vehicleId, lookup),
       });
       const status = response.status;
-      const existingLocalState = await loadFreeUnlockState(user.id);
+      const existingLocalState = await loadFreeUnlockStateForUser(user.id);
       const unlockState = {
         used: status.freeUnlocksUsed,
         localUsed: existingLocalState.localUsed ?? existingLocalState.used,
-        unlockedVehicleIds: status.unlockedVehicleIds ?? [],
+        unlockedVehicleIds: dedupeUnlockIds([...(status.unlockedVehicleIds ?? []), vehicleId, ...linkedVehicleIds]),
       };
       await saveFreeUnlockState(user.id, unlockState);
       logFreeUnlockCounterState("backend_unlock_status", {
@@ -708,7 +771,17 @@ export const subscriptionService = {
             : "No free unlocks remaining. Upgrade to Pro for full access.",
       };
     } catch (error) {
-      const unlockState = await loadFreeUnlockState(user.id);
+      console.log("[subscription] BACKEND_UNLOCK_REQUEST_FAILED", {
+        vehicleId,
+        linkedVehicleCount: linkedVehicleIds.length,
+        hasDescriptor: Boolean(lookup?.descriptor),
+        message: error instanceof Error ? error.message : String(error),
+        code:
+          typeof error === "object" && error && "code" in error && typeof (error as { code?: unknown }).code === "string"
+            ? (error as { code: string }).code
+            : null,
+      });
+      const unlockState = await loadFreeUnlockStateForUser(user.id);
       const code =
         typeof error === "object" && error && "code" in error && typeof (error as { code?: unknown }).code === "string"
           ? (error as { code: string }).code
@@ -716,16 +789,24 @@ export const subscriptionService = {
       const reason =
         code === "VEHICLE_NOT_FOUND"
           ? "vehicle_not_found"
+          : code === "UNLOCK_DESCRIPTOR_MISSING" || code === "UNLOCK_KEY_MISSING" || code === "VALIDATION_ERROR"
+            ? "vehicle_not_found"
           : code === "AUTH_REQUIRED"
             ? "auth_required"
             : code === "BACKEND_UNREACHABLE" || code === "REQUEST_TIMEOUT"
               ? "network_error"
+              : code === "SUPABASE_RPC_FAILED" || code === "SUPABASE_QUERY_FAILED" || code === "SUPABASE_UPSERT_FAILED"
+                ? "backend_error"
               : "unknown";
       const message =
         code === "VEHICLE_NOT_FOUND"
-          ? "This vehicle can be viewed, but it is not unlockable yet. Try another catalog-linked result."
+          ? "Vehicle identity is missing. Try reopening this result and unlocking again."
+          : code === "UNLOCK_DESCRIPTOR_MISSING" || code === "UNLOCK_KEY_MISSING" || code === "VALIDATION_ERROR"
+            ? "Vehicle identity is missing. Try reopening this result and unlocking again."
           : code === "AUTH_REQUIRED"
             ? "Sign in to use your free unlocks on this device."
+            : code === "SUPABASE_RPC_FAILED" || code === "SUPABASE_QUERY_FAILED" || code === "SUPABASE_UPSERT_FAILED"
+              ? "The unlock service is temporarily unavailable. Please try again in a moment."
             : error instanceof Error
               ? error.message
               : "We couldn’t apply your free unlock right now.";

@@ -231,6 +231,7 @@ export type FreeUnlockReason =
   | "payload_too_thin"
   | "auth_required"
   | "network_error"
+  | "backend_error"
   | "unknown";
 
 export type SubscriptionStatus = {

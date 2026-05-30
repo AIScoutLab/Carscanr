@@ -42,13 +42,16 @@ export class UnlockService {
     const balance = await repositories.unlockBalances.getOrCreate(userId);
     const unlocks = await repositories.vehicleUnlocks.listByUser(userId);
     const remaining = Math.max(0, balance.freeUnlocksTotal - balance.freeUnlocksUsed);
+    const unlockedVehicleIds = Array.from(
+      new Set(
+        unlocks.flatMap((unlock) => [unlock.sourceVehicleId, unlock.vehicleKey, unlock.unlockKey]).filter((id): id is string => typeof id === "string" && id.length > 0),
+      ),
+    );
     return {
       freeUnlocksTotal: balance.freeUnlocksTotal,
       freeUnlocksUsed: balance.freeUnlocksUsed,
       freeUnlocksRemaining: remaining,
-      unlockedVehicleIds: unlocks
-        .map((unlock) => unlock.sourceVehicleId)
-        .filter((id): id is string => typeof id === "string" && id.length > 0),
+      unlockedVehicleIds,
     };
   }
 
@@ -198,36 +201,6 @@ export class UnlockService {
     descriptor?: VehicleLookupDescriptor | null;
     scanId?: string | null;
   }): Promise<UnlockEntitlementResult> {
-    if (input.vehicleId) {
-      const vehicle = await this.resolveUnlockableVehicle(input.vehicleId);
-      if (vehicle) {
-        return this.grantUnlockForVehicle({
-          userId: input.userId,
-          vehicle,
-          scanId: input.scanId ?? null,
-          requested: true,
-        });
-      }
-
-      if (!input.descriptor) {
-        throw new AppError(404, "VEHICLE_NOT_FOUND", "Vehicle not found.");
-      }
-
-      logger.warn(
-        {
-          label: "UNLOCK_VEHICLE_ID_FALLBACK_TO_DESCRIPTOR",
-          userId: input.userId,
-          vehicleId: input.vehicleId,
-          scanId: input.scanId ?? null,
-        },
-        "UNLOCK_VEHICLE_ID_FALLBACK_TO_DESCRIPTOR",
-      );
-    }
-
-    if (!input.descriptor) {
-      throw new AppError(400, "UNLOCK_DESCRIPTOR_MISSING", "Vehicle identity is required to grant an unlock.");
-    }
-
     const plan = await this.subscriptionService.getActivePlan(input.userId);
     if (isProPlan(plan)) {
       return {
@@ -240,6 +213,43 @@ export class UnlockService {
       };
     }
 
+    if (!input.descriptor && input.vehicleId) {
+      const vehicle = await this.resolveUnlockableVehicle(input.vehicleId);
+      if (vehicle) {
+        return this.grantUnlockForVehicle({
+          userId: input.userId,
+          vehicle,
+          scanId: input.scanId ?? null,
+          requested: true,
+        });
+      }
+
+      logger.warn(
+        {
+          label: "UNLOCK_VEHICLE_ID_RESOLUTION_FAILED",
+          userId: input.userId,
+          vehicleId: input.vehicleId,
+          scanId: input.scanId ?? null,
+          reason: "vehicle_not_found_without_descriptor",
+        },
+        "UNLOCK_VEHICLE_ID_RESOLUTION_FAILED",
+      );
+      throw new AppError(404, "VEHICLE_NOT_FOUND", "Vehicle not found.");
+    }
+
+    if (!input.descriptor) {
+      logger.warn(
+        {
+          label: "UNLOCK_DESCRIPTOR_MISSING",
+          userId: input.userId,
+          hasVehicleId: Boolean(input.vehicleId),
+          scanId: input.scanId ?? null,
+        },
+        "UNLOCK_DESCRIPTOR_MISSING",
+      );
+      throw new AppError(400, "UNLOCK_DESCRIPTOR_MISSING", "Vehicle identity is required to grant an unlock.");
+    }
+
     const vehicleKey = buildVehicleKey({
       year: input.descriptor.year,
       make: input.descriptor.make,
@@ -249,6 +259,17 @@ export class UnlockService {
     });
     const unlockKeyResult = buildUnlockKey({ vehicleKey });
     if (!unlockKeyResult.key) {
+      logger.warn(
+        {
+          label: "UNLOCK_KEY_BUILD_FAILED",
+          userId: input.userId,
+          hasVehicleId: Boolean(input.vehicleId),
+          hasDescriptor: true,
+          scanId: input.scanId ?? null,
+          vehicleKey,
+        },
+        "UNLOCK_KEY_BUILD_FAILED",
+      );
       throw new AppError(400, "UNLOCK_KEY_MISSING", "Unable to build unlock key for this vehicle.");
     }
 
@@ -257,6 +278,8 @@ export class UnlockService {
         label: "UNLOCK_DESCRIPTOR_GRANT_ATTEMPT",
         userId: input.userId,
         vehicleKey,
+        unlockType: unlockKeyResult.type,
+        hasSourceVehicleId: Boolean(input.vehicleId),
         sourceVehicleId: input.vehicleId ?? null,
         scanId: input.scanId ?? null,
       },
@@ -280,6 +303,10 @@ export class UnlockService {
         sourceVehicleId: input.vehicleId ?? null,
         alreadyUnlocked: result.alreadyUnlocked,
         usedUnlock: result.usedUnlock,
+        usedUnlockCredit: result.usedUnlockCredit,
+        allowed: result.allowed,
+        freeUnlocksRemaining: result.freeUnlocksRemaining,
+        unlockCreditsRemaining: result.unlockCreditsRemaining,
       },
       "UNLOCK_ALLOWED",
     );

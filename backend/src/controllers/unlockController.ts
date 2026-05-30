@@ -45,9 +45,15 @@ export class UnlockController {
     logger.info(
       {
         label: "UNLOCK_REQUEST_RECEIVED",
+        authUserPresent: Boolean(req.auth?.userId),
         userId: req.auth!.userId,
         hasVehicleId: Boolean(vehicleId),
         hasDescriptor: Boolean(descriptor),
+        descriptorYear: descriptor?.year ?? null,
+        descriptorMake: descriptor?.make ?? null,
+        descriptorModel: descriptor?.model ?? null,
+        descriptorHasTrim: Boolean(descriptor?.trim),
+        descriptorVehicleType: descriptor?.vehicleType ?? null,
         scanId: scanId ?? null,
       },
       "UNLOCK_REQUEST_RECEIVED",

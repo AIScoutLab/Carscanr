@@ -143,6 +143,148 @@ describe("premium market access security", () => {
     assert.equal(listingsProviderCalled, true);
   });
 
+  test("stable vehicle unlock succeeds and descriptor market access uses the same key", async () => {
+    let valueProviderCalled = false;
+    setProviders({
+      ...createTestProviders(),
+      valueProvider: {
+        async getValuation(input) {
+          valueProviderCalled = true;
+          return {
+            id: `valuation-${input.vehicleId}`,
+            vehicleId: input.vehicleId,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition as any,
+            tradeIn: 26000,
+            privateParty: 28500,
+            dealerRetail: 30900,
+            currency: "USD",
+            generatedAt: new Date().toISOString(),
+            sourceLabel: "Based on market data",
+            modelType: "provider_range",
+          };
+        },
+      },
+    });
+
+    const unlockResponse = await requestApp({
+      method: "POST",
+      url: "/api/unlocks/use",
+      headers: {
+        ...authHeaders(),
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({
+        vehicleId: "2021-cadillac-ct4-premium-luxury",
+        year: 2021,
+        make: "Cadillac",
+        model: "CT4",
+        trim: "Premium Luxury",
+        vehicleType: "car",
+      }),
+    });
+    const unlockBody = parseJson<any>(unlockResponse);
+
+    assert.equal(unlockResponse.statusCode, 200);
+    assert.equal(unlockBody.success, true);
+    assert.equal(unlockBody.data.entitlement.allowed, true);
+    assert.equal(unlockBody.data.entitlement.usedUnlock, true);
+
+    const valueResponse = await requestApp({
+      method: "GET",
+      url:
+        "/api/vehicle/value?year=2021&make=Cadillac&model=CT4&trim=Premium%20Luxury&vehicleType=car&zip=60502&mileage=12000&condition=good" +
+        "&allowLive=true&forceLive=true&fetchReason=user_requested_value_refresh&sourceScreen=valueScreen&action=valueRefresh",
+      headers: authHeaders(),
+    });
+    const valueBody = parseJson<any>(valueResponse);
+
+    assert.equal(valueResponse.statusCode, 200);
+    assert.equal(valueBody.success, true);
+    assert.equal(valueProviderCalled, true);
+  });
+
+  test("descriptor-only unlock succeeds without a catalog vehicle id", async () => {
+    const unlockResponse = await requestApp({
+      method: "POST",
+      url: "/api/unlocks/use",
+      headers: {
+        ...authHeaders(),
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({
+        year: 2016,
+        make: "Mercedes-Benz",
+        model: "C-Class",
+        trim: "C 300",
+        vehicleType: "car",
+        bodyStyle: "Coupe",
+      }),
+    });
+    const unlockBody = parseJson<any>(unlockResponse);
+
+    assert.equal(unlockResponse.statusCode, 200);
+    assert.equal(unlockBody.success, true);
+    assert.equal(unlockBody.data.entitlement.allowed, true);
+    assert.equal(unlockBody.data.entitlement.usedUnlock, true);
+
+    const listingsResponse = await requestApp({
+      method: "GET",
+      url:
+        "/api/vehicle/listings?year=2016&make=Mercedes-Benz&model=C-Class&trim=C%20300&vehicleType=car&zip=30563&radiusMiles=50" +
+        "&allowLive=true&forceLive=true&fetchReason=user_requested_listings_refresh&sourceScreen=listingsScreen&action=listingsRefresh",
+      headers: authHeaders(),
+    });
+    const listingsBody = parseJson<any>(listingsResponse);
+
+    assert.equal(listingsResponse.statusCode, 200);
+    assert.equal(listingsBody.success, true);
+  });
+
+  test("free user with no unlocks receives a no-credit response instead of a grant failure", async () => {
+    for (const model of ["CT4", "CT5", "ATS"]) {
+      const response = await requestApp({
+        method: "POST",
+        url: "/api/unlocks/use",
+        headers: {
+          ...authHeaders(),
+          "content-type": "application/json",
+        },
+        payload: JSON.stringify({
+          year: 2021,
+          make: "Cadillac",
+          model,
+          trim: "Premium Luxury",
+          vehicleType: "car",
+        }),
+      });
+      assert.equal(response.statusCode, 200);
+    }
+
+    const exhaustedResponse = await requestApp({
+      method: "POST",
+      url: "/api/unlocks/use",
+      headers: {
+        ...authHeaders(),
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({
+        year: 2021,
+        make: "Cadillac",
+        model: "XT4",
+        trim: "Sport",
+        vehicleType: "car",
+      }),
+    });
+    const exhaustedBody = parseJson<any>(exhaustedResponse);
+
+    assert.equal(exhaustedResponse.statusCode, 200);
+    assert.equal(exhaustedBody.success, true);
+    assert.equal(exhaustedBody.data.entitlement.allowed, false);
+    assert.equal(exhaustedBody.data.entitlement.reason, "no_free_unlocks");
+  });
+
   test("Pro yearly users can request live value without a free unlock", async () => {
     setRepositories(
       createTestRepositories({

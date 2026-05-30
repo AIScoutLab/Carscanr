@@ -1,17 +1,14 @@
-import { router, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, Image, Modal, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Href, router, useLocalSearchParams } from "expo-router";
+import { type PropsWithChildren, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Alert, Animated, Image, Keyboard, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ImageSourcePropType, type StyleProp, type ViewStyle } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { AppContainer } from "@/components/AppContainer";
-import { BackButton } from "@/components/BackButton";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 import { EmptyState } from "@/components/EmptyState";
 import { ListingCard } from "@/components/ListingCard";
 import { LockedContentPreview } from "@/components/LockedContentPreview";
-import { PrimaryButton } from "@/components/PrimaryButton";
 import { PremiumSkeleton } from "@/components/PremiumSkeleton";
-import { ScanUsageMeter } from "@/components/ScanUsageMeter";
 import { SectionHeader } from "@/components/SectionHeader";
-import { SegmentedTabBar } from "@/components/SegmentedTabBar";
 import { ValueEstimateCard } from "@/components/ValueEstimateCard";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { cardStyles } from "@/design/patterns";
@@ -20,24 +17,47 @@ import { useSubscription } from "@/hooks/useSubscription";
 import { buildListingDerivedConditionSetFromListings, getConditionSourceLabel, normalizeSupportedValueCondition, resolveConditionValues } from "@/lib/valueConditionSet";
 import { completeCanonicalSpecs, formatCanonicalModelName, sanitizeSpecValue } from "@/lib/canonicalSpecCompletion";
 import { formatHorsepowerLabel } from "@/lib/vehicleData";
-import { mobileBuildInfo, mobileEnv } from "@/lib/env";
+import { mobileBuildInfo } from "@/lib/env";
 import { isProPlan } from "@/lib/subscription";
 import { buildSpecialtyVehicleOverview, isSpecialtyExoticMake } from "@/lib/specialtyVehicles";
 import { buildVehicleDescription } from "@/lib/vehicleDescription";
 import { MarketAreaZipSource, isValidMarketAreaZip, normalizeMarketAreaZip } from "@/lib/marketAreaZip";
+import { garageService } from "@/services/garageService";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { marketAreaZipService } from "@/services/marketAreaZipService";
 import { scanService } from "@/services/scanService";
+import { authService } from "@/services/authService";
 import { buildVehicleSoftUnlockId, buildVehicleUnlockId } from "@/services/subscriptionService";
 import { ListingsDebugMeta, VehicleLookupDescriptor, vehicleService } from "@/services/vehicleService";
 import { ValuationResult, VehicleRecord } from "@/types";
 import { formatCurrency } from "@/lib/utils";
 
-const tabs = ["Overview", "Specs", "Value", "For Sale", "Photos"];
+const allDetailTabs = ["Overview", "Specs", "Value", "For Sale", "Photos"] as const;
+const detailTabs = ["Overview", "Value", "Photos"] as const;
+const tabs = [...detailTabs];
+type DetailTab = (typeof allDetailTabs)[number];
+const detailTabLabels: Record<(typeof detailTabs)[number], string> = {
+  Overview: "Details",
+  Value: "Value & Listings",
+  Photos: "Photos",
+};
 const defaultZip = "";
 const defaultMileage = "18400";
 const defaultCondition = "Good";
 const conditionOptions = ["Fair", "Good", "Excellent"];
+
+function coerceDetailTab(value: unknown): DetailTab | null {
+  if (value === "Specs") {
+    return "Overview";
+  }
+  if (value === "Market Value") {
+    return "Value";
+  }
+  if (value === "Listings" || value === "For Sale") {
+    return "Value";
+  }
+  return typeof value === "string" && (allDetailTabs as readonly string[]).includes(value) ? (value as DetailTab) : null;
+}
 
 type ListingsMarketContext = {
   zip: string;
@@ -495,6 +515,11 @@ function buildProductionDisplayTitle(input: {
   return [input.yearLabel && !isOverbroadYearRangeLabel(input.yearLabel) ? input.yearLabel : null, makeModel].filter(Boolean).join(" ").trim();
 }
 
+function buildDetailHeroTitle(title: string) {
+  const cleaned = title.replace(/\s*\(est\.\)\s*/gi, " ").replace(/\s+/g, " ").trim();
+  return cleaned.replace(/^\d{4}(?:\s*[-–—]\s*\d{4})?\s+/, "").trim() || cleaned;
+}
+
 function isUnavailableValue(value: string | undefined | null) {
   return !value || value === "Unavailable";
 }
@@ -798,9 +823,359 @@ function ApproximateDataState({
       <Text style={styles.approximateStateTitle}>{title}</Text>
       <Text style={styles.approximateStateBody}>{body}</Text>
       {supportNote ? <Text style={styles.approximateStateSupport}>{supportNote}</Text> : null}
-      {actionLabel && onAction ? <PrimaryButton label={actionLabel} secondary={secondaryAction} onPress={onAction} disabled={actionDisabled} /> : null}
+      {actionLabel && onAction ? <PremiumDetailButton label={actionLabel} secondary={secondaryAction} onPress={onAction} disabled={actionDisabled} /> : null}
     </View>
   );
+}
+
+function PremiumDetailButton({
+  label,
+  onPress,
+  disabled = false,
+  secondary = false,
+}: {
+  label: string;
+  onPress?: () => void;
+  disabled?: boolean;
+  secondary?: boolean;
+}) {
+  return (
+    <Pressable
+      style={[styles.detailActionButton, secondary && styles.detailActionButtonSecondary, disabled && styles.detailActionButtonDisabled]}
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+    >
+      {secondary ? (
+        <Text style={[styles.detailActionLabel, styles.detailActionLabelSecondary]}>{label}</Text>
+      ) : (
+        <LinearGradient colors={["#D8A36B", "#B6844F"]} start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }} style={styles.detailActionGradient}>
+          <Text style={styles.detailActionLabel}>{label}</Text>
+        </LinearGradient>
+      )}
+    </Pressable>
+  );
+}
+
+function VehicleDetailContainer({
+  children,
+  scroll = true,
+  contentContainerStyle,
+}: PropsWithChildren<{
+  scroll?: boolean;
+  contentContainerStyle?: StyleProp<ViewStyle>;
+}>) {
+  const content = (
+    <>
+      <View style={styles.pageGlowAmber} pointerEvents="none" />
+      <View style={styles.pageGlowGraphite} pointerEvents="none" />
+      {children}
+    </>
+  );
+
+  return (
+    <SafeAreaView style={styles.vehicleSafeArea} edges={["top", "right", "bottom", "left"]}>
+      <LinearGradient colors={["#030405", "#0A0A09", "#040405"]} style={styles.vehicleGradient}>
+        {scroll ? (
+          <ScrollView
+            style={styles.vehicleScroll}
+            contentContainerStyle={[styles.vehicleContent, contentContainerStyle]}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            onScrollBeginDrag={() => Keyboard.dismiss()}
+          >
+            {content}
+          </ScrollView>
+        ) : (
+          <View style={[styles.vehicleContent, styles.vehicleStaticContent, contentContainerStyle]}>{content}</View>
+        )}
+      </LinearGradient>
+    </SafeAreaView>
+  );
+}
+
+function DetailSectionNav({
+  activeTab,
+  onChange,
+}: {
+  activeTab: DetailTab;
+  onChange: (tab: DetailTab) => void;
+}) {
+  return (
+    <View style={styles.detailTabRail}>
+      {tabs.map((item) => {
+        const active = item === activeTab;
+        return (
+          <Pressable
+            key={item}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+            onPress={() => onChange(item)}
+            style={[styles.detailTabButton, active && styles.detailTabButtonActive]}
+          >
+            <Text style={[styles.detailTabLabel, active && styles.detailTabLabelActive]}>{detailTabLabels[item]}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function DetailBackButton({ fallbackHref }: { fallbackHref: Href }) {
+  const handlePress = () => {
+    console.log("[tap] vehicle-detail-back", { fallbackHref });
+    if (typeof router.canGoBack === "function" && router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace(fallbackHref);
+  };
+
+  return (
+    <Pressable style={styles.detailBackButton} onPress={handlePress} accessibilityRole="button">
+      <Ionicons name="chevron-back" size={18} color="#F5F3EE" />
+      <Text style={styles.detailBackLabel}>Back</Text>
+    </Pressable>
+  );
+}
+
+function buildMarketMetrics(result: ValuationResult) {
+  const conditionSetMode = result.status === "loaded_condition_set";
+  const listingRangeMode =
+    result.status === "loaded_listing_range" ||
+    (conditionSetMode &&
+      result.conditionValues != null &&
+      Boolean(result.low || result.median || result.high) &&
+      result.tradeIn === "Unavailable" &&
+      result.privateParty === "Unavailable");
+
+  return listingRangeMode
+    ? [
+        { label: "Low", value: result.low ?? "Unavailable", range: result.listingCount ? `${result.listingCount} comps` : "Comparable listings" },
+        { label: "Median", value: result.median ?? "Unavailable", range: result.sourceLabel },
+        { label: "High", value: result.high ?? "Unavailable", range: result.confidenceLabel },
+      ]
+    : [
+        { label: "Trade-in", value: result.tradeIn, range: result.tradeInRange },
+        { label: "Private", value: result.privateParty, range: result.privatePartyRange },
+        { label: "Retail", value: result.dealerRetail, range: result.dealerRetailRange },
+      ];
+}
+
+function PremiumMarketValueCard({
+  result,
+  loading = false,
+}: {
+  result: ValuationResult;
+  loading?: boolean;
+}) {
+  const metrics = buildMarketMetrics(result);
+  const visibleMetrics = metrics.filter((metric) => !isUnavailableValue(metric.value));
+  const primaryValue =
+    visibleMetrics.find((metric) => metric.label === "Private")?.value ??
+    visibleMetrics.find((metric) => metric.label === "Median")?.value ??
+    visibleMetrics[0]?.value ??
+    "Value pending";
+  const sourceLabel = result.valuationSource === "listing_comps" ? "Market Value" : "Reference Value";
+
+  return (
+    <View style={styles.marketValueCard}>
+      <View style={styles.premiumSectionHeader}>
+        <Text style={styles.marketValueLabel}>{sourceLabel}</Text>
+      </View>
+      <Text style={styles.marketValueHeading}>{primaryValue}</Text>
+      {visibleMetrics.length > 1 ? (
+        <View style={styles.marketMetricGrid}>
+          {visibleMetrics.map((metric, index) => (
+          <View key={`${metric.label}-${index}`} style={styles.marketMetricCard}>
+            <Text style={styles.marketMetricLabel}>{metric.label}</Text>
+            <Text style={styles.marketMetricValue}>{metric.value}</Text>
+          </View>
+          ))}
+        </View>
+      ) : null}
+      <Text style={styles.marketSource}>{result.sourceLabel}</Text>
+      <Text style={styles.marketConfidence}>{result.confidenceLabel}</Text>
+      {loading ? <ActivityIndicator color="#E7B97F" /> : null}
+    </View>
+  );
+}
+
+function ReferenceValueCard({ vehicle, compact = false }: { vehicle: VehicleRecord; compact?: boolean }) {
+  if (!vehicle.specs.msrp || vehicle.specs.msrp <= 0) {
+    return null;
+  }
+  return (
+    <View style={[styles.referenceValueCard, compact && styles.referenceValueCardCompact]}>
+      <View style={styles.premiumSectionHeader}>
+        <Text style={styles.referenceValueLabel}>Reference Value</Text>
+      </View>
+      <Text style={styles.referenceValueAmount}>{formatCurrency(vehicle.specs.msrp)}</Text>
+      <Text style={styles.referenceValueBody}>
+        {compact ? "Based on local canonical data" : "Local canonical MSRP/reference data. Live market value loads only when you request it."}
+      </Text>
+    </View>
+  );
+}
+
+function LockedValueListingsCard({
+  vehicle,
+  loading,
+  disabled,
+  onPress,
+}: {
+  vehicle: VehicleRecord;
+  loading: boolean;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  const referenceValue = vehicle.specs.msrp && vehicle.specs.msrp > 0 ? formatCurrency(vehicle.specs.msrp) : null;
+  return (
+    <Pressable
+      style={[styles.lockedValueCard, disabled && styles.lockedValueCardDisabled]}
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel="Unlock Value and Listings"
+    >
+      <View style={styles.lockedValueHeader}>
+        <View style={styles.lockedValueIcon}>
+          <Ionicons name="lock-closed-outline" size={18} color="#E7B97F" />
+        </View>
+        <View style={styles.lockedValueCopy}>
+          <Text style={styles.lockedValueTitle}>Value & Listings locked</Text>
+          <Text style={styles.lockedValueBody}>Unlock once to load live market value and nearby listings.</Text>
+        </View>
+      </View>
+      {referenceValue ? (
+        <View style={styles.lockedReferenceStrip}>
+          <View>
+            <Text style={styles.lockedReferenceLabel}>Reference Value</Text>
+            <Text style={styles.lockedReferenceBody}>Based on local canonical data</Text>
+          </View>
+          <Text style={styles.lockedReferenceValue}>{referenceValue}</Text>
+        </View>
+      ) : null}
+      <View style={styles.lockedValueCta}>
+        {loading ? <ActivityIndicator color="#0B0907" /> : <Text style={styles.lockedValueCtaText}>Unlock Value & Listings</Text>}
+        {!loading ? <Ionicons name="chevron-forward" size={17} color="#0B0907" /> : null}
+      </View>
+    </Pressable>
+  );
+}
+
+function PremiumListingsSection({
+  listings,
+  locked,
+  loading,
+  fallbackImageSource,
+}: {
+  listings: VehicleRecord["listings"];
+  locked: boolean;
+  loading: boolean;
+  fallbackImageSource?: ImageSourcePropType | null;
+}) {
+  const believableListings = listings.filter(isBelievableListing);
+
+  return (
+    <View style={styles.listingsPanel}>
+      <View style={styles.tabIntroCompact}>
+        <Text style={styles.listingsKicker}>Similar Listings</Text>
+        <View style={styles.premiumBadge}>
+          <Text style={styles.premiumBadgeText}>{locked ? "Locked" : believableListings.length > 0 ? `${believableListings.length} comps` : "Ready"}</Text>
+        </View>
+      </View>
+      <Text style={styles.listingsPanelBody}>
+        {locked
+          ? "Unlock once to load live market value and nearby listings for this vehicle."
+          : believableListings.length > 0
+            ? "Nearby comps help ground the market view with price, mileage, and seller context."
+            : "Live nearby listings are available on demand when you want current comps."}
+      </Text>
+      {locked ? (
+        <View style={styles.lockedPreviewStack} pointerEvents="none">
+          {[0, 1].map((item) => (
+            <View key={item} style={styles.lockedPreviewRow}>
+              <View style={styles.lockedPreviewLineShort} />
+              <View style={styles.lockedPreviewLineLong} />
+              <Ionicons name="lock-closed-outline" size={14} color="rgba(172,178,190,0.68)" />
+            </View>
+          ))}
+        </View>
+      ) : believableListings.length > 0 ? (
+        <View style={styles.premiumListingStack}>
+          {believableListings.slice(0, 3).map((listing, index) => (
+            <PremiumListingRow key={`${listing.id || listing.title}-${index}`} listing={listing} fallbackImageSource={fallbackImageSource} />
+          ))}
+        </View>
+      ) : null}
+      {loading ? <ActivityIndicator color="#E7B97F" /> : null}
+    </View>
+  );
+}
+
+function PremiumListingRow({
+  listing,
+  fallbackImageSource,
+}: {
+  listing: VehicleRecord["listings"][number];
+  fallbackImageSource?: ImageSourcePropType | null;
+}) {
+  const price = safeListingText(listing.price, "Price unavailable");
+  const mileage = safeListingText(listing.mileage, "Mileage unavailable");
+  const location = safeListingText(listing.location, "Location unavailable");
+  const source = safeListingText(listing.sourceLabel || listing.dealer, "Marketplace");
+  const imageSource =
+    typeof listing.imageUrl === "string" && listing.imageUrl.trim().length > 0
+      ? { uri: listing.imageUrl.trim() }
+      : fallbackImageSource ?? null;
+
+  return (
+    <View style={styles.premiumListingRow}>
+      {imageSource ? <Image source={imageSource} style={styles.premiumListingImage} resizeMode="cover" /> : <View style={styles.premiumListingImageFallback} />}
+      <View style={styles.premiumListingCopy}>
+        <Text style={styles.premiumListingSource} numberOfLines={1}>{source}</Text>
+        <Text style={styles.premiumListingPrice}>{price}</Text>
+        <Text style={styles.premiumListingMeta} numberOfLines={1}>{mileage} • {location}</Text>
+      </View>
+      <View style={styles.premiumListingAction}>
+        <Ionicons name="open-outline" size={18} color="#E7B97F" />
+      </View>
+    </View>
+  );
+}
+
+function safeListingText(value: unknown, fallback: string) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+function normalizePhotoMatchPart(value: string | number | null | undefined) {
+  return `${value ?? ""}`.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function listingImageMatchesVehicle(listing: VehicleRecord["listings"][number], vehicle: VehicleRecord) {
+  if (typeof listing.imageUrl !== "string" || listing.imageUrl.trim().length === 0 || !isBelievableListing(listing)) {
+    return false;
+  }
+  if (vehicle.isSampleVehicle && listing.isSampleListing) {
+    return true;
+  }
+
+  const title = normalizePhotoMatchPart(listing.title);
+  const make = normalizePhotoMatchPart(vehicle.make);
+  const model = normalizePhotoMatchPart(vehicle.model);
+  const year = vehicle.year > 0 ? String(vehicle.year) : "";
+  const modelTokens = model.split(" ").filter((part) => part.length >= 2);
+  const hasModel = modelTokens.length > 0 && modelTokens.every((part) => title.split(" ").includes(part));
+  const hasMake = make.length > 0 && title.includes(make);
+  const hasYear = year.length > 0 && title.includes(year);
+
+  return hasModel && (hasMake || hasYear || model.length <= 4);
+}
+
+function capitalizeCondition(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
 }
 
 function isRiskSensitiveFamily(input: {
@@ -1130,7 +1505,7 @@ function shouldShowEstimatedTrim(input: {
 }
 
 export default function VehicleDetailScreen() {
-  const { id, imageUri, scanId, estimate, titleLabel, yearLabel, make, model, trimLabel, vehicleType, confidence, unlockId, garageSource, reopenedSource, trustedCase, resultSource, isSampleVehicle: sampleVehicleParam, source: routeSource } = useLocalSearchParams<{
+  const { id, imageUri, scanId, estimate, titleLabel, yearLabel, make, model, trimLabel, vehicleType, confidence, unlockId, garageSource, reopenedSource, trustedCase, resultSource, isSampleVehicle: sampleVehicleParam, source: routeSource, initialTab, marketIntent } = useLocalSearchParams<{
     id: string;
     imageUri?: string;
     scanId?: string;
@@ -1149,6 +1524,8 @@ export default function VehicleDetailScreen() {
     resultSource?: string;
     isSampleVehicle?: string;
     source?: string;
+    initialTab?: string;
+    marketIntent?: string;
   }>();
   const [vehicle, setVehicle] = useState<VehicleRecord | null>(null);
   const [valuation, setValuation] = useState<ValuationResult>(createEmptyValuation());
@@ -1165,9 +1542,13 @@ export default function VehicleDetailScreen() {
   const [valueDebugUpdateCount, setValueDebugUpdateCount] = useState(0);
   const [valueDebugUpdatedAt, setValueDebugUpdatedAt] = useState<string | null>(null);
   const [listingsDebugMeta, setListingsDebugMeta] = useState<ListingsDebugMeta | null>(null);
-  const [tab, setTab] = useState("Overview");
+  const initialRouteTab = coerceDetailTab(initialTab);
+  const routeMarketIntent =
+    marketIntent === "value" || marketIntent === "listings" || marketIntent === "bundle" ? marketIntent : null;
+  const [tab, setTab] = useState<DetailTab>(initialRouteTab ?? "Overview");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [marketZipInitialized, setMarketZipInitialized] = useState(false);
   const [resolvedImageUri, setResolvedImageUri] = useState<string | null>(typeof imageUri === "string" && imageUri.trim().length > 0 ? imageUri : null);
   const [imageSourceLabel, setImageSourceLabel] = useState<string>(typeof imageUri === "string" && imageUri.trim().length > 0 ? "scanned photo (route param)" : "provider/generic");
   const [heroImagePolicy, setHeroImagePolicy] = useState<HeroImagePolicy>({
@@ -1183,13 +1564,15 @@ export default function VehicleDetailScreen() {
   const strongestValuationRef = useRef<ValuationResult>(createEmptyValuation());
   const lastValueRequestKeyRef = useRef<string | null>(null);
   const pendingValueRequestKeyRef = useRef<string | null>(null);
+  const routeMarketIntentHandledRef = useRef<string | null>(null);
+  const marketUnlockConfirmationOpenRef = useRef(false);
+  const marketUnlockSpendInFlightRef = useRef(false);
   const heroOpacity = useRef(new Animated.Value(0)).current;
   const heroTranslate = useRef(new Animated.Value(12)).current;
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const contentTranslate = useRef(new Animated.Value(16)).current;
   const {
     status: usage,
-    freeUnlocksUsed,
     freeUnlocksRemaining,
     freeUnlocksLimit,
     isUnlocking,
@@ -1200,7 +1583,8 @@ export default function VehicleDetailScreen() {
     errorMessage,
     unlockedVehicleIds,
   } = useSubscription();
-  const unlockFailureTitle = (reason?: string) => (reason === "payload_too_thin" ? "Unlock protected" : "Unlock unavailable");
+  const unlockFailureTitle = (reason?: string) =>
+    reason === "payload_too_thin" ? "Unlock protected" : reason === "backend_error" ? "Unlock service unavailable" : "Unlock unavailable";
   const isEstimateMode = estimate === "1" || id.startsWith("estimate:");
   const isSampleDetail =
     sampleVehicleParam === "1" ||
@@ -1208,7 +1592,7 @@ export default function VehicleDetailScreen() {
     resultSource === "sample_vehicle" ||
     id.endsWith("-sample") ||
     vehicle?.isSampleVehicle === true;
-  const showQaDebugStrip = mobileEnv.appEnv !== "production" || mobileEnv.showQaDebug === "1";
+  const showQaDebugStrip = false;
   const isPro = isProPlan(usage?.plan);
   const resolvedUnlockId =
     (typeof unlockId === "string" && unlockId.trim().length > 0
@@ -1290,6 +1674,7 @@ export default function VehicleDetailScreen() {
     estimateMode: isEstimateMode,
   });
   const resolvedDisplayTitle = finalDisplayIdentity.titleLabel || `${vehicle?.year ?? ""} ${vehicle?.make ?? ""} ${formatCanonicalModelName(vehicle?.make, vehicle?.model)}`.trim();
+  const resolvedHeroTitle = buildDetailHeroTitle(resolvedDisplayTitle);
   const normalizedRenderedIdentity = useMemo(
     () =>
       normalizeVehicleIdentityForRendering({
@@ -1334,11 +1719,6 @@ export default function VehicleDetailScreen() {
         .filter((entry): entry is string => Boolean(entry))
         .join(" • ")
     : null;
-  const lockedEyebrow = isEstimateMode
-    ? trustedResult
-      ? "High-confidence identification"
-      : "Vehicle identification"
-    : "Vehicle details";
   const unlockedDetailSubtitle = isEstimateMode
     ? trustedResult
       ? "High-confidence identification"
@@ -1368,6 +1748,14 @@ export default function VehicleDetailScreen() {
     vehicle,
     yearLabel,
   ]);
+  const unlockStatusTitle = hasFullAccess
+    ? feedbackMessage?.toLowerCase().includes("free unlock")
+      ? "Free unlock applied"
+      : "Value & Listings unlocked"
+    : "Value & Listings locked";
+  const unlockStatusBody = hasFullAccess
+    ? "This vehicle is now fully unlocked"
+    : "Unlock once to load live market value and nearby listings.";
   const applyValuationUpdate = useCallback(
     (
       next: ValuationResult,
@@ -1404,6 +1792,48 @@ export default function VehicleDetailScreen() {
       });
     },
     [id, scanId],
+  );
+  const updateSavedGarageMarketSnapshot = useCallback(
+    (input: {
+      valuation: ValuationResult;
+      listings?: VehicleRecord["listings"] | null;
+      source: "live_value" | "live_listings";
+    }) => {
+      if (isSampleDetail || !resolvedUnlockId || !hasStructuredValueEvidence(input.valuation)) {
+        return;
+      }
+
+      void garageService
+        .updateLocalEstimateMarketSnapshot({
+          unlockId: resolvedUnlockId,
+          valuation: input.valuation,
+          listings: input.listings ?? vehicle?.listings ?? null,
+          source: input.source,
+        })
+        .then((updatedItem) => {
+          if (__DEV__) {
+            console.log("[vehicle-detail] GARAGE_MARKET_SNAPSHOT_SYNCED", {
+              routeId: id,
+              scanId: typeof scanId === "string" ? scanId : null,
+              unlockId: resolvedUnlockId,
+              source: input.source,
+              updated: Boolean(updatedItem),
+              garageItemId: updatedItem?.id ?? null,
+              providerCall: false,
+            });
+          }
+        })
+        .catch((err) => {
+          console.log("[vehicle-detail] GARAGE_MARKET_SNAPSHOT_SYNC_FAILED", {
+            routeId: id,
+            scanId: typeof scanId === "string" ? scanId : null,
+            unlockId: resolvedUnlockId,
+            source: input.source,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        });
+    },
+    [id, isSampleDetail, resolvedUnlockId, scanId, vehicle?.listings],
   );
   const baseDisplayValuation = shouldDisplayCurrentValuationState(valuation) ? valuation : strongestValuationRef.current;
   const conditionAwareDisplayValuation = useMemo(() => {
@@ -1446,6 +1876,42 @@ export default function VehicleDetailScreen() {
       ]);
     });
   };
+  const confirmVehicleMarketUnlockSpend = useCallback(async () => {
+    if (marketUnlockConfirmationOpenRef.current) {
+      return false;
+    }
+    marketUnlockConfirmationOpenRef.current = true;
+    const remainingLine = Number.isFinite(freeUnlocksRemaining)
+      ? `\n\nYou have ${freeUnlocksRemaining} ${freeUnlocksRemaining === 1 ? "unlock" : "unlocks"} remaining.`
+      : "";
+    const confirmed = await new Promise<boolean>((resolve) => {
+      Alert.alert(
+        "Use 1 unlock?",
+        `This will unlock live market value and nearby listings for this vehicle.${remainingLine}`,
+        [
+          {
+            text: "Cancel",
+            style: "cancel",
+            onPress: () => resolve(false),
+          },
+          {
+            text: "Use Unlock",
+            onPress: () => resolve(true),
+          },
+        ],
+      );
+    });
+    marketUnlockConfirmationOpenRef.current = false;
+    return confirmed;
+  }, [freeUnlocksRemaining]);
+  const buildVehicleMarketUnlockSuccessBody = useCallback((alreadyUnlocked: boolean) => {
+    const nextRemaining = Number.isFinite(freeUnlocksRemaining)
+      ? alreadyUnlocked
+        ? freeUnlocksRemaining
+        : Math.max(0, freeUnlocksRemaining - 1)
+      : null;
+    return `Live market value and nearby listings are unlocked for this vehicle.${nextRemaining != null ? `\n\n${nextRemaining} ${nextRemaining === 1 ? "unlock" : "unlocks"} remaining.` : ""}`;
+  }, [freeUnlocksRemaining]);
   const trustedUnlockedYear = vehicle?.year || Number.parseInt(typeof yearLabel === "string" ? yearLabel : "", 10) || null;
   const trustedUnlockedMake = vehicle?.make || (typeof make === "string" ? make : "");
   const trustedUnlockedModel = vehicle?.model || (typeof model === "string" ? model : "");
@@ -1544,6 +2010,9 @@ export default function VehicleDetailScreen() {
     const normalizedZip = normalizeMarketAreaZip(nextValue);
     setZipCode(normalizedZip);
     setZipSource(normalizedZip.length > 0 ? "user_input" : "blank");
+    if (isValidMarketAreaZip(normalizedZip)) {
+      Keyboard.dismiss();
+    }
     console.log("[vehicle-detail] VALUE_ZIP_SOURCE", {
       routeId: id,
       scanId: typeof scanId === "string" ? scanId : null,
@@ -1713,6 +2182,11 @@ export default function VehicleDetailScreen() {
           allowReplacement: true,
         });
         setVehicle((current) => (current ? { ...current, valuation: nextResult } : current));
+        updateSavedGarageMarketSnapshot({
+          valuation: nextResult,
+          listings: vehicle.listings,
+          source: "live_value",
+        });
         previousConditionRef.current = normalizedCondition;
         previousValueRef.current = JSON.stringify(result);
         void marketAreaZipService.saveLastUsedZip(normalizedZip);
@@ -1774,6 +2248,7 @@ export default function VehicleDetailScreen() {
     isEstimateMode,
     isSampleDetail,
     mileage,
+    updateSavedGarageMarketSnapshot,
     valueLookupInput,
     vehicle,
     zipCode,
@@ -1878,6 +2353,13 @@ export default function VehicleDetailScreen() {
             condition: normalizedCondition,
             vehicle,
           });
+          if (derivedValue) {
+            updateSavedGarageMarketSnapshot({
+              valuation: derivedValue,
+              listings: result.listings,
+              source: "live_listings",
+            });
+          }
           if (derivedValue && shouldReplaceStaleValue) {
             console.log("[vehicle-detail] VALUE_HYDRATED_FROM_FORSALE_LISTINGS", {
               vehicleId: vehicle.id,
@@ -1932,10 +2414,332 @@ export default function VehicleDetailScreen() {
         }
         void marketAreaZipService.saveLastUsedZip(normalizedZip);
       })
+      .catch((error) => {
+        console.error("[vehicle-detail] LISTINGS_REQUEST_FAILED", {
+          routeId: id,
+          scanId: typeof scanId === "string" ? scanId : null,
+          vehicleId: vehicle.id,
+          lookup: valueLookupInput,
+          zip: normalizedZip,
+          zipSource,
+          mileage: normalizedMileage,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        setListingsDebugMeta({
+          sourceLabel: "Live listings could not be loaded",
+          rawCount: 0,
+          believableCount: 0,
+          mode: "none",
+          fallbackReason: "provider_error",
+        });
+      })
       .finally(() => {
         setListingsRefreshLoading(false);
       });
-  }, [applyValuationUpdate, condition, displayValuation, id, isSampleDetail, mileage, scanId, valueLookupInput, vehicle, zipCode, zipSource]);
+  }, [applyValuationUpdate, condition, displayValuation, id, isSampleDetail, mileage, scanId, updateSavedGarageMarketSnapshot, valueLookupInput, vehicle, zipCode, zipSource]);
+
+  const marketUnlockPrimaryId = resolvedUnlockId || vehicle?.id || "";
+  const marketUnlockLinkedIds = useMemo(
+    () =>
+      [vehicle?.id ?? null, resolvedSoftUnlockId]
+        .filter((entry): entry is string => Boolean(entry && entry !== marketUnlockPrimaryId)),
+    [marketUnlockPrimaryId, resolvedSoftUnlockId, vehicle?.id],
+  );
+  const marketUnlockLookup = useMemo(() => {
+    if (valueLookupInput && typeof valueLookupInput !== "string") {
+      return valueLookupInput;
+    }
+    return {
+      vehicleId: valueLookupInput ?? marketUnlockPrimaryId,
+      descriptor: vehicle ? buildDetailLookupDescriptor(vehicle) : null,
+    };
+  }, [marketUnlockPrimaryId, valueLookupInput, vehicle]);
+  const canRequestLiveListings = !isSampleDetail && isValidMarketAreaZip(normalizeMarketAreaZip(zipCode));
+  const vehicleMarketUnlockLabel = "Unlock Value & Listings";
+  const marketValueActionLabel = valuationLoading
+    ? "Loading live market value..."
+    : hasFullAccess || isPro
+      ? "Load live market value"
+      : vehicleMarketUnlockLabel;
+  const marketListingsActionLabel = listingsRefreshLoading
+    ? "Loading live listings..."
+    : hasFullAccess || isPro
+      ? "Load live listings"
+      : vehicleMarketUnlockLabel;
+  const marketValueActionDisabled = valuationLoading || isUnlocking || (!marketUnlockPrimaryId && !hasFullAccess);
+  const marketListingsActionDisabled = listingsRefreshLoading || isUnlocking || (!marketUnlockPrimaryId && !hasFullAccess);
+  const loadVehicleMarketSections = useCallback(() => {
+    requestExplicitLiveValue();
+    if (canRequestLiveListings) {
+      requestExplicitLiveListings();
+    }
+  }, [canRequestLiveListings, requestExplicitLiveListings, requestExplicitLiveValue]);
+
+  const ensureAuthenticatedForLiveMarket = useCallback(async () => {
+    const token = await authService.getAccessToken();
+    if (token) {
+      return true;
+    }
+    Alert.alert(
+      "Sign in to load live data",
+      "Live market value and nearby listings require a signed-in account so unlocks and purchases can be verified securely.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Sign In", onPress: () => router.push("/auth?mode=sign-in") },
+      ],
+    );
+    return false;
+  }, []);
+
+  const handleVehicleMarketBundleAction = useCallback(async () => {
+    if (valuationLoading || listingsRefreshLoading || isUnlocking || isSampleDetail || marketUnlockSpendInFlightRef.current) {
+      return;
+    }
+    if (!(await ensureAuthenticatedForLiveMarket())) {
+      return;
+    }
+    if (hasFullAccess || isPro) {
+      loadVehicleMarketSections();
+      return;
+    }
+    if (freeUnlocksRemaining <= 0) {
+      router.push("/paywall");
+      return;
+    }
+    if (!marketUnlockPrimaryId) {
+      Alert.alert("Unlock unavailable", "This saved vehicle cannot be unlocked yet.");
+      return;
+    }
+    if (!canRequestLiveValue && !canRequestLiveListings) {
+      requestExplicitLiveValue();
+      return;
+    }
+    const confirmed = await confirmVehicleMarketUnlockSpend();
+    if (!confirmed) {
+      return;
+    }
+    marketUnlockSpendInFlightRef.current = true;
+    try {
+      const result = await useFreeUnlockForVehicle(marketUnlockPrimaryId, marketUnlockLinkedIds, marketUnlockLookup);
+      if (result.ok) {
+        await refreshStatus();
+        loadVehicleMarketSections();
+        Alert.alert(
+          "Value & Listings unlocked",
+          buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked),
+        );
+        return;
+      }
+      if (result.reason === "no_free_unlocks") {
+        router.push("/paywall");
+        return;
+      }
+      Alert.alert(
+        unlockFailureTitle(result.reason),
+        result.message || errorMessage || "We couldn’t apply your free unlock right now.",
+      );
+    } finally {
+      marketUnlockSpendInFlightRef.current = false;
+    }
+  }, [
+    canRequestLiveListings,
+    canRequestLiveValue,
+    buildVehicleMarketUnlockSuccessBody,
+    confirmVehicleMarketUnlockSpend,
+    errorMessage,
+    ensureAuthenticatedForLiveMarket,
+    freeUnlocksRemaining,
+    hasFullAccess,
+    isPro,
+    isSampleDetail,
+    isUnlocking,
+    listingsRefreshLoading,
+    loadVehicleMarketSections,
+    marketUnlockLinkedIds,
+    marketUnlockLookup,
+    marketUnlockPrimaryId,
+    refreshStatus,
+    requestExplicitLiveValue,
+    useFreeUnlockForVehicle,
+    valuationLoading,
+  ]);
+
+  const handleMarketValueAction = useCallback(async () => {
+    if (valuationLoading || isUnlocking || isSampleDetail || marketUnlockSpendInFlightRef.current) {
+      return;
+    }
+    if (!(await ensureAuthenticatedForLiveMarket())) {
+      return;
+    }
+    if (hasFullAccess || isPro) {
+      requestExplicitLiveValue();
+      return;
+    }
+    if (freeUnlocksRemaining <= 0) {
+      router.push("/paywall");
+      return;
+    }
+    if (!marketUnlockPrimaryId) {
+      Alert.alert("Unlock unavailable", "This saved vehicle cannot be unlocked yet.");
+      return;
+    }
+    if (!canRequestLiveValue) {
+      requestExplicitLiveValue();
+      return;
+    }
+    const confirmed = await confirmVehicleMarketUnlockSpend();
+    if (!confirmed) {
+      return;
+    }
+    marketUnlockSpendInFlightRef.current = true;
+    try {
+      const result = await useFreeUnlockForVehicle(marketUnlockPrimaryId, marketUnlockLinkedIds, marketUnlockLookup);
+      if (result.ok) {
+        await refreshStatus();
+        loadVehicleMarketSections();
+        Alert.alert(
+          "Value & Listings unlocked",
+          buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked),
+        );
+        return;
+      }
+      if (result.reason === "no_free_unlocks") {
+        router.push("/paywall");
+        return;
+      }
+      Alert.alert(
+        unlockFailureTitle(result.reason),
+        result.message || errorMessage || "We couldn’t apply your free unlock right now.",
+      );
+    } finally {
+      marketUnlockSpendInFlightRef.current = false;
+    }
+  }, [
+    canRequestLiveValue,
+    buildVehicleMarketUnlockSuccessBody,
+    confirmVehicleMarketUnlockSpend,
+    errorMessage,
+    ensureAuthenticatedForLiveMarket,
+    freeUnlocksRemaining,
+    hasFullAccess,
+    isPro,
+    isSampleDetail,
+    isUnlocking,
+    marketUnlockLinkedIds,
+    marketUnlockLookup,
+    marketUnlockPrimaryId,
+    refreshStatus,
+    loadVehicleMarketSections,
+    requestExplicitLiveValue,
+    useFreeUnlockForVehicle,
+    valuationLoading,
+  ]);
+
+  const handleMarketListingsAction = useCallback(async () => {
+    if (listingsRefreshLoading || isUnlocking || isSampleDetail || marketUnlockSpendInFlightRef.current) {
+      return;
+    }
+    if (!(await ensureAuthenticatedForLiveMarket())) {
+      return;
+    }
+    if (hasFullAccess || isPro) {
+      requestExplicitLiveListings();
+      return;
+    }
+    if (freeUnlocksRemaining <= 0) {
+      router.push("/paywall");
+      return;
+    }
+    if (!marketUnlockPrimaryId) {
+      Alert.alert("Unlock unavailable", "This saved vehicle cannot be unlocked yet.");
+      return;
+    }
+    if (!canRequestLiveListings) {
+      Alert.alert("Market ZIP required", "Enter a valid market area ZIP before loading nearby listings.");
+      return;
+    }
+    const confirmed = await confirmVehicleMarketUnlockSpend();
+    if (!confirmed) {
+      return;
+    }
+    marketUnlockSpendInFlightRef.current = true;
+    try {
+      const result = await useFreeUnlockForVehicle(marketUnlockPrimaryId, marketUnlockLinkedIds, marketUnlockLookup);
+      if (result.ok) {
+        await refreshStatus();
+        loadVehicleMarketSections();
+        Alert.alert(
+          "Value & Listings unlocked",
+          buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked),
+        );
+        return;
+      }
+      if (result.reason === "no_free_unlocks") {
+        router.push("/paywall");
+        return;
+      }
+      Alert.alert(
+        unlockFailureTitle(result.reason),
+        result.message || errorMessage || "We couldn’t apply your free unlock right now.",
+      );
+    } finally {
+      marketUnlockSpendInFlightRef.current = false;
+    }
+  }, [
+    canRequestLiveListings,
+    buildVehicleMarketUnlockSuccessBody,
+    confirmVehicleMarketUnlockSpend,
+    errorMessage,
+    ensureAuthenticatedForLiveMarket,
+    freeUnlocksRemaining,
+    hasFullAccess,
+    isPro,
+    isSampleDetail,
+    isUnlocking,
+    listingsRefreshLoading,
+    loadVehicleMarketSections,
+    marketUnlockLinkedIds,
+    marketUnlockLookup,
+    marketUnlockPrimaryId,
+    refreshStatus,
+    requestExplicitLiveListings,
+    useFreeUnlockForVehicle,
+  ]);
+
+  useEffect(() => {
+    if (!routeMarketIntent || loading || !vehicle || isSampleDetail || !marketZipInitialized) {
+      return;
+    }
+    const intentKey = `${id}:${typeof scanId === "string" ? scanId : ""}:${routeMarketIntent}`;
+    if (routeMarketIntentHandledRef.current === intentKey) {
+      return;
+    }
+    routeMarketIntentHandledRef.current = intentKey;
+    if (routeMarketIntent === "bundle") {
+      setTab(initialRouteTab ?? "Value");
+      void handleVehicleMarketBundleAction();
+      return;
+    }
+    if (routeMarketIntent === "value") {
+      setTab("Value");
+      void handleMarketValueAction();
+      return;
+    }
+      setTab("Value");
+    void handleMarketListingsAction();
+  }, [
+    handleMarketListingsAction,
+    handleMarketValueAction,
+    handleVehicleMarketBundleAction,
+    id,
+    initialRouteTab,
+    isSampleDetail,
+    loading,
+    marketZipInitialized,
+    routeMarketIntent,
+    scanId,
+    vehicle,
+  ]);
 
   useEffect(() => {
     if (__DEV__) {
@@ -1957,6 +2761,7 @@ export default function VehicleDetailScreen() {
     pendingValueRequestKeyRef.current = null;
     previousConditionRef.current = null;
     previousValueRef.current = null;
+    routeMarketIntentHandledRef.current = null;
     setValueDebugStatus("idle");
     setValueDebugOrigin("hydrated");
     setValueDebugUpdateCount(0);
@@ -1966,7 +2771,9 @@ export default function VehicleDetailScreen() {
     setZipStorageDebug(null);
     setZipCode("");
     setZipSource("blank");
-  }, [id, scanId]);
+    setMarketZipInitialized(false);
+    setTab(initialRouteTab ?? "Overview");
+  }, [id, initialRouteTab, scanId]);
 
   useEffect(() => {
     let active = true;
@@ -1991,7 +2798,12 @@ export default function VehicleDetailScreen() {
           buildCommit: mobileBuildInfo.gitCommit || "unknown",
         });
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) {
+          setMarketZipInitialized(true);
+        }
+      });
 
     return () => {
       active = false;
@@ -2954,23 +3766,28 @@ export default function VehicleDetailScreen() {
 
     if (userAdjustedInputs) {
       setValueDebugStatus("idle");
-      setValuation((current) => ({
-        ...current,
-        status: "stale_after_input_change",
-        tradeIn: "Unavailable",
-        tradeInRange: "Unavailable",
-        privateParty: "Unavailable",
-        privatePartyRange: "Unavailable",
-        dealerRetail: "Unavailable",
-        dealerRetailRange: "Unavailable",
-        low: null,
-        high: null,
-        median: null,
-        sourceLabel: "Live market inputs changed",
-        confidenceLabel: "Press Load live market value to refresh pricing for the current ZIP and mileage.",
-        message: "Live market inputs changed since the last value load.",
-        reason: "inputs_changed",
-      }));
+      setValuation((current) => {
+        if (current.status === "stale_after_input_change" && current.reason === "inputs_changed") {
+          return current;
+        }
+        return {
+          ...current,
+          status: "stale_after_input_change",
+          tradeIn: "Unavailable",
+          tradeInRange: "Unavailable",
+          privateParty: "Unavailable",
+          privatePartyRange: "Unavailable",
+          dealerRetail: "Unavailable",
+          dealerRetailRange: "Unavailable",
+          low: null,
+          high: null,
+          median: null,
+          sourceLabel: "Live market inputs changed",
+          confidenceLabel: "Press Load live market value to refresh pricing for the current ZIP and mileage.",
+          message: "Live market inputs changed since the last value load.",
+          reason: "inputs_changed",
+        };
+      });
       if (__DEV__) {
         console.log("[vehicle-detail] VALUE_AUTO_REFRESH_SKIPPED", {
           routeId: id,
@@ -3025,7 +3842,7 @@ export default function VehicleDetailScreen() {
   }, [condition, displayValuation, id, mileage, scanId, tab, valuation, valueTabFinalState, vehicle, zipCode, zipSource]);
 
   useEffect(() => {
-    if (!vehicle || !listingsMarketContext) {
+    if (!vehicle || isSampleDetail || !listingsMarketContext) {
       return;
     }
 
@@ -3119,6 +3936,7 @@ export default function VehicleDetailScreen() {
     applyValuationUpdate,
     condition,
     displayValuation,
+    isSampleDetail,
     mileage,
     listingsMarketContext,
     valueLookupInput,
@@ -3128,7 +3946,7 @@ export default function VehicleDetailScreen() {
   ]);
 
   useEffect(() => {
-    if (!vehicle) {
+    if (!vehicle || isSampleDetail) {
       return;
     }
 
@@ -3221,6 +4039,7 @@ export default function VehicleDetailScreen() {
     applyValuationUpdate,
     condition,
     displayValuation,
+    isSampleDetail,
     listingsMarketContext,
     mileage,
     valueLookupInput,
@@ -3651,6 +4470,28 @@ export default function VehicleDetailScreen() {
         : isEstimateMode
           ? "estimated result"
           : "provider/generic fallback";
+  const galleryImageSources = useMemo(() => {
+    if (!vehicle) {
+      return [];
+    }
+    const primary = resolvedImageUri && (heroUsesResolvedImage || selectedImageSourceLabel === "cropped scan fallback")
+      ? { uri: resolvedImageUri }
+      : vehicle.isSampleVehicle && vehicle.heroImage
+        ? toVehicleImageSource(vehicle.heroImage)
+        : null;
+    const listingSources = vehicle.listings
+      .filter((listing) => listingImageMatchesVehicle(listing, vehicle))
+      .map((listing) => ({ uri: listing.imageUrl.trim() }));
+    const uniqueSources = new Map<string, NonNullable<typeof primary> | { uri: string }>();
+    if (primary) {
+      uniqueSources.set(JSON.stringify(primary), primary);
+    }
+    listingSources.forEach((source) => {
+      uniqueSources.set(source.uri, source);
+    });
+    const sources = Array.from(uniqueSources.values());
+    return sources.slice(0, 4);
+  }, [heroUsesResolvedImage, resolvedImageUri, selectedImageSourceLabel, vehicle]);
   const scannedImageSelected = heroUsesResolvedImage || selectedImageSourceLabel === "cropped scan fallback";
   const heroImageFitMode = "cover";
   const overviewCopy =
@@ -3751,8 +4592,8 @@ export default function VehicleDetailScreen() {
 
   if (loading) {
     return (
-      <AppContainer scroll={false} contentContainerStyle={styles.loadingPage}>
-        <BackButton fallbackHref="/(tabs)/scan" label="Back" />
+      <VehicleDetailContainer scroll={false} contentContainerStyle={styles.loadingPage}>
+        <DetailBackButton fallbackHref="/(tabs)/scan" />
         <View style={styles.loadingWrap}>
           <View style={styles.loadingHeroCard}>
             <PremiumSkeleton height={280} radius={Radius.xl} />
@@ -3769,22 +4610,21 @@ export default function VehicleDetailScreen() {
           </View>
           <ActivityIndicator size="small" color={Colors.accent} />
         </View>
-      </AppContainer>
+      </VehicleDetailContainer>
     );
   }
 
   if (!vehicle) {
     return (
-      <AppContainer contentContainerStyle={tab === "For Sale" ? styles.listingsPageContent : styles.pageContent}>
-        <BackButton fallbackHref="/(tabs)/scan" label="Back" />
+      <VehicleDetailContainer contentContainerStyle={styles.pageContent}>
+        <DetailBackButton fallbackHref="/(tabs)/scan" />
         <EmptyState title="Vehicle unavailable" description={error ?? "We couldn’t load this vehicle right now."} />
-      </AppContainer>
+      </VehicleDetailContainer>
     );
   }
 
   return (
-    <AppContainer contentContainerStyle={tab === "For Sale" ? styles.listingsPageContent : styles.pageContent}>
-      <BackButton fallbackHref="/(tabs)/scan" label="Back" />
+    <VehicleDetailContainer contentContainerStyle={styles.pageContent}>
       <Animated.View style={{ opacity: heroOpacity, transform: [{ translateY: heroTranslate }] }}>
         <View style={styles.heroShell}>
           <Pressable
@@ -3799,107 +4639,89 @@ export default function VehicleDetailScreen() {
                 style={[styles.hero, heroImagePolicy.artifactRisk && !fallbackHeroImageUri ? styles.heroArtifactCrop : null]}
                 resizeMode={heroImageFitMode}
               />
-              <LinearGradient colors={["rgba(4,8,18,0.04)", "rgba(4,8,18,0.12)", "rgba(4,8,18,0.46)"]} style={styles.heroGradient} />
+              <LinearGradient colors={["rgba(3,4,5,0.04)", "rgba(3,4,5,0.26)", "rgba(3,4,5,0.96)"]} style={styles.heroGradient} />
+              <View style={styles.heroBackOverlay}>
+                <DetailBackButton fallbackHref="/(tabs)/scan" />
+              </View>
+              <View style={styles.heroTitleBlock}>
+                <Text style={styles.heroTitle}>{resolvedHeroTitle}</Text>
+                <Text style={styles.heroSubtitle}>{estimateSubtitle || unlockedDetailSubtitle}</Text>
+              </View>
             </View>
           </Pressable>
-          <View style={styles.heroMetaCard}>
-            {isEstimateMode ? (
-              <View style={styles.heroMetaTopRow}>
-                <View style={styles.heroBadge}>
-                  <Text style={styles.heroBadgeLabel}>{lockedEyebrow}</Text>
-                </View>
-              </View>
-            ) : null}
-            <Text style={styles.heroTitle}>{resolvedDisplayTitle}</Text>
-            <Text style={styles.heroSubtitle}>{estimateSubtitle || unlockedDetailSubtitle}</Text>
-            {summaryChips.length > 0 ? (
-              <View style={styles.heroChipRow}>
-                {summaryChips.map((chip) => (
-                  <View key={chip} style={styles.heroChip}>
-                    <Text style={styles.heroChipLabel}>{chip}</Text>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-          </View>
         </View>
       </Animated.View>
-      {__DEV__ ? <Text style={styles.imageDebug}>Image source: {selectedImageSourceLabel}</Text> : null}
-      <Animated.View style={[styles.contentStack, { opacity: contentOpacity, transform: [{ translateY: contentTranslate }] }]}>
-      {usage && !isSampleDetail ? (
-        <ScanUsageMeter
-          status={usage}
-          mode="unlocks"
-          unlocksUsed={freeUnlocksUsed}
-          unlocksRemaining={freeUnlocksRemaining}
-          unlocksLimit={freeUnlocksLimit}
-        />
-      ) : null}
-      <View style={[styles.headerCard, isEstimateMode && styles.headerCardEstimate]}>
-        {isEstimateMode ? <Text style={styles.estimateEyebrow}>Vehicle details</Text> : null}
-        {feedbackMessage ? <Text style={styles.feedbackNotice}>{feedbackMessage}</Text> : null}
-        {errorMessage ? <Text style={styles.errorNotice}>{errorMessage}</Text> : null}
-        {!isEstimateMode ? <Text style={styles.headerKicker}>{isSampleDetail ? "Vehicle summary" : "Vehicle summary"}</Text> : null}
-        <Text style={styles.subtitle}>{estimateSubtitle || unlockedDetailSubtitle}</Text>
-        {isEstimateMode ? (
-          <>
-            {__DEV__ ? (
-              <TouchableOpacity
-                style={styles.qaResetButton}
-                activeOpacity={0.86}
-                accessibilityRole="button"
-                onPress={() => {
-                  resetMainstreamGroundingCoverageAggregate();
-                  Alert.alert("Coverage counters reset", "Mainstream grounding QA aggregate counters were cleared for this app session.");
-                }}
-              >
-                <Text style={styles.qaResetButtonLabel}>Reset coverage QA counters</Text>
-              </TouchableOpacity>
-            ) : null}
-          </>
+      <Animated.View style={[styles.contentStack, styles.contentInset, { opacity: contentOpacity, transform: [{ translateY: contentTranslate }] }]}>
+        {summaryChips.length > 0 ? (
+          <View style={styles.heroChipRow}>
+            {summaryChips.map((chip, index) => (
+              <View key={`${chip}-${index}`} style={styles.heroChip}>
+                <Text style={styles.heroChipLabel}>{chip}</Text>
+              </View>
+            ))}
+          </View>
         ) : null}
-      </View>
-      <SegmentedTabBar tabs={tabs} activeTab={tab} onChange={setTab} />
+        <View style={styles.unlockStatusCard}>
+          <View style={styles.unlockStatusIcon}>
+            <Ionicons name={hasFullAccess ? "flash" : "lock-closed"} size={17} color="#E7B97F" />
+          </View>
+          <View style={styles.unlockStatusCopy}>
+            <Text style={styles.unlockStatusTitle}>{unlockStatusTitle}</Text>
+            <Text style={styles.unlockStatusBody}>{unlockStatusBody}</Text>
+          </View>
+          {garageSource === "1" || reopenedSource === "1" ? <Text style={styles.unlockStatusMeta}>Saved</Text> : null}
+        </View>
+        {feedbackMessage && !hasFullAccess ? <Text style={styles.feedbackNotice}>{feedbackMessage}</Text> : null}
+        {errorMessage ? <Text style={styles.errorNotice}>{errorMessage}</Text> : null}
+        <DetailSectionNav activeTab={tab} onChange={setTab} />
 
       {tab === "Overview" ? (
         <>
-          {vehicleDescription.description ? (
-            <View style={styles.sectionCard}>
-              <SectionHeader
-                title="Description"
-                subtitle="A short overview grounded in the vehicle identity and confirmed data available here."
-              />
-              <Text style={styles.descriptionBody}>{vehicleDescription.description}</Text>
-            </View>
-          ) : null}
-          <View style={styles.sectionCard}>
-            {isEstimateMode ? (
-              <SectionHeader
-                title="Vehicle Identification"
-                subtitle={trustedResult ? "High-confidence identification." : "Vehicle identification from your scan."}
-              />
-            ) : (
-              <SectionHeader
-                title="Overview"
-                subtitle="Core identity details and confirmed overview copy."
-              />
-            )}
-            <Text style={styles.body}>{overviewCopy}</Text>
-            <DetailRow
-              label="Year"
-              value={
-                isEstimateMode
-                  ? (finalDisplayIdentity.yearLabel || (vehicle.year ? `${vehicle.year}` : "Vehicle identified"))
-                  : finalDisplayIdentity.yearLabel || `${vehicle.year}`
-              }
-            />
-            <DetailRow label="Make" value={finalDisplayIdentity.make || vehicle.make} />
-            <DetailRow label="Model" value={finalDisplayIdentity.model || vehicle.model} />
-            {!trustedResult ? (
-              <DetailRow label={isEstimateMode ? "Trim" : "Trim"} value={resolvedDisplayTrim || "Unavailable"} />
-            ) : null}
-            <DetailRow label="Body style" value={resolvedDisplayBodyStyle || "Vehicle"} />
+          <View style={styles.tabIntro}>
+            <Text style={styles.tabIntroTitle}>Details</Text>
+            <Text style={styles.tabIntroSubtitle}>Identity, canonical specs, and ownership context.</Text>
+            {vehicleDescription.description ? <Text style={styles.tabIntroBody}>{vehicleDescription.description}</Text> : null}
           </View>
+          <View style={styles.detailGroupStack}>
+            <ReferenceValueCard vehicle={vehicle} compact />
+            <InfoGroupCard title="Identity" icon="finger-print-outline">
+              <DetailRow
+                label="Year"
+                value={
+                  isEstimateMode
+                    ? (finalDisplayIdentity.yearLabel || (vehicle.year ? `${vehicle.year}` : "Vehicle identified"))
+                    : finalDisplayIdentity.yearLabel || `${vehicle.year}`
+                }
+              />
+              <DetailRow label="Make" value={finalDisplayIdentity.make || vehicle.make} />
+              <DetailRow label="Model" value={finalDisplayIdentity.model || vehicle.model} />
+              {!trustedResult ? (
+                <DetailRow label={isEstimateMode ? "Trim" : "Trim"} value={resolvedDisplayTrim || "Unavailable"} />
+              ) : null}
+              <DetailRow label="Body style" value={resolvedDisplayBodyStyle || "Vehicle"} />
+            </InfoGroupCard>
+            <InfoGroupCard title="Performance" icon="speedometer-outline">
+              <SpecGrid
+                items={[
+                  { label: "Engine", value: vehicle.specs.engine },
+                  { label: horsepowerSupport?.label ?? "Horsepower", value: horsepowerSupport?.value ?? formatHorsepowerLabel(vehicle.specs.horsepower) },
+                  { label: "MPG / Range", value: vehicle.specs.mpgOrRange },
+                ]}
+              />
+            </InfoGroupCard>
+            <InfoGroupCard title="Drivetrain" icon="git-branch-outline">
+              <SpecGrid
+                items={[
+                  { label: "Drivetrain", value: vehicle.specs.drivetrain },
+                  { label: "Transmission", value: vehicle.specs.transmission },
+                  { label: "Body style", value: resolvedDisplayBodyStyle || "Vehicle" },
+                ]}
+              />
+            </InfoGroupCard>
+          </View>
+          {horsepowerSupport && !horsepowerSupport.exact ? (
+            <Text style={styles.specSupportNoteQuiet}>Horsepower is matched from local canonical family data because exact trim power can vary.</Text>
+          ) : null}
         </>
       ) : null}
 
@@ -4008,279 +4830,125 @@ export default function VehicleDetailScreen() {
       ) : null}
 
       {tab === "Value" ? (
-        isEstimateMode ? (
-          valueTabFinalState === "value_available_strong" || valueTabFinalState === "value_available_light" ? (
-            <>
-              <View style={styles.sectionCard}>
-                <SectionHeader
-                  title={valueTabFinalState === "value_available_light" ? "Nearby market view" : "Pricing"}
-                  subtitle={
-                    valueTabFinalState === "value_available_light"
-                      ? "A useful nearby value range for this vehicle."
-                      : "Nearby pricing for this vehicle when available."
-                  }
-                />
-                <Text style={styles.body}>
-                  {estimateSupport?.marketSourceLabel ?? "Nearby pricing support is shown here when available for this vehicle."}
-                </Text>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Market area ZIP</Text>
+        <>
+          <View style={styles.tabIntro}>
+            <Text style={styles.tabIntroTitle}>Value & Listings</Text>
+            <Text style={styles.tabIntroSubtitle}>Market trend and live comparable listings.</Text>
+          </View>
+          {!isSampleDetail ? (
+            <View style={styles.marketSettingsCard}>
+              <View style={styles.premiumSectionHeader}>
+                <View style={styles.premiumSectionTitleRow}>
+                  <Ionicons name="options-outline" size={17} color="#E7B97F" />
+                  <Text style={styles.premiumSectionTitle}>Market Settings</Text>
+                </View>
+                <Text style={styles.marketSettingsHint}>{zipCode || "ZIP required"}</Text>
+              </View>
+              <Text style={styles.marketSettingsDescription}>ZIP, mileage, and condition shape the local market estimate.</Text>
+              <View style={styles.marketSettingsRow}>
+                <View style={styles.marketFieldCompact}>
+                  <Text style={styles.inputLabel}>ZIP</Text>
                   <TextInput
-                    style={styles.input}
+                    style={[styles.input, styles.inputCompact]}
                     value={zipCode}
                     onChangeText={handleZipCodeChange}
                     autoCapitalize="characters"
                     keyboardType="number-pad"
                     maxLength={5}
-                    placeholder="Enter ZIP code"
-                    placeholderTextColor={Colors.textMuted}
+                    returnKeyType="done"
+                    onSubmitEditing={() => Keyboard.dismiss()}
+                    placeholder="ZIP"
+                    placeholderTextColor="#6F7480"
                   />
-                  <Text style={styles.inputHint}>{marketAreaZipHint}</Text>
                 </View>
-                <View style={styles.inputGroup}>
+                <View style={styles.marketFieldCompact}>
                   <Text style={styles.inputLabel}>Mileage</Text>
                   <TextInput
-                    style={styles.input}
+                    style={[styles.input, styles.inputCompact]}
                     value={mileage}
                     onChangeText={setMileage}
                     keyboardType="number-pad"
+                    returnKeyType="done"
+                    onSubmitEditing={() => Keyboard.dismiss()}
                     placeholder="Mileage"
-                    placeholderTextColor={Colors.textMuted}
+                    placeholderTextColor="#6F7480"
                   />
                 </View>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Condition</Text>
-                  <View style={styles.conditionGrid}>
-                    {conditionOptions.map((option) => {
-                      const active = option === condition;
-                      return (
-                        <Pressable
-                          key={option}
-                          style={[styles.conditionChip, active && styles.conditionChipActive]}
-                          onPress={() => setCondition(option)}
-                        >
-                          <Text style={[styles.conditionChipLabel, active && styles.conditionChipLabelActive]}>{option}</Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                </View>
               </View>
-              {valuationLoading ? (
-                <ApproximateDataState
-                  title={loadingValueCardCopy.title}
-                  body={loadingValueCardCopy.body}
-                  supportNote={loadingValueCardCopy.supportNote}
-                  actionLabel="Loading live market value..."
-                  onAction={requestExplicitLiveValue}
-                  badgeLabel={null}
-                  actionDisabled
-                  loading
+              <Pressable style={styles.marketSettingsDoneButton} onPress={() => Keyboard.dismiss()} accessibilityRole="button">
+                <Text style={styles.marketSettingsDoneLabel}>Done</Text>
+              </Pressable>
+              <View style={styles.conditionGridCompact}>
+                {conditionOptions.map((option) => {
+                  const active = option === condition;
+                  return (
+                    <Pressable
+                      key={option}
+                      style={[styles.conditionChip, styles.conditionChipCompact, active && styles.conditionChipActive]}
+                      onPress={() => setCondition(option)}
+                    >
+                      <Text style={[styles.conditionChipLabel, active && styles.conditionChipLabelActive]}>{option}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <Text style={styles.inputHint}>{marketAreaZipHint}</Text>
+            </View>
+          ) : null}
+          {isLocked ? (
+            <>
+              <LockedValueListingsCard
+                vehicle={vehicle}
+                loading={isUnlocking}
+                onPress={handleVehicleMarketBundleAction}
+                disabled={marketValueActionDisabled || marketListingsActionDisabled}
+              />
+            </>
+          ) : (
+            <>
+              {canRenderValueEstimateCard(displayValuation) ? (
+                <PremiumMarketValueCard
+                  result={displayValuation}
+                  loading={valuationLoading}
                 />
               ) : (
-                <ValueEstimateCard
-                  result={displayValuation}
-                  tone={valueTabFinalState === "value_available_light" ? "light" : "strong"}
-                  actionLabel="Load live market value"
-                  onAction={requestExplicitLiveValue}
-                  actionDisabled={!canRequestLiveValue}
-                />
+                <>
+                  <ReferenceValueCard vehicle={vehicle} />
+                  {valuationLoading ? (
+                    <ApproximateDataState
+                      title={loadingValueCardCopy.title}
+                      body={loadingValueCardCopy.body}
+                      supportNote={loadingValueCardCopy.supportNote}
+                      badgeLabel={null}
+                      loading
+                    />
+                  ) : (
+                    <ApproximateDataState
+                      title={valueStatusCardCopy.title}
+                      body={valueStatusCardCopy.body}
+                      supportNote={valueStatusCardCopy.supportNote}
+                      badgeLabel={null}
+                    />
+                  )}
+                </>
               )}
-              {showQaDebugStrip ? <QaDebugStrip title="QA Value Debug" rows={valueQaRows} /> : null}
-            </>
-          ) : (
-            <>
-              <View style={styles.sectionCard}>
-                <SectionHeader
-                  title="Value inputs"
-                  subtitle="Enter a market area ZIP, mileage, and condition before loading live pricing."
+              <PremiumListingsSection
+                listings={vehicle.listings}
+                locked={false}
+                loading={listingsRefreshLoading}
+                fallbackImageSource={heroImageSource ?? toVehicleImageSource(vehicle.heroImage)}
+              />
+              {!isSampleDetail ? (
+                <PremiumDetailButton
+                  label={valuationLoading || listingsRefreshLoading ? "Loading Value & Listings..." : canRenderValueEstimateCard(displayValuation) ? "Refresh Value & Listings" : "Load Value & Listings"}
+                  onPress={handleVehicleMarketBundleAction}
+                  disabled={marketValueActionDisabled || marketListingsActionDisabled}
+                  secondary={canRenderValueEstimateCard(displayValuation)}
                 />
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Market area ZIP</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={zipCode}
-                    onChangeText={handleZipCodeChange}
-                    autoCapitalize="characters"
-                    keyboardType="number-pad"
-                    maxLength={5}
-                    placeholder="Enter ZIP code"
-                    placeholderTextColor={Colors.textMuted}
-                  />
-                  <Text style={styles.inputHint}>{marketAreaZipHint}</Text>
-                </View>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Mileage</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={mileage}
-                    onChangeText={setMileage}
-                    keyboardType="number-pad"
-                    placeholder="Mileage"
-                    placeholderTextColor={Colors.textMuted}
-                  />
-                </View>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Condition</Text>
-                  <View style={styles.conditionGrid}>
-                    {conditionOptions.map((option) => {
-                      const active = option === condition;
-                      return (
-                        <Pressable
-                          key={option}
-                          style={[styles.conditionChip, active && styles.conditionChipActive]}
-                          onPress={() => setCondition(option)}
-                        >
-                          <Text style={[styles.conditionChipLabel, active && styles.conditionChipLabelActive]}>{option}</Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                </View>
-              </View>
-              <ApproximateDataState
-                title={valuationLoading ? loadingValueCardCopy.title : valueStatusCardCopy.title}
-                body={valuationLoading ? loadingValueCardCopy.body : valueStatusCardCopy.body}
-                supportNote={valuationLoading ? loadingValueCardCopy.supportNote : valueStatusCardCopy.supportNote}
-                actionLabel={valuationLoading ? "Loading live market value..." : "Load live market value"}
-                onAction={requestExplicitLiveValue}
-                badgeLabel={null}
-                actionDisabled={!canRequestLiveValue || valuationLoading}
-                loading={valuationLoading}
-              />
-              {showQaDebugStrip ? <QaDebugStrip title="QA Value Debug" rows={valueQaRows} /> : null}
+              ) : null}
             </>
-          )
-        ) : (
-        <>
-          <View style={styles.sectionCard}>
-            <SectionHeader
-              title={isSampleDetail ? "Sample value estimate" : "Value inputs"}
-              subtitle={
-                isSampleDetail
-                  ? "Demo data — not live market data."
-                  : "Tune the estimate to your market and condition. Local market pricing depends on ZIP."
-              }
-            />
-            {isSampleDetail ? (
-              <Text style={styles.body}>This sample uses local demo value data so it never calls live valuation providers or consumes unlocks.</Text>
-            ) : (
-              <>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Market area ZIP</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={zipCode}
-                    onChangeText={handleZipCodeChange}
-                    autoCapitalize="characters"
-                    keyboardType="number-pad"
-                    maxLength={5}
-                    placeholder="Enter ZIP code"
-                    placeholderTextColor={Colors.textMuted}
-                  />
-                  <Text style={styles.inputHint}>{marketAreaZipHint}</Text>
-                </View>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Mileage</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={mileage}
-                    onChangeText={setMileage}
-                    keyboardType="number-pad"
-                    placeholder="Mileage"
-                    placeholderTextColor={Colors.textMuted}
-                  />
-                </View>
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Condition</Text>
-                  <View style={styles.conditionGrid}>
-                    {conditionOptions.map((option) => {
-                      const active = option === condition;
-                      return (
-                        <Pressable
-                          key={option}
-                          style={[styles.conditionChip, active && styles.conditionChipActive]}
-                          onPress={() => setCondition(option)}
-                        >
-                          <Text style={[styles.conditionChipLabel, active && styles.conditionChipLabelActive]}>{option}</Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                </View>
-              </>
-            )}
-          </View>
-          {valuationLoading ? (
-            <ApproximateDataState
-              title={loadingValueCardCopy.title}
-              body={loadingValueCardCopy.body}
-              supportNote={loadingValueCardCopy.supportNote}
-              actionLabel="Loading live market value..."
-              onAction={requestExplicitLiveValue}
-              badgeLabel={null}
-              actionDisabled
-              loading
-            />
-          ) : !canRenderValueEstimateCard(displayValuation) ? (
-            <ApproximateDataState
-              title={valueStatusCardCopy.title}
-              body={valueStatusCardCopy.body}
-              supportNote={valueStatusCardCopy.supportNote}
-              actionLabel="Load live market value"
-              onAction={requestExplicitLiveValue}
-              badgeLabel={null}
-              actionDisabled={!canRequestLiveValue}
-            />
-          ) : isLocked ? (
-            <LockedContentPreview
-              locked
-              title="Value preview"
-              description="Preview the market card now. Pro reveals the full value context every time."
-            >
-              <ValueEstimateCard
-                result={displayValuation}
-                actionLabel="Load live market value"
-                onAction={requestExplicitLiveValue}
-                actionDisabled={!canRequestLiveValue}
-              />
-            </LockedContentPreview>
-          ) : (
-            <ValueEstimateCard
-              result={displayValuation}
-              actionLabel={isSampleDetail ? null : "Load live market value"}
-              onAction={isSampleDetail ? null : requestExplicitLiveValue}
-              actionDisabled={!canRequestLiveValue}
-            />
           )}
-          {showQaDebugStrip ? <QaDebugStrip title="QA Value Debug" rows={valueQaRows} /> : null}
-          {isLocked ? (
-            <UnlockAccessCard
-              remaining={freeUnlocksRemaining}
-              limit={freeUnlocksLimit}
-              disabled={!vehicle?.id || isUnlocking}
-              isUnlocking={isUnlocking}
-              onUnlock={async () => {
-                if (!vehicle?.id) return;
-                const confirmed = await confirmUnlockIfNeeded();
-                if (!confirmed) return;
-                const result = await useFreeUnlockForVehicle(vehicle.id);
-                if (result.ok) {
-                  await refreshStatus();
-                  Alert.alert("Free unlock applied", result.message);
-                  setTab("Value");
-                } else {
-                  Alert.alert(
-                    unlockFailureTitle(result.reason),
-                    result.message || errorMessage || "We couldn’t apply your free unlock right now.",
-                  );
-                }
-              }}
-              onUpgrade={() => router.push("/paywall")}
-            />
-          ) : null}
         </>
-        )
       ) : null}
 
       {tab === "For Sale" ? (
@@ -4344,9 +5012,11 @@ export default function VehicleDetailScreen() {
                     ? "This vehicle was identified with high confidence, so the specs shown here remain the strongest available details."
                     : "The current result still includes the best available specs while local market coverage catches up."
                 }
-                actionLabel="Load live listings"
-                onAction={requestExplicitLiveListings}
+                actionLabel={marketListingsActionLabel}
+                onAction={handleMarketListingsAction}
                 badgeLabel={null}
+                actionDisabled={marketListingsActionDisabled}
+                secondaryAction={false}
               />
               {showQaDebugStrip ? <QaDebugStrip title="QA Listings Debug" rows={listingsQaRows} /> : null}
             </>
@@ -4356,15 +5026,15 @@ export default function VehicleDetailScreen() {
           <View style={styles.sectionCard}>
             <Text style={styles.body}>
               {isLocked
-                ? "Nearby listings are shown as a preview in free mode and fully unlocked in Pro."
+                ? "Nearby listings unlock with market value for this vehicle. No second unlock is required."
                 : "Nearby listings help you compare local pricing, mileage, and dealer context at a glance."}
             </Text>
           </View>
           {isLocked ? (
             <LockedContentPreview
               locked
-              title="Nearby listings preview"
-              description="See the full set of local comps and shopping context with Pro."
+              title="Listings locked"
+              description="Use one vehicle unlock to load both live listings and market value."
             >
               <View style={styles.listingsWrap}>
                 {vehicle.listings
@@ -4380,9 +5050,11 @@ export default function VehicleDetailScreen() {
                 title="Live listings unavailable"
                 body="We don't have trusted nearby listings for this vehicle yet."
                 supportNote="Load live listings when you're ready to check current comps."
-                actionLabel="Load live listings"
-                onAction={requestExplicitLiveListings}
+                actionLabel={marketListingsActionLabel}
+                onAction={handleMarketListingsAction}
                 badgeLabel={null}
+                actionDisabled={marketListingsActionDisabled}
+                secondaryAction={false}
               />
             </>
           ) : (
@@ -4395,26 +5067,12 @@ export default function VehicleDetailScreen() {
           {showQaDebugStrip ? <QaDebugStrip title="QA Listings Debug" rows={listingsQaRows} /> : null}
           {isLocked ? (
             <UnlockAccessCard
+              variant="listings"
               remaining={freeUnlocksRemaining}
               limit={freeUnlocksLimit}
-              disabled={!vehicle?.id || isUnlocking}
+              disabled={marketListingsActionDisabled}
               isUnlocking={isUnlocking}
-              onUnlock={async () => {
-                if (!vehicle?.id) return;
-                const confirmed = await confirmUnlockIfNeeded();
-                if (!confirmed) return;
-                const result = await useFreeUnlockForVehicle(vehicle.id);
-                if (result.ok) {
-                  await refreshStatus();
-                  Alert.alert("Free unlock applied", result.message);
-                  setTab("For Sale");
-                } else {
-                  Alert.alert(
-                    unlockFailureTitle(result.reason),
-                    result.message || errorMessage || "We couldn’t apply your free unlock right now.",
-                  );
-                }
-              }}
+              onUnlock={handleMarketListingsAction}
               onUpgrade={() => router.push("/paywall")}
             />
           ) : null}
@@ -4423,24 +5081,38 @@ export default function VehicleDetailScreen() {
       ) : null}
 
       {tab === "Photos" ? (
-        <View style={styles.sectionCard}>
-          <Text style={styles.body}>Your saved scan photos live here for each vehicle. Add more photos as the Garage evolves.</Text>
-          <View style={styles.photoFrame}>
-            <Image source={heroImageSource ?? toVehicleImageSource(vehicle.heroImage)} style={styles.photo} resizeMode={heroImageFitMode} />
+        <View style={styles.photosSection}>
+          <View style={styles.tabIntro}>
+            <Text style={styles.tabIntroTitle}>Photos</Text>
+            <Text style={styles.tabIntroSubtitle}>Reference imagery for this vehicle.</Text>
           </View>
+          {galleryImageSources.length > 0 ? (
+            <View style={styles.photoGrid}>
+              {galleryImageSources.map((source, index) => (
+                <View key={index} style={styles.photoTile}>
+                  <Image source={source} style={styles.photoTileImage} resizeMode="cover" />
+                </View>
+              ))}
+            </View>
+          ) : (
+            <View style={styles.photosEmptyCard}>
+              <Text style={styles.photosEmptyTitle}>No additional photos yet</Text>
+              <Text style={styles.photosEmptyBody}>More photos appear after listings are loaded.</Text>
+            </View>
+          )}
         </View>
       ) : null}
       <View style={styles.bottomActionStack}>
         {isLocked ? (
           <>
-            <PrimaryButton
+            <PremiumDetailButton
               label="Scan Another Vehicle"
               onPress={() => router.push("/(tabs)/scan")}
             />
-            <PrimaryButton label="View Pro Features" secondary onPress={() => router.push("/paywall")} />
+            <PremiumDetailButton label="View Pro Features" secondary onPress={() => router.push("/paywall")} />
           </>
         ) : (
-          <PrimaryButton
+          <PremiumDetailButton
             label="Scan Another Vehicle"
             secondary={isTrustedUnlockedEstimate}
             onPress={() => router.push("/(tabs)/scan")}
@@ -4453,23 +5125,23 @@ export default function VehicleDetailScreen() {
           <Pressable style={styles.heroModalCard} onPress={(event) => event.stopPropagation()}>
             <Image source={heroImageSource ?? toVehicleImageSource(vehicle.heroImage)} style={styles.heroModalImage} resizeMode={heroImageFitMode} />
             <View style={styles.heroModalBody}>
-              <Text style={styles.heroModalTitle}>{resolvedDisplayTitle}</Text>
+              <Text style={styles.heroModalTitle}>{resolvedHeroTitle}</Text>
               <Text style={styles.heroModalSubtitle}>{estimateSubtitle || unlockedDetailSubtitle}</Text>
               {summaryChips.length > 0 ? (
                 <View style={styles.heroModalChipRow}>
-                  {summaryChips.map((chip) => (
-                    <View key={`modal-${chip}`} style={styles.heroChip}>
+                  {summaryChips.map((chip, index) => (
+                    <View key={`modal-${chip}-${index}`} style={styles.heroChip}>
                       <Text style={styles.heroChipLabel}>{chip}</Text>
                     </View>
                   ))}
                 </View>
               ) : null}
-              <PrimaryButton label="Close quick view" secondary onPress={() => setHeroPreviewOpen(false)} />
+              <PremiumDetailButton label="Close quick view" secondary onPress={() => setHeroPreviewOpen(false)} />
             </View>
           </Pressable>
         </Pressable>
       </Modal>
-    </AppContainer>
+    </VehicleDetailContainer>
   );
 }
 
@@ -4479,6 +5151,27 @@ function DetailRow({ label, value }: { label: string; value: string }) {
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
       <Text style={styles.rowValue}>{displayValue}</Text>
+    </View>
+  );
+}
+
+function InfoGroupCard({
+  title,
+  icon,
+  children,
+}: PropsWithChildren<{
+  title: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}>) {
+  return (
+    <View style={styles.infoGroupCard}>
+      <View style={styles.infoGroupHeader}>
+        <View style={styles.infoGroupIcon}>
+          <Ionicons name={icon} size={16} color="#E7B97F" />
+        </View>
+        <Text style={styles.infoGroupTitle}>{title}</Text>
+      </View>
+      <View style={styles.infoGroupBody}>{children}</View>
     </View>
   );
 }
@@ -4493,8 +5186,8 @@ function SpecGrid({
     .filter((item) => item.value !== "Unknown");
   return (
     <View style={styles.specGrid}>
-      {displayItems.map((item) => (
-        <View key={`${item.label}-${item.value}`} style={styles.specCard}>
+      {displayItems.map((item, index) => (
+        <View key={`${item.label}-${item.value}-${index}`} style={styles.specCard}>
           <Text style={styles.specCardLabel}>{item.label}</Text>
           <Text style={styles.specCardValue}>{item.value}</Text>
         </View>
@@ -4524,6 +5217,7 @@ function QaDebugStrip({
 }
 
 function UnlockAccessCard({
+  variant = "details",
   remaining,
   limit,
   disabled,
@@ -4531,6 +5225,7 @@ function UnlockAccessCard({
   onUnlock,
   onUpgrade,
 }: {
+  variant?: "details" | "market" | "listings";
   remaining: number;
   limit: number;
   disabled: boolean;
@@ -4539,35 +5234,94 @@ function UnlockAccessCard({
   onUpgrade: () => void;
 }) {
   const used = Math.max(0, limit - Math.max(0, remaining));
+  const isVehicleMarketUnlock = variant === "market" || variant === "listings";
+  const title =
+    isVehicleMarketUnlock ? "Unlock Value & Listings" : "Unlock Full Details";
+  const body =
+    isVehicleMarketUnlock
+      ? "One free unlock loads live market value and nearby listings for this saved vehicle."
+      : "This unlock gives full premium access for this vehicle.";
+  const primaryLabel = isUnlocking
+    ? "Applying unlock..."
+    : remaining > 0
+      ? "Use Free Unlock"
+      : isVehicleMarketUnlock
+        ? "Unlock Value & Listings"
+        : "Unlock Full Details";
   return (
     <View style={styles.unlockCard}>
-      <Text style={styles.unlockTitle}>Unlock Full Details</Text>
-      <Text style={styles.unlockBody}>This unlock gives full premium access for this vehicle.</Text>
+      <Text style={styles.unlockTitle}>{title}</Text>
+      <Text style={styles.unlockBody}>{body}</Text>
       <Text style={styles.unlockNote}>
         {used} of {limit} free unlocks used • {Math.max(0, remaining)} remaining
       </Text>
       {remaining > 0 ? (
-        <PrimaryButton label={isUnlocking ? "Applying unlock..." : "Unlock Full Details"} onPress={onUnlock} disabled={disabled} />
+        <PremiumDetailButton label={primaryLabel} onPress={onUnlock} disabled={disabled} />
       ) : null}
-      <PrimaryButton label="Unlock Pro" secondary onPress={onUpgrade} />
+      <PremiumDetailButton label="Go Pro" secondary onPress={onUpgrade} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  vehicleSafeArea: {
+    flex: 1,
+    backgroundColor: "#030405",
+  },
+  vehicleGradient: {
+    flex: 1,
+  },
+  vehicleScroll: {
+    flex: 1,
+  },
+  vehicleContent: {
+    paddingTop: 10,
+    paddingHorizontal: 0,
+    paddingBottom: 156,
+    gap: 0,
+  },
+  vehicleStaticContent: {
+    flex: 1,
+  },
+  pageGlowAmber: {
+    position: "absolute",
+    top: -110,
+    right: -92,
+    width: 260,
+    height: 260,
+    borderRadius: 260,
+    backgroundColor: "rgba(216, 163, 107, 0.13)",
+  },
+  pageGlowGraphite: {
+    position: "absolute",
+    top: 110,
+    left: -120,
+    width: 260,
+    height: 260,
+    borderRadius: 260,
+    backgroundColor: "rgba(255, 255, 255, 0.025)",
+  },
   heroShell: {
-    gap: 12,
+    gap: 0,
+    marginHorizontal: 16,
+    borderRadius: 26,
+    overflow: "hidden",
+    backgroundColor: "rgba(10, 10, 10, 0.98)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.18)",
+    shadowColor: "#000000",
+    shadowOpacity: 0.34,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 14 },
   },
   heroFrame: {
     width: "100%",
-    height: 320,
-    borderRadius: Radius.xl,
+    height: 306,
+    borderRadius: 26,
     overflow: "hidden",
-    backgroundColor: Colors.cardAlt,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    backgroundColor: "#050505",
   },
-  hero: { width: "100%", height: "100%" },
+  hero: { width: "100%", height: "100%", backgroundColor: "#050505" },
   heroArtifactCrop: {
     height: "114%",
     transform: [{ translateY: -30 }],
@@ -4575,66 +5329,85 @@ const styles = StyleSheet.create({
   heroGradient: {
     ...StyleSheet.absoluteFillObject,
   },
+  heroBackOverlay: {
+    position: "absolute",
+    top: 16,
+    left: 14,
+  },
+  heroTitleBlock: {
+    position: "absolute",
+    left: 18,
+    right: 18,
+    bottom: 18,
+    gap: 4,
+  },
   heroMetaCard: {
-    ...cardStyles.primary,
-    gap: 10,
-    padding: 18,
+    position: "absolute",
+    left: 14,
+    right: 14,
+    bottom: 10,
+    gap: 9,
+    padding: 14,
+    borderRadius: 20,
+    backgroundColor: "rgba(12, 12, 12, 0.9)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.22)",
   },
   heroMetaTopRow: {
     marginBottom: 2,
   },
   heroBadge: {
     alignSelf: "flex-start",
-    backgroundColor: "rgba(10, 20, 34, 0.92)",
+    backgroundColor: "rgba(216, 163, 107, 0.1)",
     borderRadius: Radius.pill,
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderWidth: 1,
-    borderColor: "rgba(71, 123, 255, 0.26)",
+    borderColor: "rgba(216, 163, 107, 0.28)",
   },
   heroBadgeLabel: {
     ...Typography.caption,
-    color: Colors.premium,
+    color: "#E7B97F",
     textTransform: "uppercase",
     letterSpacing: 1.1,
   },
   heroPressable: {
-    borderRadius: Radius.xl,
+    borderRadius: 0,
   },
-  heroTitle: { ...Typography.hero, color: Colors.textStrong, fontSize: 30, lineHeight: 34 },
-  heroSubtitle: { ...Typography.body, color: Colors.textSoft },
+  heroTitle: { ...Typography.hero, color: Colors.textStrong, fontSize: 29, lineHeight: 32 },
+  heroSubtitle: { ...Typography.body, color: "#D4D7DD", lineHeight: 20 },
   heroChipRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: 9,
   },
   heroChip: {
-    backgroundColor: Colors.cardAlt,
+    backgroundColor: "rgba(18, 18, 19, 0.92)",
     borderRadius: Radius.pill,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: "rgba(216, 163, 107, 0.18)",
   },
-  heroChipLabel: { ...Typography.caption, color: Colors.textStrong },
+  heroChipLabel: { ...Typography.caption, color: "#F3F1EC", fontWeight: "800" },
   heroModalBackdrop: {
     flex: 1,
-    backgroundColor: "rgba(3, 7, 14, 0.88)",
+    backgroundColor: "rgba(3, 4, 5, 0.9)",
     justifyContent: "center",
     padding: 20,
   },
   heroModalCard: {
-    backgroundColor: "rgba(9, 16, 28, 0.98)",
+    backgroundColor: "rgba(12, 12, 12, 0.98)",
     borderRadius: Radius.xl,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: "rgba(216, 163, 107, 0.2)",
     overflow: "hidden",
     gap: 16,
   },
   heroModalImage: {
     width: "100%",
     height: 320,
-    backgroundColor: "rgba(2, 6, 12, 0.92)",
+    backgroundColor: "#050505",
   },
   heroModalBody: {
     paddingHorizontal: 18,
@@ -4654,7 +5427,137 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 8,
   },
+  detailBackButton: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: Radius.pill,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    backgroundColor: "rgba(18, 18, 18, 0.76)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.18)",
+  },
+  detailBackLabel: {
+    ...Typography.bodyStrong,
+    color: "#F5F3EE",
+    fontWeight: "700",
+  },
   contentStack: { gap: 18 },
+  contentInset: { paddingHorizontal: 17, paddingTop: 16 },
+  unlockStatusCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 15,
+    borderRadius: 18,
+    backgroundColor: "rgba(31, 24, 19, 0.84)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.26)",
+  },
+  unlockStatusIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(216, 163, 107, 0.16)",
+  },
+  unlockStatusCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  unlockStatusTitle: {
+    ...Typography.caption,
+    color: "#E7B97F",
+    fontWeight: "800",
+  },
+  unlockStatusBody: {
+    ...Typography.caption,
+    color: "#D6D1C9",
+  },
+  unlockStatusMeta: {
+    ...Typography.caption,
+    color: "#8F96A3",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  detailStatusCard: {
+    borderRadius: 20,
+    padding: 12,
+    gap: 8,
+    backgroundColor: "rgba(14, 14, 14, 0.86)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.16)",
+  },
+  detailStatusRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  statusPill: {
+    borderRadius: Radius.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    backgroundColor: "rgba(255, 255, 255, 0.045)",
+  },
+  statusPillUnlocked: {
+    borderColor: "rgba(216, 163, 107, 0.34)",
+    backgroundColor: "rgba(216, 163, 107, 0.12)",
+  },
+  statusPillLocked: {
+    borderColor: "rgba(153, 158, 170, 0.18)",
+    backgroundColor: "rgba(153, 158, 170, 0.07)",
+  },
+  statusPillLabel: {
+    ...Typography.caption,
+    color: "#E7B97F",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    fontWeight: "700",
+  },
+  detailStatusCopy: {
+    ...Typography.body,
+    color: "#AEB3BE",
+    lineHeight: 22,
+  },
+  detailTabRail: {
+    flexDirection: "row",
+    gap: 5,
+    padding: 5,
+    borderRadius: 18,
+    backgroundColor: "rgba(16, 16, 17, 0.94)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+  },
+  detailTabButton: {
+    flex: 1,
+    minHeight: 41,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+  },
+  detailTabButtonActive: {
+    backgroundColor: "#D6A269",
+    borderWidth: 1,
+    borderColor: "rgba(255, 225, 190, 0.36)",
+    shadowColor: "#D8A36B",
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  detailTabLabel: {
+    ...Typography.caption,
+    color: "#848B98",
+    fontWeight: "700",
+  },
+  detailTabLabelActive: {
+    color: "#0B0907",
+  },
   imageDebug: { ...Typography.caption, color: Colors.textMuted },
   headerCard: { ...cardStyles.primary, padding: 20, gap: 8 },
   headerCardEstimate: {
@@ -4694,94 +5597,528 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     fontWeight: "700",
   },
-  estimateNoticeInline: { ...Typography.caption, color: Colors.textMuted, lineHeight: 18 },
-  sectionCard: { ...cardStyles.primary, padding: 20, gap: 16 },
+  estimateNoticeInline: { ...Typography.caption, color: "#8F96A3", lineHeight: 18 },
+  tabIntro: {
+    gap: 7,
+    marginTop: 10,
+  },
+  tabIntroCompact: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  tabIntroTitle: {
+    ...Typography.heading,
+    color: "#F5F3EE",
+    fontSize: 21,
+    lineHeight: 25,
+  },
+  tabIntroSubtitle: {
+    ...Typography.body,
+    color: "#8F96A3",
+    lineHeight: 22,
+  },
+  tabIntroBody: {
+    ...Typography.body,
+    color: "#CFD2D8",
+    lineHeight: 24,
+    marginTop: 8,
+  },
+  detailListCard: {
+    overflow: "hidden",
+    borderRadius: 20,
+    backgroundColor: "rgba(14, 14, 14, 0.88)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.09)",
+  },
+  detailGroupStack: {
+    gap: 13,
+  },
+  infoGroupCard: {
+    gap: 13,
+    padding: 16,
+    borderRadius: 22,
+    backgroundColor: "rgba(15, 15, 16, 0.94)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.09)",
+  },
+  infoGroupHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+  },
+  infoGroupIcon: {
+    width: 29,
+    height: 29,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(216, 163, 107, 0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.22)",
+  },
+  infoGroupTitle: {
+    ...Typography.bodyStrong,
+    color: "#F5F3EE",
+  },
+  infoGroupBody: {
+    gap: 10,
+  },
+  sectionCard: {
+    padding: 20,
+    gap: 16,
+    borderRadius: 22,
+    backgroundColor: "rgba(14, 14, 14, 0.9)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+  },
   trustedSpecsStack: { gap: 12 },
   specGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 12,
+    gap: 10,
   },
   specCard: {
-    width: "47%",
-    minHeight: 92,
-    borderRadius: Radius.lg,
-    padding: 14,
-    backgroundColor: Colors.cardAlt,
+    width: "48%",
+    minHeight: 82,
+    borderRadius: 16,
+    padding: 13,
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
     borderWidth: 1,
-    borderColor: Colors.borderSoft,
+    borderColor: "rgba(255, 255, 255, 0.075)",
     justifyContent: "space-between",
     gap: 8,
   },
   specCardLabel: {
     ...Typography.caption,
-    color: Colors.textMuted,
+    color: "#8F96A3",
     textTransform: "uppercase",
     letterSpacing: 0.7,
   },
   specCardValue: {
     ...Typography.bodyStrong,
-    color: Colors.textStrong,
+    color: "#F5F3EE",
   },
-  approximateStateCard: { ...cardStyles.secondary, gap: 12, padding: 18 },
+  approximateStateCard: {
+    gap: 12,
+    padding: 18,
+    borderRadius: 22,
+    backgroundColor: "rgba(14, 14, 14, 0.9)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.18)",
+  },
   approximateStateBadge: {
     alignSelf: "flex-start",
-    backgroundColor: Colors.background,
+    backgroundColor: "rgba(216, 163, 107, 0.1)",
     borderRadius: Radius.pill,
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderWidth: 1,
-    borderColor: Colors.borderSoft,
+    borderColor: "rgba(216, 163, 107, 0.24)",
   },
   approximateStateBadgeLabel: {
     ...Typography.caption,
-    color: Colors.textMuted,
+    color: "#E7B97F",
     textTransform: "uppercase",
     letterSpacing: 0.8,
   },
-  approximateStateTitle: { ...Typography.heading, color: Colors.textStrong },
-  approximateStateBody: { ...Typography.body, color: Colors.textSoft },
-  approximateStateSupport: { ...Typography.caption, color: Colors.textMuted, lineHeight: 18 },
+  approximateStateTitle: { ...Typography.heading, color: "#F5F3EE" },
+  approximateStateBody: { ...Typography.body, color: "#B5BAC4" },
+  approximateStateSupport: { ...Typography.caption, color: "#8F96A3", lineHeight: 18 },
   listingsWrap: { gap: 18 },
-  pageContent: { paddingVertical: 24 },
-  listingsPageContent: { paddingVertical: 24, backgroundColor: Colors.backgroundAlt },
-  body: { ...Typography.body, color: Colors.textMuted },
-  descriptionBody: { ...Typography.body, color: Colors.textSoft, lineHeight: 24 },
-  row: { borderTopWidth: 1, borderTopColor: Colors.borderSoft, paddingTop: 14, gap: 4 },
-  rowLabel: { ...Typography.caption, color: Colors.textMuted },
-  rowValue: { ...Typography.body, color: Colors.textStrong },
-  specSupportNote: { ...Typography.caption, color: Colors.textMuted, marginTop: -4, marginBottom: 4 },
-  specSupportNoteQuiet: { ...Typography.caption, color: Colors.textMuted, marginTop: 6, opacity: 0.88, lineHeight: 18 },
+  pageContent: { paddingVertical: 14 },
+  listingsPageContent: { paddingVertical: 14 },
+  body: { ...Typography.body, color: "#B5BAC4", lineHeight: 23 },
+  descriptionBody: { ...Typography.body, color: "#CED2DA", lineHeight: 24 },
+  row: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 16,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255, 255, 255, 0.07)",
+    paddingTop: 11,
+  },
+  rowLabel: { ...Typography.caption, color: "#8F96A3", textTransform: "uppercase", letterSpacing: 1 },
+  rowValue: { ...Typography.bodyStrong, color: "#F5F3EE", flexShrink: 1, textAlign: "right" },
+  specSupportNote: { ...Typography.caption, color: "#8F96A3", marginTop: -4, marginBottom: 4 },
+  specSupportNoteQuiet: { ...Typography.caption, color: "#8F96A3", marginTop: 6, opacity: 0.88, lineHeight: 18 },
   inputGroup: { gap: 8 },
-  inputLabel: { ...Typography.caption, color: Colors.textMuted },
-  input: { backgroundColor: Colors.cardAlt, borderRadius: Radius.md, padding: 14, color: Colors.text, ...Typography.body },
-  inputHint: { ...Typography.caption, color: Colors.textMuted, lineHeight: 18 },
+  inputLabel: { ...Typography.caption, color: "#8F96A3", textTransform: "uppercase", letterSpacing: 0.7 },
+  input: {
+    backgroundColor: "rgba(255, 255, 255, 0.055)",
+    borderRadius: Radius.md,
+    padding: 14,
+    color: "#F5F3EE",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    ...Typography.body,
+  },
+  inputHint: { ...Typography.caption, color: "#8F96A3", lineHeight: 18 },
+  marketSettingsCard: {
+    gap: 10,
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: "rgba(14, 14, 14, 0.72)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+  },
+  premiumSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  premiumSectionTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flexShrink: 1,
+  },
+  premiumSectionTitle: {
+    ...Typography.bodyStrong,
+    color: "#F5F3EE",
+  },
+  premiumBadge: {
+    borderRadius: Radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.28)",
+    backgroundColor: "rgba(216, 163, 107, 0.1)",
+  },
+  premiumBadgeText: {
+    ...Typography.caption,
+    color: "#E7B97F",
+    fontWeight: "700",
+  },
+  marketSettingsHint: {
+    ...Typography.caption,
+    color: "#E7B97F",
+    fontWeight: "700",
+  },
+  marketSettingsDescription: {
+    ...Typography.caption,
+    color: "#AEB3BE",
+    lineHeight: 18,
+  },
+  marketSettingsRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  marketSettingsDoneButton: {
+    alignSelf: "flex-end",
+    borderRadius: Radius.pill,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: "rgba(216, 163, 107, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.28)",
+  },
+  marketSettingsDoneLabel: {
+    ...Typography.caption,
+    color: "#E7B97F",
+    fontWeight: "800",
+  },
+  marketFieldCompact: {
+    flex: 1,
+    gap: 7,
+  },
+  inputCompact: {
+    paddingVertical: 12,
+  },
   conditionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  conditionGridCompact: {
+    flexDirection: "row",
+    gap: 8,
+  },
   conditionChip: {
-    backgroundColor: Colors.cardAlt,
+    backgroundColor: "rgba(255, 255, 255, 0.055)",
     borderRadius: Radius.pill,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderWidth: 1,
     borderColor: "transparent",
   },
-  conditionChipActive: {
-    backgroundColor: Colors.accentSoft,
-    borderColor: Colors.accent,
+  conditionChipCompact: {
+    flex: 1,
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 9,
   },
-  conditionChipLabel: { ...Typography.caption, color: Colors.text },
-  conditionChipLabelActive: { color: Colors.accent, fontWeight: "700" },
+  conditionChipActive: {
+    backgroundColor: "rgba(216, 163, 107, 0.14)",
+    borderColor: "rgba(216, 163, 107, 0.38)",
+  },
+  conditionChipLabel: { ...Typography.caption, color: "#D7DAE0" },
+  conditionChipLabelActive: { color: "#E7B97F", fontWeight: "700" },
+  marketValueCard: {
+    gap: 14,
+    padding: 18,
+    borderRadius: 20,
+    backgroundColor: "rgba(26, 20, 17, 0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.26)",
+  },
+  marketValueLabel: {
+    ...Typography.caption,
+    color: "#E7B97F",
+    textTransform: "uppercase",
+    letterSpacing: 1.2,
+    fontWeight: "800",
+  },
+  marketValueHeading: {
+    ...Typography.price,
+    color: "#F5F3EE",
+  },
+  marketMetricGrid: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  marketMetricCard: {
+    flex: 1,
+    minHeight: 70,
+    borderRadius: 14,
+    padding: 10,
+    gap: 5,
+    backgroundColor: "rgba(255, 255, 255, 0.055)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+  },
+  marketMetricLabel: {
+    ...Typography.caption,
+    color: "#8F96A3",
+    textTransform: "uppercase",
+    letterSpacing: 0.7,
+  },
+  marketMetricValue: {
+    ...Typography.bodyStrong,
+    color: "#F5F3EE",
+  },
+  marketSource: {
+    ...Typography.caption,
+    color: "#D8C0A0",
+  },
+  marketConfidence: {
+    ...Typography.caption,
+    color: "#8F96A3",
+  },
+  referenceValueCard: {
+    gap: 10,
+    padding: 18,
+    borderRadius: 22,
+    backgroundColor: "rgba(28, 21, 17, 0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.24)",
+  },
+  referenceValueCardCompact: {
+    marginTop: 6,
+  },
+  referenceValueLabel: {
+    ...Typography.caption,
+    color: "#E7B97F",
+    textTransform: "uppercase",
+    letterSpacing: 1.2,
+    fontWeight: "800",
+  },
+  referenceValueAmount: {
+    ...Typography.price,
+    color: "#F5F3EE",
+  },
+  referenceValueBody: {
+    ...Typography.caption,
+    color: "#8F96A3",
+    lineHeight: 18,
+  },
+  lockedValueCard: {
+    gap: 16,
+    padding: 18,
+    borderRadius: 24,
+    backgroundColor: "rgba(28, 21, 17, 0.94)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.28)",
+    shadowColor: "#D8A36B",
+    shadowOpacity: 0.08,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+  },
+  lockedValueCardDisabled: {
+    opacity: 0.62,
+  },
+  lockedValueHeader: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "flex-start",
+  },
+  lockedValueIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(216, 163, 107, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.28)",
+  },
+  lockedValueCopy: {
+    flex: 1,
+    gap: 5,
+  },
+  lockedValueTitle: {
+    ...Typography.heading,
+    color: "#F5F3EE",
+  },
+  lockedValueBody: {
+    ...Typography.body,
+    color: "#B8BEC8",
+    lineHeight: 22,
+  },
+  lockedReferenceStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 14,
+    borderRadius: 17,
+    padding: 13,
+    backgroundColor: "rgba(255, 255, 255, 0.045)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+  },
+  lockedReferenceLabel: {
+    ...Typography.caption,
+    color: "#E7B97F",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    fontWeight: "800",
+  },
+  lockedReferenceBody: {
+    ...Typography.caption,
+    color: "#8F96A3",
+    marginTop: 3,
+  },
+  lockedReferenceValue: {
+    ...Typography.bodyStrong,
+    color: "#F5F3EE",
+    flexShrink: 0,
+  },
+  lockedValueCta: {
+    minHeight: 50,
+    borderRadius: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    backgroundColor: "#D8A36B",
+  },
+  lockedValueCtaText: {
+    ...Typography.bodyStrong,
+    color: "#0B0907",
+  },
+  listingsPanel: {
+    gap: 12,
+  },
+  listingsKicker: {
+    ...Typography.caption,
+    color: "#8F96A3",
+    textTransform: "uppercase",
+    letterSpacing: 1.4,
+    fontWeight: "800",
+  },
+  listingsPanelBody: {
+    ...Typography.body,
+    color: "#8F96A3",
+    lineHeight: 22,
+  },
+  lockedPreviewStack: {
+    gap: 10,
+  },
+  lockedPreviewRow: {
+    minHeight: 54,
+    borderRadius: 16,
+    padding: 12,
+    gap: 7,
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.06)",
+  },
+  lockedPreviewLineShort: {
+    width: "38%",
+    height: 9,
+    borderRadius: 9,
+    backgroundColor: "rgba(255, 255, 255, 0.16)",
+  },
+  lockedPreviewLineLong: {
+    width: "62%",
+    height: 10,
+    borderRadius: 10,
+    backgroundColor: "rgba(216, 163, 107, 0.18)",
+  },
+  premiumListingStack: {
+    gap: 12,
+  },
+  premiumListingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 12,
+    borderRadius: 18,
+    backgroundColor: "rgba(18, 18, 19, 0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.09)",
+  },
+  premiumListingImage: {
+    width: 78,
+    height: 70,
+    borderRadius: 14,
+    backgroundColor: "#050505",
+  },
+  premiumListingImageFallback: {
+    width: 78,
+    height: 70,
+    borderRadius: 14,
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+  },
+  premiumListingCopy: {
+    flex: 1,
+    gap: 6,
+  },
+  premiumListingSource: {
+    ...Typography.caption,
+    color: "#8F96A3",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    fontWeight: "800",
+  },
+  premiumListingPrice: {
+    ...Typography.heading,
+    color: "#E7B97F",
+  },
+  premiumListingMeta: {
+    ...Typography.caption,
+    color: "#B5BAC4",
+  },
+  premiumListingAction: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(216, 163, 107, 0.13)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.32)",
+  },
   valueLoading: { ...Typography.caption, color: Colors.textMuted },
   qaDebugStrip: {
     ...cardStyles.secondary,
     gap: 8,
     padding: 14,
-    borderColor: "rgba(94, 231, 255, 0.16)",
-    backgroundColor: "rgba(7, 14, 24, 0.88)",
+    borderColor: "rgba(216, 163, 107, 0.16)",
+    backgroundColor: "rgba(12, 12, 12, 0.88)",
   },
   qaDebugTitle: {
     ...Typography.caption,
-    color: Colors.premium,
+    color: "#E7B97F",
     textTransform: "uppercase",
     letterSpacing: 0.9,
     fontWeight: "700",
@@ -4802,27 +6139,97 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     textAlign: "right",
   },
-  photoFrame: {
-    width: "100%",
-    height: 220,
-    borderRadius: Radius.lg,
-    overflow: "hidden",
-    backgroundColor: Colors.cardAlt,
+  photosSection: {
+    gap: 16,
   },
-  photo: { width: "100%", height: "100%" },
+  photoGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+  },
+  photoTile: {
+    width: "48%",
+    aspectRatio: 1.08,
+    overflow: "hidden",
+    borderRadius: 14,
+    backgroundColor: "#050505",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+  },
+  photoTileImage: {
+    width: "100%",
+    height: "100%",
+  },
+  photosEmptyCard: {
+    gap: 8,
+    padding: 18,
+    borderRadius: 18,
+    backgroundColor: "rgba(18, 18, 19, 0.9)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+  },
+  photosEmptyTitle: {
+    ...Typography.bodyStrong,
+    color: "#F5F3EE",
+  },
+  photosEmptyBody: {
+    ...Typography.body,
+    color: "#8F96A3",
+    lineHeight: 22,
+  },
   bottomActionStack: { gap: 12, marginTop: 6, paddingTop: 10, paddingBottom: 10 },
   loadingPage: { flex: 1, gap: 20 },
   loadingWrap: { flex: 1, justifyContent: "center", gap: 18 },
-  loadingHeroCard: { ...cardStyles.primaryTint, gap: 16, padding: 18 },
+  loadingHeroCard: {
+    gap: 16,
+    padding: 18,
+    borderRadius: 22,
+    backgroundColor: "rgba(14, 14, 14, 0.9)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.16)",
+  },
   loadingHeroCopy: { gap: 8 },
-  loadingEyebrow: { ...Typography.caption, color: Colors.premium, textTransform: "uppercase", letterSpacing: 1.2 },
+  loadingEyebrow: { ...Typography.caption, color: "#E7B97F", textTransform: "uppercase", letterSpacing: 1.2 },
   loadingText: { ...Typography.title, color: Colors.textStrong },
   loadingBody: { ...Typography.body, color: Colors.textSoft },
   loadingStack: { gap: 14 },
-  unlockCard: { ...cardStyles.secondary, gap: 10 },
-  feedbackNotice: { ...Typography.caption, color: Colors.textMuted },
+  detailActionButton: {
+    minHeight: 54,
+    borderRadius: Radius.pill,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.34)",
+    backgroundColor: "rgba(216, 163, 107, 0.12)",
+  },
+  detailActionButtonSecondary: {
+    backgroundColor: "rgba(255, 255, 255, 0.055)",
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+  },
+  detailActionButtonDisabled: { opacity: 0.58 },
+  detailActionGradient: {
+    minHeight: 54,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+  },
+  detailActionLabel: { ...Typography.bodyStrong, color: "#080807" },
+  detailActionLabelSecondary: { color: "#EBD0AD" },
+  unlockCard: {
+    gap: 12,
+    padding: 18,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.22)",
+    backgroundColor: "rgba(18, 16, 14, 0.94)",
+  },
+  feedbackNotice: { ...Typography.caption, color: "#AEB3BE" },
   errorNotice: { ...Typography.caption, color: Colors.dangerSoft },
-  unlockTitle: { ...Typography.heading, color: Colors.textStrong },
-  unlockBody: { ...Typography.body, color: Colors.textMuted },
-  unlockNote: { ...Typography.caption, color: Colors.textMuted },
+  unlockTitle: { ...Typography.heading, color: "#F5F3EE" },
+  unlockBody: { ...Typography.body, color: "#B5BAC4" },
+  unlockNote: { ...Typography.caption, color: "#8F96A3" },
 });
