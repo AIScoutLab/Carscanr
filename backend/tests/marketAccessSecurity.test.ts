@@ -81,6 +81,68 @@ describe("premium market access security", () => {
     assert.equal(listingsProviderCalled, false);
   });
 
+  test("descriptor unlock enables live value and listings for estimated scan results", async () => {
+    let listingsProviderCalled = false;
+    setProviders({
+      ...createTestProviders(),
+      listingsProvider: {
+        async getListings(input) {
+          listingsProviderCalled = true;
+          return [
+            {
+              id: `listing-${input.vehicleId}`,
+              vehicleId: input.vehicleId,
+              title: "2021 Cadillac CT4 Premium Luxury",
+              price: 31995,
+              mileage: 11820,
+              dealer: "Lakefront Auto",
+              distanceMiles: 12,
+              location: "Chicago, IL",
+              imageUrl: "https://example.com/cadillac-ct4.jpg",
+              listedAt: new Date("2026-04-18T12:00:00.000Z").toISOString(),
+            },
+          ];
+        },
+      },
+    });
+
+    const unlockResponse = await requestApp({
+      method: "POST",
+      url: "/api/unlocks/use",
+      headers: {
+        ...authHeaders(),
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({
+        vehicleId: "estimate:2021:cadillac:ct4:family",
+        year: 2021,
+        make: "Cadillac",
+        model: "CT4",
+        trim: "Premium Luxury",
+        vehicleType: "car",
+      }),
+    });
+    const unlockBody = parseJson<any>(unlockResponse);
+
+    assert.equal(unlockResponse.statusCode, 200);
+    assert.equal(unlockBody.success, true);
+    assert.equal(unlockBody.data.entitlement.allowed, true);
+    assert.equal(unlockBody.data.entitlement.usedUnlock, true);
+
+    const listingsResponse = await requestApp({
+      method: "GET",
+      url:
+        "/api/vehicle/listings?year=2021&make=Cadillac&model=CT4&trim=Premium%20Luxury&vehicleType=car&zip=60502&radiusMiles=50" +
+        "&allowLive=true&forceLive=true&fetchReason=user_requested_listings_refresh&sourceScreen=listingsScreen&action=listingsRefresh",
+      headers: authHeaders(),
+    });
+    const listingsBody = parseJson<any>(listingsResponse);
+
+    assert.equal(listingsResponse.statusCode, 200);
+    assert.equal(listingsBody.success, true);
+    assert.equal(listingsProviderCalled, true);
+  });
+
   test("Pro yearly users can request live value without a free unlock", async () => {
     setRepositories(
       createTestRepositories({

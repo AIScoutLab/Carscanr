@@ -5,7 +5,7 @@ import { resolveStoredVehicleRecordById } from "../lib/canonicalVehicleCatalog.j
 import { logger } from "../lib/logger.js";
 import { repositories } from "../lib/repositoryRegistry.js";
 import { isProPlan } from "../lib/subscription.js";
-import { VehicleRecord } from "../types/domain.js";
+import { VehicleLookupDescriptor, VehicleRecord } from "../types/domain.js";
 import { SubscriptionService } from "./subscriptionService.js";
 import { VehicleService } from "./vehicleService.js";
 
@@ -190,5 +190,107 @@ export class UnlockService {
       scanId: input.scanId ?? null,
       requested: true,
     });
+  }
+
+  async grantUnlockForLookup(input: {
+    userId: string;
+    vehicleId?: string | null;
+    descriptor?: VehicleLookupDescriptor | null;
+    scanId?: string | null;
+  }): Promise<UnlockEntitlementResult> {
+    if (input.vehicleId) {
+      const vehicle = await this.resolveUnlockableVehicle(input.vehicleId);
+      if (vehicle) {
+        return this.grantUnlockForVehicle({
+          userId: input.userId,
+          vehicle,
+          scanId: input.scanId ?? null,
+          requested: true,
+        });
+      }
+
+      if (!input.descriptor) {
+        throw new AppError(404, "VEHICLE_NOT_FOUND", "Vehicle not found.");
+      }
+
+      logger.warn(
+        {
+          label: "UNLOCK_VEHICLE_ID_FALLBACK_TO_DESCRIPTOR",
+          userId: input.userId,
+          vehicleId: input.vehicleId,
+          scanId: input.scanId ?? null,
+        },
+        "UNLOCK_VEHICLE_ID_FALLBACK_TO_DESCRIPTOR",
+      );
+    }
+
+    if (!input.descriptor) {
+      throw new AppError(400, "UNLOCK_DESCRIPTOR_MISSING", "Vehicle identity is required to grant an unlock.");
+    }
+
+    const plan = await this.subscriptionService.getActivePlan(input.userId);
+    if (isProPlan(plan)) {
+      return {
+        isPro: true,
+        alreadyUnlocked: true,
+        usedUnlock: false,
+        remainingUnlocks: Number.POSITIVE_INFINITY,
+        allowed: true,
+        reason: "pro",
+      };
+    }
+
+    const vehicleKey = buildVehicleKey({
+      year: input.descriptor.year,
+      make: input.descriptor.make,
+      model: input.descriptor.model,
+      trim: input.descriptor.trim,
+      vehicleType: input.descriptor.vehicleType,
+    });
+    const unlockKeyResult = buildUnlockKey({ vehicleKey });
+    if (!unlockKeyResult.key) {
+      throw new AppError(400, "UNLOCK_KEY_MISSING", "Unable to build unlock key for this vehicle.");
+    }
+
+    logger.info(
+      {
+        label: "UNLOCK_DESCRIPTOR_GRANT_ATTEMPT",
+        userId: input.userId,
+        vehicleKey,
+        sourceVehicleId: input.vehicleId ?? null,
+        scanId: input.scanId ?? null,
+      },
+      "UNLOCK_DESCRIPTOR_GRANT_ATTEMPT",
+    );
+
+    const result = await repositories.vehicleUnlocks.grantUnlock({
+      userId: input.userId,
+      unlockKey: unlockKeyResult.key,
+      unlockType: unlockKeyResult.type,
+      vehicleKey: vehicleKey ?? null,
+      sourceVehicleId: input.vehicleId ?? null,
+      scanId: input.scanId ?? null,
+    });
+
+    logger.info(
+      {
+        label: "UNLOCK_ALLOWED",
+        userId: input.userId,
+        vehicleKey,
+        sourceVehicleId: input.vehicleId ?? null,
+        alreadyUnlocked: result.alreadyUnlocked,
+        usedUnlock: result.usedUnlock,
+      },
+      "UNLOCK_ALLOWED",
+    );
+
+    return {
+      isPro: false,
+      alreadyUnlocked: result.alreadyUnlocked,
+      usedUnlock: result.usedUnlock,
+      remainingUnlocks: result.freeUnlocksRemaining,
+      allowed: result.allowed,
+      reason: result.allowed ? (result.alreadyUnlocked ? "already_unlocked" : "consumed") : "no_free_unlocks",
+    };
   }
 }

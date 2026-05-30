@@ -2720,7 +2720,24 @@ export class SupabaseVehicleUnlockRepository implements VehicleUnlockRepository 
       p_source_vehicle_id: input.sourceVehicleId ?? null,
       p_scan_id: input.scanId ?? null,
     });
-    if (error) throw new AppError(500, "SUPABASE_RPC_FAILED", "Failed to grant vehicle unlock.", error);
+    if (error) {
+      logger.error(
+        {
+          label: "UNLOCK_GRANT_RPC_FAILED",
+          userId: input.userId,
+          unlockType: input.unlockType,
+          hasVehicleKey: Boolean(input.vehicleKey),
+          hasSourceVehicleId: Boolean(input.sourceVehicleId),
+          scanId: input.scanId ?? null,
+          code: error.code ?? null,
+          message: error.message,
+          details: error.details ?? null,
+          hint: error.hint ?? null,
+        },
+        "UNLOCK_GRANT_RPC_FAILED",
+      );
+      throw new AppError(500, "SUPABASE_RPC_FAILED", "Failed to grant vehicle unlock.", error);
+    }
     const row = Array.isArray(data) ? data[0] : data;
     if (!row) {
       throw new AppError(500, "SUPABASE_RPC_FAILED", "Unlock grant returned empty result.");

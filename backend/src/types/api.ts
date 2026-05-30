@@ -158,10 +158,12 @@ export const subscriptionVerifySchema = z.object({
   productId: z.string().min(3),
 });
 
-export const unlockUseSchema = z.object({
-  vehicleId: z.string().min(1),
-  scanId: z.string().uuid().optional().nullable(),
-});
+export const unlockUseSchema = requireVehicleLookup(
+  z.object({
+    ...vehicleLookupDescriptorFields,
+    scanId: z.string().uuid().optional().nullable(),
+  }),
+);
 
 export const garageDeleteParamsSchema = z.object({
   id: z.string().min(1),
