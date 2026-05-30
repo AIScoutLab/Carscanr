@@ -192,6 +192,26 @@ type ListingsRequestOptions = {
   zipSource?: MarketAreaZipSource;
 };
 
+function isLiveMarketRequest(options?: { allowLive?: boolean }) {
+  return options?.allowLive === true;
+}
+
+function getApiErrorCode(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error && typeof (error as { code?: unknown }).code === "string"
+    ? (error as { code: string }).code
+    : null;
+}
+
+function getApiErrorStatus(error: unknown) {
+  if (typeof error !== "object" || error === null || !("details" in error)) {
+    return null;
+  }
+  const details = (error as { details?: unknown }).details;
+  return typeof details === "object" && details !== null && "status" in details && typeof (details as { status?: unknown }).status === "number"
+    ? (details as { status: number }).status
+    : null;
+}
+
 function defaultOverview(vehicle: BackendVehicle) {
   if (isSpecialtyExoticMake(vehicle.make)) {
     return buildSpecialtyVehicleOverview({
@@ -1082,6 +1102,7 @@ export const vehicleService = {
     options?: ValueRequestOptions,
   ): Promise<ValuationResult> {
     const path = buildVehicleValueRequestPath(vehicleLookup, zip, mileage, condition, options);
+    const authRequired = isLiveMarketRequest(options);
     console.log("[vehicle-service] VALUE_REQUEST_STARTED", {
       vehicleLookup,
       zip,
@@ -1118,11 +1139,12 @@ export const vehicleService = {
       action: options?.action ?? null,
       forceLive: options?.forceLive ?? null,
       zipSource: options?.zipSource ?? null,
+      authRequired,
       path,
     });
     const response = await apiRequestEnvelope<BackendValuation>({
       path,
-      authRequired: false,
+      authRequired,
     }).catch((error) => {
       console.error("[vehicle-service] VALUE_REQUEST_FAILED", {
         vehicleLookup,
@@ -1130,6 +1152,10 @@ export const vehicleService = {
         mileage,
         condition,
         path,
+        allowLive: options?.allowLive ?? null,
+        authRequired,
+        errorCode: getApiErrorCode(error),
+        httpStatus: getApiErrorStatus(error),
         message: error instanceof Error ? error.message : String(error),
       });
       throw error;
@@ -1190,15 +1216,30 @@ export const vehicleService = {
     options?: ListingsRequestOptions,
   ): Promise<ListingsResultEnvelope> {
     const path = buildVehicleListingsRequestPath(vehicleLookup, zip, options);
+    const authRequired = isLiveMarketRequest(options);
     console.log("[vehicle-service] LISTINGS_REQUEST_PARAMS", {
       vehicleLookup,
       zip,
       options: options ?? null,
+      allowLive: options?.allowLive ?? null,
+      authRequired,
       path,
     });
     const response = await apiRequestEnvelope<BackendListing[], ListingsDebugMeta>({
       path,
-      authRequired: false,
+      authRequired,
+    }).catch((error) => {
+      console.error("[vehicle-service] LISTINGS_REQUEST_FAILED", {
+        vehicleLookup,
+        zip,
+        path,
+        allowLive: options?.allowLive ?? null,
+        authRequired,
+        errorCode: getApiErrorCode(error),
+        httpStatus: getApiErrorStatus(error),
+        message: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
     });
     const listings = response.data;
     console.log("[vehicle-service] LISTINGS_RESPONSE_RECEIVED", {

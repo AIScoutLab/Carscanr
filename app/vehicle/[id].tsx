@@ -699,6 +699,22 @@ function buildUnavailableValueResult(input: {
   };
 }
 
+function getApiRequestErrorCode(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error && typeof (error as { code?: unknown }).code === "string"
+    ? (error as { code: string }).code
+    : null;
+}
+
+function getApiRequestErrorStatus(error: unknown) {
+  if (typeof error !== "object" || error === null || !("details" in error)) {
+    return null;
+  }
+  const details = (error as { details?: unknown }).details;
+  return typeof details === "object" && details !== null && "status" in details && typeof (details as { status?: unknown }).status === "number"
+    ? (details as { status: number }).status
+    : null;
+}
+
 function buildSpecialtyValueStateCopy(input: {
   make: string;
   model: string;
@@ -2054,6 +2070,65 @@ export default function VehicleDetailScreen() {
       buildCommit: mobileBuildInfo.gitCommit || "unknown",
     });
   }, [id, scanId, zipCode, zipStorageDebug?.storageKey, zipStorageDebug?.storageVersion, zipStorageDebug?.wasLegacy60610Ignored]);
+  const vehicleDetailReturnTarget = useMemo(() => {
+    const params = new URLSearchParams();
+    const setParam = (key: string, value: string | undefined) => {
+      if (typeof value === "string" && value.trim().length > 0) {
+        params.set(key, value);
+      }
+    };
+
+    setParam("imageUri", typeof imageUri === "string" ? imageUri : undefined);
+    setParam("scanId", typeof scanId === "string" ? scanId : undefined);
+    setParam("estimate", typeof estimate === "string" ? estimate : undefined);
+    setParam("titleLabel", typeof titleLabel === "string" ? titleLabel : undefined);
+    setParam("yearLabel", typeof yearLabel === "string" ? yearLabel : undefined);
+    setParam("make", typeof make === "string" ? make : undefined);
+    setParam("model", typeof model === "string" ? model : undefined);
+    setParam("trimLabel", typeof trimLabel === "string" ? trimLabel : undefined);
+    setParam("vehicleType", typeof vehicleType === "string" ? vehicleType : undefined);
+    setParam("confidence", typeof confidence === "string" ? confidence : undefined);
+    setParam("unlockId", resolvedUnlockId ?? undefined);
+    setParam("garageSource", typeof garageSource === "string" ? garageSource : undefined);
+    setParam("reopenedSource", typeof reopenedSource === "string" ? reopenedSource : undefined);
+    setParam("trustedCase", typeof trustedCase === "string" ? trustedCase : undefined);
+    setParam("resultSource", typeof resultSource === "string" ? resultSource : undefined);
+    setParam("isSampleVehicle", typeof sampleVehicleParam === "string" ? sampleVehicleParam : undefined);
+    setParam("source", typeof routeSource === "string" ? routeSource : undefined);
+    params.set("initialTab", "Value");
+    params.set("marketIntent", "bundle");
+
+    const query = params.toString();
+    return `/vehicle/${encodeURIComponent(id)}${query ? `?${query}` : ""}`;
+  }, [
+    confidence,
+    estimate,
+    garageSource,
+    id,
+    imageUri,
+    make,
+    model,
+    reopenedSource,
+    resolvedUnlockId,
+    resultSource,
+    routeSource,
+    sampleVehicleParam,
+    scanId,
+    titleLabel,
+    trimLabel,
+    trustedCase,
+    vehicleType,
+    yearLabel,
+  ]);
+  const routeToAuthForLiveMarket = useCallback(() => {
+    router.push({
+      pathname: "/auth",
+      params: {
+        mode: "sign-in",
+        returnTo: vehicleDetailReturnTarget,
+      },
+    });
+  }, [vehicleDetailReturnTarget]);
   const requestExplicitLiveValue = useCallback(() => {
     if (!vehicle || !valueLookupInput || valuationLoading) {
       return;
@@ -2220,6 +2295,9 @@ export default function VehicleDetailScreen() {
         void marketAreaZipService.saveLastUsedZip(normalizedZip);
       })
       .catch((error) => {
+        const errorCode = getApiRequestErrorCode(error);
+        const httpStatus = getApiRequestErrorStatus(error);
+        const believedSignedIn = authService.hasActiveSession();
         console.error("[vehicle-detail] VALUE_REQUEST_FAILED", {
           routeId: id,
           scanId: typeof scanId === "string" ? scanId : null,
@@ -2229,8 +2307,47 @@ export default function VehicleDetailScreen() {
           zipSource,
           mileage: normalizedMileage,
           condition: normalizedCondition,
+          endpoint: "/api/vehicle/value",
+          allowLive: true,
+          errorCode,
+          httpStatus,
+          believedSignedIn,
           message: error instanceof Error ? error.message : String(error),
         });
+        if (errorCode === "AUTH_REQUIRED") {
+          const authValue = buildUnavailableValueResult({
+            reason: "auth_required",
+            sourceLabel: "Sign in required",
+            message: "Sign in to load live market data.",
+          });
+          applyValuationUpdate(authValue, "value-refresh-auth-required", {
+            allowReplacement: true,
+          });
+          setVehicle((current) => (current ? { ...current, valuation: authValue } : current));
+          setValueDebugStatus("rejected");
+          Alert.alert(
+            "Sign in to load live market data",
+            "Your session is needed to verify this vehicle unlock.",
+            [
+              { text: "Cancel", style: "cancel" },
+              { text: "Sign In", onPress: routeToAuthForLiveMarket },
+            ],
+          );
+          return;
+        }
+        if (errorCode === "PREMIUM_ACCESS_REQUIRED") {
+          const lockedValue = buildUnavailableValueResult({
+            reason: "premium_access_required",
+            sourceLabel: "Unlock Value & Listings",
+            message: "Unlock this vehicle before loading live market data.",
+          });
+          applyValuationUpdate(lockedValue, "value-refresh-premium-required", {
+            allowReplacement: true,
+          });
+          setVehicle((current) => (current ? { ...current, valuation: lockedValue } : current));
+          setValueDebugStatus("rejected");
+          return;
+        }
         const errorValue = buildUnavailableValueResult({
           reason: "provider_error",
           status: "provider_error",
@@ -2276,6 +2393,7 @@ export default function VehicleDetailScreen() {
     isEstimateMode,
     isSampleDetail,
     mileage,
+    routeToAuthForLiveMarket,
     updateSavedGarageMarketSnapshot,
     valueLookupInput,
     vehicle,
@@ -2443,6 +2561,9 @@ export default function VehicleDetailScreen() {
         void marketAreaZipService.saveLastUsedZip(normalizedZip);
       })
       .catch((error) => {
+        const errorCode = getApiRequestErrorCode(error);
+        const httpStatus = getApiRequestErrorStatus(error);
+        const believedSignedIn = authService.hasActiveSession();
         console.error("[vehicle-detail] LISTINGS_REQUEST_FAILED", {
           routeId: id,
           scanId: typeof scanId === "string" ? scanId : null,
@@ -2451,8 +2572,41 @@ export default function VehicleDetailScreen() {
           zip: normalizedZip,
           zipSource,
           mileage: normalizedMileage,
+          endpoint: "/api/vehicle/listings",
+          allowLive: true,
+          errorCode,
+          httpStatus,
+          believedSignedIn,
           message: error instanceof Error ? error.message : String(error),
         });
+        if (errorCode === "AUTH_REQUIRED") {
+          setListingsDebugMeta({
+            sourceLabel: "Sign in to load live listings",
+            rawCount: 0,
+            believableCount: 0,
+            mode: "none",
+            fallbackReason: "auth_required",
+          });
+          Alert.alert(
+            "Sign in to load live market data",
+            "Your session is needed to verify this vehicle unlock.",
+            [
+              { text: "Cancel", style: "cancel" },
+              { text: "Sign In", onPress: routeToAuthForLiveMarket },
+            ],
+          );
+          return;
+        }
+        if (errorCode === "PREMIUM_ACCESS_REQUIRED") {
+          setListingsDebugMeta({
+            sourceLabel: "Unlock Value & Listings",
+            rawCount: 0,
+            believableCount: 0,
+            mode: "none",
+            fallbackReason: "premium_access_required",
+          });
+          return;
+        }
         setListingsDebugMeta({
           sourceLabel: "Live listings could not be loaded",
           rawCount: 0,
@@ -2464,7 +2618,7 @@ export default function VehicleDetailScreen() {
       .finally(() => {
         setListingsRefreshLoading(false);
       });
-  }, [applyValuationUpdate, condition, displayValuation, id, isSampleDetail, mileage, scanId, updateSavedGarageMarketSnapshot, valueLookupInput, vehicle, zipCode, zipSource]);
+  }, [applyValuationUpdate, condition, displayValuation, id, isSampleDetail, mileage, routeToAuthForLiveMarket, scanId, updateSavedGarageMarketSnapshot, valueLookupInput, vehicle, zipCode, zipSource]);
 
   const marketUnlockPrimaryId = resolvedUnlockId || vehicle?.id || "";
   const marketUnlockLinkedIds = useMemo(
@@ -2482,56 +2636,6 @@ export default function VehicleDetailScreen() {
       descriptor: vehicle ? buildDetailLookupDescriptor(vehicle) : null,
     };
   }, [marketUnlockPrimaryId, valueLookupInput, vehicle]);
-  const vehicleDetailReturnTarget = useMemo(() => {
-    const params = new URLSearchParams();
-    const setParam = (key: string, value: string | undefined) => {
-      if (typeof value === "string" && value.trim().length > 0) {
-        params.set(key, value);
-      }
-    };
-
-    setParam("imageUri", typeof imageUri === "string" ? imageUri : undefined);
-    setParam("scanId", typeof scanId === "string" ? scanId : undefined);
-    setParam("estimate", typeof estimate === "string" ? estimate : undefined);
-    setParam("titleLabel", typeof titleLabel === "string" ? titleLabel : undefined);
-    setParam("yearLabel", typeof yearLabel === "string" ? yearLabel : undefined);
-    setParam("make", typeof make === "string" ? make : undefined);
-    setParam("model", typeof model === "string" ? model : undefined);
-    setParam("trimLabel", typeof trimLabel === "string" ? trimLabel : undefined);
-    setParam("vehicleType", typeof vehicleType === "string" ? vehicleType : undefined);
-    setParam("confidence", typeof confidence === "string" ? confidence : undefined);
-    setParam("unlockId", resolvedUnlockId ?? undefined);
-    setParam("garageSource", typeof garageSource === "string" ? garageSource : undefined);
-    setParam("reopenedSource", typeof reopenedSource === "string" ? reopenedSource : undefined);
-    setParam("trustedCase", typeof trustedCase === "string" ? trustedCase : undefined);
-    setParam("resultSource", typeof resultSource === "string" ? resultSource : undefined);
-    setParam("isSampleVehicle", typeof sampleVehicleParam === "string" ? sampleVehicleParam : undefined);
-    setParam("source", typeof routeSource === "string" ? routeSource : undefined);
-    params.set("initialTab", "Value");
-    params.set("marketIntent", "bundle");
-
-    const query = params.toString();
-    return `/vehicle/${encodeURIComponent(id)}${query ? `?${query}` : ""}`;
-  }, [
-    confidence,
-    estimate,
-    garageSource,
-    id,
-    imageUri,
-    make,
-    model,
-    reopenedSource,
-    resolvedUnlockId,
-    resultSource,
-    routeSource,
-    sampleVehicleParam,
-    scanId,
-    titleLabel,
-    trimLabel,
-    trustedCase,
-    vehicleType,
-    yearLabel,
-  ]);
   const canRequestLiveListings = !isSampleDetail && isValidMarketAreaZip(normalizeMarketAreaZip(zipCode));
   const vehicleMarketUnlockLabel = "Unlock Value & Listings";
   const marketValueActionLabel = valuationLoading
@@ -2565,19 +2669,12 @@ export default function VehicleDetailScreen() {
         { text: "Cancel", style: "cancel" },
         {
           text: "Sign In",
-          onPress: () =>
-            router.push({
-              pathname: "/auth",
-              params: {
-                mode: "sign-in",
-                returnTo: vehicleDetailReturnTarget,
-              },
-            }),
+          onPress: routeToAuthForLiveMarket,
         },
       ],
     );
     return false;
-  }, [vehicleDetailReturnTarget]);
+  }, [routeToAuthForLiveMarket]);
 
   const handleVehicleMarketBundleAction = useCallback(async () => {
     if (valuationLoading || listingsRefreshLoading || isUnlocking || isSampleDetail || marketUnlockSpendInFlightRef.current) {
