@@ -1,6 +1,6 @@
 import { Href, router, useLocalSearchParams } from "expo-router";
 import { type PropsWithChildren, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, Image, Keyboard, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ImageSourcePropType, type StyleProp, type ViewStyle } from "react-native";
+import { ActivityIndicator, Alert, Animated, Image, InputAccessoryView, Keyboard, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ImageSourcePropType, type StyleProp, type ViewStyle } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -45,6 +45,7 @@ const defaultZip = "";
 const defaultMileage = "18400";
 const defaultCondition = "Good";
 const conditionOptions = ["Fair", "Good", "Excellent"];
+const marketInputAccessoryViewID = "vehicle-market-input-accessory";
 
 function coerceDetailTab(value: unknown): DetailTab | null {
   if (value === "Specs") {
@@ -927,7 +928,10 @@ function DetailSectionNav({
             key={item}
             accessibilityRole="button"
             accessibilityState={{ selected: active }}
-            onPress={() => onChange(item)}
+            onPress={() => {
+              Keyboard.dismiss();
+              onChange(item);
+            }}
             style={[styles.detailTabButton, active && styles.detailTabButtonActive]}
           >
             <Text style={[styles.detailTabLabel, active && styles.detailTabLabelActive]}>{detailTabLabels[item]}</Text>
@@ -2130,6 +2134,7 @@ export default function VehicleDetailScreen() {
     });
   }, [vehicleDetailReturnTarget]);
   const requestExplicitLiveValue = useCallback(() => {
+    Keyboard.dismiss();
     if (!vehicle || !valueLookupInput || valuationLoading) {
       return;
     }
@@ -2402,6 +2407,7 @@ export default function VehicleDetailScreen() {
     valuationLoading,
   ]);
   const requestExplicitLiveListings = useCallback(() => {
+    Keyboard.dismiss();
     if (!vehicle || !valueLookupInput || listingsRefreshLoading) {
       return;
     }
@@ -2677,6 +2683,7 @@ export default function VehicleDetailScreen() {
   }, [routeToAuthForLiveMarket]);
 
   const handleVehicleMarketBundleAction = useCallback(async () => {
+    Keyboard.dismiss();
     if (valuationLoading || listingsRefreshLoading || isUnlocking || isSampleDetail || marketUnlockSpendInFlightRef.current) {
       return;
     }
@@ -2750,6 +2757,7 @@ export default function VehicleDetailScreen() {
   ]);
 
   const handleMarketValueAction = useCallback(async () => {
+    Keyboard.dismiss();
     if (valuationLoading || isUnlocking || isSampleDetail || marketUnlockSpendInFlightRef.current) {
       return;
     }
@@ -2821,6 +2829,7 @@ export default function VehicleDetailScreen() {
   ]);
 
   const handleMarketListingsAction = useCallback(async () => {
+    Keyboard.dismiss();
     if (listingsRefreshLoading || isUnlocking || isSampleDetail || marketUnlockSpendInFlightRef.current) {
       return;
     }
@@ -5040,10 +5049,11 @@ export default function VehicleDetailScreen() {
                     autoCapitalize="characters"
                     keyboardType="number-pad"
                     maxLength={5}
+                    inputAccessoryViewID={marketInputAccessoryViewID}
                     returnKeyType="done"
                     onSubmitEditing={() => Keyboard.dismiss()}
                     placeholder="ZIP"
-                    placeholderTextColor="#6F7480"
+                    placeholderTextColor="rgba(214, 205, 194, 0.48)"
                   />
                 </View>
                 <View style={styles.marketFieldCompact}>
@@ -5053,16 +5063,24 @@ export default function VehicleDetailScreen() {
                     value={mileage}
                     onChangeText={setMileage}
                     keyboardType="number-pad"
+                    inputAccessoryViewID={marketInputAccessoryViewID}
                     returnKeyType="done"
                     onSubmitEditing={() => Keyboard.dismiss()}
                     placeholder="Mileage"
-                    placeholderTextColor="#6F7480"
+                    placeholderTextColor="rgba(214, 205, 194, 0.48)"
                   />
                 </View>
               </View>
               <Pressable style={styles.marketSettingsDoneButton} onPress={() => Keyboard.dismiss()} accessibilityRole="button">
                 <Text style={styles.marketSettingsDoneLabel}>Done</Text>
               </Pressable>
+              <InputAccessoryView nativeID={marketInputAccessoryViewID}>
+                <View style={styles.keyboardAccessory}>
+                  <Pressable style={styles.keyboardAccessoryDone} onPress={() => Keyboard.dismiss()} accessibilityRole="button">
+                    <Text style={styles.keyboardAccessoryDoneText}>Done</Text>
+                  </Pressable>
+                </View>
+              </InputAccessoryView>
               <View style={styles.conditionGridCompact}>
                 {conditionOptions.map((option) => {
                   const active = option === condition;
@@ -5070,7 +5088,10 @@ export default function VehicleDetailScreen() {
                     <Pressable
                       key={option}
                       style={[styles.conditionChip, styles.conditionChipCompact, active && styles.conditionChipActive]}
-                      onPress={() => setCondition(option)}
+                      onPress={() => {
+                        Keyboard.dismiss();
+                        setCondition(option);
+                      }}
                     >
                       <Text style={[styles.conditionChipLabel, active && styles.conditionChipLabelActive]}>{option}</Text>
                     </Pressable>
@@ -6003,6 +6024,31 @@ const styles = StyleSheet.create({
     borderColor: "rgba(216, 163, 107, 0.28)",
   },
   marketSettingsDoneLabel: {
+    ...Typography.caption,
+    color: "#E7B97F",
+    fontWeight: "800",
+  },
+  keyboardAccessory: {
+    minHeight: 48,
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    alignItems: "flex-end",
+    justifyContent: "center",
+    backgroundColor: "#10100F",
+    borderTopWidth: 1,
+    borderTopColor: "rgba(216, 163, 107, 0.18)",
+  },
+  keyboardAccessoryDone: {
+    minHeight: 34,
+    paddingHorizontal: 16,
+    borderRadius: Radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(216, 163, 107, 0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.32)",
+  },
+  keyboardAccessoryDoneText: {
     ...Typography.caption,
     color: "#E7B97F",
     fontWeight: "800",

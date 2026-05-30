@@ -218,14 +218,13 @@ export default function OnboardingScreen() {
   };
 
   const scrollToSlide = (index: number, animated: boolean) => {
-    const node = scrollRef.current as (ScrollView & { getNode?: () => ScrollView | null }) | null;
-    const target = typeof node?.scrollTo === "function" ? node : typeof node?.getNode === "function" ? node.getNode() : null;
-    target?.scrollTo({ x: index * metrics.slideWidth, animated });
+    scrollRef.current?.scrollTo({ x: index * metrics.slideWidth, animated });
   };
 
   const goToSlide = (index: number) => {
-    setActiveIndex(index);
-    requestAnimationFrame(() => scrollToSlide(index, true));
+    const nextIndex = Math.max(0, Math.min(index, ONBOARDING_STEPS.length - 1));
+    setActiveIndex(nextIndex);
+    scrollToSlide(nextIndex, true);
   };
 
   useEffect(() => {
@@ -280,7 +279,9 @@ export default function OnboardingScreen() {
 
         <View style={styles.carouselViewport}>
           <Animated.ScrollView
-            ref={scrollRef}
+            ref={(node) => {
+              scrollRef.current = node as unknown as ScrollView | null;
+            }}
             horizontal
             pagingEnabled
             decelerationRate="fast"
