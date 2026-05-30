@@ -1070,28 +1070,47 @@ function PremiumListingsSection({
   locked,
   loading,
   fallbackImageSource,
+  debugMeta,
 }: {
   listings: VehicleRecord["listings"];
   locked: boolean;
   loading: boolean;
   fallbackImageSource?: ImageSourcePropType | null;
+  debugMeta?: ListingsDebugMeta | null;
 }) {
   const believableListings = listings.filter(isBelievableListing);
+  const displayListings = believableListings.length > 0
+    ? believableListings
+    : listings.filter((listing) => safeListingText(listing.price, "") !== "");
+  const noListingsReason =
+    debugMeta?.fallbackReason === "provider_error"
+      ? "Live listings could not be loaded. Check the market settings and try refreshing."
+      : debugMeta?.rawCount === 0 || debugMeta?.mode === "none"
+        ? "No nearby live listings found for this exact match."
+        : listings.length > 0
+          ? "Listings were returned, but none had enough price and seller detail to show confidently."
+          : "No nearby live listings found for this exact match.";
+  const noListingsContext =
+    debugMeta?.sourceLabel && debugMeta.sourceLabel !== "Live listings could not be loaded"
+      ? debugMeta.sourceLabel
+      : "If a market value is shown, it may be based on available comps, cached data, or modeled fallback rather than visible nearby listings.";
 
   return (
     <View style={styles.listingsPanel}>
       <View style={styles.tabIntroCompact}>
         <Text style={styles.listingsKicker}>Similar Listings</Text>
         <View style={styles.premiumBadge}>
-          <Text style={styles.premiumBadgeText}>{locked ? "Locked" : believableListings.length > 0 ? `${believableListings.length} comps` : "Ready"}</Text>
+          <Text style={styles.premiumBadgeText}>{locked ? "Locked" : displayListings.length > 0 ? `${displayListings.length} comps` : loading ? "Loading" : "None found"}</Text>
         </View>
       </View>
       <Text style={styles.listingsPanelBody}>
         {locked
           ? "Unlock once to load live market value and nearby listings for this vehicle."
-          : believableListings.length > 0
+          : displayListings.length > 0
             ? "Nearby comps help ground the market view with price, mileage, and seller context."
-            : "Live nearby listings are available on demand when you want current comps."}
+            : loading
+              ? "Searching live nearby listings for current comparable vehicles."
+              : noListingsReason}
       </Text>
       {locked ? (
         <View style={styles.lockedPreviewStack} pointerEvents="none">
@@ -1103,11 +1122,19 @@ function PremiumListingsSection({
             </View>
           ))}
         </View>
-      ) : believableListings.length > 0 ? (
+      ) : displayListings.length > 0 ? (
         <View style={styles.premiumListingStack}>
-          {believableListings.slice(0, 3).map((listing, index) => (
+          {displayListings.slice(0, 3).map((listing, index) => (
             <PremiumListingRow key={`${listing.id || listing.title}-${index}`} listing={listing} fallbackImageSource={fallbackImageSource} />
           ))}
+        </View>
+      ) : !loading ? (
+        <View style={styles.listingsEmptyCard}>
+          <Ionicons name="search-outline" size={18} color="#E7B97F" />
+          <View style={styles.listingsEmptyCopy}>
+            <Text style={styles.listingsEmptyTitle}>No nearby live listings found</Text>
+            <Text style={styles.listingsEmptyBody}>{noListingsContext}</Text>
+          </View>
         </View>
       ) : null}
       {loading ? <ActivityIndicator color="#E7B97F" /> : null}
@@ -1124,6 +1151,7 @@ function PremiumListingRow({
 }) {
   const price = safeListingText(listing.price, "Price unavailable");
   const mileage = safeListingText(listing.mileage, "Mileage unavailable");
+  const distance = safeListingText(listing.distance, "");
   const location = safeListingText(listing.location, "Location unavailable");
   const source = safeListingText(listing.sourceLabel || listing.dealer, "Marketplace");
   const imageSource =
@@ -1137,7 +1165,7 @@ function PremiumListingRow({
       <View style={styles.premiumListingCopy}>
         <Text style={styles.premiumListingSource} numberOfLines={1}>{source}</Text>
         <Text style={styles.premiumListingPrice}>{price}</Text>
-        <Text style={styles.premiumListingMeta} numberOfLines={1}>{mileage} • {location}</Text>
+        <Text style={styles.premiumListingMeta} numberOfLines={1}>{[mileage, distance, location].filter(Boolean).join(" • ")}</Text>
       </View>
       <View style={styles.premiumListingAction}>
         <Ionicons name="open-outline" size={18} color="#E7B97F" />
@@ -2454,6 +2482,56 @@ export default function VehicleDetailScreen() {
       descriptor: vehicle ? buildDetailLookupDescriptor(vehicle) : null,
     };
   }, [marketUnlockPrimaryId, valueLookupInput, vehicle]);
+  const vehicleDetailReturnTarget = useMemo(() => {
+    const params = new URLSearchParams();
+    const setParam = (key: string, value: string | undefined) => {
+      if (typeof value === "string" && value.trim().length > 0) {
+        params.set(key, value);
+      }
+    };
+
+    setParam("imageUri", typeof imageUri === "string" ? imageUri : undefined);
+    setParam("scanId", typeof scanId === "string" ? scanId : undefined);
+    setParam("estimate", typeof estimate === "string" ? estimate : undefined);
+    setParam("titleLabel", typeof titleLabel === "string" ? titleLabel : undefined);
+    setParam("yearLabel", typeof yearLabel === "string" ? yearLabel : undefined);
+    setParam("make", typeof make === "string" ? make : undefined);
+    setParam("model", typeof model === "string" ? model : undefined);
+    setParam("trimLabel", typeof trimLabel === "string" ? trimLabel : undefined);
+    setParam("vehicleType", typeof vehicleType === "string" ? vehicleType : undefined);
+    setParam("confidence", typeof confidence === "string" ? confidence : undefined);
+    setParam("unlockId", resolvedUnlockId ?? undefined);
+    setParam("garageSource", typeof garageSource === "string" ? garageSource : undefined);
+    setParam("reopenedSource", typeof reopenedSource === "string" ? reopenedSource : undefined);
+    setParam("trustedCase", typeof trustedCase === "string" ? trustedCase : undefined);
+    setParam("resultSource", typeof resultSource === "string" ? resultSource : undefined);
+    setParam("isSampleVehicle", typeof sampleVehicleParam === "string" ? sampleVehicleParam : undefined);
+    setParam("source", typeof routeSource === "string" ? routeSource : undefined);
+    params.set("initialTab", "Value");
+    params.set("marketIntent", "bundle");
+
+    const query = params.toString();
+    return `/vehicle/${encodeURIComponent(id)}${query ? `?${query}` : ""}`;
+  }, [
+    confidence,
+    estimate,
+    garageSource,
+    id,
+    imageUri,
+    make,
+    model,
+    reopenedSource,
+    resolvedUnlockId,
+    resultSource,
+    routeSource,
+    sampleVehicleParam,
+    scanId,
+    titleLabel,
+    trimLabel,
+    trustedCase,
+    vehicleType,
+    yearLabel,
+  ]);
   const canRequestLiveListings = !isSampleDetail && isValidMarketAreaZip(normalizeMarketAreaZip(zipCode));
   const vehicleMarketUnlockLabel = "Unlock Value & Listings";
   const marketValueActionLabel = valuationLoading
@@ -2485,11 +2563,21 @@ export default function VehicleDetailScreen() {
       "Live market value and nearby listings require a signed-in account so unlocks and purchases can be verified securely.",
       [
         { text: "Cancel", style: "cancel" },
-        { text: "Sign In", onPress: () => router.push("/auth?mode=sign-in") },
+        {
+          text: "Sign In",
+          onPress: () =>
+            router.push({
+              pathname: "/auth",
+              params: {
+                mode: "sign-in",
+                returnTo: vehicleDetailReturnTarget,
+              },
+            }),
+        },
       ],
     );
     return false;
-  }, []);
+  }, [vehicleDetailReturnTarget]);
 
   const handleVehicleMarketBundleAction = useCallback(async () => {
     if (valuationLoading || listingsRefreshLoading || isUnlocking || isSampleDetail || marketUnlockSpendInFlightRef.current) {
@@ -4937,6 +5025,7 @@ export default function VehicleDetailScreen() {
                 locked={false}
                 loading={listingsRefreshLoading}
                 fallbackImageSource={heroImageSource ?? toVehicleImageSource(vehicle.heroImage)}
+                debugMeta={listingsDebugMeta}
               />
               {!isSampleDetail ? (
                 <PremiumDetailButton
@@ -6107,6 +6196,29 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(216, 163, 107, 0.13)",
     borderWidth: 1,
     borderColor: "rgba(216, 163, 107, 0.32)",
+  },
+  listingsEmptyCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: "rgba(18, 18, 19, 0.78)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.16)",
+  },
+  listingsEmptyCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  listingsEmptyTitle: {
+    ...Typography.bodyStrong,
+    color: "#F5F3EE",
+  },
+  listingsEmptyBody: {
+    ...Typography.caption,
+    color: "#9BA1AD",
+    lineHeight: 18,
   },
   valueLoading: { ...Typography.caption, color: Colors.textMuted },
   qaDebugStrip: {

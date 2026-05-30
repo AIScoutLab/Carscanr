@@ -1,12 +1,9 @@
-import { router, useLocalSearchParams, usePathname } from "expo-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Href, router, useLocalSearchParams, usePathname } from "expo-router";
+import { useEffect, useRef, useState } from "react";
 import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { BrandMark } from "@/components/BrandMark";
-import { BRAND_MARK_LAYOUT } from "@/constants/branding";
-import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { useSubscription } from "@/hooks/useSubscription";
 import { mobileEnv } from "@/lib/env";
@@ -15,7 +12,7 @@ import { startupPreferences } from "@/services/startupPreferences";
 
 export default function AuthScreen() {
   const pathname = usePathname();
-  const params = useLocalSearchParams<{ mode?: "sign-in" | "sign-up" }>();
+  const params = useLocalSearchParams<{ mode?: "sign-in" | "sign-up"; returnTo?: string }>();
   const insets = useSafeAreaInsets();
   const passwordInputRef = useRef<TextInput | null>(null);
   const [email, setEmail] = useState("");
@@ -24,33 +21,14 @@ export default function AuthScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
-  const [authDebugLines, setAuthDebugLines] = useState<string[]>([]);
   const { refreshStatus } = useSubscription();
 
   const hasApiBaseUrl = Boolean(mobileEnv.apiBaseUrl);
   const hasSupabaseUrl = Boolean(mobileEnv.supabaseUrl);
   const hasSupabaseAnonKey = Boolean(mobileEnv.supabaseAnonKey);
-  const networkTarget = "Supabase";
-  const supabaseTarget = useMemo(() => {
-    try {
-      return new URL(mobileEnv.supabaseUrl).origin;
-    } catch {
-      return mobileEnv.supabaseUrl || "invalid-supabase-url";
-    }
-  }, []);
-  const apiTarget = useMemo(() => {
-    try {
-      return new URL(mobileEnv.apiBaseUrl).origin;
-    } catch {
-      return mobileEnv.apiBaseUrl || "invalid-api-url";
-    }
-  }, []);
-
-  const appendAuthDebug = (label: string, value?: unknown) => {
-    const nextLine = value === undefined ? label : `${label}: ${typeof value === "string" ? value : JSON.stringify(value)}`;
-    console.log("[auth-debug]", nextLine);
-    setAuthDebugLines((current) => [...current.slice(-5), nextLine]);
-  };
+  const returnTo = typeof params.returnTo === "string" && isSafeReturnTarget(params.returnTo)
+    ? params.returnTo
+    : "/(tabs)/scan";
 
   useEffect(() => {
     console.log("[auth] route mounted", {
@@ -73,12 +51,10 @@ export default function AuthScreen() {
       const token = await authService.getAccessToken();
       if (!active) return;
       if (token) {
-        console.log("[auth] redirecting to tabs", {
-          reason: "access-token-present",
+        console.log("[auth] active session detected on auth screen", {
           pathname,
         });
         await refreshStatus();
-        router.replace("/(tabs)/scan");
       }
     };
     hydrate().catch((error) => {
@@ -118,24 +94,21 @@ export default function AuthScreen() {
       setIsSubmitting(true);
       setAuthError(null);
       setAuthNotice(null);
-      setAuthDebugLines([]);
-      appendAuthDebug("sign-up tapped", mode === "sign-up");
-      appendAuthDebug("request start", { mode, target: networkTarget, supabaseTarget });
       if (mode === "sign-in") {
         await authService.signIn(normalizedEmail, normalizedPassword);
         console.log("[auth] submit success", { mode });
         await refreshStatus();
-        console.log("[auth] redirecting to tabs", {
+        console.log("[auth] redirecting after submit", {
           reason: "auth-submit-success",
           pathname,
           mode,
+          hasReturnTo: returnTo !== "/(tabs)/scan",
         });
-        router.replace("/(tabs)/scan");
+        router.replace(returnTo as Href);
         return;
       }
 
       const result = await authService.signUp(normalizedEmail, normalizedPassword);
-      appendAuthDebug("sign-up outcome", result.outcome);
       if (result.outcome === "confirmation_required") {
         setMode("sign-in");
         setPassword("");
@@ -145,16 +118,15 @@ export default function AuthScreen() {
 
       console.log("[auth] submit success", { mode });
       await refreshStatus();
-      console.log("[auth] redirecting to tabs", {
+      console.log("[auth] redirecting after submit", {
         reason: "auth-submit-success",
         pathname,
         mode,
+        hasReturnTo: returnTo !== "/(tabs)/scan",
       });
-      router.replace("/(tabs)/scan");
+      router.replace(returnTo as Href);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Please try again.";
-      appendAuthDebug("request failed", message);
-      appendAuthDebug("parsed error message", message);
       setAuthError(message);
       Alert.alert(mode === "sign-in" ? "Unable to sign in" : "Unable to create account", message);
     } finally {
@@ -176,13 +148,10 @@ export default function AuthScreen() {
 
     try {
       setIsSubmitting(true);
-      appendAuthDebug("Reset link requested");
-      appendAuthDebug("password reset request start", { target: networkTarget, supabaseTarget });
       await authService.resetPassword(normalizedEmail);
       setAuthNotice("Password reset email sent. Check your inbox.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to send password reset email.";
-      appendAuthDebug("password reset failed", message);
       setAuthError(message);
     } finally {
       setIsSubmitting(false);
@@ -200,343 +169,424 @@ export default function AuthScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "right", "left", "bottom"]}>
+      <LinearGradient
+        pointerEvents="none"
+        colors={["rgba(205,144,82,0.16)", "rgba(22,19,18,0.10)", "rgba(5,5,6,0)"]}
+        locations={[0, 0.45, 1]}
+        start={{ x: 0.2, y: 0 }}
+        end={{ x: 0.82, y: 0.9 }}
+        style={styles.warmGlow}
+      />
+      <LinearGradient
+        pointerEvents="none"
+        colors={["rgba(255,255,255,0.05)", "rgba(255,255,255,0)"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0.7 }}
+        style={styles.topSheen}
+      />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={0}>
         <ScrollView
           style={styles.flex}
-          contentContainerStyle={[styles.content, { paddingTop: 4, paddingBottom: Math.max(insets.bottom, 24) }]}
+          contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom + 44, 72) }]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
         >
-      <View style={styles.contentInner}>
-      <View style={styles.topBar}>
-        <TouchableOpacity
-          style={styles.topBarButton}
-          activeOpacity={0.86}
-          accessibilityRole="button"
-          onPress={() => {
-            if (router.canGoBack()) {
-              router.back();
-              return;
-            }
-            router.replace("/(tabs)/scan");
-          }}
-        >
-          <Ionicons name="chevron-back" size={18} color={Colors.textStrong} />
-          <Text style={styles.topBarButtonLabel}>Back</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.topBarButton}
-          activeOpacity={0.86}
-          accessibilityRole="button"
-          onPress={() => router.replace("/(tabs)/scan")}
-        >
-          <Text style={styles.topBarButtonLabel}>Close</Text>
-        </TouchableOpacity>
-      </View>
-      {__DEV__ ? (
-        <View style={styles.debugBanner}>
-          <Text style={styles.debugBannerTitle}>LIVE AUTH SCREEN V2</Text>
-          <Text style={styles.debugBannerText}>AUTH SCREEN LOADED</Text>
-          <Text style={styles.debugBannerText}>pathname: {pathname}</Text>
-          <Text style={styles.debugBannerText}>mode: {mode}</Text>
-          <Text style={styles.debugBannerText}>API base URL present: {hasApiBaseUrl ? "yes" : "no"}</Text>
-          <Text style={styles.debugBannerText}>Supabase URL present: {hasSupabaseUrl ? "yes" : "no"}</Text>
-          <Text style={styles.debugBannerText}>Network target: {networkTarget}</Text>
-          <Text style={styles.debugBannerText}>Supabase host: {supabaseTarget}</Text>
-          <Text style={styles.debugBannerText}>API host: {apiTarget}</Text>
-          {authDebugLines.map((line) => (
-            <Text key={line} style={styles.debugBannerText}>
-              {line}
-            </Text>
-          ))}
-        </View>
-      ) : null}
-      <LinearGradient colors={["rgba(16,56,148,0.32)", "rgba(53,96,207,0.10)", "rgba(7,13,28,0.94)"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.brandWrap}>
-        <BrandMark
-          size={BRAND_MARK_LAYOUT.authHero.size}
-          contentScale={BRAND_MARK_LAYOUT.authHero.contentScale}
-          resizeMode="contain"
-        />
-        <View style={styles.brandTextWrap}>
-          <Text style={styles.brandName}>Use CarScanr free right away.</Text>
-          <Text style={styles.brandNote}>Create an account only if you want Garage sync, saved history, and restore across devices.</Text>
-        </View>
-      </LinearGradient>
-      <Text style={styles.title}>{mode === "sign-in" ? "Welcome back." : "Create your account."}</Text>
-      <Text style={styles.subtitle}>
-        {mode === "sign-in"
-          ? "Sign in to sync your Garage, saved history, and unlocks across devices."
-          : "Create an account if you want Garage sync, saved history, and restore across devices. Scanning still works without one."}
-      </Text>
-      <View style={styles.guestNoteCard}>
-        <Text style={styles.guestNoteTitle}>Account optional</Text>
-        <Text style={styles.guestNoteBody}>Unlimited basic scans stay free. Accounts are mainly for sync, saved history, restore, and Garage continuity across devices.</Text>
-        <View style={styles.guestActionRow}>
-          <TouchableOpacity
-            style={styles.quickActionButton}
-            activeOpacity={0.86}
-            accessibilityRole="button"
-            onPress={() => switchMode(mode === "sign-in" ? "sign-up" : "sign-in")}
-          >
-            <Text style={styles.quickActionLabel}>
-              {mode === "sign-in" ? "Create Free Account" : "Already Have an Account?"}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.quickActionButton}
-            activeOpacity={0.86}
-            accessibilityRole="button"
-            onPress={() => {
-              console.log("[tap] auth-continue-as-guest");
-              startupPreferences
-                .setHasSeenOnboarding()
-                .catch(() => undefined)
-                .finally(() => {
+          <View style={styles.contentInner}>
+            <View style={styles.topBar}>
+              <TouchableOpacity
+                style={[styles.topBarButton, styles.backButton]}
+                activeOpacity={0.86}
+                accessibilityRole="button"
+                accessibilityLabel="Back"
+                onPress={() => {
+                  if (router.canGoBack()) {
+                    router.back();
+                    return;
+                  }
                   router.replace("/(tabs)/scan");
-                });
-            }}
-          >
-            <Text style={styles.quickActionLabel}>Continue as Guest</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-      <View style={styles.card}>
-        <View>
-          <TextInput
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="email-address"
-            returnKeyType="next"
-            style={styles.input}
-            placeholder="Email"
-            placeholderTextColor={Colors.textMuted}
-            onSubmitEditing={() => passwordInputRef.current?.focus()}
-          />
-        </View>
-        <View>
-          <TextInput
-            ref={passwordInputRef}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor={Colors.textMuted}
-            returnKeyType="done"
-            onSubmitEditing={() => {
-              void submit();
-            }}
-          />
-        </View>
-        {mode === "sign-in" ? (
-          <TouchableOpacity
-            activeOpacity={0.86}
-            accessibilityRole="button"
-            onPress={() => {
-              void forgotPassword();
-            }}
-            style={styles.forgotPasswordButton}
-          >
-            <Text style={styles.forgotPasswordText}>Forgot password?</Text>
-          </TouchableOpacity>
-        ) : null}
-        <View>
-          <PrimaryButton label={isSubmitting ? "Working..." : mode === "sign-in" ? "Sign In" : "Create Account"} onPress={submit} disabled={isSubmitting} />
-        </View>
-        <PrimaryButton
-          label="Continue with Apple"
-          secondary
-          onPress={() => {
-            console.log("[tap] auth-apple-placeholder");
-            Alert.alert("Apple sign-in unavailable", "Apple sign-in is not wired yet. Please use email and password for now.");
-          }}
-        />
-      </View>
-      {authError ? (
-        <View style={styles.errorCard}>
-          <Text style={styles.errorTitle}>Auth error</Text>
-          <Text style={styles.errorBody}>{authError}</Text>
-        </View>
-      ) : null}
-      {authNotice ? (
-        <View style={styles.noticeCard}>
-          <Text style={styles.noticeTitle}>Check your email</Text>
-          <Text style={styles.noticeBody}>{authNotice}</Text>
-        </View>
-      ) : null}
-      </View>
+                }}
+              >
+                <Ionicons name="chevron-back" size={20} color={Colors.textStrong} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.topBarButton}
+                activeOpacity={0.86}
+                accessibilityRole="button"
+                onPress={() => router.replace("/(tabs)/scan")}
+              >
+                <Text style={styles.topBarButtonLabel}>Close</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.heroCopy}>
+              <Text style={styles.title}>{mode === "sign-in" ? "Welcome back." : "Create your account."}</Text>
+              <Text style={styles.subtitle}>
+                {mode === "sign-in"
+                  ? "Sign in to sync your Garage, saved scans, and unlocks across devices."
+                  : "Create an account to sync your Garage, history, and unlocks across devices."}
+              </Text>
+            </View>
+
+            <View style={styles.guestNoteCard}>
+              <View style={styles.sectionEyebrowRow}>
+                <View style={styles.goldDot} />
+                <Text style={styles.guestNoteTitle}>Account Optional</Text>
+              </View>
+              <Text style={styles.guestNoteBody}>Basic scanning stays free. Accounts sync your Garage, history, and unlocks across devices.</Text>
+              <View style={styles.guestActionRow}>
+                <TouchableOpacity
+                  style={[styles.authButton, styles.authButtonPrimary]}
+                  activeOpacity={0.88}
+                  accessibilityRole="button"
+                  onPress={() => switchMode(mode === "sign-in" ? "sign-up" : "sign-in")}
+                >
+                  <LinearGradient colors={["#D9A46D", "#C8905A"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.buttonFill}>
+                    <Text style={styles.primaryButtonLabel}>
+                      {mode === "sign-in" ? "Create Free Account" : "Sign In Instead"}
+                    </Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.authButton, styles.authButtonSecondary]}
+                  activeOpacity={0.86}
+                  accessibilityRole="button"
+                  onPress={() => {
+                    console.log("[tap] auth-continue-as-guest");
+                    startupPreferences
+                      .setHasSeenOnboarding()
+                      .catch(() => undefined)
+                      .finally(() => {
+                        router.replace("/(tabs)/scan");
+                      });
+                  }}
+                >
+                  <Text style={styles.secondaryButtonLabel}>Continue as Guest</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.formLabel}>{mode === "sign-in" ? "Already have an account" : "Create with email"}</Text>
+              <View style={styles.inputStack}>
+                <TextInput
+                  value={email}
+                  onChangeText={setEmail}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="email-address"
+                  returnKeyType="next"
+                  style={styles.input}
+                  placeholder="Email"
+                  placeholderTextColor="#7E8797"
+                  onSubmitEditing={() => passwordInputRef.current?.focus()}
+                />
+                <TextInput
+                  ref={passwordInputRef}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry
+                  style={styles.input}
+                  placeholder="Password"
+                  placeholderTextColor="#7E8797"
+                  returnKeyType="done"
+                  onSubmitEditing={() => {
+                    void submit();
+                  }}
+                />
+              </View>
+              {mode === "sign-in" ? (
+                <TouchableOpacity
+                  activeOpacity={0.86}
+                  accessibilityRole="button"
+                  onPress={() => {
+                    void forgotPassword();
+                  }}
+                  style={styles.forgotPasswordButton}
+                >
+                  <Text style={styles.forgotPasswordText}>Forgot password?</Text>
+                </TouchableOpacity>
+              ) : null}
+              {authError ? (
+                <View style={styles.errorCard}>
+                  <Text style={styles.errorTitle}>Auth error</Text>
+                  <Text style={styles.errorBody}>{authError}</Text>
+                </View>
+              ) : null}
+              {authNotice ? (
+                <View style={styles.noticeCard}>
+                  <Text style={styles.noticeTitle}>Check your email</Text>
+                  <Text style={styles.noticeBody}>{authNotice}</Text>
+                </View>
+              ) : null}
+              <TouchableOpacity
+                style={[styles.authButton, styles.authButtonPrimary, isSubmitting && styles.disabledButton]}
+                activeOpacity={0.88}
+                accessibilityRole="button"
+                onPress={submit}
+                disabled={isSubmitting}
+              >
+                <LinearGradient colors={["#D9A46D", "#C8905A"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.buttonFill}>
+                  <Text style={styles.primaryButtonLabel}>{isSubmitting ? "Working..." : mode === "sign-in" ? "Sign In" : "Create Account"}</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.authButton, styles.appleButton]}
+                activeOpacity={0.86}
+                accessibilityRole="button"
+                onPress={() => {
+                  console.log("[tap] auth-apple-placeholder");
+                  Alert.alert("Apple sign-in unavailable", "Apple sign-in is not wired yet. Please use email and password for now.");
+                }}
+              >
+                <Ionicons name="logo-apple" size={18} color={Colors.textStrong} />
+                <Text style={styles.secondaryButtonLabel}>Continue with Apple</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
+function isSafeReturnTarget(value: string) {
+  return value.startsWith("/") && !value.startsWith("//") && !value.includes("://");
+}
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: "#050506",
   },
   flex: {
     flex: 1,
   },
+  warmGlow: {
+    position: "absolute",
+    top: -120,
+    left: -80,
+    right: -80,
+    height: 420,
+  },
+  topSheen: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 160,
+  },
   content: {
     flexGrow: 1,
-    paddingHorizontal: 20,
+    paddingTop: 6,
+    paddingHorizontal: 22,
   },
   contentInner: {
-    gap: 20,
+    gap: 18,
   },
   topBar: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     gap: 12,
-    marginTop: 2,
+    marginTop: 0,
   },
   topBarButton: {
-    minHeight: 42,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    minHeight: 38,
+    paddingHorizontal: 15,
+    paddingVertical: 8,
     borderRadius: Radius.pill,
-    backgroundColor: Colors.cardSoft,
+    backgroundColor: "rgba(28,28,30,0.82)",
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: "rgba(255,255,255,0.12)",
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 6,
+  },
+  backButton: {
+    width: 38,
+    paddingHorizontal: 0,
   },
   topBarButtonLabel: {
     ...Typography.caption,
     color: Colors.textStrong,
+    fontWeight: "600",
+    letterSpacing: 0,
+  },
+  heroCopy: {
+    gap: 8,
+    marginTop: 4,
+  },
+  title: {
+    ...Typography.largeTitle,
+    fontFamily: Platform.select({ ios: "AvenirNext-Bold", default: "sans-serif" }),
     fontWeight: "700",
-    letterSpacing: 0.2,
-  },
-  debugBanner: {
-    backgroundColor: "#FFF0C7",
-    borderRadius: Radius.lg,
-    padding: 12,
-    gap: 4,
-    borderWidth: 1,
-    borderColor: "#E4C35A",
-  },
-  debugBannerTitle: {
-    ...Typography.bodyStrong,
+    letterSpacing: -0.45,
     color: Colors.text,
+    lineHeight: 41,
+    paddingTop: 2,
   },
-  debugBannerText: {
-    ...Typography.caption,
-    color: Colors.text,
+  subtitle: {
+    ...Typography.body,
+    color: "#AEB5C2",
+    lineHeight: 22,
   },
-  brandWrap: {
-    flexDirection: "row",
-    alignItems: "center",
+  guestNoteCard: {
+    backgroundColor: "rgba(21,21,23,0.88)",
+    borderRadius: 18,
+    padding: 18,
     gap: 14,
-    marginTop: 8,
-    padding: 20,
-    borderRadius: Radius.xl,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: "rgba(255,255,255,0.10)",
     overflow: "hidden",
   },
-  brandTextWrap: {
-    gap: 6,
-    flex: 1,
+  sectionEyebrowRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
-  brandName: {
-    ...Typography.title,
-    color: Colors.textStrong,
-  },
-  brandNote: {
-    ...Typography.body,
-    color: Colors.textSoft,
-  },
-  title: { ...Typography.largeTitle, color: Colors.text, marginTop: 10 },
-  subtitle: { ...Typography.body, color: Colors.textSoft },
-  guestNoteCard: {
-    backgroundColor: Colors.cardAlt,
-    borderRadius: Radius.lg,
-    padding: 14,
-    gap: 12,
-    borderWidth: 1,
-    borderColor: Colors.border,
+  goldDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: "#D8A46F",
   },
   guestNoteTitle: {
-    ...Typography.bodyStrong,
-    color: Colors.text,
+    ...Typography.caption,
+    color: "#E7BD8A",
+    fontWeight: "700",
+    letterSpacing: 0.8,
   },
   guestNoteBody: {
-    ...Typography.caption,
-    color: Colors.textMuted,
+    ...Typography.body,
+    color: "#B9BFCA",
+    lineHeight: 21,
   },
   guestActionRow: {
     gap: 10,
   },
-  quickActionButton: {
-    backgroundColor: Colors.card,
-    borderRadius: Radius.lg,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: Colors.border,
+  authButton: {
+    minHeight: 50,
+    borderRadius: 13,
+    overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
   },
-  quickActionLabel: {
-    ...Typography.bodyStrong,
-    color: Colors.text,
-    textAlign: "center",
+  authButtonPrimary: {
+    backgroundColor: "#C8905A",
+    shadowColor: "#C8905A",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.2,
+    shadowRadius: 22,
+    elevation: 4,
   },
-  card: { backgroundColor: Colors.card, borderRadius: Radius.xl, padding: 20, gap: 14, borderWidth: 1, borderColor: Colors.border },
+  authButtonSecondary: {
+    backgroundColor: "rgba(26,26,28,0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+  appleButton: {
+    backgroundColor: "rgba(12,12,13,0.96)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  buttonFill: {
+    minHeight: 50,
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+  },
+  primaryButtonLabel: {
+    ...Typography.bodyStrong,
+    color: "#070707",
+    textAlign: "center",
+    fontWeight: "800",
+  },
+  secondaryButtonLabel: {
+    ...Typography.bodyStrong,
+    color: Colors.textStrong,
+    textAlign: "center",
+    fontWeight: "700",
+  },
+  disabledButton: {
+    opacity: 0.65,
+  },
+  card: {
+    backgroundColor: "rgba(20,20,22,0.88)",
+    borderRadius: 18,
+    padding: 18,
+    gap: 13,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+  },
+  formLabel: {
+    ...Typography.caption,
+    color: "#9098A7",
+    fontWeight: "700",
+    letterSpacing: 1,
+    textTransform: "uppercase",
+  },
+  inputStack: {
+    gap: 10,
+  },
   input: {
-    backgroundColor: Colors.cardAlt,
-    borderRadius: Radius.md,
-    padding: 16,
+    minHeight: 50,
+    backgroundColor: "rgba(43,43,45,0.82)",
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
     color: Colors.text,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: "rgba(255,255,255,0.12)",
     ...Typography.body,
   },
   forgotPasswordButton: {
     alignSelf: "flex-end",
-    marginTop: -2,
+    marginTop: -1,
+    marginBottom: 1,
+    paddingVertical: 2,
   },
   forgotPasswordText: {
-    ...Typography.body,
-    color: Colors.accent,
+    ...Typography.caption,
+    color: "#DDB27F",
+    fontWeight: "700",
   },
   errorCard: {
-    backgroundColor: "#FFF1F2",
+    backgroundColor: "rgba(90,31,36,0.42)",
     borderWidth: 1,
-    borderColor: "#FDA4AF",
+    borderColor: "rgba(244,113,116,0.34)",
     borderRadius: Radius.lg,
     padding: 16,
     gap: 8,
   },
   errorTitle: {
     ...Typography.bodyStrong,
-    color: Colors.text,
+    color: "#FFD4D6",
   },
   errorBody: {
     ...Typography.body,
-    color: Colors.text,
+    color: "#F1BEC2",
   },
   noticeCard: {
-    backgroundColor: "#EEF8E8",
+    backgroundColor: "rgba(38,57,35,0.46)",
     borderWidth: 1,
-    borderColor: "#9ED08A",
+    borderColor: "rgba(158,208,138,0.34)",
     borderRadius: Radius.lg,
     padding: 16,
     gap: 8,
   },
   noticeTitle: {
     ...Typography.bodyStrong,
-    color: Colors.text,
+    color: "#D8F0CE",
   },
   noticeBody: {
     ...Typography.body,
-    color: Colors.text,
+    color: "#C3D8BB",
   },
 });
