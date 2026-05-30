@@ -2,7 +2,7 @@
 
 Update this file after meaningful product, auth, scan, environment, deployment, or TestFlight changes so the next session starts from the current truth.
 
-Last updated: May 16, 2026 CDT, after commit `3e1acab` was pushed, deployed to Render, and published as an EAS Update on production runtime `1.0.2`.
+Last updated: May 28, 2026 CDT, after RevenueCat webhook deployment and TestFlight readiness checks. Current local app/UI work is still dirty and not shipped unless explicitly noted below.
 
 ## Project Summary
 
@@ -23,11 +23,527 @@ Product goal:
   - free users get 3 free Pro unlocks
   - only premium detail access should lock after free Pro unlocks are exhausted
 
-## Current State Snapshot
+## May 28, 2026 Active Truth
 
-### Current shipped release / deployment truth
+This section supersedes the May 27 section for day-to-day work.
 
-- Current repo HEAD after the latest shipped pass:
+### Backend / Render deployment
+
+- Current local branch:
+  - `backend-marketcheck-fix`
+- Current committed/pushed backend security fix:
+  - `17f653e479e82d698553d70af0aba489f25e05ca`
+  - commit message: `Fix RevenueCat webhook observability`
+- Pushed state:
+  - `git push origin backend-marketcheck-fix` returned `Everything up-to-date`
+- Render production service:
+  - service URL: `https://carscanr.onrender.com`
+  - webhook URL: `POST https://carscanr.onrender.com/api/revenuecat/webhook`
+  - Render service is configured to track GitHub `AIScoutLab/Carscanr main`
+  - `render.yaml` has `autoDeploy: false`
+  - important: the deployed fix was released through Render dashboard `Manual Deploy` -> `Deploy a specific commit`, not by moving `main`
+- Current live backend health check after deploy:
+  - URL: `https://carscanr.onrender.com/health`
+  - `backendBuildCommit`: `17f653e479e82d698553d70af0aba489f25e05ca`
+  - `appEnv`: `production`
+  - active providers:
+    - vision: `openai`
+    - specs: `marketcheck`
+    - value: `marketcheck`
+    - listings: `marketcheck`
+  - `liveProviderCallsEnabled: true`
+  - `revenueCatWebhookConfigured: true`
+- Webhook auth verification:
+  - unauthenticated `POST /api/revenuecat/webhook` now returns:
+    - status: `401`
+    - code: `REVENUECAT_WEBHOOK_UNAUTHORIZED`
+  - this confirms the webhook route is no longer being intercepted by the generic app bearer-auth middleware (`AUTH_REQUIRED`)
+- Do not print or log webhook auth token values. Render/RevenueCat secrets remain dashboard-only.
+
+### RevenueCat webhook database / expected verification
+
+- RevenueCat webhook events should insert into:
+  - `public.revenuecat_events`
+- Useful SQL to verify latest events:
+
+```sql
+select
+  id,
+  event_id,
+  event_type,
+  app_user_id,
+  product_id,
+  processed,
+  processed_action,
+  processing_error,
+  received_at
+from public.revenuecat_events
+order by received_at desc
+limit 20;
+```
+
+- Expected successful test webhook behavior:
+  - Render logs show `POST /api/revenuecat/webhook` with status `200`
+  - `revenuecat_events.processed = true`
+  - `processed_action` is one of:
+    - `pro_granted`
+    - `pro_revoked`
+    - `unlock_pack_credited`
+    - `unlock_pack_revoked`
+    - `duplicate`
+    - `ignored`
+- Duplicate RevenueCat event IDs should not double-credit unlock packs.
+
+### TestFlight readiness status
+
+- TestFlight build was **not** started on May 28 because production RevenueCat mobile config is missing from EAS.
+- Current EAS production config facts:
+  - production backend URL resolves correctly:
+    - `EXPO_PUBLIC_API_BASE_URL=https://carscanr.onrender.com`
+  - production app env resolves correctly:
+    - `EXPO_PUBLIC_APP_ENV=production`
+  - Supabase mobile URL/publishable anon key are present in EAS production env
+  - RevenueCat mobile purchase config resolves empty in production app config:
+    - `revenueCatIosApiKey: ""`
+    - `revenueCatEntitlementId: ""`
+- Blocking manual/dashboard action before TestFlight build:
+  - add these EAS production environment variables:
+    - `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY`
+    - `EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID`
+  - do not paste their values into chat, commits, logs, or docs
+- Important likely cleanup before a polished external TestFlight:
+  - EAS production profile currently includes `EXPO_PUBLIC_SHOW_QA_DEBUG=1`
+  - app code currently hard-disables the vehicle detail QA strip with `showQaDebugStrip = false`, but confirm whether any other QA debug UI should be hidden before external testers
+
+### TestFlight app metadata observed
+
+- EAS project id:
+  - `6e7cd5a8-7f65-44ce-88a8-3d1a3f589cc6`
+- App Store Connect app id in `eas.json`:
+  - `6761960201`
+- iOS bundle identifier:
+  - `com.mattbrillman.carscanr`
+- App display name:
+  - `CarScanr`
+- Expo app version:
+  - `1.0.2`
+- Expo runtime version:
+  - `1.0.2`
+- Current remote EAS iOS build number:
+  - `90`
+- Production EAS profile:
+  - `autoIncrement: true`
+  - next production iOS build should auto-increment to `91`
+- Native iOS project exists, so EAS uses native values for some fields:
+  - `ios.bundleIdentifier` from app config is ignored because `ios/` exists
+  - native bundle id is set in `ios/CarIdentifier.xcodeproj/project.pbxproj`
+
+### TestFlight prep changes made locally
+
+These are uncommitted local build-prep changes made during the May 28 TestFlight readiness pass:
+
+- [package.json](/Users/mattbrillman/Car_Identifier/package.json)
+  - added SDK 53-compatible direct Expo deps required for native/TestFlight builds:
+    - `expo-constants`
+    - `expo-font`
+    - `expo-linking`
+  - corrected `expo-haptics` from invalid `55.x` to SDK 53-compatible `~14.1.4`
+- [package-lock.json](/Users/mattbrillman/Car_Identifier/package-lock.json)
+  - updated by `npx expo install expo-font expo-constants expo-linking expo-haptics`
+- [app.config.ts](/Users/mattbrillman/Car_Identifier/app.config.ts)
+  - added `expo-font` to `plugins`
+- [metro.config.js](/Users/mattbrillman/Car_Identifier/metro.config.js)
+  - added minimal Expo-standard Metro config:
+
+```js
+const { getDefaultConfig } = require("expo/metro-config");
+
+const config = getDefaultConfig(__dirname);
+
+module.exports = config;
+```
+
+### TestFlight validation results
+
+Commands run during May 28 readiness pass:
+
+- `eas env:list --environment production`
+  - confirmed production backend URL
+  - confirmed Supabase publishable mobile config
+  - showed missing RevenueCat mobile env vars
+- `eas build:version:get -p ios`
+  - reported iOS build number `90`
+- `eas config --platform ios --profile production --json`
+  - confirmed production app config and missing RevenueCat mobile values
+- `npm run typecheck`
+  - passed
+- `backend/node_modules/.bin/tsx --test tests/paywallPurchaseOptions.test.ts tests/freeUnlockRegression.test.ts`
+  - passed 7/7
+- `npx expo-doctor`
+  - after dependency/config fixes: 17/18 checks passed
+  - one remaining warning:
+    - native `ios/`/`android/` folders exist, so app config fields like icon/plugins/ios are not automatically synced as in CNG/prebuild
+  - this is expected for the current native-project workflow, but native assets/config must be kept in sync manually
+- Root `npm test`
+  - not available; `package.json` has no root `test` script
+
+### Current dirty worktree reminder
+
+The worktree remains heavily dirty from local UI/product/native icon work. Do not revert or overwrite without explicit user approval.
+
+Current build-prep changes are mixed into that dirty tree, and should be reviewed/committed intentionally before any release branch cleanup:
+
+- `app.config.ts`
+- `package.json`
+- `package-lock.json`
+- `metro.config.js`
+
+There are also many existing uncommitted app/UI/native icon changes from previous work, including:
+
+- redesigned app screens
+- iOS app icon assets
+- new logo/profile assets
+- Garage/result/vehicle detail/paywall/auth changes
+
+### Next recommended TestFlight path
+
+1. Add missing EAS production env vars:
+   - `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY`
+   - `EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID`
+2. Re-run:
+
+```bash
+eas env:list --environment production
+eas config --platform ios --profile production --json
+npm run typecheck
+backend/node_modules/.bin/tsx --test tests/paywallPurchaseOptions.test.ts tests/freeUnlockRegression.test.ts
+npx expo-doctor
+```
+
+3. Confirm RevenueCat values are present in the resolved app config without printing actual secret/key values.
+4. Decide whether to remove/gate `EXPO_PUBLIC_SHOW_QA_DEBUG=1` from production EAS profile before external testers.
+5. Start the TestFlight build:
+
+```bash
+eas build -p ios --profile production --auto-submit
+```
+
+6. If auto-submit is not used or fails:
+
+```bash
+eas submit -p ios --latest
+```
+
+## May 27, 2026 Active Truth
+
+This section supersedes the older historical sections below for day-to-day work. Keep the older sections because they explain how the current architecture got here, but do not assume their shipped-release metadata is current.
+
+### Repo / deployment state
+
+- Current local branch:
+  - `backend-marketcheck-fix`
+- Current local HEAD:
+  - `6073da27551ec37fff831f01770f147296760f4e`
+- Current live backend health check:
+  - URL: `https://carscanr.onrender.com/health`
+  - `backendBuildCommit`: `a699dc4976614d3425a00b88772e424146d80a93`
+  - `appEnv`: `production`
+  - `forceProviderMode`: `live`
+  - active providers:
+    - vision: `openai`
+    - specs: `marketcheck`
+    - value: `marketcheck`
+    - listings: `marketcheck`
+  - MarketCheck flags:
+    - `marketCheckEnabled: true`
+    - `marketCheckDisableExternalCalls: false`
+    - `marketCheckEnableScanEnrichment: false`
+    - `marketCheckEnableAutoSpecs: false`
+    - `marketCheckEnableAutoListings: false`
+    - `marketCheckEnableBackgroundRefresh: false`
+    - `enableBackgroundMarketCheck: false`
+- No commit, Render deploy, EAS Update, or TestFlight build was created during the May 27 redesign/auth pass.
+- Important:
+  - the local app has many uncommitted UI/product changes
+  - do not treat the simulator state as shipped production
+  - do not revert unrelated dirty files unless the user explicitly asks
+
+### Current dirty worktree summary
+
+Changed tracked files currently include:
+
+- [app/(tabs)/_layout.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/_layout.tsx)
+- [app/(tabs)/garage.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/garage.tsx)
+- [app/(tabs)/profile.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/profile.tsx)
+- [app/(tabs)/scan.tsx](/Users/mattbrillman/Car_Identifier/app/(tabs)/scan.tsx)
+- [app/_layout.tsx](/Users/mattbrillman/Car_Identifier/app/_layout.tsx)
+- [app/auth.tsx](/Users/mattbrillman/Car_Identifier/app/auth.tsx)
+- [app/paywall.tsx](/Users/mattbrillman/Car_Identifier/app/paywall.tsx)
+- [app/scan/camera.tsx](/Users/mattbrillman/Car_Identifier/app/scan/camera.tsx)
+- [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx)
+- [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx)
+- [babel.config.js](/Users/mattbrillman/Car_Identifier/babel.config.js)
+- [backend/src/services/photoClusterService.ts](/Users/mattbrillman/Car_Identifier/backend/src/services/photoClusterService.ts)
+- [components/SamplePhotoPickerSheet.tsx](/Users/mattbrillman/Car_Identifier/components/SamplePhotoPickerSheet.tsx)
+- [constants/branding.ts](/Users/mattbrillman/Car_Identifier/constants/branding.ts)
+- [icon-1024.png](/Users/mattbrillman/Car_Identifier/icon-1024.png)
+- [ios/CarIdentifier/Images.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png](/Users/mattbrillman/Car_Identifier/ios/CarIdentifier/Images.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png)
+- [ios/CarIdentifier/Images.xcassets/AppIcon.appiconset/Contents.json](/Users/mattbrillman/Car_Identifier/ios/CarIdentifier/Images.xcassets/AppIcon.appiconset/Contents.json)
+- [ios/Podfile.lock](/Users/mattbrillman/Car_Identifier/ios/Podfile.lock)
+- [lib/pricing.ts](/Users/mattbrillman/Car_Identifier/lib/pricing.ts)
+- [lib/purchaseOptions.ts](/Users/mattbrillman/Car_Identifier/lib/purchaseOptions.ts)
+- [services/garageService.ts](/Users/mattbrillman/Car_Identifier/services/garageService.ts)
+- [services/offlineCanonicalService.ts](/Users/mattbrillman/Car_Identifier/services/offlineCanonicalService.ts)
+- [tests/freeUnlockRegression.test.ts](/Users/mattbrillman/Car_Identifier/tests/freeUnlockRegression.test.ts)
+
+Tracked deletions currently shown by git:
+
+- `Icon.png`
+- `carscanr_app_icon_1024.png`
+- `icon-cropped-source.png`
+- `icon-safe-crop.png`
+
+Untracked current local files/directories include:
+
+- [`.env.local`](/Users/mattbrillman/Car_Identifier/.env.local)
+- [Logo_New.png](/Users/mattbrillman/Car_Identifier/Logo_New.png)
+- [assets/carscanr-profile-logo.png](/Users/mattbrillman/Car_Identifier/assets/carscanr-profile-logo.png)
+- [assets/data/local_reference_values.json](/Users/mattbrillman/Car_Identifier/assets/data/local_reference_values.json)
+- [backend/data/](/Users/mattbrillman/Car_Identifier/backend/data/)
+- [carapi-opendatafeed-2026-04-17/](/Users/mattbrillman/Car_Identifier/carapi-opendatafeed-2026-04-17/)
+- [carscanr_silhouettes/carscanr_silhouettes_preview.png](/Users/mattbrillman/Car_Identifier/carscanr_silhouettes/carscanr_silhouettes_preview.png)
+- multiple generated iOS app icon PNGs under [ios/CarIdentifier/Images.xcassets/AppIcon.appiconset/](/Users/mattbrillman/Car_Identifier/ios/CarIdentifier/Images.xcassets/AppIcon.appiconset/)
+
+### Premium UI redesign state
+
+The app has been substantially restyled toward the premium dark automotive CarScanr design language:
+
+- bottom tab bar:
+  - deep black/graphite background
+  - amber/brass active treatment
+  - muted inactive tint
+  - subtle top border
+  - active indicator spacing adjusted so it no longer collides with the tab label
+- Profile:
+  - redesigned guest header, stats, premium Collector Access card, settings rows, support buttons
+  - RevenueCat debug/config/user-facing diagnostics removed from the user UI
+  - restore purchases and upgrade flow preserved
+- Scan:
+  - redesigned as cinematic dark/gold scan entry screen
+  - standalone logo/header removed to keep the hero higher and more focused
+  - photo-source sheet redesigned as native mobile dark/gold UI
+  - sample vehicle cards remain local-only
+- Scan Progress:
+  - redesigned dark/gold analysis screen
+  - progress UI now uses real existing step/progress state rather than hardcoded `STEP 3 OF 4` / `75%`
+- Result:
+  - redesigned post-scan summary in premium dark/gold style
+  - free real scans now show useful local/canonical specs when available
+  - missing spec cards are hidden instead of showing placeholders
+  - sample/demo vehicles use richer curated local-only data
+  - sample/demo market/listing previews remain local-only and never call providers
+  - Save to Garage is now above AI Insights and supports toggling saved/unsaved
+  - saved vehicles now persist enough local reference/MSRP data when available
+  - AI Insights were tightened to avoid generic/repetitive filler and avoid duplicating top spec cards
+- Garage:
+  - redesigned as premium collection view with cinematic cards and deeper black/graphite atmosphere
+  - card labels avoid misleading live-value language unless live value is actually unlocked
+  - default Garage value uses local canonical/reference/MSRP data only
+  - Garage total sums best available saved value:
+    1. live unlocked market value if saved
+    2. local reference/MSRP value if present
+    3. otherwise excluded / pending
+- Vehicle Detail:
+  - redesigned away from old blue/cyan style
+  - current tab structure is:
+    - Details
+    - Value & Listings
+    - Photos
+  - Details uses grouped premium info cards
+  - Value & Listings is vehicle-level, not separate per-card unlocks
+  - Photos tab must only show current-vehicle-associated images:
+    - user's scanned/saved photo
+    - listing images already returned for this same vehicle
+    - bundled/sample images only when they explicitly match the current sample vehicle
+  - no generic Porsche/Ford/Tesla/etc. fallback photos should appear on unrelated vehicles
+- Paywall:
+  - redesigned as dark/gold premium subscription screen
+  - current pricing:
+    - Yearly Pro: `$39.99/year`
+    - Monthly Pro: `$4.99/month`
+    - 5 Unlock Pack: `$4.99 one-time`
+    - 1 unlock = 1 vehicle
+  - yearly selected by default
+  - CTA text changes with selected plan
+  - unlock-remaining callout uses real usage state
+  - temporary paywall debug logs were removed or gated
+  - RevenueCat wiring and restore purchases preserved
+- Auth:
+  - user-facing auth debug/status panel removed
+  - auth no longer auto-bounces Auth -> Scan -> Profile just from opening auth
+  - redesigned sign-in/create-account screen in premium black/gold
+  - Account Optional copy is:
+    - `Basic scanning stays free. Accounts sync your Garage, history, and unlocks across devices.`
+  - Continue as Guest remains visible and usable
+  - form errors/notices now appear inside the form card near the action buttons
+  - Apple sign-in button is styled as a premium secondary dark button, while preserving the existing placeholder/handler behavior
+  - auth title typography was adjusted after simulator review so `Create your account.` and `Welcome back.` do not visually clip or show odd cap/ascender imbalance
+
+### Current logo / app icon state
+
+- User provided new app icon/logo source at:
+  - [icon-1024.png](/Users/mattbrillman/Car_Identifier/icon-1024.png)
+- Branding flows through:
+  - [constants/branding.ts](/Users/mattbrillman/Car_Identifier/constants/branding.ts)
+  - [assets/carscanr-profile-logo.png](/Users/mattbrillman/Car_Identifier/assets/carscanr-profile-logo.png)
+  - generated iOS AppIcon assets
+- Simulator home-screen icon was manually refreshed during the session by rebuilding/reinstalling as needed.
+- Important:
+  - app icon changes are native asset changes
+  - a production app icon change will require a native build/TestFlight/App Store release, not just OTA
+
+### Unlock / Value & Listings product rule
+
+Current intended product rule:
+
+- one unlock applies to one vehicle/result
+- one unlock unlocks both:
+  - Market Value
+  - Available Listings
+- tapping either unlock CTA should trigger the same vehicle-level unlock state
+- do not decrement twice
+- do not require a second unlock for listings after value is unlocked, or vice versa
+- Pro/unlimited users can manually load without consuming free unlocks
+- 0-unlock non-Pro users should route to paywall/upgrade and should not call live providers directly
+
+Important confirmation UX added:
+
+- before spending a free unlock, show a confirmation:
+  - title: `Use 1 unlock?`
+  - body: `This will unlock live market value and nearby listings for this vehicle.`
+  - dynamic remaining count when available:
+    - `You have 1 unlock remaining.`
+    - `You have 3 unlocks remaining.`
+  - buttons:
+    - `Use Unlock`
+    - `Cancel`
+- no decrement should happen until `Use Unlock`
+- success feedback:
+  - `Value & Listings unlocked`
+- repeated taps are guarded with in-flight refs
+- Pro users should not see the free-unlock confirmation
+
+Files touched for this unlock model:
+
+- [app/scan/result.tsx](/Users/mattbrillman/Car_Identifier/app/scan/result.tsx)
+- [app/vehicle/[id].tsx](/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx)
+- [services/garageService.ts](/Users/mattbrillman/Car_Identifier/services/garageService.ts)
+- [tests/freeUnlockRegression.test.ts](/Users/mattbrillman/Car_Identifier/tests/freeUnlockRegression.test.ts)
+
+### MarketCheck call policy and recent verification
+
+Hard policy:
+
+- do not call MarketCheck on scan open, result render, Garage open, or vehicle detail open
+- do not auto-fetch live value/listings when saving to Garage
+- only explicit manual Value & Listings load/unlock should call live providers
+- sample/demo vehicles must never call MarketCheck/live provider/value/listing APIs
+- Garage should never auto-load live value/listings
+
+Provider usage log source:
+
+- production usage logs are in Supabase table:
+  - `provider_api_usage_logs`
+- useful app-side debug endpoint exists but requires auth:
+  - `GET /api/debug/marketcheck`
+- direct query filter used during May 27 checks:
+  - provider: `marketcheck`
+  - billable-ish events counted:
+    - `provider_request`
+    - `stale_refresh`
+
+Recent observed production MarketCheck usage:
+
+- Toyota Corolla test:
+  - 4 entries in the last hour at the time of check
+  - 2 values
+  - 2 listings
+  - context: 2023 Toyota Corolla, ZIP `60610`
+- Mercedes test:
+  - 2 entries
+  - 1 value
+  - 1 listings
+  - context: 2001 Mercedes-Benz S-Class S500, ZIP `60610`
+- BMW Z3 test:
+  - 2 entries
+  - both listings
+  - cache keys:
+    - `listings:1997:bmw:z3:60610:100`
+    - `listings:1997:bmw:z3:base:60610:100`
+  - no BMW Z3 value query appeared in the checked 30-minute window
+
+If call counts spike again, inspect:
+
+- duplicate frontend manual-load handlers
+- separate value/listings loaders both hitting multiple cache keys
+- trim and non-trim listing fallback calls
+- stale cache refresh behavior
+- whether result and detail screens both request live data after the same unlock
+
+### Validation run during the May 27 pass
+
+Commands that passed during the session:
+
+- `npm run typecheck`
+- `git diff --check -- app/auth.tsx`
+- `git diff --check -- app/paywall.tsx lib/pricing.ts lib/purchaseOptions.ts`
+- `git diff --check -- app/vehicle/[id].tsx app/scan/result.tsx tests/freeUnlockRegression.test.ts`
+- `backend/node_modules/.bin/tsx --test tests/paywallPurchaseOptions.test.ts`
+- `backend/node_modules/.bin/tsx --test tests/freeUnlockRegression.test.ts`
+
+Simulator checks performed:
+
+- auth sign-in screen visual polish and title typography
+- auth create-account mode toggle
+- Continue as Guest navigates to Scan
+- Forgot Password empty-email validation appears visibly
+- Apple sign-in placeholder remains tappable
+- paywall buttons were verified tappable after fixing touch-blocking decorative overlays
+- MarketCheck production log checks were performed from local backend env using Supabase service role
+
+Known caveat:
+
+- not every screen was re-tested after every tiny polish edit
+- before shipping, do a full smoke pass:
+  1. scan vehicle
+  2. result summary
+  3. save/unsave Garage
+  4. View Vehicle Details
+  5. Details / Value & Listings / Photos tabs
+  6. one-unlock confirmation and cancel path
+  7. one-unlock confirm path
+  8. Garage display after unlock
+  9. paywall selection/buttons/restore
+  10. auth create/sign-in/guest/forgot-password
+
+### Immediate next-session priorities
+
+1. Review the full dirty diff before committing. There are many UI files plus native icon assets.
+2. Verify the one-unlock Value & Listings flow end-to-end in simulator with a non-Pro account/guest that has free unlocks:
+   - confirmation appears before decrement
+   - Cancel does not decrement
+   - Use Unlock decrements once
+   - both value and listings become available
+   - Garage saved record updates without creating duplicates
+3. Investigate why BMW Z3 produced two listing calls and no value call in the latest production log sample.
+4. Decide whether the app icon/native assets should be committed and whether a native build is required.
+5. If shipping OTA only, avoid committing native-only changes unless intentionally preparing the next native release.
+
+## Historical Snapshot From Earlier Shipped Passes
+
+### Earlier shipped release / deployment truth
+
+- Repo HEAD after the May 16 shipped pass:
   - branch: `backend-marketcheck-fix`
   - commit: `3e1acabedeef961a3ae8b02c7691d6120ca6bbeb`
   - commit message: `Restore guided search and improve CT4 results`

@@ -9,6 +9,7 @@ web-build
 backend/.env
 backend/.env.local
 app-example-secrets.json
+*.p8
 
 # Raw/reference source drops can be very large. Keep generated/curated outputs
 # under version control instead of committing vendor data dumps.
