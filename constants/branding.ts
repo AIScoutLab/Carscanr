@@ -1,5 +1,5 @@
-export const CANONICAL_BRAND_MARK_ASSET_PATH = "../icon-1024.png";
-export const CANONICAL_BRAND_MARK_SOURCE = require("../icon-1024.png");
+export const CANONICAL_BRAND_MARK_ASSET_PATH = "../Logo_New.png";
+export const CANONICAL_BRAND_MARK_SOURCE = require("../Logo_New.png");
 
 export const BRAND_MARK_LAYOUT = {
   onboardingHeader: {
@@ -20,6 +20,7 @@ export const BRAND_MARK_LAYOUT = {
 // Older logo files drifted back into production when screens imported them directly.
 export const DEPRECATED_BRAND_ASSET_REFERENCES = [
   "@/carscanr_app_icon_1024.png",
+  "../icon-1024.png",
   "../Icon.png",
   "../../Icon.png",
   "../assets/icon.png",

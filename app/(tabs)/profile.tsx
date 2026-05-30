@@ -1,18 +1,46 @@
-import { router } from "expo-router";
-import { Alert, Linking, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { useCallback, useEffect, useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
-import { AppContainer } from "@/components/AppContainer";
-import { PaywallCard } from "@/components/PaywallCard";
-import { PrimaryButton } from "@/components/PrimaryButton";
-import { Colors, Radius, Typography } from "@/constants/theme";
+import { router } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
+import { Alert, Image, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { CANONICAL_BRAND_MARK_SOURCE } from "@/constants/branding";
+import { Typography } from "@/constants/theme";
 import { useSubscription } from "@/hooks/useSubscription";
 import { resolveProfileAccessState } from "@/lib/subscription";
 import { supabase } from "@/lib/supabase";
 import { authService } from "@/services/authService";
-import { getApiAuthDebug } from "@/services/apiClient";
 import { AuthUser } from "@/types";
+
+type IconName = keyof typeof Ionicons.glyphMap;
+
+const premiumFeatures: Array<{ icon: IconName; label: string }> = [
+  { icon: "trending-up-outline", label: "Market Value Intelligence" },
+  { icon: "location-outline", label: "Live Listings" },
+  { icon: "sparkles-outline", label: "Collector Insights" },
+  { icon: "albums-outline", label: "Garage Sync" },
+];
+
+function sanitizeProfileMessage(message: string | null) {
+  if (!message) return null;
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes("revenuecat") ||
+    normalized.includes("configured") ||
+    normalized.includes("entitlement") ||
+    normalized.includes("sdk") ||
+    normalized.includes("expo go") ||
+    normalized.includes("development or production build")
+  ) {
+    return "Purchases could not be restored right now. Please try again later or contact support.";
+  }
+  return message;
+}
+
+function openSupportEmail(subject: string) {
+  void Linking.openURL(`mailto:support@carscanr.app?subject=${encodeURIComponent(subject)}`);
+}
 
 export default function ProfileScreen() {
   const {
@@ -29,17 +57,11 @@ export default function ProfileScreen() {
     cancelPro,
   } = useSubscription();
   const [user, setUser] = useState<AuthUser | null>(authService.getCurrentUserSync());
-  const [tokenPresent, setTokenPresent] = useState(false);
-  const [sessionDetected, setSessionDetected] = useState(false);
-  const [apiDebug, setApiDebug] = useState(getApiAuthDebug());
   const accessState = resolveProfileAccessState(status, isLoading);
 
   const refreshAuthSnapshot = async () => {
-    const [{ data }, nextUser, token] = await Promise.all([supabase.auth.getSession(), authService.getCurrentUser(), authService.getAccessToken()]);
-    setSessionDetected(Boolean(data.session));
+    const [, nextUser] = await Promise.all([supabase.auth.getSession(), authService.getCurrentUser(), authService.getAccessToken()]);
     setUser(nextUser);
-    setTokenPresent(Boolean(token));
-    setApiDebug(getApiAuthDebug());
   };
 
   useEffect(() => {
@@ -94,170 +116,659 @@ export default function ProfileScreen() {
     status?.provider,
   ]);
 
+  const scansUsed = status?.scansUsed ?? status?.scansUsedToday ?? 0;
+  const displayName = user?.fullName?.trim() || "Guest";
+  const memberSubtitle = user ? user.email : accessState.hasProEntitlement ? "Collector member" : "Free member";
+  const sinceLabel = new Date().toLocaleString("en-US", { month: "short", year: "numeric" });
+  const garageValue = user ? "Sync" : "0";
+  const remainingUnlocks = Math.max(0, freeUnlocksRemaining);
+  const unlockUsageLabel = accessState.hasProEntitlement ? "Unlimited collector access active" : `${remainingUnlocks} free unlocks remaining`;
+  const displayFeedbackMessage = sanitizeProfileMessage(feedbackMessage);
+  const displayErrorMessage = sanitizeProfileMessage(errorMessage);
+
+  const handleRestorePurchases = useCallback(() => {
+    if (isRestoring) return;
+    console.log("[tap] profile-restore-purchases");
+    restorePurchases().catch(() => undefined);
+  }, [isRestoring, restorePurchases]);
+
+  const handleCancelPro = useCallback(() => {
+    if (isCancelling) return;
+    console.log("[tap] profile-cancel-pro");
+    Alert.alert("Cancel Pro", "Move this account back to the free plan?", [
+      { text: "Keep Pro", style: "cancel" },
+      {
+        text: "Cancel Pro",
+        style: "destructive",
+        onPress: () => {
+          cancelPro().catch(() => undefined);
+        },
+      },
+    ]);
+  }, [cancelPro, isCancelling]);
+
+  const handleSignOut = useCallback(() => {
+    console.log("[tap] profile-sign-out");
+    authService
+      .signOut()
+      .then(() => {
+        router.replace("/(tabs)/scan" as never);
+      })
+      .catch(() => undefined);
+  }, []);
+
   return (
-    <AppContainer>
-      <LinearGradient colors={["rgba(29,140,255,0.18)", "rgba(94,231,255,0.05)", "rgba(4,8,18,0.2)"]} style={styles.heroCard}>
-        <Text style={styles.title}>Account and access</Text>
-        <Text style={styles.heroBody}>Unlimited free scans stay front and center. Your account adds sync, history, support, and recovery across devices.</Text>
+    <SafeAreaView style={styles.safeArea} edges={["top", "right", "bottom", "left"]}>
+      <LinearGradient colors={["#040506", "#080709", "#030405"]} style={styles.screen}>
+        <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          <View style={styles.profileHeader}>
+            <View style={styles.identityRow}>
+              <View style={styles.logoShell}>
+                <Image source={CANONICAL_BRAND_MARK_SOURCE} style={styles.logoImage} resizeMode="contain" />
+              </View>
+              <View style={styles.identityText}>
+                <Text style={styles.profileName}>{displayName}</Text>
+                <Text style={styles.memberSubtitle}>{memberSubtitle}</Text>
+              </View>
+            </View>
+            <View style={styles.statsRow}>
+              <ProfileStat label="SCANS" value={isLoading ? "..." : scansUsed} />
+              <ProfileStat label="GARAGE" value={garageValue} />
+              <ProfileStat label="SINCE" value={sinceLabel} wide />
+            </View>
+          </View>
+
+          <View style={styles.heroCopy}>
+            <Text style={styles.heroTitle}>Your automotive intelligence companion</Text>
+            <Text style={styles.heroBody}>
+              {user
+                ? "Your account keeps Garage sync, purchase restore, and collection history ready across devices."
+                : "Scans stay free. Create an account to unlock advanced features and sync your collection."}
+            </Text>
+          </View>
+
+          {!user ? (
+            <View style={styles.authActions}>
+              <GoldButton label="Create Account" onPress={() => router.push("/auth?mode=sign-up")} />
+              <DarkButton label="Sign In" onPress={() => router.push("/auth?mode=sign-in")} />
+            </View>
+          ) : null}
+
+          <LinearGradient colors={["#2A211B", "#1C1713", "#0D0B0A"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.collectorCard}>
+            <View style={styles.premiumEyebrowRow}>
+              <Ionicons name="trophy-outline" size={15} color={profileColors.goldLight} />
+              <Text style={styles.premiumEyebrow}>PREMIUM</Text>
+            </View>
+            <Text style={styles.collectorTitle}>Collector Access</Text>
+            <Text style={styles.collectorBody}>Unlock market intelligence, live listings, and collector-grade insights for every vehicle you scan.</Text>
+            <View style={styles.featureList}>
+              {premiumFeatures.map((feature) => (
+                <PremiumFeature key={feature.label} icon={feature.icon} label={feature.label} />
+              ))}
+            </View>
+            <View style={styles.unlockPill}>
+              <View style={styles.unlockDots} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+                {Array.from({ length: Math.min(freeUnlocksLimit, 5) }).map((_, index) => (
+                  <View key={index} style={[styles.unlockDot, index < freeUnlocksUsed && styles.unlockDotActive]} />
+                ))}
+              </View>
+              <Text style={styles.unlockText}>{unlockUsageLabel}</Text>
+            </View>
+            {accessState.showPrimaryUpgradeCta ? (
+              <TouchableOpacity activeOpacity={0.88} accessibilityRole="button" onPress={() => router.push("/paywall")}>
+                <LinearGradient colors={["rgba(214,158,93,0.28)", "rgba(214,158,93,0.16)"]} style={styles.upgradeButton}>
+                  <Ionicons name="flash-outline" size={18} color={profileColors.goldLight} />
+                  <Text style={styles.upgradeButtonText}>Upgrade to Pro</Text>
+                  <Ionicons name="chevron-forward" size={17} color={profileColors.goldLight} />
+                </LinearGradient>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.activeAccessPill}>
+                <Ionicons name="checkmark-circle-outline" size={18} color={profileColors.goldLight} />
+                <Text style={styles.activeAccessText}>{accessState.planLabel}</Text>
+              </View>
+            )}
+          </LinearGradient>
+
+          {displayFeedbackMessage || displayErrorMessage ? (
+            <View style={[styles.messageCard, displayErrorMessage && styles.errorMessageCard]}>
+              <Text style={[styles.messageText, displayErrorMessage && styles.errorMessageText]}>{displayErrorMessage ?? displayFeedbackMessage}</Text>
+            </View>
+          ) : null}
+
+          <SectionLabel label="Settings" />
+          <View style={styles.settingsCard}>
+            <SettingsRow
+              icon="notifications-outline"
+              label="Notifications"
+              onPress={() => Alert.alert("Notifications", "Notification preferences will be available in a future app update.")}
+            />
+            <View style={styles.separator} />
+            <SettingsRow icon="shield-outline" label="Privacy" onPress={() => openSupportEmail("CarScanr Privacy Question")} />
+            <View style={styles.separator} />
+            <SettingsRow icon="refresh-outline" label={isRestoring ? "Restoring Purchases..." : "Restore Purchases"} onPress={handleRestorePurchases} disabled={isRestoring} />
+            <View style={styles.separator} />
+            <SettingsRow icon="help-circle-outline" label="Help & Support" onPress={() => openSupportEmail("CarScanr Support Request")} />
+            <View style={styles.separator} />
+            <SettingsRow icon="document-text-outline" label="Terms & Privacy" onPress={() => openSupportEmail("CarScanr Terms and Privacy")} />
+            {accessState.hasProEntitlement ? (
+              <>
+                <View style={styles.separator} />
+                <SettingsRow icon="close-circle-outline" label={isCancelling ? "Cancelling Pro..." : "Cancel Pro"} onPress={handleCancelPro} disabled={isCancelling} />
+              </>
+            ) : null}
+            {user ? (
+              <>
+                <View style={styles.separator} />
+                <SettingsRow icon="log-out-outline" label="Sign Out" onPress={handleSignOut} />
+              </>
+            ) : null}
+          </View>
+
+          <SectionLabel label="Support" />
+          <View style={styles.supportList}>
+            <SupportButton icon="sparkles-outline" label="Request a Feature" onPress={() => openSupportEmail("CarScanr Feature Request")} />
+            <SupportButton icon="mail-outline" label="Report an Issue" onPress={() => openSupportEmail("CarScanr Bug Report")} />
+          </View>
+        </ScrollView>
       </LinearGradient>
-      <View style={[styles.card, styles.accountCard]}>
-        <Text style={styles.sectionTitle}>Account</Text>
-        <Text style={styles.name}>{user ? user.fullName : "Guest mode"}</Text>
-        <Text style={styles.meta}>
-          {user ? user.email : "Create an account to sync your Garage, unlock history, and purchase recovery across devices."}
-        </Text>
-        {!user ? (
-          <View style={styles.actionGroup}>
-            <PrimaryButton label="Create Free Account" onPress={() => router.push("/auth?mode=sign-up")} />
-            <PrimaryButton label="Sign In" secondary onPress={() => router.push("/auth?mode=sign-in")} />
-          </View>
-        ) : null}
-        {__DEV__ ? (
-          <View style={styles.debugBlock}>
-            <Text style={styles.debugLine}>Session detected: {sessionDetected ? "yes" : "no"}</Text>
-            <Text style={styles.debugLine}>Auth status: {user ? "Signed In" : "Guest"}</Text>
-            <Text style={styles.debugLine}>Token present: {tokenPresent ? "Yes" : "No"}</Text>
-            <Text style={styles.debugLine}>Current email: {user?.email ?? "None"}</Text>
-            <Text style={styles.debugLine}>API base: {apiDebug?.baseUrl ?? "Unknown"}</Text>
-            <Text style={styles.debugLine}>
-              Last request: {apiDebug ? `${apiDebug.method} ${apiDebug.path}` : "None"}
-            </Text>
-            <Text style={styles.debugLine}>
-              Last request auth: {apiDebug ? (apiDebug.sentAuthHeader ? "Yes" : "No") : "Unknown"}
-            </Text>
-          </View>
-        ) : null}
-      </View>
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Subscription & access</Text>
-        <Text style={styles.meta}>{accessState.planLabel}</Text>
-        {accessState.renewalLabel ? <Text style={styles.meta}>{accessState.renewalLabel}</Text> : null}
-        {accessState.showFreeUnlockUsage ? (
-          <>
-            <Text style={styles.meta}>
-              {freeUnlocksUsed} of {freeUnlocksLimit} free Pro unlocks used
-            </Text>
-            <Text style={styles.meta}>{Math.max(0, freeUnlocksRemaining)} remaining</Text>
-          </>
-        ) : null}
-        {accessState.showUpgradeOptions ? <Text style={styles.helper}>Missing Pro after sign-in? Use Restore Purchases to recheck your App Store entitlements for this account.</Text> : null}
-        {accessState.showPaywallCard ? <PaywallCard status={status} unlocksRemaining={freeUnlocksRemaining} unlocksLimit={freeUnlocksLimit} /> : null}
-        <View style={styles.actionGroup}>
-          {accessState.showPrimaryUpgradeCta ? <PrimaryButton label="Upgrade to Pro" secondary={!user} onPress={() => router.push("/paywall")} /> : null}
-          <PrimaryButton
-            label={isRestoring ? "Checking App Store..." : "Restore Purchases"}
-            secondary
-            onPress={() => {
-              console.log("[tap] profile-restore-purchases");
-              restorePurchases().catch(() => undefined);
-            }}
-            disabled={isRestoring}
-          />
-        </View>
-        {accessState.hasProEntitlement ? (
-          <TouchableOpacity
-            activeOpacity={0.86}
-            accessibilityRole="button"
-            disabled={isCancelling}
-            onPress={() => {
-              if (isCancelling) return;
-              console.log("[tap] profile-cancel-pro");
-              Alert.alert("Cancel Pro", "Move this account back to the free plan?", [
-                { text: "Keep Pro", style: "cancel" },
-                {
-                  text: "Cancel Pro",
-                  style: "destructive",
-                  onPress: () => {
-                    cancelPro().catch(() => undefined);
-                  },
-                },
-              ]);
-            }}
-          >
-            <Text style={[styles.linkText, isCancelling && styles.linkTextDisabled]}>
-              {isCancelling ? "Cancelling Pro..." : "Cancel Pro"}
-            </Text>
-          </TouchableOpacity>
-        ) : null}
-        {feedbackMessage ? <Text style={styles.helper}>{feedbackMessage}</Text> : null}
-        {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
-      </View>
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Garage & sync</Text>
-        <Text style={styles.meta}>
-          {user
-            ? "Your signed-in account can keep vehicle history, unlocks, and future sync data tied to one profile."
-            : "Sign in anytime to connect this device to a single Garage and purchase history."}
-        </Text>
-        <Text style={styles.helper}>
-          Session {sessionDetected ? "detected" : "not detected"} • API auth header {tokenPresent ? "ready" : "missing"}
-        </Text>
-      </View>
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Support & feedback</Text>
-        <Text style={styles.meta}>Reach the team quickly when something breaks, when Pro needs to be restored, or when you have an idea worth building.</Text>
-        <View style={styles.actionGroup}>
-          <PrimaryButton
-            label="Request a Feature"
-            secondary
-            onPress={() => {
-              void Linking.openURL("mailto:support@carscanr.app?subject=CarScanr%20Feature%20Request");
-            }}
-          />
-          <PrimaryButton
-            label="Report an Issue"
-            secondary
-            onPress={() => {
-              void Linking.openURL("mailto:support@carscanr.app?subject=CarScanr%20Bug%20Report");
-            }}
-          />
-        </View>
-      </View>
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>App & account</Text>
-        <Text style={styles.meta}>Manage account access and keep the current app experience organized on this device.</Text>
-        {user ? (
-          <PrimaryButton
-            label="Sign Out"
-            secondary
-            onPress={() => {
-              console.log("[tap] profile-sign-out");
-              authService
-                .signOut()
-                .then(() => {
-                  router.replace("/(tabs)/scan" as never);
-                })
-                .catch(() => undefined);
-            }}
-          />
-        ) : (
-          <PrimaryButton label="Sign In" secondary onPress={() => { console.log("[tap] profile-sign-in"); router.replace("/auth" as never); }} />
-        )}
-      </View>
-    </AppContainer>
+    </SafeAreaView>
   );
 }
 
+function ProfileStat({ label, value, wide = false }: { label: string; value: string | number; wide?: boolean }) {
+  return (
+    <View style={[styles.statItem, wide && styles.statItemWide]}>
+      <Text style={styles.statLabel}>{label}</Text>
+      <Text style={styles.statValue} numberOfLines={1}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+function PremiumFeature({ icon, label }: { icon: IconName; label: string }) {
+  return (
+    <View style={styles.featureRow}>
+      <View style={styles.featureIcon}>
+        <Ionicons name={icon} size={17} color={profileColors.goldLight} />
+      </View>
+      <Text style={styles.featureLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function SectionLabel({ label }: { label: string }) {
+  return <Text style={styles.sectionLabel}>{label}</Text>;
+}
+
+function SettingsRow({ icon, label, onPress, disabled = false }: { icon: IconName; label: string; onPress: () => void; disabled?: boolean }) {
+  return (
+    <TouchableOpacity activeOpacity={0.78} accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.settingsRow, disabled && styles.disabledRow]}>
+      <View style={styles.settingsRowLeft}>
+        <Ionicons name={icon} size={18} color={profileColors.goldLight} />
+        <Text style={styles.settingsRowText}>{label}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={17} color={profileColors.textMuted} />
+    </TouchableOpacity>
+  );
+}
+
+function SupportButton({ icon, label, onPress }: { icon: IconName; label: string; onPress: () => void }) {
+  return (
+    <TouchableOpacity activeOpacity={0.82} accessibilityRole="button" onPress={onPress} style={styles.supportButton}>
+      <Ionicons name={icon} size={18} color={profileColors.goldLight} />
+      <Text style={styles.supportButtonText}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function GoldButton({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <TouchableOpacity activeOpacity={0.88} accessibilityRole="button" onPress={onPress} style={styles.ctaShell}>
+      <LinearGradient colors={["#E2B071", "#CC965C"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.primaryCta}>
+        <Text style={styles.primaryCtaText}>{label}</Text>
+      </LinearGradient>
+    </TouchableOpacity>
+  );
+}
+
+function DarkButton({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <TouchableOpacity activeOpacity={0.82} accessibilityRole="button" onPress={onPress} style={styles.secondaryCta}>
+      <Text style={styles.secondaryCtaText}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+const profileColors = {
+  background: "#030405",
+  text: "#F8F6F2",
+  textSoft: "#B9BDC9",
+  textMuted: "#727784",
+  line: "rgba(255,255,255,0.08)",
+  lineStrong: "rgba(255,255,255,0.13)",
+  goldLight: "#E9BC7C",
+  danger: "#FF7A7A",
+};
+
+const fontFamily = Typography.body.fontFamily;
+
 const styles = StyleSheet.create({
-  title: { ...Typography.largeTitle, color: Colors.textStrong, marginTop: 4 },
-  heroCard: {
-    borderRadius: Radius.xl,
-    padding: 22,
-    gap: 10,
-    borderWidth: 1,
-    borderColor: Colors.border,
+  safeArea: {
+    flex: 1,
+    backgroundColor: profileColors.background,
   },
-  heroBody: { ...Typography.body, color: Colors.textSoft },
-  card: { backgroundColor: Colors.cardSoft, borderRadius: Radius.xl, padding: 20, gap: 10, borderWidth: 1, borderColor: Colors.border },
-  accountCard: { gap: 8 },
-  actionGroup: { gap: 10 },
-  name: { ...Typography.heading, color: Colors.textStrong },
-  meta: { ...Typography.body, color: Colors.textSoft },
-  sectionTitle: { ...Typography.heading, color: Colors.textStrong },
-  helper: { ...Typography.caption, color: Colors.textMuted },
-  error: { ...Typography.caption, color: Colors.danger },
-  linkText: { ...Typography.caption, color: Colors.accent, textAlign: "center" },
-  linkTextDisabled: { opacity: 0.6 },
-  debugBlock: { marginTop: 8, gap: 4 },
-  debugLine: { ...Typography.caption, color: Colors.textMuted },
+  screen: {
+    flex: 1,
+  },
+  scroll: {
+    flex: 1,
+  },
+  content: {
+    paddingHorizontal: 22,
+    paddingTop: 18,
+    paddingBottom: 44,
+    gap: 12,
+  },
+  profileHeader: {
+    gap: 13,
+    marginBottom: 6,
+  },
+  identityRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 13,
+  },
+  logoShell: {
+    width: 58,
+    height: 58,
+    borderRadius: 23,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#050505",
+    shadowColor: "#000000",
+    shadowOpacity: 0.42,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 5,
+  },
+  logoImage: {
+    width: 58,
+    height: 58,
+    borderRadius: 20,
+  },
+  identityText: {
+    flex: 1,
+    gap: 3,
+  },
+  profileName: {
+    fontFamily,
+    fontSize: 23,
+    lineHeight: 29,
+    fontWeight: "800",
+    letterSpacing: 0,
+    color: profileColors.text,
+  },
+  memberSubtitle: {
+    fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "500",
+    letterSpacing: 0,
+    color: profileColors.textMuted,
+  },
+  statsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingLeft: 71,
+  },
+  statItem: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 12,
+    marginRight: 12,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderRightColor: profileColors.lineStrong,
+    gap: 4,
+  },
+  statItemWide: {
+    flex: 1.3,
+    minWidth: 0,
+    marginRight: 0,
+    borderRightWidth: 0,
+  },
+  statLabel: {
+    fontFamily,
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: "800",
+    letterSpacing: 0,
+    color: profileColors.textMuted,
+  },
+  statValue: {
+    fontFamily,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: "800",
+    letterSpacing: 0,
+    color: profileColors.text,
+  },
+  heroCopy: {
+    gap: 12,
+    marginTop: 3,
+  },
+  heroTitle: {
+    maxWidth: 300,
+    fontFamily,
+    fontSize: 23,
+    lineHeight: 27,
+    fontWeight: "900",
+    letterSpacing: 0,
+    color: profileColors.text,
+  },
+  heroBody: {
+    maxWidth: 340,
+    fontFamily,
+    fontSize: 14,
+    lineHeight: 22,
+    fontWeight: "500",
+    letterSpacing: 0,
+    color: profileColors.textSoft,
+  },
+  authActions: {
+    gap: 12,
+    marginTop: 18,
+    marginBottom: 24,
+  },
+  ctaShell: {
+    borderRadius: 12,
+    shadowColor: "#000000",
+    shadowOpacity: 0.3,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 4,
+  },
+  primaryCta: {
+    minHeight: 52,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+  },
+  primaryCtaText: {
+    fontFamily,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: "800",
+    letterSpacing: 0,
+    color: "#050404",
+  },
+  secondaryCta: {
+    minHeight: 52,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+    backgroundColor: "rgba(255,255,255,0.035)",
+    borderWidth: 1,
+    borderColor: profileColors.lineStrong,
+  },
+  secondaryCtaText: {
+    fontFamily,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: "800",
+    letterSpacing: 0,
+    color: profileColors.text,
+  },
+  collectorCard: {
+    borderRadius: 25,
+    paddingHorizontal: 26,
+    paddingTop: 26,
+    paddingBottom: 24,
+    gap: 13,
+    borderWidth: 1,
+    borderColor: "rgba(214,158,93,0.26)",
+    shadowColor: "#000000",
+    shadowOpacity: 0.42,
+    shadowRadius: 26,
+    shadowOffset: { width: 0, height: 18 },
+    elevation: 6,
+    overflow: "hidden",
+  },
+  premiumEyebrowRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  premiumEyebrow: {
+    fontFamily,
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: "900",
+    letterSpacing: 0,
+    color: profileColors.goldLight,
+  },
+  collectorTitle: {
+    marginTop: 7,
+    fontFamily,
+    fontSize: 22,
+    lineHeight: 27,
+    fontWeight: "900",
+    letterSpacing: 0,
+    color: profileColors.text,
+  },
+  collectorBody: {
+    fontFamily,
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: "600",
+    letterSpacing: 0,
+    color: profileColors.text,
+  },
+  featureList: {
+    gap: 13,
+    marginTop: 7,
+  },
+  featureRow: {
+    minHeight: 32,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+  },
+  featureIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(209,154,93,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(209,154,93,0.28)",
+  },
+  featureLabel: {
+    flex: 1,
+    fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "800",
+    letterSpacing: 0,
+    color: profileColors.text,
+  },
+  unlockPill: {
+    minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 6,
+    paddingHorizontal: 15,
+    borderRadius: 12,
+    backgroundColor: "rgba(0,0,0,0.2)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  unlockDots: {
+    flexDirection: "row",
+    gap: 5,
+  },
+  unlockDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: "rgba(255,255,255,0.32)",
+  },
+  unlockDotActive: {
+    backgroundColor: profileColors.goldLight,
+  },
+  unlockText: {
+    flex: 1,
+    fontFamily,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "800",
+    letterSpacing: 0,
+    color: profileColors.textSoft,
+  },
+  upgradeButton: {
+    minHeight: 52,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 9,
+    marginTop: 4,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(233,188,124,0.38)",
+  },
+  upgradeButtonText: {
+    fontFamily,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: "900",
+    letterSpacing: 0,
+    color: profileColors.goldLight,
+  },
+  activeAccessPill: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 9,
+    marginTop: 4,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: "rgba(233,188,124,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(233,188,124,0.24)",
+  },
+  activeAccessText: {
+    fontFamily,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "900",
+    letterSpacing: 0,
+    color: profileColors.goldLight,
+  },
+  messageCard: {
+    marginTop: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    borderRadius: 14,
+    backgroundColor: "rgba(233,188,124,0.1)",
+    borderWidth: 1,
+    borderColor: "rgba(233,188,124,0.18)",
+  },
+  errorMessageCard: {
+    backgroundColor: "rgba(255,122,122,0.1)",
+    borderColor: "rgba(255,122,122,0.22)",
+  },
+  messageText: {
+    fontFamily,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "700",
+    letterSpacing: 0,
+    color: profileColors.goldLight,
+  },
+  errorMessageText: {
+    color: profileColors.danger,
+  },
+  sectionLabel: {
+    marginTop: 22,
+    marginLeft: 3,
+    marginBottom: 4,
+    fontFamily,
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: "900",
+    letterSpacing: 0,
+    textTransform: "uppercase",
+    color: profileColors.textMuted,
+  },
+  settingsCard: {
+    borderRadius: 20,
+    backgroundColor: "rgba(14,15,19,0.86)",
+    borderWidth: 1,
+    borderColor: profileColors.line,
+    overflow: "hidden",
+    shadowColor: "#000000",
+    shadowOpacity: 0.26,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 4,
+  },
+  settingsRow: {
+    minHeight: 50,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 14,
+    paddingHorizontal: 19,
+  },
+  disabledRow: {
+    opacity: 0.62,
+  },
+  settingsRowLeft: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 13,
+  },
+  settingsRowText: {
+    flex: 1,
+    fontFamily,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: "800",
+    letterSpacing: 0,
+    color: profileColors.text,
+  },
+  separator: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: profileColors.line,
+  },
+  supportList: {
+    gap: 12,
+  },
+  supportButton: {
+    minHeight: 50,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 11,
+    borderRadius: 11,
+    backgroundColor: "rgba(255,255,255,0.045)",
+    borderWidth: 1,
+    borderColor: profileColors.lineStrong,
+  },
+  supportButtonText: {
+    fontFamily,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: "900",
+    letterSpacing: 0,
+    color: profileColors.text,
+  },
 });

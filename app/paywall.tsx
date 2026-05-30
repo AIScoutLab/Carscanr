@@ -105,7 +105,7 @@ export default function PaywallScreen() {
   return (
     <AppContainer>
       <BackButton fallbackHref="/(tabs)/scan" label="Back" />
-      <LinearGradient colors={["rgba(29,140,255,0.2)", "rgba(94,231,255,0.08)", "rgba(4,8,18,0.18)"]} style={styles.heroBanner}>
+      <LinearGradient colors={["rgba(216,163,104,0.18)", "rgba(216,163,104,0.06)", "rgba(5,5,6,0.22)"]} style={styles.heroBanner}>
         <Text style={styles.heroTitle}>A cleaner performance tier</Text>
         <Text style={styles.heroBody}>Unlimited free scans stay in front. Pro opens deeper specs, richer value context, shopping intelligence, and synced premium access.</Text>
       </LinearGradient>

@@ -299,7 +299,7 @@ export default function SearchScreen() {
   return (
     <AppContainer>
       <BackButton fallbackHref="/(tabs)/scan" label="Back" />
-      <LinearGradient colors={["rgba(29,140,255,0.18)", "rgba(94,231,255,0.05)", "rgba(4,8,18,0.2)"]} style={styles.heroCard}>
+      <LinearGradient colors={["rgba(216,163,104,0.16)", "rgba(216,163,104,0.05)", "rgba(5,5,6,0.24)"]} style={styles.heroCard}>
         <Text style={styles.title}>Dial in an exact vehicle</Text>
         <Text style={styles.subtitle}>Use year, make, and model when you already know the vehicle and want the most deterministic path in the app.</Text>
       </LinearGradient>

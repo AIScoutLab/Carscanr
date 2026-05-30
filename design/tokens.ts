@@ -1,24 +1,24 @@
 export const colors = {
-  page: "#050B14",
-  pageAlt: "#08131F",
+  page: "#030404",
+  pageAlt: "#090A0C",
 
-  surface: "#0F2236",
-  surfaceSoft: "#0A1A2A",
-  surfaceTint: "#0B1A2A",
-  surfaceStrong: "#13243A",
+  surface: "#151312",
+  surfaceSoft: "#101010",
+  surfaceTint: "#1B1714",
+  surfaceStrong: "#211D1A",
 
-  text: "#E6EDF3",
-  textStrong: "#E6EDF3",
-  textSoft: "#9FB3C8",
-  textMuted: "#7890A8",
-  textFaint: "#627A93",
+  text: "#F5F1EA",
+  textStrong: "#FFFFFF",
+  textSoft: "#B8B0A5",
+  textMuted: "#8F8990",
+  textFaint: "#6F6A72",
 
   line: "rgba(255,255,255,0.06)",
   lineSoft: "rgba(255,255,255,0.04)",
 
-  primary: "#1688FF",
-  primarySoft: "rgba(22, 136, 255, 0.16)",
-  primaryDeep: "#0F6FE0",
+  primary: "#D8A368",
+  primarySoft: "rgba(216, 163, 104, 0.16)",
+  primaryDeep: "#B9824A",
 
   success: "#30D18C",
   successSoft: "rgba(48, 209, 140, 0.14)",
@@ -26,10 +26,10 @@ export const colors = {
   warning: "#E1A949",
   warningSoft: "rgba(225, 169, 73, 0.14)",
 
-  premium: "#5EEBFF",
-  premiumSoft: "rgba(94, 231, 255, 0.14)",
+  premium: "#E0AD72",
+  premiumSoft: "rgba(224, 173, 114, 0.14)",
 
-  overlay: "rgba(5, 11, 20, 0.46)",
+  overlay: "rgba(3, 4, 4, 0.56)",
   shadow: "#02060D",
 } as const;
 

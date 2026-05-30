@@ -29,7 +29,7 @@ const styles = StyleSheet.create({
   card: {
     ...cardStyles.secondary,
     gap: 10,
-    borderColor: "rgba(59,130,246,0.35)",
+    borderColor: "rgba(216, 163, 104, 0.34)",
   },
   title: { ...Typography.heading, color: Colors.textStrong },
   description: { ...Typography.body, color: Colors.textSoft },

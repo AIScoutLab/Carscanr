@@ -6,10 +6,10 @@ import { Colors, Radius, Shadows } from "@/constants/theme";
 type PremiumCardVariant = "default" | "tint" | "hero" | "glass";
 
 const VARIANT_COLORS: Record<PremiumCardVariant, readonly [string, string]> = {
-  default: ["rgba(10, 23, 38, 0.98)", "rgba(7, 17, 29, 0.98)"],
-  tint: ["rgba(18, 35, 56, 0.98)", "rgba(10, 22, 36, 0.98)"],
-  hero: ["rgba(15, 34, 54, 0.98)", "rgba(8, 18, 31, 0.98)"],
-  glass: ["rgba(15, 31, 48, 0.82)", "rgba(9, 20, 33, 0.82)"],
+  default: ["rgba(21, 19, 18, 0.98)", "rgba(10, 10, 10, 0.98)"],
+  tint: ["rgba(29, 24, 20, 0.98)", "rgba(14, 13, 12, 0.98)"],
+  hero: ["rgba(32, 27, 23, 0.98)", "rgba(12, 11, 10, 0.98)"],
+  glass: ["rgba(24, 22, 20, 0.84)", "rgba(10, 10, 10, 0.84)"],
 };
 
 export function PremiumCard({
@@ -41,17 +41,17 @@ const styles = StyleSheet.create({
   shell: {
     borderRadius: Radius.xl,
     borderWidth: 1,
-    borderColor: "rgba(105, 164, 255, 0.16)",
+    borderColor: "rgba(216, 163, 104, 0.16)",
     overflow: "hidden",
     backgroundColor: Colors.card,
     ...Shadows.card,
   },
   heroShell: {
-    borderColor: "rgba(94, 235, 255, 0.18)",
+    borderColor: "rgba(216, 163, 104, 0.2)",
     ...Shadows.cardStrong,
   },
   glowShell: {
-    shadowColor: "#5EEBFF",
+    shadowColor: "#D8A368",
     shadowOpacity: 0.16,
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 10 },
@@ -64,6 +64,6 @@ const styles = StyleSheet.create({
     width: 140,
     height: 140,
     borderRadius: 999,
-    backgroundColor: "rgba(94, 235, 255, 0.08)",
+    backgroundColor: "rgba(216, 163, 104, 0.08)",
   },
 });

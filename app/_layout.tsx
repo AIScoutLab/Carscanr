@@ -30,6 +30,10 @@ function extractDeepLinkTokens(url: string) {
   }
 }
 
+function isManagedAuthLink(url: string) {
+  return url.startsWith("carscanr://auth") || url.startsWith("carscanr://reset-password");
+}
+
 export default function RootLayout() {
   const [startupError, setStartupError] = useState<string | null>(null);
   const pathname = usePathname();
@@ -137,7 +141,7 @@ export default function RootLayout() {
 
     Linking.getInitialURL()
       .then((url) => {
-        if (url) {
+        if (url && isManagedAuthLink(url)) {
           return handleAuthLink(url, "initial");
         }
       })
@@ -146,7 +150,9 @@ export default function RootLayout() {
       });
 
     const subscription = Linking.addEventListener("url", ({ url }) => {
-      void handleAuthLink(url, "event");
+      if (isManagedAuthLink(url)) {
+        void handleAuthLink(url, "event");
+      }
     });
 
     return () => {
@@ -176,8 +182,8 @@ export default function RootLayout() {
       fallbackMessage="The app hit an unexpected rendering issue. Review the console logs and the detail message below."
     >
       <SubscriptionProvider>
-        <StatusBar style="dark" />
-        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#F5F6F8" } }}>
+        <StatusBar style="light" />
+        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.background } }}>
           <Stack.Screen name="index" />
           <Stack.Screen name="onboarding" />
           <Stack.Screen name="auth" />
@@ -196,7 +202,7 @@ export default function RootLayout() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#F5F6F8",
+    backgroundColor: Colors.background,
     justifyContent: "center",
     padding: 24,
   },

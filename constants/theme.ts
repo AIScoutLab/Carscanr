@@ -28,15 +28,15 @@ export const Colors = {
   overlay: colors.overlay,
   shadow: colors.shadow,
   gold: colors.premium,
-  accentGlow: "rgba(29, 140, 255, 0.34)",
-  cyanGlow: "rgba(94, 231, 255, 0.22)",
+  accentGlow: "rgba(216, 163, 104, 0.24)",
+  warmGlow: "rgba(132, 103, 76, 0.16)",
   dangerSoft: "rgba(217, 75, 91, 0.18)",
 };
 
 export const PremiumGradients = {
   page: [colors.pageAlt, colors.page, colors.page] as const,
-  primaryCard: ["#0F2236", "#0A1A2A"] as const,
-  imageFrame: ["#0F2236", "#0A1A2A"] as const,
+  primaryCard: ["#181513", "#0E0E0F"] as const,
+  imageFrame: ["#181513", "#0E0E0F"] as const,
 };
 
 export const PremiumCard = {
@@ -46,8 +46,8 @@ export const PremiumCard = {
   inputBackground: colors.surfaceStrong,
   imageFrameInner: "rgba(5, 11, 20, 0.92)",
   border: colors.line,
-  accentBorder: "rgba(59,130,246,0.35)",
-  softAccentBorder: "rgba(59,130,246,0.25)",
+  accentBorder: "rgba(216, 163, 104, 0.34)",
+  softAccentBorder: "rgba(216, 163, 104, 0.22)",
 };
 
 export const Spacing = {
