@@ -210,6 +210,7 @@ The backend now fails fast for preview/production-style deployments when critica
 - `ALLOW_MOCK_FALLBACKS=true`
 - mock providers selected for preview/production
 - MarketCheck selected without `MARKETCHECK_API_KEY`
+- placeholder MarketCheck credentials selected for preview/production
 - OpenAI vision selected without `OPENAI_API_KEY`
 
 Startup logs and `/health` now report non-secret diagnostics:
@@ -218,6 +219,7 @@ Startup logs and `/health` now report non-secret diagnostics:
 - `APP_ENV`
 - whether Supabase is configured
 - whether OpenAI is configured
+- whether MarketCheck is configured, reported as a non-secret credential state only
 - whether dev auth bypass is enabled
 - whether mock fallbacks are allowed
 - active provider selection

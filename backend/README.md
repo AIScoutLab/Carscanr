@@ -343,7 +343,9 @@ Ready-to-run SQL for that starter dataset lives in [backend/supabase/seed.sql](/
 
 The backend can now use live internet-backed vehicle data for search, listings, and market-value estimates via MarketCheck.
 
-To enable it in `backend/.env`:
+MarketCheck credentials are backend-only. Do not add them to Expo, mobile, `EXPO_PUBLIC_*`, app config, or checked-in files.
+
+To enable it locally in `backend/.env`:
 
 ```env
 VEHICLE_SPECS_PROVIDER=marketcheck
@@ -353,6 +355,33 @@ MARKETCHECK_API_KEY=your_marketcheck_api_key
 MARKETCHECK_BASE_URL=https://api.marketcheck.com
 MARKETCHECK_VALUE_RADIUS_MILES=100
 ```
+
+Required Render environment variables for production:
+
+- `VEHICLE_SPECS_PROVIDER=marketcheck`
+- `VEHICLE_VALUE_PROVIDER=marketcheck`
+- `VEHICLE_LISTINGS_PROVIDER=marketcheck`
+- `MARKETCHECK_API_KEY`
+- `MARKETCHECK_BASE_URL=https://api.marketcheck.com`
+- `MARKETCHECK_VALUE_RADIUS_MILES=100`
+- `MARKETCHECK_MONTHLY_CALL_LIMIT`
+- `MARKETCHECK_WARN_AT`
+- `MARKETCHECK_DISABLE_EXTERNAL_CALLS`
+- `MARKETCHECK_ENABLE_SCAN_ENRICHMENT`
+- `MARKETCHECK_ENABLE_AUTO_SPECS`
+- `MARKETCHECK_ENABLE_AUTO_LISTINGS`
+- `MARKETCHECK_ENABLE_BACKGROUND_REFRESH`
+
+`render.yaml` marks `MARKETCHECK_API_KEY` as `sync: false`; set or rotate the real key only in the Render backend service environment. Production startup fails if MarketCheck providers are selected and the key is missing or still set to a placeholder value.
+
+Rotation checklist:
+
+1. Generate/rotate the key in the MarketCheck dashboard.
+2. In Render, open the Carscanr backend service, then `Environment`.
+3. Update `MARKETCHECK_API_KEY` with the new value. Do not paste it into code, chat, docs, logs, or Expo/EAS env.
+4. Save the env change and redeploy/restart the backend service so the running process reads the new key.
+5. Confirm `/health` reports `marketCheckConfigured: true` and `marketCheckCredentialState: "configured"` without exposing the key.
+6. Run one intentional live value/listings test and inspect backend logs for `MARKETCHECK_API_REQUEST_START` and `MARKETCHECK_API_RESPONSE`. Logs must not include the key.
 
 Behavior:
 
