@@ -228,6 +228,7 @@ function selectMarketCheckListingsProviderAttempts(input: {
   attempts: ListingsLookupAttempt[];
   normalListingsRefresh: boolean;
   requestedTrim?: string | null;
+  forceLive?: boolean | null;
 }) {
   if (!input.normalListingsRefresh) {
     return input.attempts;
@@ -235,16 +236,32 @@ function selectMarketCheckListingsProviderAttempts(input: {
 
   const liveSafeAttempts = input.attempts.filter((attempt) => !isAdjacentOrExpandedListingsStrategy(attempt.strategy));
   const genericTrim = isGenericListingsTrimValue(input.requestedTrim);
-  const preferredAttempt =
-    genericTrim
-      ? liveSafeAttempts.find((attempt) => attempt.strategy === "same-year-any-trim") ??
-        liveSafeAttempts.find((attempt) => attempt.strategy === "same-year-family-model") ??
-        liveSafeAttempts.find((attempt) => attempt.strategy === "exact-year-make-model")
-      : liveSafeAttempts.find((attempt) => attempt.strategy === "exact-year-make-model") ??
-        liveSafeAttempts.find((attempt) => attempt.strategy === "same-year-any-trim") ??
-        liveSafeAttempts.find((attempt) => attempt.strategy === "same-year-family-model");
+  if (input.forceLive !== true) {
+    const preferredAttempt =
+      genericTrim
+        ? liveSafeAttempts.find((attempt) => attempt.strategy === "same-year-any-trim") ??
+          liveSafeAttempts.find((attempt) => attempt.strategy === "same-year-family-model") ??
+          liveSafeAttempts.find((attempt) => attempt.strategy === "exact-year-make-model")
+        : liveSafeAttempts.find((attempt) => attempt.strategy === "exact-year-make-model") ??
+          liveSafeAttempts.find((attempt) => attempt.strategy === "same-year-any-trim") ??
+          liveSafeAttempts.find((attempt) => attempt.strategy === "same-year-family-model");
 
-  return preferredAttempt ? [preferredAttempt] : liveSafeAttempts.slice(0, 1);
+    return preferredAttempt ? [preferredAttempt] : liveSafeAttempts.slice(0, 1);
+  }
+
+  const preferredStrategies: ListingsLookupAttempt["strategy"][] = genericTrim
+    ? ["same-year-any-trim", "same-year-family-model", "exact-year-make-model", "wider-radius-250"]
+    : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model", "wider-radius-250"];
+  const selected: ListingsLookupAttempt[] = [];
+  for (const strategy of preferredStrategies) {
+    const attempt =
+      (strategy === "wider-radius-250" ? input.attempts : liveSafeAttempts).find((entry) => entry.strategy === strategy) ?? null;
+    if (attempt && !selected.some((entry) => listingsAttemptKey(entry) === listingsAttemptKey(attempt))) {
+      selected.push(attempt);
+    }
+  }
+
+  return selected.length > 0 ? selected.slice(0, 4) : liveSafeAttempts.slice(0, 1);
 }
 
 function isMissingSupabaseRelationError(error: unknown, relationName: string) {
@@ -5776,6 +5793,7 @@ export class VehicleService {
                 attempts: fallbackAttempts,
                 normalListingsRefresh,
                 requestedTrim: lookupBaseVehicle?.trim ?? descriptor?.trim ?? null,
+                forceLive: input.forceLive,
               })
             : [
                 fallbackAttempts.find((attempt) => attempt.strategy === "same-year-any-trim") ??
@@ -5925,7 +5943,8 @@ export class VehicleService {
             : cacheKey;
           if (normalListingsRefresh && attemptCacheKey && providers.listingsProviderName === "marketcheck") {
             const cachedAttempt = await repositories.listingsCache.findByCacheKey(attemptCacheKey).catch(() => null);
-            if (cachedAttempt && isFresh(cachedAttempt.expiresAt, currentIso) && cachedAttempt.responseJson.isEmpty) {
+            const shouldBypassEmptyListingsCache = input.forceLive === true;
+            if (cachedAttempt && isFresh(cachedAttempt.expiresAt, currentIso) && cachedAttempt.responseJson.isEmpty && !shouldBypassEmptyListingsCache) {
               await repositories.listingsCache.markAccessed(attemptCacheKey, currentIso).catch(() => undefined);
               await writeUsageLog({
                 provider: cachedAttempt.provider,
@@ -5962,6 +5981,19 @@ export class VehicleService {
                 believableCount: 0,
               });
               continue;
+            }
+            if (cachedAttempt && isFresh(cachedAttempt.expiresAt, currentIso) && cachedAttempt.responseJson.isEmpty && shouldBypassEmptyListingsCache) {
+              logger.info(
+                {
+                  label: "LISTINGS_ZERO_CACHE_BYPASSED",
+                  requestId: input.requestId,
+                  vehicleId: lookupVehicleId,
+                  cacheKey: attemptCacheKey,
+                  strategy: attempt.strategy,
+                  reason: "explicit-user-refresh",
+                },
+                "LISTINGS_ZERO_CACHE_BYPASSED",
+              );
             }
           }
           logger.info(

@@ -321,7 +321,7 @@ export default function OnboardingScreen() {
         </View>
 
         <View style={styles.carouselViewport}>
-          <Animated.ScrollView
+          <ScrollView
             ref={(node) => {
               scrollRef.current = node as unknown as (ScrollView & { getNode?: () => ScrollView | null }) | null;
             }}
@@ -334,9 +334,9 @@ export default function OnboardingScreen() {
             bounces={false}
             style={styles.carousel}
             contentContainerStyle={styles.carouselContent}
-            onScroll={Animated.event([{ nativeEvent: { contentOffset: { x: scrollX } } }], {
-              useNativeDriver: true,
-            })}
+            onScroll={(event) => {
+              scrollX.setValue(event.nativeEvent.contentOffset.x);
+            }}
             scrollEventThrottle={16}
             onMomentumScrollEnd={handleScrollEnd}
           >
@@ -354,7 +354,7 @@ export default function OnboardingScreen() {
                 scrollX={scrollX}
               />
             ))}
-          </Animated.ScrollView>
+          </ScrollView>
         </View>
 
         <View style={[styles.footer, { paddingHorizontal: metrics.horizontalPadding }]}>

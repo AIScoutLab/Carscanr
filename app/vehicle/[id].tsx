@@ -27,6 +27,7 @@ import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { marketAreaZipService } from "@/services/marketAreaZipService";
 import { scanService } from "@/services/scanService";
 import { authService } from "@/services/authService";
+import { startupPreferences } from "@/services/startupPreferences";
 import { buildVehicleSoftUnlockId, buildVehicleUnlockId } from "@/services/subscriptionService";
 import { ListingsDebugMeta, VehicleLookupDescriptor, vehicleService } from "@/services/vehicleService";
 import { ValuationResult, VehicleRecord } from "@/types";
@@ -2125,13 +2126,23 @@ export default function VehicleDetailScreen() {
     yearLabel,
   ]);
   const routeToAuthForLiveMarket = useCallback(() => {
-    router.push({
-      pathname: "/auth",
-      params: {
-        mode: "sign-in",
-        returnTo: vehicleDetailReturnTarget,
-      },
-    });
+    startupPreferences
+      .setPendingAuthReturnTarget(vehicleDetailReturnTarget)
+      .catch((error) => {
+        console.warn("[vehicle-detail] failed to persist auth return target", {
+          returnTo: vehicleDetailReturnTarget,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => {
+        router.push({
+          pathname: "/auth",
+          params: {
+            mode: "sign-in",
+            returnTo: vehicleDetailReturnTarget,
+          },
+        });
+      });
   }, [vehicleDetailReturnTarget]);
   const requestExplicitLiveValue = useCallback(() => {
     Keyboard.dismiss();
@@ -2452,6 +2463,7 @@ export default function VehicleDetailScreen() {
         fetchReason: "user_requested_listings_refresh",
         sourceScreen: "listingsScreen",
         action: "listingsRefresh",
+        forceLive: true,
         radiusMiles: 100,
         mileage: normalizedMileage,
         zipSource,

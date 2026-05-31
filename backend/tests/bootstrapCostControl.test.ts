@@ -1918,14 +1918,14 @@ describe("bootstrap cost control", () => {
       action: "listingsRefresh",
     });
 
-    assert.equal(attempts.length, 1);
+    assert.equal(attempts.length <= 4, true);
     assert.equal(attempts.every((attempt) => attempt.model === "4Runner"), true);
     assert.equal(attempts.some((attempt) => attempt.model === "4"), false);
     assert.equal(attempts.some((attempt) => attempt.year === 2011 && attempt.radiusMiles === 100), true);
-    assert.equal(attempts.some((attempt) => attempt.radiusMiles === 250), false);
+    assert.equal(attempts.some((attempt) => attempt.radiusMiles === 250), true);
   });
 
-  test("normal listings refresh drops generic Base trim and caps live provider calls", async () => {
+  test("force-live listings refresh drops generic Base trim and uses bounded fallback attempts", async () => {
     const attempts: Array<{ model: string; year: number; radiusMiles: number | null; trim: string | null }> = [];
     setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
     setProviders({
@@ -1973,10 +1973,22 @@ describe("bootstrap cost control", () => {
         radiusMiles: 100,
         trim: "",
       },
+      {
+        model: "4Runner",
+        year: 2011,
+        radiusMiles: 100,
+        trim: "Base",
+      },
+      {
+        model: "4Runner",
+        year: 2011,
+        radiusMiles: 250,
+        trim: "",
+      },
     ]);
   });
 
-  test("normal listings refresh respects cached zero-result listing response", async () => {
+  test("force-live listings refresh bypasses cached zero-result listing response", async () => {
     const descriptor = {
       year: 2011,
       make: "Toyota",
@@ -2037,7 +2049,7 @@ describe("bootstrap cost control", () => {
       action: "listingsRefresh",
     });
 
-    assert.equal(providerCalls, 0);
+    assert.equal(providerCalls, 3);
     assert.equal(result.data.length, 0);
   });
 

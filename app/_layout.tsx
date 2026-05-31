@@ -10,6 +10,7 @@ import { assertMobileStartupConfig, getMobileEnvDiagnostics, getMobileStartupCon
 import { supabase } from "@/lib/supabase";
 import { marketAreaZipService } from "@/services/marketAreaZipService";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
+import { startupPreferences } from "@/services/startupPreferences";
 
 function extractDeepLinkTokens(url: string) {
   try {
@@ -128,7 +129,8 @@ export default function RootLayout() {
           if (isResetPasswordLink || parsed.type === "recovery") {
             router.replace("/reset-password" as never);
           } else {
-            router.replace("/(tabs)/scan" as never);
+            const target = await startupPreferences.consumePendingAuthReturnTarget("/(tabs)/scan");
+            router.replace(target as never);
           }
         }
       } catch (error) {

@@ -187,6 +187,7 @@ type ListingsRequestOptions = {
   fetchReason?: string;
   sourceScreen?: string;
   action?: string;
+  forceLive?: boolean;
   radiusMiles?: number;
   mileage?: string | number;
   zipSource?: MarketAreaZipSource;
@@ -1307,6 +1308,9 @@ export function buildVehicleListingsRequestPath(
   }
   if (typeof options?.action === "string" && options.action.trim().length > 0) {
     params.set("action", options.action.trim());
+  }
+  if (typeof options?.forceLive === "boolean") {
+    params.set("forceLive", options.forceLive ? "true" : "false");
   }
   if (typeof options?.zipSource === "string" && options.zipSource.length > 0) {
     params.set("zipSource", options.zipSource);
