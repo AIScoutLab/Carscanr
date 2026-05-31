@@ -10,6 +10,7 @@ import { getOnboardingLayoutMetrics } from "@/lib/onboardingLayout";
 import { Radius, Typography } from "@/constants/theme";
 import { startupPreferences } from "@/services/startupPreferences";
 import { sampleScanPhotos } from "@/features/scan/samplePhotos";
+import { mobileBuildInfo } from "@/lib/env";
 
 function CameraVisual() {
   const sample = sampleScanPhotos[1] ?? sampleScanPhotos[0];
@@ -189,13 +190,17 @@ export default function OnboardingScreen() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const metrics = useMemo(() => getOnboardingLayoutMetrics(width), [width]);
-  const scrollRef = useRef<ScrollView | null>(null);
+  const scrollRef = useRef<(ScrollView & { getNode?: () => ScrollView | null }) | null>(null);
   const scrollX = useRef(new Animated.Value(0)).current;
   const [activeIndex, setActiveIndex] = useState(0);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    console.log("[onboarding] ONBOARDING_STARTED", { stepCount: ONBOARDING_STEPS.length });
+    console.log("[onboarding] ONBOARDING_RENDERED_BLACK_GOLD_V3", {
+      stepCount: ONBOARDING_STEPS.length,
+      gitCommit: mobileBuildInfo.gitCommit || "unknown",
+      runtimeVersion: mobileBuildInfo.version || "unknown",
+    });
   }, []);
 
   const finishOnboarding = async (event: "completed" | "skipped", target: string) => {
@@ -207,6 +212,7 @@ export default function OnboardingScreen() {
       console.log(`[onboarding] ${event === "completed" ? "ONBOARDING_COMPLETED" : "ONBOARDING_SKIPPED"}`, {
         activeIndex,
         target,
+        gitCommit: mobileBuildInfo.gitCommit || "unknown",
       });
       await startupPreferences.markOnboardingComplete();
       router.replace(target as never);
@@ -218,25 +224,62 @@ export default function OnboardingScreen() {
   };
 
   const scrollToSlide = (index: number, animated: boolean) => {
-    scrollRef.current?.scrollTo({ x: index * metrics.slideWidth, animated });
+    const node = scrollRef.current;
+    const target = typeof node?.scrollTo === "function" ? node : typeof node?.getNode === "function" ? node.getNode() : null;
+    if (!target || typeof target.scrollTo !== "function") {
+      console.warn("[onboarding] SCROLL_REF_UNAVAILABLE", {
+        index,
+        animated,
+        activeIndex,
+      });
+      return false;
+    }
+
+    target.scrollTo({ x: index * metrics.slideWidth, animated });
+    return true;
   };
 
   const goToSlide = (index: number) => {
     const nextIndex = Math.max(0, Math.min(index, ONBOARDING_STEPS.length - 1));
+    console.log("[onboarding] GO_TO_SLIDE", {
+      from: activeIndex,
+      to: nextIndex,
+      slideWidth: metrics.slideWidth,
+    });
     setActiveIndex(nextIndex);
-    scrollToSlide(nextIndex, true);
+    requestAnimationFrame(() => {
+      const scrolled = scrollToSlide(nextIndex, true);
+      if (!scrolled) {
+        scrollX.setValue(nextIndex * metrics.slideWidth);
+      }
+    });
   };
 
   useEffect(() => {
-    scrollToSlide(activeIndex, false);
+    requestAnimationFrame(() => {
+      const scrolled = scrollToSlide(activeIndex, false);
+      if (!scrolled) {
+        scrollX.setValue(activeIndex * metrics.slideWidth);
+      }
+    });
   }, [activeIndex, metrics.slideWidth]);
 
   const handleScrollEnd = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const nextIndex = Math.round(event.nativeEvent.contentOffset.x / metrics.slideWidth);
+    const nextIndex = Math.max(0, Math.min(ONBOARDING_STEPS.length - 1, Math.round(event.nativeEvent.contentOffset.x / metrics.slideWidth)));
+    console.log("[onboarding] SCROLL_END", {
+      from: activeIndex,
+      to: nextIndex,
+      offsetX: event.nativeEvent.contentOffset.x,
+    });
     setActiveIndex(nextIndex);
   };
 
   const nextAction = () => {
+    console.log("[onboarding] CONTINUE_PRESSED", {
+      activeIndex,
+      stepCount: ONBOARDING_STEPS.length,
+      saving,
+    });
     if (activeIndex >= ONBOARDING_STEPS.length - 1) {
       void finishOnboarding("completed", "/(tabs)/scan");
       return;
@@ -280,7 +323,7 @@ export default function OnboardingScreen() {
         <View style={styles.carouselViewport}>
           <Animated.ScrollView
             ref={(node) => {
-              scrollRef.current = node as unknown as ScrollView | null;
+              scrollRef.current = node as unknown as (ScrollView & { getNode?: () => ScrollView | null }) | null;
             }}
             horizontal
             pagingEnabled
