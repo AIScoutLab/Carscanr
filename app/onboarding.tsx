@@ -1,9 +1,10 @@
 import { router } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Image, NativeScrollEvent, NativeSyntheticEvent, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { Animated, Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { BrandMark } from "@/components/BrandMark";
+import { RuntimeDebugStamp } from "@/components/RuntimeDebugStamp";
 import { BRAND_MARK_LAYOUT } from "@/constants/branding";
 import { APP_BRAND, ONBOARDING_STEPS, OnboardingVisualKind } from "@/lib/onboardingFlow";
 import { getOnboardingLayoutMetrics } from "@/lib/onboardingLayout";
@@ -190,13 +191,12 @@ export default function OnboardingScreen() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const metrics = useMemo(() => getOnboardingLayoutMetrics(width), [width]);
-  const scrollRef = useRef<(ScrollView & { getNode?: () => ScrollView | null }) | null>(null);
   const scrollX = useRef(new Animated.Value(0)).current;
   const [activeIndex, setActiveIndex] = useState(0);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    console.log("[onboarding] ONBOARDING_RENDERED_BLACK_GOLD_V3", {
+    console.log("[onboarding] ONBOARDING_RENDERED_BLACK_GOLD_V4_DETERMINISTIC", {
       stepCount: ONBOARDING_STEPS.length,
       gitCommit: mobileBuildInfo.gitCommit || "unknown",
       runtimeVersion: mobileBuildInfo.version || "unknown",
@@ -223,22 +223,6 @@ export default function OnboardingScreen() {
     }
   };
 
-  const scrollToSlide = (index: number, animated: boolean) => {
-    const node = scrollRef.current;
-    const target = typeof node?.scrollTo === "function" ? node : typeof node?.getNode === "function" ? node.getNode() : null;
-    if (!target || typeof target.scrollTo !== "function") {
-      console.warn("[onboarding] SCROLL_REF_UNAVAILABLE", {
-        index,
-        animated,
-        activeIndex,
-      });
-      return false;
-    }
-
-    target.scrollTo({ x: index * metrics.slideWidth, animated });
-    return true;
-  };
-
   const goToSlide = (index: number) => {
     const nextIndex = Math.max(0, Math.min(index, ONBOARDING_STEPS.length - 1));
     console.log("[onboarding] GO_TO_SLIDE", {
@@ -247,31 +231,7 @@ export default function OnboardingScreen() {
       slideWidth: metrics.slideWidth,
     });
     setActiveIndex(nextIndex);
-    requestAnimationFrame(() => {
-      const scrolled = scrollToSlide(nextIndex, true);
-      if (!scrolled) {
-        scrollX.setValue(nextIndex * metrics.slideWidth);
-      }
-    });
-  };
-
-  useEffect(() => {
-    requestAnimationFrame(() => {
-      const scrolled = scrollToSlide(activeIndex, false);
-      if (!scrolled) {
-        scrollX.setValue(activeIndex * metrics.slideWidth);
-      }
-    });
-  }, [activeIndex, metrics.slideWidth]);
-
-  const handleScrollEnd = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const nextIndex = Math.max(0, Math.min(ONBOARDING_STEPS.length - 1, Math.round(event.nativeEvent.contentOffset.x / metrics.slideWidth)));
-    console.log("[onboarding] SCROLL_END", {
-      from: activeIndex,
-      to: nextIndex,
-      offsetX: event.nativeEvent.contentOffset.x,
-    });
-    setActiveIndex(nextIndex);
+    scrollX.setValue(nextIndex * metrics.slideWidth);
   };
 
   const nextAction = () => {
@@ -319,42 +279,29 @@ export default function OnboardingScreen() {
             <Text style={styles.skipLabel}>Skip</Text>
           </Pressable>
         </View>
+        <View style={[styles.debugWrap, { paddingHorizontal: metrics.horizontalPadding }]}>
+          <RuntimeDebugStamp
+            screen="onboarding-v4-deterministic"
+            lines={[
+              `index ${activeIndex + 1}/${ONBOARDING_STEPS.length}`,
+              `continue deterministic: state-rendered`,
+            ]}
+          />
+        </View>
 
         <View style={styles.carouselViewport}>
-          <ScrollView
-            ref={(node) => {
-              scrollRef.current = node as unknown as (ScrollView & { getNode?: () => ScrollView | null }) | null;
-            }}
-            horizontal
-            pagingEnabled
-            decelerationRate="fast"
-            snapToInterval={metrics.slideWidth}
-            snapToAlignment="start"
-            showsHorizontalScrollIndicator={false}
-            bounces={false}
-            style={styles.carousel}
-            contentContainerStyle={styles.carouselContent}
-            onScroll={(event) => {
-              scrollX.setValue(event.nativeEvent.contentOffset.x);
-            }}
-            scrollEventThrottle={16}
-            onMomentumScrollEnd={handleScrollEnd}
-          >
-            {ONBOARDING_STEPS.map((step, index) => (
-              <OnboardingSlide
-                key={step.key}
-                step={step}
-                index={index}
-                width={metrics.slideWidth}
-                horizontalPadding={metrics.horizontalPadding}
-                visualHeight={metrics.visualHeight}
-                headlineFontSize={metrics.headlineFontSize}
-                headlineLineHeight={metrics.headlineLineHeight}
-                headlineMaxWidth={metrics.headlineMaxWidth}
-                scrollX={scrollX}
-              />
-            ))}
-          </ScrollView>
+          <OnboardingSlide
+            key={ONBOARDING_STEPS[activeIndex].key}
+            step={ONBOARDING_STEPS[activeIndex]}
+            index={activeIndex}
+            width={metrics.slideWidth}
+            horizontalPadding={metrics.horizontalPadding}
+            visualHeight={metrics.visualHeight}
+            headlineFontSize={metrics.headlineFontSize}
+            headlineLineHeight={metrics.headlineLineHeight}
+            headlineMaxWidth={metrics.headlineMaxWidth}
+            scrollX={scrollX}
+          />
         </View>
 
         <View style={[styles.footer, { paddingHorizontal: metrics.horizontalPadding }]}>
@@ -417,6 +364,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: 18,
   },
+  debugWrap: {
+    marginTop: -8,
+    marginBottom: 10,
+  },
   brandWrap: {
     flexDirection: "row",
     alignItems: "center",
@@ -453,12 +404,6 @@ const styles = StyleSheet.create({
   carouselViewport: {
     flex: 1,
     overflow: "hidden",
-  },
-  carousel: {
-    flex: 1,
-  },
-  carouselContent: {
-    alignItems: "stretch",
   },
   slide: {
     flex: 1,

@@ -136,11 +136,30 @@ export class VehicleController {
 
   private async assertLiveMarketAccess(input: {
     req: Request;
+    requestId?: string;
+    kind: "value" | "listings";
     vehicleId?: string | null;
     descriptor: VehicleLookupDescriptor | null;
   }) {
     const auth = input.req.auth;
     if (!auth || auth.isGuest) {
+      logger.warn(
+        {
+          label: "LIVE_MARKET_ACCESS_DENIED",
+          requestId: input.requestId ?? null,
+          kind: input.kind,
+          reason: "auth_required",
+          authPresent: Boolean(auth),
+          userIdPresent: Boolean(auth?.userId),
+          isGuest: auth?.isGuest ?? null,
+          vehicleIdPresent: Boolean(input.vehicleId),
+          descriptorPresent: Boolean(input.descriptor),
+          descriptorYear: input.descriptor?.year ?? null,
+          descriptorMake: input.descriptor?.make ?? null,
+          descriptorModel: input.descriptor?.model ?? null,
+        },
+        "LIVE_MARKET_ACCESS_DENIED",
+      );
       throw new AppError(
         401,
         "AUTH_REQUIRED",
@@ -150,6 +169,19 @@ export class VehicleController {
 
     const plan = await this.subscriptionService.getActivePlan(auth.userId);
     if (isProPlan(plan)) {
+      logger.info(
+        {
+          label: "LIVE_MARKET_ACCESS_ALLOWED",
+          requestId: input.requestId ?? null,
+          kind: input.kind,
+          reason: "pro_plan",
+          userIdPresent: true,
+          plan,
+          vehicleIdPresent: Boolean(input.vehicleId),
+          descriptorPresent: Boolean(input.descriptor),
+        },
+        "LIVE_MARKET_ACCESS_ALLOWED",
+      );
       return;
     }
 
@@ -158,17 +190,64 @@ export class VehicleController {
       descriptor: input.descriptor,
     });
     if (!unlockKey) {
+      logger.warn(
+        {
+          label: "LIVE_MARKET_ACCESS_DENIED",
+          requestId: input.requestId ?? null,
+          kind: input.kind,
+          reason: "unlock_key_missing",
+          userIdPresent: true,
+          plan,
+          vehicleIdPresent: Boolean(input.vehicleId),
+          descriptorPresent: Boolean(input.descriptor),
+        },
+        "LIVE_MARKET_ACCESS_DENIED",
+      );
       throw new AppError(400, "UNLOCK_KEY_MISSING", "Unable to verify vehicle unlock for this market request.");
     }
 
     const existingUnlock = await repositories.vehicleUnlocks.findByUserAndKey(auth.userId, unlockKey);
     if (!existingUnlock) {
+      logger.warn(
+        {
+          label: "LIVE_MARKET_ACCESS_DENIED",
+          requestId: input.requestId ?? null,
+          kind: input.kind,
+          reason: "premium_access_required",
+          userIdPresent: true,
+          plan,
+          unlockKey,
+          vehicleIdPresent: Boolean(input.vehicleId),
+          descriptorPresent: Boolean(input.descriptor),
+          descriptorYear: input.descriptor?.year ?? null,
+          descriptorMake: input.descriptor?.make ?? null,
+          descriptorModel: input.descriptor?.model ?? null,
+        },
+        "LIVE_MARKET_ACCESS_DENIED",
+      );
       throw new AppError(
         403,
         "PREMIUM_ACCESS_REQUIRED",
         "Unlock Value & Listings for this vehicle before loading live market data.",
       );
     }
+    logger.info(
+      {
+        label: "LIVE_MARKET_ACCESS_ALLOWED",
+        requestId: input.requestId ?? null,
+        kind: input.kind,
+        reason: "vehicle_unlock_found",
+        userIdPresent: true,
+        plan,
+        unlockKey,
+        vehicleIdPresent: Boolean(input.vehicleId),
+        descriptorPresent: Boolean(input.descriptor),
+        descriptorYear: input.descriptor?.year ?? null,
+        descriptorMake: input.descriptor?.make ?? null,
+        descriptorModel: input.descriptor?.model ?? null,
+      },
+      "LIVE_MARKET_ACCESS_ALLOWED",
+    );
   }
 
   getMarketCheckDebugSummary = async (_req: Request, res: Response) => {
@@ -388,6 +467,8 @@ export class VehicleController {
       ) {
         await this.assertLiveMarketAccess({
           req,
+          requestId: res.locals.requestId,
+          kind: "value",
           vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
           descriptor,
         });
@@ -513,6 +594,8 @@ export class VehicleController {
       ) {
         await this.assertLiveMarketAccess({
           req,
+          requestId: res.locals.requestId,
+          kind: "listings",
           vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
           descriptor,
         });

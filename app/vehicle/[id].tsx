@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { ListingCard } from "@/components/ListingCard";
 import { LockedContentPreview } from "@/components/LockedContentPreview";
 import { PremiumSkeleton } from "@/components/PremiumSkeleton";
+import { RuntimeDebugStamp } from "@/components/RuntimeDebugStamp";
 import { SectionHeader } from "@/components/SectionHeader";
 import { ValueEstimateCard } from "@/components/ValueEstimateCard";
 import { Colors, Radius, Typography } from "@/constants/theme";
@@ -28,6 +29,7 @@ import { marketAreaZipService } from "@/services/marketAreaZipService";
 import { scanService } from "@/services/scanService";
 import { authService } from "@/services/authService";
 import { startupPreferences } from "@/services/startupPreferences";
+import { getApiAuthDebug, getLastApiRequestDebug } from "@/services/apiClient";
 import { buildVehicleSoftUnlockId, buildVehicleUnlockId } from "@/services/subscriptionService";
 import { ListingsDebugMeta, VehicleLookupDescriptor, vehicleService } from "@/services/vehicleService";
 import { ValuationResult, VehicleRecord } from "@/types";
@@ -74,6 +76,48 @@ type ZipStorageDebug = {
   storageKey: string;
   storageVersion: "v4";
   wasLegacy60610Ignored: boolean;
+};
+
+type LiveMarketRuntimeDebug = {
+  action: string;
+  authBelievedSignedIn: boolean | null;
+  authHadToken: boolean | null;
+  authSentHeader: boolean | null;
+  requestPath: string | null;
+  requestUrl: string | null;
+  valueCode: string | null;
+  valueHttpStatus: number | null;
+  valueStatus: string | null;
+  valueReason: string | null;
+  valueSource: string | null;
+  listingsCode: string | null;
+  listingsHttpStatus: number | null;
+  listingsRawCount: number | null;
+  listingsBelievableCount: number | null;
+  listingsMode: string | null;
+  listingsFallbackReason: string | null;
+  marketCheckTrace: string | null;
+};
+
+const initialLiveMarketRuntimeDebug: LiveMarketRuntimeDebug = {
+  action: "idle",
+  authBelievedSignedIn: null,
+  authHadToken: null,
+  authSentHeader: null,
+  requestPath: null,
+  requestUrl: null,
+  valueCode: null,
+  valueHttpStatus: null,
+  valueStatus: null,
+  valueReason: null,
+  valueSource: null,
+  listingsCode: null,
+  listingsHttpStatus: null,
+  listingsRawCount: null,
+  listingsBelievableCount: null,
+  listingsMode: null,
+  listingsFallbackReason: null,
+  marketCheckTrace: null,
 };
 
 function logValueUiTransition(
@@ -715,6 +759,29 @@ function getApiRequestErrorStatus(error: unknown) {
   return typeof details === "object" && details !== null && "status" in details && typeof (details as { status?: unknown }).status === "number"
     ? (details as { status: number }).status
     : null;
+}
+
+function captureLiveMarketRequestDebug(): Pick<LiveMarketRuntimeDebug, "authBelievedSignedIn" | "authHadToken" | "authSentHeader" | "requestPath" | "requestUrl"> {
+  const authDebug = getApiAuthDebug();
+  const requestDebug = getLastApiRequestDebug();
+  return {
+    authBelievedSignedIn: authService.hasActiveSession(),
+    authHadToken: authDebug?.hadToken ?? null,
+    authSentHeader: authDebug?.sentAuthHeader ?? null,
+    requestPath: requestDebug?.path ?? authDebug?.path ?? null,
+    requestUrl: requestDebug?.url ?? null,
+  };
+}
+
+function formatLiveMarketDebugBool(value: boolean | null) {
+  return value === null ? "unknown" : value ? "yes" : "no";
+}
+
+function formatDebugRoute(value: string | null, maxLength = 74) {
+  if (!value) {
+    return "none";
+  }
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
 }
 
 function buildSpecialtyValueStateCopy(input: {
@@ -1591,6 +1658,7 @@ export default function VehicleDetailScreen() {
   const [valueDebugUpdateCount, setValueDebugUpdateCount] = useState(0);
   const [valueDebugUpdatedAt, setValueDebugUpdatedAt] = useState<string | null>(null);
   const [listingsDebugMeta, setListingsDebugMeta] = useState<ListingsDebugMeta | null>(null);
+  const [liveMarketRuntimeDebug, setLiveMarketRuntimeDebug] = useState<LiveMarketRuntimeDebug>(initialLiveMarketRuntimeDebug);
   const initialRouteTab = coerceDetailTab(initialTab);
   const routeMarketIntent =
     marketIntent === "value" || marketIntent === "listings" || marketIntent === "bundle" ? marketIntent : null;
@@ -2135,11 +2203,16 @@ export default function VehicleDetailScreen() {
         });
       })
       .finally(() => {
+        setLiveMarketRuntimeDebug((current) => ({
+          ...current,
+          action: "auth-required-return-persisted",
+          marketCheckTrace: `pendingReturn ${formatDebugRoute(vehicleDetailReturnTarget)}`,
+        }));
         router.push({
           pathname: "/auth",
           params: {
             mode: "sign-in",
-            returnTo: vehicleDetailReturnTarget,
+            intent: "vehicle-market",
           },
         });
       });
@@ -2214,6 +2287,19 @@ export default function VehicleDetailScreen() {
     pendingValueRequestKeyRef.current = requestKey;
     setValueDebugStatus("requested");
     setValuationLoading(true);
+    setLiveMarketRuntimeDebug((current) => ({
+      ...current,
+      action: "value-request-started",
+      authBelievedSignedIn: authService.hasActiveSession(),
+      requestPath: "/api/vehicle/value",
+      requestUrl: null,
+      valueCode: "REQUESTING",
+      valueHttpStatus: null,
+      valueStatus: null,
+      valueReason: null,
+      valueSource: null,
+      marketCheckTrace: "waiting for backend response",
+    }));
     logValueUiTransition("VALUE_UI_REFRESH_STARTED", {
       routeId: id,
       scanId: typeof scanId === "string" ? scanId : null,
@@ -2257,10 +2343,25 @@ export default function VehicleDetailScreen() {
         zipSource,
       })
       .then((result) => {
+        const requestDebug = captureLiveMarketRequestDebug();
         const nextResult =
           isEstimateMode && estimateSupport?.familyLabel
             ? buildApproximateValuation(result, estimateSupport.familyLabel, estimateSupport.yearRangeLabel)
             : result;
+        setLiveMarketRuntimeDebug((current) => ({
+          ...current,
+          ...requestDebug,
+          action: "value-response-ok",
+          valueCode: "OK",
+          valueHttpStatus: null,
+          valueStatus: nextResult.status ?? null,
+          valueReason: nextResult.unavailableReason ?? nextResult.reason ?? null,
+          valueSource: nextResult.valuationSource ?? nextResult.modelType ?? null,
+          marketCheckTrace:
+            nextResult.valuationSource === "listing_comps" || nextResult.valuationSource === "provider"
+              ? "backend returned live/provider valuation evidence"
+              : `backend returned ${nextResult.valuationSource ?? nextResult.modelType ?? "unknown"} valuation`,
+        }));
         console.log("[vehicle-detail] VALUE_REFRESH_RESPONSE_RECEIVED", {
           routeId: id,
           scanId: typeof scanId === "string" ? scanId : null,
@@ -2313,7 +2414,22 @@ export default function VehicleDetailScreen() {
       .catch((error) => {
         const errorCode = getApiRequestErrorCode(error);
         const httpStatus = getApiRequestErrorStatus(error);
+        const requestDebug = captureLiveMarketRequestDebug();
         const believedSignedIn = authService.hasActiveSession();
+        setLiveMarketRuntimeDebug((current) => ({
+          ...current,
+          ...requestDebug,
+          action: "value-response-error",
+          valueCode: errorCode ?? "ERROR",
+          valueHttpStatus: httpStatus,
+          valueStatus: "error",
+          valueReason: error instanceof Error ? error.message : String(error),
+          valueSource: null,
+          marketCheckTrace:
+            errorCode === "AUTH_REQUIRED" || errorCode === "PREMIUM_ACCESS_REQUIRED"
+              ? "MarketCheck not called: backend denied access before provider"
+              : "backend/provider error; inspect code and status",
+        }));
         console.error("[vehicle-detail] VALUE_REQUEST_FAILED", {
           routeId: id,
           scanId: typeof scanId === "string" ? scanId : null,
@@ -2448,6 +2564,20 @@ export default function VehicleDetailScreen() {
     }
 
     setListingsRefreshLoading(true);
+    setLiveMarketRuntimeDebug((current) => ({
+      ...current,
+      action: "listings-request-started",
+      authBelievedSignedIn: authService.hasActiveSession(),
+      requestPath: "/api/vehicle/listings",
+      requestUrl: null,
+      listingsCode: "REQUESTING",
+      listingsHttpStatus: null,
+      listingsRawCount: null,
+      listingsBelievableCount: null,
+      listingsMode: null,
+      listingsFallbackReason: null,
+      marketCheckTrace: "waiting for backend response",
+    }));
     console.log("[vehicle-detail] LISTINGS_LIVE_REFRESH_REQUESTED", {
       routeId: id,
       scanId: typeof scanId === "string" ? scanId : null,
@@ -2469,8 +2599,24 @@ export default function VehicleDetailScreen() {
         zipSource,
       })
       .then(async (result) => {
+        const requestDebug = captureLiveMarketRequestDebug();
         setListingsDebugMeta(result.meta);
         const believableListings = result.listings.filter(isBelievableListing);
+        setLiveMarketRuntimeDebug((current) => ({
+          ...current,
+          ...requestDebug,
+          action: "listings-response-ok",
+          listingsCode: "OK",
+          listingsHttpStatus: null,
+          listingsRawCount: result.meta?.rawCount ?? result.listings.length,
+          listingsBelievableCount: result.meta?.believableCount ?? believableListings.length,
+          listingsMode: result.meta?.mode ?? null,
+          listingsFallbackReason: result.meta?.fallbackReason ?? null,
+          marketCheckTrace:
+            result.meta?.rawCount && result.meta.rawCount > 0
+              ? `backend returned ${result.meta.rawCount} raw listing(s)`
+              : `backend returned no displayable listings (${result.meta?.fallbackReason ?? "no reason"})`,
+        }));
         setVehicle((current) =>
           current
             ? {
@@ -2581,7 +2727,23 @@ export default function VehicleDetailScreen() {
       .catch((error) => {
         const errorCode = getApiRequestErrorCode(error);
         const httpStatus = getApiRequestErrorStatus(error);
+        const requestDebug = captureLiveMarketRequestDebug();
         const believedSignedIn = authService.hasActiveSession();
+        setLiveMarketRuntimeDebug((current) => ({
+          ...current,
+          ...requestDebug,
+          action: "listings-response-error",
+          listingsCode: errorCode ?? "ERROR",
+          listingsHttpStatus: httpStatus,
+          listingsRawCount: 0,
+          listingsBelievableCount: 0,
+          listingsMode: "none",
+          listingsFallbackReason: error instanceof Error ? error.message : String(error),
+          marketCheckTrace:
+            errorCode === "AUTH_REQUIRED" || errorCode === "PREMIUM_ACCESS_REQUIRED"
+              ? "MarketCheck not called: backend denied access before provider"
+              : "backend/provider error; inspect code and status",
+        }));
         console.error("[vehicle-detail] LISTINGS_REQUEST_FAILED", {
           routeId: id,
           scanId: typeof scanId === "string" ? scanId : null,
@@ -5041,6 +5203,18 @@ export default function VehicleDetailScreen() {
             <Text style={styles.tabIntroTitle}>Value & Listings</Text>
             <Text style={styles.tabIntroSubtitle}>Market trend and live comparable listings.</Text>
           </View>
+          <RuntimeDebugStamp
+            screen="vehicle-value-v4-live-debug"
+            lines={[
+              `route ${formatDebugRoute(`/vehicle/${id}`, 52)} | tab ${tab} | locked ${isLocked ? "yes" : "no"}`,
+              `returnTo ${formatDebugRoute(vehicleDetailReturnTarget, 82)}`,
+              `auth signedIn ${formatLiveMarketDebugBool(liveMarketRuntimeDebug.authBelievedSignedIn)} token ${formatLiveMarketDebugBool(liveMarketRuntimeDebug.authHadToken)} header ${formatLiveMarketDebugBool(liveMarketRuntimeDebug.authSentHeader)}`,
+              `request ${formatDebugRoute(liveMarketRuntimeDebug.requestPath ?? liveMarketRuntimeDebug.requestUrl, 82)}`,
+              `value ${liveMarketRuntimeDebug.valueCode ?? "none"} status ${liveMarketRuntimeDebug.valueStatus ?? "none"} reason ${formatDebugRoute(liveMarketRuntimeDebug.valueReason, 42)}`,
+              `listings ${liveMarketRuntimeDebug.listingsCode ?? "none"} raw ${liveMarketRuntimeDebug.listingsRawCount ?? "?"} shown ${liveMarketRuntimeDebug.listingsBelievableCount ?? "?"} mode ${liveMarketRuntimeDebug.listingsMode ?? "none"}`,
+              `trace ${formatDebugRoute(liveMarketRuntimeDebug.marketCheckTrace, 82)}`,
+            ]}
+          />
           {!isSampleDetail ? (
             <View style={styles.marketSettingsCard}>
               <View style={styles.premiumSectionHeader}>

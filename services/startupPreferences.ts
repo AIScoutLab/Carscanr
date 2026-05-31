@@ -32,9 +32,18 @@ export const startupPreferences = {
     await AsyncStorage.setItem(PENDING_AUTH_RETURN_TARGET_KEY, target);
   },
 
-  async consumePendingAuthReturnTarget(fallback = "/(tabs)/scan") {
+  async getPendingAuthReturnTarget() {
     const value = await AsyncStorage.getItem(PENDING_AUTH_RETURN_TARGET_KEY);
+    return value && isSafeReturnTarget(value) ? value : null;
+  },
+
+  async clearPendingAuthReturnTarget() {
     await AsyncStorage.removeItem(PENDING_AUTH_RETURN_TARGET_KEY);
+  },
+
+  async consumePendingAuthReturnTarget(fallback = "/(tabs)/scan") {
+    const value = await this.getPendingAuthReturnTarget();
+    await this.clearPendingAuthReturnTarget();
     return value && isSafeReturnTarget(value) ? value : fallback;
   },
 };

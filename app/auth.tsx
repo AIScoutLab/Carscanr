@@ -5,6 +5,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors, Radius, Typography } from "@/constants/theme";
+import { RuntimeDebugStamp } from "@/components/RuntimeDebugStamp";
 import { useSubscription } from "@/hooks/useSubscription";
 import { mobileEnv } from "@/lib/env";
 import { authService } from "@/services/authService";
@@ -21,6 +22,7 @@ export default function AuthScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const [pendingReturnTo, setPendingReturnTo] = useState<string | null>(null);
   const { refreshStatus } = useSubscription();
 
   const hasApiBaseUrl = Boolean(mobileEnv.apiBaseUrl);
@@ -76,22 +78,57 @@ export default function AuthScreen() {
   }, [params.mode]);
 
   useEffect(() => {
-    if (returnTo === "/(tabs)/scan") {
-      return;
-    }
-    startupPreferences.setPendingAuthReturnTarget(returnTo).catch((error) => {
-      console.warn("[auth] failed to persist return target", {
-        returnTo,
+    let active = true;
+    const hydratePendingReturn = async () => {
+      if (explicitReturnTo) {
+        await startupPreferences.setPendingAuthReturnTarget(explicitReturnTo);
+      }
+      const persisted = await startupPreferences.getPendingAuthReturnTarget();
+      if (!active) return;
+      setPendingReturnTo(persisted);
+      console.log("[auth] pending return target hydrated", {
+        explicitReturnTo: explicitReturnTo ?? null,
+        persistedReturnTo: persisted ?? null,
+      });
+    };
+    hydratePendingReturn().catch((error) => {
+      console.warn("[auth] failed to hydrate return target", {
+        explicitReturnTo: explicitReturnTo ?? null,
         message: error instanceof Error ? error.message : String(error),
       });
     });
-  }, [returnTo]);
+    return () => {
+      active = false;
+    };
+  }, [explicitReturnTo]);
 
   useEffect(() => {
     if (!hasApiBaseUrl || !hasSupabaseUrl || !hasSupabaseAnonKey) {
       setAuthError("Configuration error - this build is missing API or Supabase settings.");
     }
   }, [hasApiBaseUrl, hasSupabaseAnonKey, hasSupabaseUrl]);
+
+  const resolveAuthSuccessTarget = async () => {
+    const persisted = await startupPreferences.getPendingAuthReturnTarget();
+    const target = persisted ?? explicitReturnTo ?? returnTo;
+    setPendingReturnTo(target);
+    return target;
+  };
+
+  const navigateAfterAuthSuccess = async () => {
+    const target = await resolveAuthSuccessTarget();
+    console.log("[auth] redirecting after submit", {
+      reason: "auth-submit-success",
+      pathname,
+      mode,
+      explicitReturnTo: explicitReturnTo ?? null,
+      pendingReturnTo: target,
+      hasReturnTo: target !== "/(tabs)/scan",
+    });
+    router.replace(target as Href);
+    await startupPreferences.clearPendingAuthReturnTarget();
+    setPendingReturnTo(null);
+  };
 
   const submit = async () => {
     console.log("[tap] auth-submit", { mode, hasEmail: Boolean(email.trim()), hasPassword: Boolean(password.trim()) });
@@ -111,14 +148,7 @@ export default function AuthScreen() {
         await authService.signIn(normalizedEmail, normalizedPassword);
         console.log("[auth] submit success", { mode });
         await refreshStatus();
-        const target = explicitReturnTo ? await startupPreferences.consumePendingAuthReturnTarget(returnTo) : returnTo;
-        console.log("[auth] redirecting after submit", {
-          reason: "auth-submit-success",
-          pathname,
-          mode,
-          hasReturnTo: target !== "/(tabs)/scan",
-        });
-        router.replace(target as Href);
+        await navigateAfterAuthSuccess();
         return;
       }
 
@@ -132,14 +162,7 @@ export default function AuthScreen() {
 
       console.log("[auth] submit success", { mode });
       await refreshStatus();
-      const target = explicitReturnTo ? await startupPreferences.consumePendingAuthReturnTarget(returnTo) : returnTo;
-      console.log("[auth] redirecting after submit", {
-        reason: "auth-submit-success",
-        pathname,
-        mode,
-        hasReturnTo: target !== "/(tabs)/scan",
-      });
-      router.replace(target as Href);
+      await navigateAfterAuthSuccess();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Please try again.";
       setAuthError(message);
@@ -242,6 +265,14 @@ export default function AuthScreen() {
                   : "Create an account to sync your Garage, history, and unlocks across devices."}
               </Text>
             </View>
+            <RuntimeDebugStamp
+              screen="auth-v4-return"
+              lines={[
+                `explicitReturnTo ${explicitReturnTo ? explicitReturnTo.slice(0, 72) : "none"}`,
+                `pendingReturnTo ${pendingReturnTo ? pendingReturnTo.slice(0, 72) : "none"}`,
+                `mode ${mode}`,
+              ]}
+            />
 
             <View style={styles.guestNoteCard}>
               <View style={styles.sectionEyebrowRow}>
