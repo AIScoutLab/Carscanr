@@ -35,7 +35,10 @@ test("listings refresh hydrates value state from cached listings", () => {
   assert.match(screenSource, /rendererCount: visibleListings\.length/);
   assert.match(screenSource, /displayListings\.slice\(0, INITIAL_VISIBLE_LIVE_LISTINGS\)/);
   assert.match(screenSource, /Show More Listings/);
+  assert.match(screenSource, /Listings UI v935c1bc/);
   assert.match(screenSource, /setShowAllListings\(\(current\) => !current\)/);
+  assert.match(screenSource, /staleListingsClearedBeforeRequest: vehicle\.listings\.length/);
+  assert.match(screenSource, /setVehicle\(\(current\) => \(current \? \{ \.\.\.current, listings: \[\] \} : current\)\)/);
   assert.match(screenSource, /Linking\.openURL\(listingUrl\)/);
   assert.match(screenSource, /getOpenableListingUrl/);
   assert.match(serviceSource, /listingUrl: listing\.listingUrl \?\? listing\.url \?\? listing\.vdpUrl \?\? listing\.redirectUrl \?\? listing\.detailUrl \?\? null/);

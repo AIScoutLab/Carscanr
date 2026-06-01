@@ -1225,8 +1225,13 @@ function PremiumListingsSection({
     <View style={styles.listingsPanel}>
       <View style={styles.tabIntroCompact}>
         <Text style={styles.listingsKicker}>Similar Listings</Text>
-        <View style={styles.premiumBadge}>
-          <Text style={styles.premiumBadgeText}>{locked ? "Locked" : displayListings.length > 0 ? `${displayListings.length} comps` : loading ? "Loading" : "None found"}</Text>
+        <View style={styles.listingsHeaderBadges}>
+          <View style={styles.listingsVersionBadge}>
+            <Text style={styles.listingsVersionText}>Listings UI v935c1bc</Text>
+          </View>
+          <View style={styles.premiumBadge}>
+            <Text style={styles.premiumBadgeText}>{locked ? "Locked" : displayListings.length > 0 ? `${displayListings.length} comps` : loading ? "Loading" : "None found"}</Text>
+          </View>
         </View>
       </View>
       <Text style={styles.listingsPanelBody}>
@@ -2687,7 +2692,17 @@ export default function VehicleDetailScreen() {
       action: "listingsRefresh",
       zip: normalizedZip,
       zipSource,
+      staleListingsClearedBeforeRequest: vehicle.listings.length,
     });
+    setListingsDebugMeta({
+      sourceLabel: "Refreshing live listings",
+      rawCount: 0,
+      believableCount: 0,
+      mode: "none",
+      fallbackReason: null,
+    });
+    setListingsMarketContext(null);
+    setVehicle((current) => (current ? { ...current, listings: [] } : current));
 
     vehicleService
       .getListings(valueLookupInput, normalizedZip, {
@@ -6562,6 +6577,25 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: "#8F96A3",
     lineHeight: 22,
+  },
+  listingsHeaderBadges: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flexShrink: 1,
+  },
+  listingsVersionBadge: {
+    borderRadius: Radius.pill,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    backgroundColor: "rgba(216, 163, 107, 0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.20)",
+  },
+  listingsVersionText: {
+    ...Typography.caption,
+    color: "#E7B97F",
+    fontWeight: "800",
   },
   lockedPreviewStack: {
     gap: 10,
