@@ -23,6 +23,15 @@ function createJsonResponse(payload: unknown) {
   } as Response;
 }
 
+function createErrorResponse(status: number, payload: unknown) {
+  return {
+    ok: false,
+    status,
+    json: async () => payload,
+    text: async () => JSON.stringify(payload),
+  } as Response;
+}
+
 beforeEach(() => {
   setRepositories(createTestRepositories().repositories);
   env.MARKETCHECK_ENABLED = true;
@@ -34,6 +43,63 @@ beforeEach(() => {
 });
 
 describe("MarketCheck provider request guards", () => {
+  test("MarketCheck inventory 401 is surfaced as an auth failure", async () => {
+    let requestedUrl = "";
+    global.fetch = (async (url: string | URL | Request) => {
+      requestedUrl = String(url);
+      return createErrorResponse(401, { message: "Invalid authentication credentials" });
+    }) as typeof fetch;
+
+    const provider = new MarketCheckVehicleDataProvider();
+
+    await assert.rejects(
+      provider.getListings({
+        vehicleId: "live:2021-chevrolet-tahoe-base",
+        vehicle: {
+          id: "live:2021-chevrolet-tahoe-base",
+          vin: null,
+          year: 2021,
+          make: "Chevrolet",
+          model: "Tahoe",
+          trim: "Base",
+          bodyStyle: "SUV",
+          vehicleType: "car" as const,
+          msrp: 0,
+          engine: "",
+          horsepower: null,
+          torque: "",
+          transmission: "",
+          drivetrain: "",
+          mpgOrRange: "",
+          colors: [],
+        },
+        zip: "60502",
+        radiusMiles: 100,
+        requestMeta: {
+          cacheKey: "listings-auth-failure",
+          sourceScreen: "listingsScreen",
+          action: "listingsRefresh",
+          allowLive: true,
+          forceLive: true,
+        },
+      }),
+      (error: unknown) =>
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        (error as { code?: unknown }).code === "MARKETCHECK_AUTH_FAILED" &&
+        "details" in error &&
+        (error as { details?: { status?: unknown; authMethod?: unknown; credentialSource?: unknown; keyLength?: unknown } }).details?.status === 401 &&
+        (error as { details?: { status?: unknown; authMethod?: unknown; credentialSource?: unknown; keyLength?: unknown } }).details?.authMethod === "query_param_api_key" &&
+        (error as { details?: { status?: unknown; authMethod?: unknown; credentialSource?: unknown; keyLength?: unknown } }).details?.credentialSource === "MARKETCHECK_API_KEY" &&
+        (error as { details?: { status?: unknown; authMethod?: unknown; credentialSource?: unknown; keyLength?: unknown } }).details?.keyLength ===
+          "test-marketcheck-key".length,
+    );
+
+    assert.match(requestedUrl, /\/v2\/search\/car\/active\?/);
+    assert.match(requestedUrl, /api_key=test-marketcheck-key/);
+  });
+
   test("identical value request twice only makes one external call", async () => {
     let fetchCalls = 0;
     global.fetch = (async () => {

@@ -154,6 +154,9 @@ function logStartupEnvDiagnostics(env: typeof parsedEnv) {
       enableUserImageAutoApproval: env.ENABLE_USER_IMAGE_AUTO_APPROVAL,
       marketCheckConfigured: Boolean(env.MARKETCHECK_API_KEY),
       marketCheckCredentialState: getMarketCheckCredentialState(env.MARKETCHECK_API_KEY),
+      marketCheckCredentialSource: "MARKETCHECK_API_KEY",
+      marketCheckAuthMethod: "query_param_api_key",
+      marketCheckApiKeyLength: env.MARKETCHECK_API_KEY.trim().length,
       revenueCatWebhookConfigured: Boolean(env.REVENUECAT_WEBHOOK_AUTH_TOKEN),
     }),
   );
@@ -338,6 +341,9 @@ export function getStartupDiagnostics() {
     enableUserImageAutoApproval: env.ENABLE_USER_IMAGE_AUTO_APPROVAL,
     marketCheckConfigured: Boolean(env.MARKETCHECK_API_KEY),
     marketCheckCredentialState: getMarketCheckCredentialState(env.MARKETCHECK_API_KEY),
+    marketCheckCredentialSource: "MARKETCHECK_API_KEY",
+    marketCheckAuthMethod: "query_param_api_key",
+    marketCheckApiKeyLength: env.MARKETCHECK_API_KEY.trim().length,
     revenueCatWebhookConfigured: Boolean(env.REVENUECAT_WEBHOOK_AUTH_TOKEN),
   };
 }

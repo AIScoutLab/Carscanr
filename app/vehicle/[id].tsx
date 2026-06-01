@@ -1170,8 +1170,11 @@ function PremiumListingsSection({
   const displayListings = believableListings.length > 0
     ? believableListings
     : listings.filter((listing) => safeListingText(listing.price, "") !== "");
+  const providerAuthFailed = debugMeta?.fallbackReason === "provider_auth_failed";
   const noListingsReason =
-    debugMeta?.fallbackReason === "provider_error"
+    providerAuthFailed
+      ? "MarketCheck rejected the backend credentials before listings could be searched."
+      : debugMeta?.fallbackReason === "provider_error"
       ? "Live listings could not be loaded. Check the market settings and try refreshing."
       : debugMeta?.rawCount === 0 || debugMeta?.mode === "none"
         ? "No nearby live listings found for this exact match."
@@ -1179,9 +1182,16 @@ function PremiumListingsSection({
           ? "Listings were returned, but none had enough price and seller detail to show confidently."
           : "No nearby live listings found for this exact match.";
   const noListingsContext =
-    debugMeta?.sourceLabel && debugMeta.sourceLabel !== "Live listings could not be loaded"
+    providerAuthFailed
+      ? "This is a provider authentication problem, not a nearby inventory shortage."
+      : debugMeta?.sourceLabel && debugMeta.sourceLabel !== "Live listings could not be loaded"
       ? debugMeta.sourceLabel
       : "If a market value is shown, it may be based on available comps, cached data, or modeled fallback rather than visible nearby listings.";
+  const noListingsTitle = providerAuthFailed
+    ? "Provider authentication failed"
+    : debugMeta?.fallbackReason === "provider_error"
+      ? "Live listings could not be loaded"
+      : "No nearby live listings found";
 
   return (
     <View style={styles.listingsPanel}>
@@ -1218,9 +1228,9 @@ function PremiumListingsSection({
         </View>
       ) : !loading ? (
         <View style={styles.listingsEmptyCard}>
-          <Ionicons name="search-outline" size={18} color="#E7B97F" />
+          <Ionicons name={providerAuthFailed ? "alert-circle-outline" : "search-outline"} size={18} color="#E7B97F" />
           <View style={styles.listingsEmptyCopy}>
-            <Text style={styles.listingsEmptyTitle}>No nearby live listings found</Text>
+            <Text style={styles.listingsEmptyTitle}>{noListingsTitle}</Text>
             <Text style={styles.listingsEmptyBody}>{noListingsContext}</Text>
           </View>
         </View>
@@ -2784,6 +2794,19 @@ export default function VehicleDetailScreen() {
             believableCount: 0,
             mode: "none",
             fallbackReason: "premium_access_required",
+          });
+          return;
+        }
+        if (errorCode === "MARKETCHECK_AUTH_FAILED" || errorCode === "MARKETCHECK_ACCESS_DENIED") {
+          setListingsDebugMeta({
+            sourceLabel:
+              errorCode === "MARKETCHECK_AUTH_FAILED"
+                ? "MarketCheck rejected backend credentials"
+                : "MarketCheck inventory access denied",
+            rawCount: 0,
+            believableCount: 0,
+            mode: "none",
+            fallbackReason: "provider_auth_failed",
           });
           return;
         }

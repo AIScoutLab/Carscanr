@@ -131,6 +131,50 @@ function summarizeInventoryResponse(operation: string, response: InventorySearch
   };
 }
 
+function getMarketCheckCredentialDiagnostics(apiKey: string) {
+  const trimmedKey = apiKey.trim();
+  return {
+    authMethod: "query_param_api_key",
+    credentialSource: "MARKETCHECK_API_KEY",
+    keyPresent: trimmedKey.length > 0,
+    keyLength: trimmedKey.length,
+  };
+}
+
+function summarizeMarketCheckErrorBody(bodyText: string) {
+  if (!bodyText.trim()) {
+    return { message: null, length: 0 };
+  }
+
+  try {
+    const parsed = JSON.parse(bodyText) as { message?: unknown; error?: unknown; code?: unknown };
+    return {
+      message: typeof parsed.message === "string" ? parsed.message.slice(0, 160) : null,
+      error: typeof parsed.error === "string" ? parsed.error.slice(0, 160) : null,
+      code: typeof parsed.code === "string" || typeof parsed.code === "number" ? String(parsed.code).slice(0, 80) : null,
+      length: bodyText.length,
+    };
+  } catch {
+    return {
+      message: bodyText.slice(0, 160),
+      length: bodyText.length,
+    };
+  }
+}
+
+function mapMarketCheckFailureCode(status: number) {
+  if (status === 401) {
+    return "MARKETCHECK_AUTH_FAILED";
+  }
+  if (status === 403) {
+    return "MARKETCHECK_ACCESS_DENIED";
+  }
+  if (status === 429) {
+    return "MARKETCHECK_RATE_LIMITED";
+  }
+  return "MARKETCHECK_REQUEST_FAILED";
+}
+
 function normalizeSourceScreen(value: string | null | undefined) {
   if (typeof value !== "string") {
     return "unknown";
@@ -1025,10 +1069,12 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
       const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
       const startedAt = Date.now();
       this.marketCheckCallCount += 1;
+      const credentialDiagnostics = getMarketCheckCredentialDiagnostics(this.apiKey);
       logger.info(
         {
           label: "MARKETCHECK_API_REQUEST_START",
           ...requestContext,
+          ...credentialDiagnostics,
           cacheHit: false,
           marketCheckCallCount: this.marketCheckCallCount,
           appEnv: env.APP_ENV,
@@ -1055,14 +1101,16 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
 
         if (!response.ok) {
           const bodyText = await response.text().catch(() => "");
+          const bodySummary = summarizeMarketCheckErrorBody(bodyText);
           throw new AppError(
             response.status,
-            response.status === 429 ? "MARKETCHECK_RATE_LIMITED" : "MARKETCHECK_REQUEST_FAILED",
+            mapMarketCheckFailureCode(response.status),
             `MarketCheck inventory search failed with status ${response.status}.`,
             {
               operation,
               status: response.status,
-              body: bodyText.slice(0, 500),
+              bodySummary,
+              ...credentialDiagnostics,
             },
           );
         }
@@ -1097,6 +1145,8 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
           requestSummary: requestContext,
           responseSummary: {
             message: error instanceof Error ? error.message : "Unknown MarketCheck failure",
+            code: typeof error === "object" && error && "code" in error ? (error as { code?: unknown }).code : undefined,
+            details: typeof error === "object" && error && "details" in error ? (error as { details?: unknown }).details : undefined,
           },
         });
         this.invalidateMonthlySummaryCache();
@@ -1106,6 +1156,7 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
             endpoint,
             provider: "marketcheck",
             operation,
+            ...credentialDiagnostics,
             durationMs: Date.now() - startedAt,
             reason: requestMeta?.reason ?? null,
             caller: requestMeta?.caller ?? null,
