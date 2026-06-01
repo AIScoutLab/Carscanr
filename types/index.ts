@@ -99,6 +99,7 @@ export type ListingResult = {
   distance: string;
   location: string;
   imageUrl: string;
+  listingUrl?: string | null;
   isSampleListing?: boolean;
   sourceLabel?: string;
 };

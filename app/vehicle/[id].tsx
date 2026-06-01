@@ -1,6 +1,6 @@
 import { Href, router, useLocalSearchParams } from "expo-router";
 import { type PropsWithChildren, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, Image, InputAccessoryView, Keyboard, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ImageSourcePropType, type StyleProp, type ViewStyle } from "react-native";
+import { ActivityIndicator, Alert, Animated, Image, InputAccessoryView, Keyboard, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ImageSourcePropType, type StyleProp, type ViewStyle } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -1170,9 +1170,10 @@ function PremiumListingsSection({
 }) {
   const [showAllListings, setShowAllListings] = useState(false);
   const believableListings = listings.filter(isBelievableListing);
-  const displayListings = believableListings.length > 0
-    ? believableListings
-    : listings.filter((listing) => safeListingText(listing.price, "") !== "");
+  const priceListings = listings.filter((listing) => safeListingText(listing.price, "") !== "");
+  const displayListings = priceListings.length > 0
+    ? [...priceListings].sort((a, b) => Number(isBelievableListing(b)) - Number(isBelievableListing(a)))
+    : listings;
   const canExpandListings = displayListings.length > INITIAL_VISIBLE_LIVE_LISTINGS;
   const visibleListings = showAllListings
     ? displayListings
@@ -1180,6 +1181,23 @@ function PremiumListingsSection({
   useEffect(() => {
     setShowAllListings(false);
   }, [displayListings.length]);
+  useEffect(() => {
+    if (!__DEV__) {
+      return;
+    }
+    console.log("[vehicle-detail] LISTINGS_RENDER_ARRAY_TRACE", {
+      totalListingsReceived: listings.length,
+      listingsWithUrl: listings.filter((listing) => Boolean(getOpenableListingUrl(listing))).length,
+      listingsWithoutUrl: listings.filter((listing) => !getOpenableListingUrl(listing)).length,
+      firstThreeUrls: listings.slice(0, 3).map((listing) => getOpenableListingUrl(listing)),
+      believableListingsUsedByOldRenderer: believableListings.length,
+      priceListingsAvailable: priceListings.length,
+      badgeCount: displayListings.length,
+      rendererCount: visibleListings.length,
+      showAllListings,
+      showMoreVisible: canExpandListings,
+    });
+  }, [believableListings.length, canExpandListings, displayListings.length, listings.length, priceListings.length, showAllListings, visibleListings.length]);
   const providerAuthFailed = debugMeta?.fallbackReason === "provider_auth_failed";
   const noListingsReason =
     providerAuthFailed
@@ -1274,28 +1292,80 @@ function PremiumListingRow({
   const distance = safeListingText(listing.distance, "");
   const location = safeListingText(listing.location, "Location unavailable");
   const source = safeListingText(listing.sourceLabel || listing.dealer, "Marketplace");
+  const listingUrl = getOpenableListingUrl(listing);
   const imageSource =
     typeof listing.imageUrl === "string" && listing.imageUrl.trim().length > 0
       ? { uri: listing.imageUrl.trim() }
       : fallbackImageSource ?? null;
 
+  const openListing = useCallback(async () => {
+    if (!listingUrl) {
+      console.warn("[vehicle-detail] LISTING_OPEN_BLOCKED", {
+        listingId: listing.id,
+        reason: "missing-openable-url",
+        hasListingUrl: Boolean(listing.listingUrl),
+      });
+      return;
+    }
+    try {
+      console.log("[vehicle-detail] LISTING_OPEN_REQUESTED", {
+        listingId: listing.id,
+        urlHost: getSafeUrlHost(listingUrl),
+        handler: "row-press",
+        hasListingUrl: Boolean(listing.listingUrl),
+      });
+      await Linking.openURL(listingUrl);
+    } catch (error) {
+      console.warn("[vehicle-detail] LISTING_OPEN_FAILED", {
+        listingId: listing.id,
+        urlHost: getSafeUrlHost(listingUrl),
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, [listing.id, listing.listingUrl, listingUrl]);
+
   return (
-    <View style={styles.premiumListingRow}>
+    <Pressable
+      style={[styles.premiumListingRow, !listingUrl && styles.premiumListingRowDisabled]}
+      onPress={openListing}
+      disabled={!listingUrl}
+      accessibilityRole="link"
+      accessibilityLabel={listingUrl ? `Open listing for ${listing.title}` : `Listing link unavailable for ${listing.title}`}
+    >
       {imageSource ? <Image source={imageSource} style={styles.premiumListingImage} resizeMode="cover" /> : <View style={styles.premiumListingImageFallback} />}
       <View style={styles.premiumListingCopy}>
         <Text style={styles.premiumListingSource} numberOfLines={1}>{source}</Text>
         <Text style={styles.premiumListingPrice}>{price}</Text>
         <Text style={styles.premiumListingMeta} numberOfLines={1}>{[mileage, distance, location].filter(Boolean).join(" • ")}</Text>
       </View>
-      <View style={styles.premiumListingAction}>
-        <Ionicons name="open-outline" size={18} color="#E7B97F" />
+      <View style={[styles.premiumListingAction, !listingUrl && styles.premiumListingActionDisabled]} pointerEvents="none">
+        <Ionicons name={listingUrl ? "open-outline" : "link-outline"} size={18} color={listingUrl ? "#E7B97F" : "rgba(231, 185, 127, 0.38)"} />
       </View>
-    </View>
+    </Pressable>
   );
 }
 
 function safeListingText(value: unknown, fallback: string) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+function getOpenableListingUrl(listing: VehicleRecord["listings"][number]) {
+  const candidates = [listing.listingUrl].filter((value): value is string => typeof value === "string");
+  for (const candidate of candidates) {
+    const trimmed = candidate.trim();
+    if (/^https?:\/\//i.test(trimmed)) {
+      return trimmed;
+    }
+  }
+  return null;
+}
+
+function getSafeUrlHost(url: string) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "invalid-url";
+  }
 }
 
 function normalizePhotoMatchPart(value: string | number | null | undefined) {
@@ -6547,6 +6617,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.09)",
   },
+  premiumListingRowDisabled: {
+    opacity: 0.72,
+  },
   premiumListingImage: {
     width: 78,
     height: 70,
@@ -6587,6 +6660,10 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(216, 163, 107, 0.13)",
     borderWidth: 1,
     borderColor: "rgba(216, 163, 107, 0.32)",
+  },
+  premiumListingActionDisabled: {
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+    borderColor: "rgba(255, 255, 255, 0.08)",
   },
   listingsEmptyCard: {
     flexDirection: "row",

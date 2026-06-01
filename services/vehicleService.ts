@@ -157,6 +157,11 @@ type BackendListing = {
   distanceMiles: number;
   location: string;
   imageUrl: string;
+  listingUrl?: string | null;
+  url?: string | null;
+  vdpUrl?: string | null;
+  redirectUrl?: string | null;
+  detailUrl?: string | null;
   listedAt: string;
 };
 
@@ -519,7 +524,7 @@ function mapValuation(valuation: BackendValuation): ValuationResult {
 }
 
 function mapListings(listings: BackendListing[]): ListingResult[] {
-  return listings.map((listing) => ({
+  const mapped = listings.map((listing) => ({
     id: listing.id,
     title: listing.title,
     price: formatCurrency(listing.price),
@@ -528,7 +533,23 @@ function mapListings(listings: BackendListing[]): ListingResult[] {
     distance: `${listing.distanceMiles} mi`,
     location: listing.location,
     imageUrl: listing.imageUrl,
+    listingUrl: listing.listingUrl ?? listing.url ?? listing.vdpUrl ?? listing.redirectUrl ?? listing.detailUrl ?? null,
   }));
+  console.log("[vehicle-service] LISTING_URL_MAPPING_TRACE", {
+    totalListingsReturned: listings.length,
+    listingsWithUrl: mapped.filter((listing) => typeof listing.listingUrl === "string" && /^https?:\/\//i.test(listing.listingUrl.trim())).length,
+    listingsWithoutUrl: mapped.filter((listing) => !(typeof listing.listingUrl === "string" && /^https?:\/\//i.test(listing.listingUrl.trim()))).length,
+    urlFieldPresence: listings.slice(0, 12).map((listing) => ({
+      id: listing.id,
+      listingUrl: Boolean(listing.listingUrl),
+      url: Boolean(listing.url),
+      vdpUrl: Boolean(listing.vdpUrl),
+      redirectUrl: Boolean(listing.redirectUrl),
+      detailUrl: Boolean(listing.detailUrl),
+    })),
+    firstThreeUrls: mapped.slice(0, 3).map((listing) => listing.listingUrl ?? null),
+  });
+  return mapped;
 }
 
 function createEmptyValuation(): ValuationResult {

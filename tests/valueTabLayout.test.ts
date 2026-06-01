@@ -25,13 +25,20 @@ test("value results keep the live market button grouped with the card", () => {
 
 test("listings refresh hydrates value state from cached listings", () => {
   const screenSource = fs.readFileSync(screenPath, "utf8");
+  const serviceSource = fs.readFileSync(vehicleServicePath, "utf8");
 
   assert.match(screenSource, /\.getListings\([\s\S]*fetchReason:\s*"user_requested_listings_refresh"/);
   assert.match(screenSource, /const MAX_VISIBLE_LIVE_LISTINGS = 12;/);
   assert.match(screenSource, /const INITIAL_VISIBLE_LIVE_LISTINGS = 6;/);
+  assert.match(screenSource, /const priceListings = listings\.filter/);
+  assert.match(screenSource, /badgeCount: displayListings\.length/);
+  assert.match(screenSource, /rendererCount: visibleListings\.length/);
   assert.match(screenSource, /displayListings\.slice\(0, INITIAL_VISIBLE_LIVE_LISTINGS\)/);
   assert.match(screenSource, /Show More Listings/);
   assert.match(screenSource, /setShowAllListings\(\(current\) => !current\)/);
+  assert.match(screenSource, /Linking\.openURL\(listingUrl\)/);
+  assert.match(screenSource, /getOpenableListingUrl/);
+  assert.match(serviceSource, /listingUrl: listing\.listingUrl \?\? listing\.url \?\? listing\.vdpUrl \?\? listing\.redirectUrl \?\? listing\.detailUrl \?\? null/);
   assert.match(screenSource, /buildListingsHydratedValuation/);
   assert.match(screenSource, /shouldReplaceValueFromListings/);
   assert.match(screenSource, /isModeledFallbackValuation/);
