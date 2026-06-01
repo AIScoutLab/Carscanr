@@ -1,4 +1,5 @@
 import { Href, router, useLocalSearchParams } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
 import { type PropsWithChildren, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, Image, InputAccessoryView, Keyboard, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ImageSourcePropType, type StyleProp, type ViewStyle } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
@@ -1316,16 +1317,25 @@ function PremiumListingRow({
       console.log("[vehicle-detail] LISTING_OPEN_REQUESTED", {
         listingId: listing.id,
         urlHost: getSafeUrlHost(listingUrl),
-        handler: "row-press",
+        handler: "in-app-browser",
         hasListingUrl: Boolean(listing.listingUrl),
       });
-      await Linking.openURL(listingUrl);
+      await WebBrowser.openBrowserAsync(listingUrl);
     } catch (error) {
-      console.warn("[vehicle-detail] LISTING_OPEN_FAILED", {
+      console.warn("[vehicle-detail] LISTING_IN_APP_BROWSER_FAILED", {
         listingId: listing.id,
         urlHost: getSafeUrlHost(listingUrl),
         message: error instanceof Error ? error.message : String(error),
       });
+      try {
+        await Linking.openURL(listingUrl);
+      } catch (fallbackError) {
+        console.warn("[vehicle-detail] LISTING_OPEN_FALLBACK_FAILED", {
+          listingId: listing.id,
+          urlHost: getSafeUrlHost(listingUrl),
+          message: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+        });
+      }
     }
   }, [listing.id, listing.listingUrl, listingUrl]);
 
