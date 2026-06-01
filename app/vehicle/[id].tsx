@@ -50,6 +50,7 @@ const defaultCondition = "Good";
 const conditionOptions = ["Fair", "Good", "Excellent"];
 const marketInputAccessoryViewID = "vehicle-market-input-accessory";
 const MAX_VISIBLE_LIVE_LISTINGS = 12;
+const INITIAL_VISIBLE_LIVE_LISTINGS = 6;
 
 function coerceDetailTab(value: unknown): DetailTab | null {
   if (value === "Specs") {
@@ -1167,10 +1168,18 @@ function PremiumListingsSection({
   fallbackImageSource?: ImageSourcePropType | null;
   debugMeta?: ListingsDebugMeta | null;
 }) {
+  const [showAllListings, setShowAllListings] = useState(false);
   const believableListings = listings.filter(isBelievableListing);
   const displayListings = believableListings.length > 0
     ? believableListings
     : listings.filter((listing) => safeListingText(listing.price, "") !== "");
+  const canExpandListings = displayListings.length > INITIAL_VISIBLE_LIVE_LISTINGS;
+  const visibleListings = showAllListings
+    ? displayListings
+    : displayListings.slice(0, INITIAL_VISIBLE_LIVE_LISTINGS);
+  useEffect(() => {
+    setShowAllListings(false);
+  }, [displayListings.length]);
   const providerAuthFailed = debugMeta?.fallbackReason === "provider_auth_failed";
   const noListingsReason =
     providerAuthFailed
@@ -1223,9 +1232,21 @@ function PremiumListingsSection({
         </View>
       ) : displayListings.length > 0 ? (
         <View style={styles.premiumListingStack}>
-          {displayListings.slice(0, MAX_VISIBLE_LIVE_LISTINGS).map((listing, index) => (
+          {visibleListings.map((listing, index) => (
             <PremiumListingRow key={`${listing.id || listing.title}-${index}`} listing={listing} fallbackImageSource={fallbackImageSource} />
           ))}
+          {canExpandListings ? (
+            <Pressable
+              style={styles.showMoreListingsButton}
+              onPress={() => setShowAllListings((current) => !current)}
+              accessibilityRole="button"
+            >
+              <Text style={styles.showMoreListingsLabel}>
+                {showAllListings ? "Show Less" : `Show More Listings (${displayListings.length - visibleListings.length} more)`}
+              </Text>
+              <Ionicons name={showAllListings ? "chevron-up" : "chevron-down"} size={17} color="#E7B97F" />
+            </Pressable>
+          ) : null}
         </View>
       ) : !loading ? (
         <View style={styles.listingsEmptyCard}>
@@ -6498,6 +6519,23 @@ const styles = StyleSheet.create({
   },
   premiumListingStack: {
     gap: 12,
+  },
+  showMoreListingsButton: {
+    minHeight: 48,
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "rgba(216, 163, 107, 0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.26)",
+  },
+  showMoreListingsLabel: {
+    ...Typography.bodyStrong,
+    color: "#E7B97F",
   },
   premiumListingRow: {
     flexDirection: "row",

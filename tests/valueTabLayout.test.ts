@@ -28,7 +28,10 @@ test("listings refresh hydrates value state from cached listings", () => {
 
   assert.match(screenSource, /\.getListings\([\s\S]*fetchReason:\s*"user_requested_listings_refresh"/);
   assert.match(screenSource, /const MAX_VISIBLE_LIVE_LISTINGS = 12;/);
-  assert.match(screenSource, /displayListings\.slice\(0, MAX_VISIBLE_LIVE_LISTINGS\)/);
+  assert.match(screenSource, /const INITIAL_VISIBLE_LIVE_LISTINGS = 6;/);
+  assert.match(screenSource, /displayListings\.slice\(0, INITIAL_VISIBLE_LIVE_LISTINGS\)/);
+  assert.match(screenSource, /Show More Listings/);
+  assert.match(screenSource, /setShowAllListings\(\(current\) => !current\)/);
   assert.match(screenSource, /buildListingsHydratedValuation/);
   assert.match(screenSource, /shouldReplaceValueFromListings/);
   assert.match(screenSource, /isModeledFallbackValuation/);
