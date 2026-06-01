@@ -98,6 +98,7 @@ describe("MarketCheck provider request guards", () => {
 
     assert.match(requestedUrl, /\/v2\/search\/car\/active\?/);
     assert.match(requestedUrl, /api_key=test-marketcheck-key/);
+    assert.match(requestedUrl, /rows=20/);
   });
 
   test("identical value request twice only makes one external call", async () => {

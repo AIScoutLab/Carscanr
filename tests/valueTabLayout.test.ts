@@ -27,6 +27,8 @@ test("listings refresh hydrates value state from cached listings", () => {
   const screenSource = fs.readFileSync(screenPath, "utf8");
 
   assert.match(screenSource, /\.getListings\([\s\S]*fetchReason:\s*"user_requested_listings_refresh"/);
+  assert.match(screenSource, /const MAX_VISIBLE_LIVE_LISTINGS = 12;/);
+  assert.match(screenSource, /displayListings\.slice\(0, MAX_VISIBLE_LIVE_LISTINGS\)/);
   assert.match(screenSource, /buildListingsHydratedValuation/);
   assert.match(screenSource, /shouldReplaceValueFromListings/);
   assert.match(screenSource, /isModeledFallbackValuation/);
@@ -41,6 +43,19 @@ test("listings refresh hydrates value state from cached listings", () => {
   assert.match(screenSource, /listingCacheKeysChecked: \["shared_vehicle_listings"\]/);
   assert.match(screenSource, /strategy: "shared_listing_comps"/);
   assert.match(screenSource, /providerCall: false/);
+});
+
+test("explicit live listings can collect broader comps without flooding the UI", () => {
+  const backendServiceSource = fs.readFileSync(path.join(process.cwd(), "backend/src/services/vehicleService.ts"), "utf8");
+  const marketCheckSource = fs.readFileSync(marketCheckProviderPath, "utf8");
+
+  assert.match(marketCheckSource, /const MARKETCHECK_LISTINGS_ROWS = 20;/);
+  assert.match(marketCheckSource, /const MARKETCHECK_VALUE_ROWS = 20;/);
+  assert.match(backendServiceSource, /const MIN_BELIEVABLE_LIVE_LISTINGS = 5;/);
+  assert.match(backendServiceSource, /const MAX_LIVE_LISTING_ATTEMPTS = 6;/);
+  assert.match(backendServiceSource, /const MAX_DISPLAY_LIVE_LISTINGS = 12;/);
+  assert.match(backendServiceSource, /"adjacent-year-previous"[\s\S]*"adjacent-year-next"[\s\S]*"wider-radius-250"/);
+  assert.match(backendServiceSource, /acceptedLiveListings\.length >= MIN_BELIEVABLE_LIVE_LISTINGS/);
 });
 
 test("believable listings replace stale modeled fallback without tab navigation", () => {

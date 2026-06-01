@@ -1918,7 +1918,7 @@ describe("bootstrap cost control", () => {
       action: "listingsRefresh",
     });
 
-    assert.equal(attempts.length <= 4, true);
+    assert.equal(attempts.length <= 6, true);
     assert.equal(attempts.every((attempt) => attempt.model === "4Runner"), true);
     assert.equal(attempts.some((attempt) => attempt.model === "4"), false);
     assert.equal(attempts.some((attempt) => attempt.year === 2011 && attempt.radiusMiles === 100), true);
@@ -1978,6 +1978,18 @@ describe("bootstrap cost control", () => {
         year: 2011,
         radiusMiles: 100,
         trim: "Base",
+      },
+      {
+        model: "4Runner",
+        year: 2010,
+        radiusMiles: 100,
+        trim: "",
+      },
+      {
+        model: "4Runner",
+        year: 2012,
+        radiusMiles: 100,
+        trim: "",
       },
       {
         model: "4Runner",
@@ -2049,7 +2061,7 @@ describe("bootstrap cost control", () => {
       action: "listingsRefresh",
     });
 
-    assert.equal(providerCalls, 3);
+    assert.equal(providerCalls, 5);
     assert.equal(result.data.length, 0);
   });
 

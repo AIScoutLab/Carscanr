@@ -49,6 +49,7 @@ const defaultMileage = "18400";
 const defaultCondition = "Good";
 const conditionOptions = ["Fair", "Good", "Excellent"];
 const marketInputAccessoryViewID = "vehicle-market-input-accessory";
+const MAX_VISIBLE_LIVE_LISTINGS = 12;
 
 function coerceDetailTab(value: unknown): DetailTab | null {
   if (value === "Specs") {
@@ -1222,7 +1223,7 @@ function PremiumListingsSection({
         </View>
       ) : displayListings.length > 0 ? (
         <View style={styles.premiumListingStack}>
-          {displayListings.slice(0, 3).map((listing, index) => (
+          {displayListings.slice(0, MAX_VISIBLE_LIVE_LISTINGS).map((listing, index) => (
             <PremiumListingRow key={`${listing.id || listing.title}-${index}`} listing={listing} fallbackImageSource={fallbackImageSource} />
           ))}
         </View>
@@ -3812,7 +3813,7 @@ export default function VehicleDetailScreen() {
             current
               ? {
                   ...current,
-                  listings: resolvedListingsResult.listings.slice(0, 2),
+                  listings: resolvedListingsResult.listings.slice(0, MAX_VISIBLE_LIVE_LISTINGS),
                 }
               : current,
           );
@@ -3824,7 +3825,7 @@ export default function VehicleDetailScreen() {
             : estimatedVehicle.valuation;
         const finalListings =
           strongListingsFallback && resolvedListingsResult
-            ? resolvedListingsResult.listings.slice(0, 2)
+            ? resolvedListingsResult.listings.slice(0, MAX_VISIBLE_LIVE_LISTINGS)
             : [];
         if (shouldDebugCrv) {
           console.log("[vehicle-detail] DEBUG_CRV_TRACE", {

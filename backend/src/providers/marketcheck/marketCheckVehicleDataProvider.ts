@@ -80,6 +80,8 @@ type SearchDescriptor = {
 
 const DEFAULT_TIMEOUT_MS = 12000;
 const MONTHLY_SUMMARY_CACHE_MS = 60 * 1000;
+const MARKETCHECK_VALUE_ROWS = 20;
+const MARKETCHECK_LISTINGS_ROWS = 20;
 const MARKETCHECK_BLOCKED_SOURCE_SCREENS = new Set([
   "scan",
   "scanResult",
@@ -1311,7 +1313,7 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
       trim: descriptor.trim,
       zip: input.zip,
       radius: input.requestMeta?.radiusMiles ?? env.MARKETCHECK_VALUE_RADIUS_MILES,
-      rows: 16,
+      rows: MARKETCHECK_VALUE_ROWS,
       stats: "price",
       car_type: "used",
       miles_range: `${Math.max(0, input.mileage - 15000)}-${input.mileage + 15000}`,
@@ -1420,7 +1422,7 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
       trim: descriptor.trim,
       zip: input.zip,
       radius: input.radiusMiles,
-      rows: 8,
+      rows: MARKETCHECK_LISTINGS_ROWS,
       start: 0,
       car_type: "used",
     }, {
