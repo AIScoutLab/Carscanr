@@ -85,7 +85,7 @@ export function PaywallCard({
       <Text style={styles.subprice}>
         {availableProducts.length > 0
           ? "Live App Store options returned by RevenueCat."
-          : status?.purchaseAvailabilityState === "ready"
+          : status?.purchaseAvailabilityState === "offerings_empty"
             ? "No RevenueCat packages were returned for this build."
             : "Purchases are unavailable until RevenueCat is configured for this build."}
       </Text>

@@ -52,6 +52,8 @@ export default function PaywallScreen() {
   const purchaseNotice =
     purchaseAvailabilityState === "preview_only"
       ? "Purchases can be previewed here, but they require a development or production build to complete."
+      : purchaseAvailabilityState === "offerings_empty"
+        ? "RevenueCat is configured, but the current offering did not return purchasable packages. Free unlocks and free scans still work normally."
       : purchaseAvailabilityState === "not_configured"
         ? "Purchases are not configured for this build yet. Free unlocks and free scans still work normally."
         : null;
@@ -167,7 +169,7 @@ export default function PaywallScreen() {
               })}
             </View>
           ) : null}
-          {purchaseAvailabilityState === "ready" && availableProducts.length === 0 ? (
+          {purchaseAvailabilityState === "offerings_empty" ? (
             <Text style={styles.warning}>RevenueCat returned an offering with no packages. Check monthly, yearly, and unlock pack configuration.</Text>
           ) : null}
           {purchaseAvailabilityState === "ready"

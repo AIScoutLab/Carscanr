@@ -126,7 +126,10 @@ export default function ProfileScreen() {
   const displayFeedbackMessage = sanitizeProfileMessage(feedbackMessage);
   const displayErrorMessage = sanitizeProfileMessage(errorMessage);
   const appVersion = mobileBuildInfo.version || "Unavailable";
-  const buildNumber = mobileBuildInfo.iosBuildNumber || "Unavailable";
+  const buildNumber = mobileBuildInfo.nativeBuildNumber || mobileBuildInfo.iosBuildNumber || "Unavailable";
+  const runtimeVersion = mobileBuildInfo.runtimeVersion || "Unavailable";
+  const updateId = mobileBuildInfo.updateId || "Embedded";
+  const channel = mobileBuildInfo.channel || "Unavailable";
 
   const handleRestorePurchases = useCallback(() => {
     if (isRestoring) return;
@@ -213,10 +216,17 @@ export default function ProfileScreen() {
                 <PremiumFeature key={feature.label} icon={feature.icon} label={feature.label} />
               ))}
             </View>
-            <View style={styles.unlockPill}>
-              <Ionicons name={accessState.hasProEntitlement ? "checkmark-circle-outline" : "flash-outline"} size={16} color={profileColors.goldLight} />
-              <Text style={styles.unlockText}>{unlockUsageLabel}</Text>
-            </View>
+            {accessState.showFreeUnlockUsage ? (
+              <View style={styles.unlockPill}>
+                <Ionicons name="flash-outline" size={16} color={profileColors.goldLight} />
+                <Text style={styles.unlockText}>{unlockUsageLabel}</Text>
+              </View>
+            ) : accessState.hasProEntitlement ? (
+              <View style={styles.unlockPill}>
+                <Ionicons name="checkmark-circle-outline" size={16} color={profileColors.goldLight} />
+                <Text style={styles.unlockText}>{unlockUsageLabel}</Text>
+              </View>
+            ) : null}
             {accessState.showPrimaryUpgradeCta ? (
               <TouchableOpacity activeOpacity={0.88} accessibilityRole="button" onPress={() => router.push("/paywall")}>
                 <LinearGradient colors={["rgba(214,158,93,0.28)", "rgba(214,158,93,0.16)"]} style={styles.upgradeButton}>
@@ -277,6 +287,12 @@ export default function ProfileScreen() {
             <InfoRow icon="information-circle-outline" label="Version" value={appVersion} />
             <View style={styles.separator} />
             <InfoRow icon="construct-outline" label="Build Number" value={buildNumber} />
+            <View style={styles.separator} />
+            <InfoRow icon="cube-outline" label="Runtime Version" value={runtimeVersion} />
+            <View style={styles.separator} />
+            <InfoRow icon="cloud-download-outline" label="Update ID" value={updateId} />
+            <View style={styles.separator} />
+            <InfoRow icon="git-branch-outline" label="Channel" value={channel} />
           </View>
         </ScrollView>
       </LinearGradient>
@@ -329,7 +345,7 @@ function InfoRow({ icon, label, value }: { icon: IconName; label: string; value:
         <Ionicons name={icon} size={18} color={profileColors.goldLight} />
         <Text style={styles.settingsRowText}>{label}</Text>
       </View>
-      <Text style={styles.infoValue} numberOfLines={1}>
+      <Text style={styles.infoValue} numberOfLines={2}>
         {value}
       </Text>
     </View>
@@ -790,7 +806,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 19,
   },
   infoValue: {
-    maxWidth: 130,
+    maxWidth: 190,
     fontFamily,
     fontSize: 13,
     lineHeight: 18,

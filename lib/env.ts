@@ -135,9 +135,14 @@ function normalizeEnvName(value: string | undefined): MobileAppEnv {
   return "local";
 }
 
-function normalizeString(value: string | undefined) {
+function normalizeString(value: string | null | undefined) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : "";
+}
+
+function getExpoConfigRuntimeVersion() {
+  const runtimeVersion = Constants.expoConfig?.runtimeVersion;
+  return typeof runtimeVersion === "string" ? runtimeVersion : "";
 }
 
 function isPlaceholderValue(value: string) {
@@ -164,6 +169,13 @@ function isValidHttpUrl(value: string) {
 
 const expoExtraPublicEnv = getExpoExtraPublicEnv();
 const expoBuildInfo = getExpoBuildInfoCandidate();
+const nativeAppVersion = normalizeString(Constants.nativeApplicationVersion);
+const nativeBuildNumber = normalizeString(Constants.nativeBuildVersion);
+const extraBuildNumber =
+  typeof expoBuildInfo?.iosBuildNumber === "string" && expoBuildInfo.iosBuildNumber.trim().length > 0
+    ? expoBuildInfo.iosBuildNumber.trim()
+    : "";
+const runtimeVersion = normalizeString(Updates.runtimeVersion) || getExpoConfigRuntimeVersion();
 
 export const mobileAppEnv = normalizeEnvName(getExpoAppEnvCandidate());
 
@@ -181,11 +193,13 @@ export const mobileEnv = {
 export const mobileBuildInfo = {
   gitCommit: normalizeString(expoBuildInfo?.gitCommit),
   buildTimestamp: normalizeString(expoBuildInfo?.buildTimestamp),
-  version: normalizeString(expoBuildInfo?.version || Constants.expoConfig?.version),
-  iosBuildNumber:
-    typeof expoBuildInfo?.iosBuildNumber === "string" && expoBuildInfo.iosBuildNumber.trim().length > 0
-      ? expoBuildInfo.iosBuildNumber.trim()
-      : "",
+  version: nativeAppVersion || normalizeString(expoBuildInfo?.version || Constants.expoConfig?.version),
+  nativeAppVersion,
+  nativeBuildNumber,
+  iosBuildNumber: nativeBuildNumber || extraBuildNumber,
+  runtimeVersion,
+  updateId: normalizeString(Updates.updateId),
+  channel: normalizeString(Updates.channel),
 };
 
 export const requiredExpoPublicEnvKeys = [

@@ -155,12 +155,27 @@ test("profile does not treat an inactive trusted pro record as active entitlemen
   assert.equal(resolved.showFreeUnlockUsage, true);
 });
 
-test("profile subscription card renders upgrade and paywall surfaces from access selector only", () => {
+test("profile distinguishes configured RevenueCat offerings with no packages from missing config", () => {
+  const resolved = resolveProfileAccessState(
+    status({
+      purchaseAvailabilityState: "offerings_empty",
+      purchaseAvailable: false,
+      availableProducts: [],
+    }),
+  );
+
+  assert.equal(resolved.mode, "free");
+  assert.equal(resolved.renewalLabel, "RevenueCat is configured, but no purchasable packages were returned.");
+  assert.equal(resolved.purchaseAvailabilityState, "offerings_empty");
+  assert.equal(resolved.showPaywallCard, true);
+});
+
+test("profile subscription card renders upgrade surfaces from access selector only", () => {
   const profileSource = fs.readFileSync(profileSourcePath, "utf8");
 
   assert.match(profileSource, /accessState\.showFreeUnlockUsage\s*\?\s*\(/);
-  assert.match(profileSource, /accessState\.showPaywallCard\s*\?\s*<PaywallCard/);
-  assert.match(profileSource, /accessState\.showPrimaryUpgradeCta\s*\?\s*<PrimaryButton label="Upgrade to Pro"/);
+  assert.match(profileSource, /accessState\.showPrimaryUpgradeCta\s*\?\s*\(/);
+  assert.match(profileSource, /<Text style={styles\.upgradeButtonText}>Upgrade to Pro<\/Text>/);
   assert.doesNotMatch(profileSource, /accessState\.showUpgradeOptions\s*\?\s*<PaywallCard/);
   assert.doesNotMatch(profileSource, /View Pro Status/);
 });

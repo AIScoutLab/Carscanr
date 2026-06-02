@@ -5,9 +5,7 @@ import { mobileEnv } from "@/lib/env";
 import { getMissingPurchaseOptionKinds, getPurchaseOptionKind } from "@/lib/purchaseOptions";
 import { authService } from "@/services/authService";
 import { guestSessionService } from "@/services/guestSessionService";
-import { PurchaseOptionKind, SubscriptionProduct } from "@/types";
-
-type PurchaseAvailabilityState = "ready" | "preview_only" | "not_configured";
+import { PurchaseAvailabilityState, PurchaseOptionKind, SubscriptionProduct } from "@/types";
 
 type PurchaseSnapshot = {
   purchaseAvailable: boolean;
@@ -230,6 +228,7 @@ export const purchaseService = {
       appUserId: configuration.appUserId,
       currentOffering: offerings.current?.identifier ?? null,
       packageCount: availableProducts.length,
+      purchaseAvailabilityState: availableProducts.length > 0 ? "ready" : "offerings_empty",
       packages: availableProducts.map((product) => ({
         productId: product.productId,
         packageIdentifier: product.packageIdentifier,
@@ -244,12 +243,13 @@ export const purchaseService = {
       configured: true,
       appUserId: configuration.appUserId,
       purchaseAvailable: availableProducts.length > 0,
+      purchaseAvailabilityState: availableProducts.length > 0 ? "ready" : "offerings_empty",
       activeEntitlement: activeEntitlement?.identifier ?? null,
       activeProductId: activeEntitlement?.productIdentifier ?? null,
     });
     return {
       purchaseAvailable: availableProducts.length > 0,
-      purchaseAvailabilityState: availableProducts.length > 0 ? "ready" : "not_configured",
+      purchaseAvailabilityState: availableProducts.length > 0 ? "ready" : "offerings_empty",
       availableProducts,
       activeEntitlement,
       activeProductId: activeEntitlement?.productIdentifier ?? null,
@@ -297,7 +297,7 @@ export const purchaseService = {
         outcome: "not_configured" as const,
         message: selectedProductKey
           ? "The selected RevenueCat package is not available in this build."
-          : "No purchasable RevenueCat package is configured for this build yet.",
+          : "RevenueCat is configured, but no purchasable package was returned by the current offering.",
       };
     }
 

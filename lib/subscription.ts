@@ -97,6 +97,8 @@ export function resolveProfileAccessState(status?: SubscriptionStatus | null, is
   const qaConfigurationMessage =
     purchaseAvailabilityState === "preview_only"
       ? "Purchases and restore require a development or production build."
+      : purchaseAvailabilityState === "offerings_empty"
+        ? "RevenueCat is configured, but no purchasable packages were returned."
       : purchaseAvailabilityState === "not_configured"
         ? "RevenueCat purchases are not configured for this build."
         : null;
