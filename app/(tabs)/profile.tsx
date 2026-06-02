@@ -2,13 +2,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
+import * as Updates from "expo-updates";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Image, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { CANONICAL_BRAND_MARK_SOURCE } from "@/constants/branding";
 import { Typography } from "@/constants/theme";
 import { useSubscription } from "@/hooks/useSubscription";
-import { mobileBuildInfo } from "@/lib/env";
+import { mobileBuildInfo, mobileEnv } from "@/lib/env";
 import { resolveProfileAccessState } from "@/lib/subscription";
 import { supabase } from "@/lib/supabase";
 import { authService } from "@/services/authService";
@@ -44,6 +45,108 @@ function openSupportEmail(subject?: string) {
   void Linking.openURL(`mailto:support@carscanr.com${query}`);
 }
 
+function formatDiagnosticValue(value: unknown) {
+  if (value === null || typeof value === "undefined" || value === "") {
+    return "Unavailable";
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "Unavailable" : value.toISOString();
+  }
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+  return String(value);
+}
+
+function formatLaunchDuration(value: number | null) {
+  return typeof value === "number" ? `${value} ms` : "Unavailable";
+}
+
+function getUpdateManifestSummary(manifest: unknown) {
+  const candidate = manifest as
+    | {
+        id?: string;
+        createdAt?: string;
+        runtimeVersion?: string;
+        extra?: {
+          buildInfo?: { gitCommit?: string };
+          expoClient?: { extra?: { buildInfo?: { gitCommit?: string } } };
+        };
+      }
+    | undefined;
+
+  return {
+    id: candidate?.id ?? null,
+    createdAt: candidate?.createdAt ?? null,
+    runtimeVersion: candidate?.runtimeVersion ?? null,
+    gitCommit:
+      candidate?.extra?.buildInfo?.gitCommit ??
+      candidate?.extra?.expoClient?.extra?.buildInfo?.gitCommit ??
+      null,
+  };
+}
+
+function getCurrentUpdateDiagnostics() {
+  return {
+    isEnabled: Updates.isEnabled,
+    channel: mobileBuildInfo.channel || null,
+    runtimeVersion: mobileBuildInfo.runtimeVersion || null,
+    rawUpdateId: mobileBuildInfo.updateId || null,
+    activeOtaUpdateId: mobileBuildInfo.activeOtaUpdateId || null,
+    activeOtaGitCommit: mobileBuildInfo.activeOtaGitCommit || null,
+    activeOtaCreatedAt: mobileBuildInfo.activeOtaCreatedAt || null,
+    embeddedGitCommit: mobileBuildInfo.embeddedGitCommit || null,
+    isEmbeddedLaunch: mobileBuildInfo.isEmbeddedLaunch,
+    isEmergencyLaunch: mobileBuildInfo.isEmergencyLaunch,
+    emergencyLaunchReason: mobileBuildInfo.emergencyLaunchReason || null,
+    launchDuration: Updates.launchDuration ?? null,
+    checkAutomatically: Updates.checkAutomatically ?? null,
+  };
+}
+
+function getUpdateCheckSummary(result: Awaited<ReturnType<typeof Updates.checkForUpdateAsync>>) {
+  return {
+    isAvailable: result.isAvailable,
+    isRollBackToEmbedded: result.isRollBackToEmbedded,
+    reason: "reason" in result ? result.reason ?? null : null,
+    manifest: getUpdateManifestSummary("manifest" in result ? result.manifest : undefined),
+  };
+}
+
+function getUpdateFetchSummary(result: Awaited<ReturnType<typeof Updates.fetchUpdateAsync>>) {
+  return {
+    isNew: result.isNew,
+    isRollBackToEmbedded: result.isRollBackToEmbedded,
+    manifest: getUpdateManifestSummary("manifest" in result ? result.manifest : undefined),
+  };
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function logRecentUpdateEntries(context: string) {
+  try {
+    const entries = await Updates.readLogEntriesAsync(60 * 60 * 1000);
+    console.log("OTA_DIAGNOSTICS_RECENT_LOGS", {
+      context,
+      entries: entries.slice(-8).map((entry) => ({
+        timestamp: entry.timestamp,
+        code: entry.code,
+        level: entry.level,
+        message: entry.message,
+        updateId: entry.updateId ?? null,
+        assetId: entry.assetId ?? null,
+      })),
+    });
+  } catch (error) {
+    console.log("OTA_DIAGNOSTICS_RECENT_LOGS_ERROR", {
+      context,
+      message: getErrorMessage(error),
+    });
+  }
+}
+
 export default function ProfileScreen() {
   const {
     status,
@@ -57,6 +160,8 @@ export default function ProfileScreen() {
     cancelPro,
   } = useSubscription();
   const [user, setUser] = useState<AuthUser | null>(authService.getCurrentUserSync());
+  const [isCheckingForUpdate, setIsCheckingForUpdate] = useState(false);
+  const [updateDiagnosticMessage, setUpdateDiagnosticMessage] = useState<string | null>(null);
   const accessState = resolveProfileAccessState(status, isLoading);
 
   const refreshAuthSnapshot = async () => {
@@ -125,11 +230,29 @@ export default function ProfileScreen() {
   const unlockUsageLabel = accessState.hasProEntitlement ? "Pro Access active" : `${remainingUnlocks} free unlocks remaining`;
   const displayFeedbackMessage = sanitizeProfileMessage(feedbackMessage);
   const displayErrorMessage = sanitizeProfileMessage(errorMessage);
-  const appVersion = mobileBuildInfo.version || "Unavailable";
-  const buildNumber = mobileBuildInfo.nativeBuildNumber || mobileBuildInfo.iosBuildNumber || "Unavailable";
+  const nativeAppVersion = mobileBuildInfo.nativeAppVersion || mobileBuildInfo.version || "Unavailable";
+  const nativeBuildNumber = mobileBuildInfo.nativeBuildNumber || mobileBuildInfo.iosBuildNumber || "Unavailable";
+  const embeddedCommit = mobileBuildInfo.embeddedGitCommit || "Unavailable";
+  const activeOtaUpdateId = mobileBuildInfo.activeOtaUpdateId || (mobileBuildInfo.isEmbeddedLaunch ? "Embedded launch" : "Unavailable");
+  const activeOtaCommit = mobileBuildInfo.activeOtaGitCommit || (mobileBuildInfo.isEmbeddedLaunch ? "Embedded launch" : "Unavailable");
   const runtimeVersion = mobileBuildInfo.runtimeVersion || "Unavailable";
-  const updateId = mobileBuildInfo.updateId || "Embedded";
   const channel = mobileBuildInfo.channel || "Unavailable";
+  const isEmbeddedLaunch = formatDiagnosticValue(mobileBuildInfo.isEmbeddedLaunch);
+  const isEmergencyLaunch = formatDiagnosticValue(mobileBuildInfo.isEmergencyLaunch);
+  const showOtaDiagnostics = __DEV__ || mobileEnv.showQaDebug === "1" || mobileEnv.showQaDebug.toLowerCase() === "true";
+  const otaDiagnosticsRows: Array<{ icon: IconName; label: string; value: string }> = [
+    { icon: "power-outline", label: "Updates Enabled", value: formatDiagnosticValue(Updates.isEnabled) },
+    { icon: "cloud-outline", label: "Raw Current Update ID", value: formatDiagnosticValue(mobileBuildInfo.updateId) },
+    { icon: "calendar-outline", label: "Active OTA Created At", value: formatDiagnosticValue(mobileBuildInfo.activeOtaCreatedAt) },
+    { icon: "timer-outline", label: "Launch Duration", value: formatLaunchDuration(Updates.launchDuration) },
+    { icon: "refresh-outline", label: "Check Automatically", value: formatDiagnosticValue(Updates.checkAutomatically) },
+    { icon: "calendar-number-outline", label: "Embedded Timestamp", value: formatDiagnosticValue(mobileBuildInfo.embeddedBuildInfo.buildTimestamp) },
+    { icon: "phone-portrait-outline", label: "Embedded Version", value: formatDiagnosticValue(mobileBuildInfo.embeddedBuildInfo.version) },
+    { icon: "construct-outline", label: "Embedded iOS Build", value: formatDiagnosticValue(mobileBuildInfo.embeddedBuildInfo.iosBuildNumber) },
+    ...(mobileBuildInfo.emergencyLaunchReason
+      ? [{ icon: "alert-circle-outline" as IconName, label: "Emergency Reason", value: mobileBuildInfo.emergencyLaunchReason }]
+      : []),
+  ];
 
   const handleRestorePurchases = useCallback(() => {
     if (isRestoring) return;
@@ -161,6 +284,76 @@ export default function ProfileScreen() {
       })
       .catch(() => undefined);
   }, []);
+
+  const handleManualUpdateCheck = useCallback(async () => {
+    if (isCheckingForUpdate) return;
+    setIsCheckingForUpdate(true);
+    setUpdateDiagnosticMessage("Checking for an OTA update...");
+    console.log("OTA_DIAGNOSTICS_MANUAL_CHECK_STARTED", getCurrentUpdateDiagnostics());
+
+    try {
+      if (!Updates.isEnabled) {
+        console.log("OTA_DIAGNOSTICS_MANUAL_CHECK_SKIPPED", {
+          reason: "updates_disabled",
+          diagnostics: getCurrentUpdateDiagnostics(),
+        });
+        setUpdateDiagnosticMessage("Expo Updates is disabled for this launch.");
+        await logRecentUpdateEntries("updates-disabled");
+        return;
+      }
+
+      console.log("OTA_DIAGNOSTICS_CHECK_FOR_UPDATE_STARTED", getCurrentUpdateDiagnostics());
+      const checkResult = await Updates.checkForUpdateAsync();
+      const checkSummary = getUpdateCheckSummary(checkResult);
+      console.log("OTA_DIAGNOSTICS_CHECK_FOR_UPDATE_RESULT", checkSummary);
+
+      if (!checkResult.isAvailable && !checkResult.isRollBackToEmbedded) {
+        setUpdateDiagnosticMessage(`No OTA update available (${checkSummary.reason ?? "no reason returned"}).`);
+        await logRecentUpdateEntries("no-update-available");
+        return;
+      }
+
+      setUpdateDiagnosticMessage("Update available. Downloading...");
+      console.log("OTA_DIAGNOSTICS_FETCH_UPDATE_STARTED", checkSummary);
+      const fetchResult = await Updates.fetchUpdateAsync();
+      const fetchSummary = getUpdateFetchSummary(fetchResult);
+      console.log("OTA_DIAGNOSTICS_FETCH_UPDATE_RESULT", fetchSummary);
+
+      if (fetchResult.isNew || fetchResult.isRollBackToEmbedded) {
+        setUpdateDiagnosticMessage("Update downloaded. Reload to apply it.");
+        await logRecentUpdateEntries("update-downloaded");
+        Alert.alert("Update Downloaded", "Reload CarScanr now to apply the downloaded update?", [
+          { text: "Later", style: "cancel" },
+          {
+            text: "Reload",
+            onPress: () => {
+              console.log("OTA_DIAGNOSTICS_RELOAD_REQUESTED", getCurrentUpdateDiagnostics());
+              Updates.reloadAsync().catch((error) => {
+                console.log("OTA_DIAGNOSTICS_RELOAD_ERROR", {
+                  message: getErrorMessage(error),
+                  diagnostics: getCurrentUpdateDiagnostics(),
+                });
+                setUpdateDiagnosticMessage(`Reload failed: ${getErrorMessage(error)}`);
+              });
+            },
+          },
+        ]);
+        return;
+      }
+
+      setUpdateDiagnosticMessage("Update check completed, but no new update was fetched.");
+      await logRecentUpdateEntries("fetch-completed-no-new-update");
+    } catch (error) {
+      console.log("OTA_DIAGNOSTICS_MANUAL_CHECK_ERROR", {
+        message: getErrorMessage(error),
+        diagnostics: getCurrentUpdateDiagnostics(),
+      });
+      setUpdateDiagnosticMessage(`Update check failed: ${getErrorMessage(error)}`);
+      await logRecentUpdateEntries("manual-check-error");
+    } finally {
+      setIsCheckingForUpdate(false);
+    }
+  }, [isCheckingForUpdate]);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "right", "bottom", "left"]}>
@@ -284,16 +477,50 @@ export default function ProfileScreen() {
 
           <SectionLabel label="About" />
           <View style={styles.settingsCard}>
-            <InfoRow icon="information-circle-outline" label="Version" value={appVersion} />
+            <InfoRow icon="phone-portrait-outline" label="Native App Version" value={nativeAppVersion} />
             <View style={styles.separator} />
-            <InfoRow icon="construct-outline" label="Build Number" value={buildNumber} />
+            <InfoRow icon="construct-outline" label="Native Build" value={nativeBuildNumber} />
             <View style={styles.separator} />
-            <InfoRow icon="cube-outline" label="Runtime Version" value={runtimeVersion} />
+            <InfoRow icon="code-slash-outline" label="Embedded Commit" value={embeddedCommit} />
             <View style={styles.separator} />
-            <InfoRow icon="cloud-download-outline" label="Update ID" value={updateId} />
+            <InfoRow icon="cloud-download-outline" label="Active OTA Update ID" value={activeOtaUpdateId} />
+            <View style={styles.separator} />
+            <InfoRow icon="git-commit-outline" label="Active OTA Commit" value={activeOtaCommit} />
+            <View style={styles.separator} />
+            <InfoRow icon="cube-outline" label="Runtime" value={runtimeVersion} />
             <View style={styles.separator} />
             <InfoRow icon="git-branch-outline" label="Channel" value={channel} />
+            <View style={styles.separator} />
+            <InfoRow icon="archive-outline" label="Is Embedded Launch" value={isEmbeddedLaunch} />
+            <View style={styles.separator} />
+            <InfoRow icon="warning-outline" label="Is Emergency Launch" value={isEmergencyLaunch} />
           </View>
+
+          {showOtaDiagnostics ? (
+            <>
+              <SectionLabel label="OTA Diagnostics" />
+              <View style={styles.settingsCard}>
+                {otaDiagnosticsRows.map((row, index) => (
+                  <View key={row.label}>
+                    {index > 0 ? <View style={styles.separator} /> : null}
+                    <InfoRow icon={row.icon} label={row.label} value={row.value} />
+                  </View>
+                ))}
+                <View style={styles.separator} />
+                <SettingsRow
+                  icon="cloud-download-outline"
+                  label={isCheckingForUpdate ? "Checking for Update..." : "Check for Update"}
+                  onPress={handleManualUpdateCheck}
+                  disabled={isCheckingForUpdate}
+                />
+              </View>
+              {updateDiagnosticMessage ? (
+                <View style={styles.messageCard}>
+                  <Text style={styles.messageText}>{updateDiagnosticMessage}</Text>
+                </View>
+              ) : null}
+            </>
+          ) : null}
         </ScrollView>
       </LinearGradient>
     </SafeAreaView>

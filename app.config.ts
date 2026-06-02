@@ -66,6 +66,7 @@ const config: ExpoConfig = {
       planOverride: process.env.EXPO_PUBLIC_PLAN_OVERRIDE || "",
       revenueCatIosApiKey: process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY || "",
       revenueCatEntitlementId: process.env.EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID || "",
+      showQaDebug: process.env.EXPO_PUBLIC_SHOW_QA_DEBUG || "",
     },
     eas: {
       projectId: easProjectId,
