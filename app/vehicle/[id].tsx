@@ -1798,6 +1798,7 @@ export default function VehicleDetailScreen() {
   const strongestValuationRef = useRef<ValuationResult>(createEmptyValuation());
   const lastValueRequestKeyRef = useRef<string | null>(null);
   const pendingValueRequestKeyRef = useRef<string | null>(null);
+  const pendingListingsRequestKeyRef = useRef<string | null>(null);
   const routeMarketIntentHandledRef = useRef<string | null>(null);
   const marketUnlockConfirmationOpenRef = useRef(false);
   const marketUnlockSpendInFlightRef = useRef(false);
@@ -2680,6 +2681,19 @@ export default function VehicleDetailScreen() {
       return;
     }
 
+    const requestKey = `${JSON.stringify(valueLookupInput)}:${normalizedZip}:${normalizedMileage || "unknown"}`;
+    if (pendingListingsRequestKeyRef.current === requestKey) {
+      console.log("[vehicle-detail] LISTINGS_DUPLICATE_REQUEST_BLOCKED", {
+        routeId: id,
+        scanId: typeof scanId === "string" ? scanId : null,
+        vehicleId: vehicle.id,
+        requestKey,
+        zip: normalizedZip,
+        zipSource,
+      });
+      return;
+    }
+    pendingListingsRequestKeyRef.current = requestKey;
     setListingsRefreshLoading(true);
     setLiveMarketRuntimeDebug((current) => ({
       ...current,
@@ -2936,6 +2950,9 @@ export default function VehicleDetailScreen() {
         });
       })
       .finally(() => {
+        if (pendingListingsRequestKeyRef.current === requestKey) {
+          pendingListingsRequestKeyRef.current = null;
+        }
         setListingsRefreshLoading(false);
       });
   }, [applyValuationUpdate, condition, displayValuation, id, isSampleDetail, mileage, routeToAuthForLiveMarket, scanId, updateSavedGarageMarketSnapshot, valueLookupInput, vehicle, zipCode, zipSource]);
@@ -3267,6 +3284,7 @@ export default function VehicleDetailScreen() {
     strongestValuationRef.current = createEmptyValuation();
     lastValueRequestKeyRef.current = null;
     pendingValueRequestKeyRef.current = null;
+    pendingListingsRequestKeyRef.current = null;
     previousConditionRef.current = null;
     previousValueRef.current = null;
     routeMarketIntentHandledRef.current = null;

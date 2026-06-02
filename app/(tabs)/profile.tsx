@@ -8,6 +8,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { CANONICAL_BRAND_MARK_SOURCE } from "@/constants/branding";
 import { Typography } from "@/constants/theme";
 import { useSubscription } from "@/hooks/useSubscription";
+import { mobileBuildInfo } from "@/lib/env";
 import { resolveProfileAccessState } from "@/lib/subscription";
 import { supabase } from "@/lib/supabase";
 import { authService } from "@/services/authService";
@@ -38,8 +39,9 @@ function sanitizeProfileMessage(message: string | null) {
   return message;
 }
 
-function openSupportEmail(subject: string) {
-  void Linking.openURL(`mailto:support@carscanr.com?subject=${encodeURIComponent(subject)}`);
+function openSupportEmail(subject?: string) {
+  const query = subject ? `?subject=${encodeURIComponent(subject)}` : "";
+  void Linking.openURL(`mailto:support@carscanr.com${query}`);
 }
 
 export default function ProfileScreen() {
@@ -123,6 +125,8 @@ export default function ProfileScreen() {
   const unlockUsageLabel = accessState.hasProEntitlement ? "Pro Access active" : `${remainingUnlocks} free unlocks remaining`;
   const displayFeedbackMessage = sanitizeProfileMessage(feedbackMessage);
   const displayErrorMessage = sanitizeProfileMessage(errorMessage);
+  const appVersion = mobileBuildInfo.version || "Unavailable";
+  const buildNumber = mobileBuildInfo.iosBuildNumber || "Unavailable";
 
   const handleRestorePurchases = useCallback(() => {
     if (isRestoring) return;
@@ -235,21 +239,9 @@ export default function ProfileScreen() {
             </View>
           ) : null}
 
-          <SectionLabel label="Settings" />
+          <SectionLabel label="Account" />
           <View style={styles.settingsCard}>
-            <SettingsRow
-              icon="notifications-outline"
-              label="Notifications"
-              onPress={() => Alert.alert("Notifications", "Notification preferences will be available in a future app update.")}
-            />
-            <View style={styles.separator} />
-            <SettingsRow icon="shield-outline" label="Privacy" onPress={() => openSupportEmail("CarScanr Privacy Question")} />
-            <View style={styles.separator} />
             <SettingsRow icon="refresh-outline" label={isRestoring ? "Restoring Purchases..." : "Restore Purchases"} onPress={handleRestorePurchases} disabled={isRestoring} />
-            <View style={styles.separator} />
-            <SettingsRow icon="help-circle-outline" label="Help & Support" onPress={() => openSupportEmail("CarScanr Support Request")} />
-            <View style={styles.separator} />
-            <SettingsRow icon="document-text-outline" label="Terms & Privacy" onPress={() => openSupportEmail("CarScanr Terms and Privacy")} />
             {accessState.hasProEntitlement ? (
               <>
                 <View style={styles.separator} />
@@ -265,9 +257,26 @@ export default function ProfileScreen() {
           </View>
 
           <SectionLabel label="Support" />
-          <View style={styles.supportList}>
-            <SupportButton icon="sparkles-outline" label="Request a Feature" onPress={() => openSupportEmail("CarScanr Feature Request")} />
-            <SupportButton icon="mail-outline" label="Report an Issue" onPress={() => openSupportEmail("CarScanr Bug Report")} />
+          <View style={styles.settingsCard}>
+            <SettingsRow icon="mail-outline" label="Contact Support" onPress={() => openSupportEmail()} />
+            <View style={styles.separator} />
+            <SettingsRow icon="alert-circle-outline" label="Report an Issue" onPress={() => openSupportEmail("CarScanr Issue Report")} />
+            <View style={styles.separator} />
+            <SettingsRow icon="sparkles-outline" label="Request a Feature" onPress={() => openSupportEmail("CarScanr Feature Request")} />
+          </View>
+
+          <SectionLabel label="Legal" />
+          <View style={styles.settingsCard}>
+            <SettingsRow icon="shield-outline" label="Privacy Policy" onPress={() => router.push("/legal/privacy-policy" as never)} />
+            <View style={styles.separator} />
+            <SettingsRow icon="document-text-outline" label="Terms of Service" onPress={() => router.push("/legal/terms-of-service" as never)} />
+          </View>
+
+          <SectionLabel label="About" />
+          <View style={styles.settingsCard}>
+            <InfoRow icon="information-circle-outline" label="Version" value={appVersion} />
+            <View style={styles.separator} />
+            <InfoRow icon="construct-outline" label="Build Number" value={buildNumber} />
           </View>
         </ScrollView>
       </LinearGradient>
@@ -313,12 +322,17 @@ function SettingsRow({ icon, label, onPress, disabled = false }: { icon: IconNam
   );
 }
 
-function SupportButton({ icon, label, onPress }: { icon: IconName; label: string; onPress: () => void }) {
+function InfoRow({ icon, label, value }: { icon: IconName; label: string; value: string }) {
   return (
-    <TouchableOpacity activeOpacity={0.82} accessibilityRole="button" onPress={onPress} style={styles.supportButton}>
-      <Ionicons name={icon} size={18} color={profileColors.goldLight} />
-      <Text style={styles.supportButtonText}>{label}</Text>
-    </TouchableOpacity>
+    <View style={styles.infoRow}>
+      <View style={styles.settingsRowLeft}>
+        <Ionicons name={icon} size={18} color={profileColors.goldLight} />
+        <Text style={styles.settingsRowText}>{label}</Text>
+      </View>
+      <Text style={styles.infoValue} numberOfLines={1}>
+        {value}
+      </Text>
+    </View>
   );
 }
 
@@ -767,30 +781,26 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     color: profileColors.text,
   },
-  separator: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: profileColors.line,
-  },
-  supportList: {
-    gap: 12,
-  },
-  supportButton: {
+  infoRow: {
     minHeight: 50,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 11,
-    borderRadius: 11,
-    backgroundColor: "rgba(255,255,255,0.045)",
-    borderWidth: 1,
-    borderColor: profileColors.lineStrong,
+    justifyContent: "space-between",
+    gap: 14,
+    paddingHorizontal: 19,
   },
-  supportButtonText: {
+  infoValue: {
+    maxWidth: 130,
     fontFamily,
-    fontSize: 14,
-    lineHeight: 19,
-    fontWeight: "900",
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "800",
     letterSpacing: 0,
-    color: profileColors.text,
+    color: profileColors.textMuted,
+    textAlign: "right",
+  },
+  separator: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: profileColors.line,
   },
 });

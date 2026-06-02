@@ -48,7 +48,7 @@ const DEFAULT_UNLOCK_EVALUATION_CONDITION = "good";
 const DEFAULT_UNLOCK_EVALUATION_RADIUS_MILES = 50;
 const LISTING_DERIVATION_RADIUS_MILES = [50, 100, 250, 500];
 const MIN_BELIEVABLE_LIVE_LISTINGS = 5;
-const MAX_LIVE_LISTING_ATTEMPTS = 6;
+const MAX_LIVE_LISTING_ATTEMPTS = 2;
 const MAX_DISPLAY_LIVE_LISTINGS = 12;
 
 function nowIso() {
@@ -233,8 +233,8 @@ function selectMarketCheckListingsProviderAttempts(input: {
   requestedTrim?: string | null;
   forceLive?: boolean | null;
 }) {
-  if (!input.normalListingsRefresh) {
-    return input.attempts;
+  if (!input.normalListingsRefresh && input.forceLive !== true) {
+    return input.attempts.slice(0, MAX_LIVE_LISTING_ATTEMPTS);
   }
 
   const liveSafeAttempts = input.attempts.filter((attempt) => !isAdjacentOrExpandedListingsStrategy(attempt.strategy));
@@ -5824,6 +5824,12 @@ export class VehicleService {
         action: input.action,
         forceLive: input.forceLive,
       });
+      const effectiveForceLiveListings = isDeveloperForceLiveListingsRefresh({
+        fetchReason,
+        sourceScreen: input.sourceScreen,
+        action: input.action,
+        forceLive: input.forceLive,
+      });
       const providerListingsAttempts =
         providers.listingsProviderName === "marketcheck"
           ? isExplicitListingsRefresh
@@ -5831,7 +5837,7 @@ export class VehicleService {
                 attempts: fallbackAttempts,
                 normalListingsRefresh,
                 requestedTrim: lookupBaseVehicle?.trim ?? descriptor?.trim ?? null,
-                forceLive: input.forceLive,
+                forceLive: effectiveForceLiveListings,
               })
             : [
                 fallbackAttempts.find((attempt) => attempt.strategy === "same-year-any-trim") ??
@@ -5870,11 +5876,13 @@ export class VehicleService {
             vehicleId: lookupVehicleId,
             liveAttemptCount: providerListingsAttempts.length,
             requestedAttemptCount: fallbackAttempts.length,
+            configuredMaxLiveListingAttempts: MAX_LIVE_LISTING_ATTEMPTS,
             blockedStrategies: blockedLiveListingsAttempts.map((attempt) => attempt.strategy),
             sourceScreen: input.sourceScreen ?? null,
             action: input.action ?? null,
             fetchReason,
             requestedForceLive: input.forceLive ?? null,
+            effectiveForceLive: effectiveForceLiveListings,
           },
           "LISTINGS_LIVE_ATTEMPT_CAPPED",
         );
@@ -5965,16 +5973,20 @@ export class VehicleService {
             vehicleId: lookupVehicleId,
             liveAttemptCount: providerListingsAttempts.length,
             requestedAttemptCount: fallbackAttempts.length,
+            configuredMaxLiveListingAttempts: MAX_LIVE_LISTING_ATTEMPTS,
             normalListingsRefresh,
             sourceScreen: input.sourceScreen ?? null,
             action: input.action ?? null,
             fetchReason,
             requestedForceLive: input.forceLive ?? null,
+            effectiveForceLive: effectiveForceLiveListings,
           },
           "LISTINGS_LIVE_ATTEMPT_COUNT",
         );
         listingsWereSimulated = listingsDecision.shouldSimulateSuccess;
-        for (const attempt of providerListingsAttempts) {
+        for (const [attemptIndex, attempt] of providerListingsAttempts.entries()) {
+          const attemptNumber = attemptIndex + 1;
+          const maxAttempts = providerListingsAttempts.length;
           const attemptDescriptor = buildCacheDescriptor({ vehicle: attempt.vehicle });
           const attemptCacheKey = attemptDescriptor
             ? getListingsCacheKey(attemptDescriptor, { zip: input.zip, radiusMiles: attempt.radiusMiles })
@@ -5993,6 +6005,8 @@ export class VehicleService {
                   ...input,
                   selectedLiveStrategy: attempt.strategy,
                   selectedTrim: attempt.vehicle.trim || null,
+                  attemptNumber,
+                  maxAttempts,
                 },
                 responseSummary: { count: 0, expiresAt: cachedAttempt.expiresAt },
               });
@@ -6009,6 +6023,8 @@ export class VehicleService {
                   trim: attempt.vehicle.trim || null,
                   zip: input.zip,
                   radiusMiles: attempt.radiusMiles,
+                  attemptNumber,
+                  maxAttempts,
                   reason: "normal-listings-refresh-zero-result-cache",
                 },
                 "LISTINGS_ZERO_CACHE_RESPECTED",
@@ -6028,6 +6044,8 @@ export class VehicleService {
                   vehicleId: lookupVehicleId,
                   cacheKey: attemptCacheKey,
                   strategy: attempt.strategy,
+                  attemptNumber,
+                  maxAttempts,
                   reason: "explicit-user-refresh",
                 },
                 "LISTINGS_ZERO_CACHE_BYPASSED",
@@ -6046,6 +6064,9 @@ export class VehicleService {
               trim: attempt.vehicle.trim ?? null,
               zip: input.zip,
               radiusMiles: attempt.radiusMiles,
+              attemptNumber,
+              maxAttempts,
+              fallbackReason: fetchReason,
             },
             "LISTINGS_FALLBACK_ATTEMPT",
           );
@@ -6070,6 +6091,8 @@ export class VehicleService {
               vehicleId: lookupVehicleId,
               provider: providers.listingsProviderName,
               strategy: attempt.strategy,
+              attemptNumber,
+              maxAttempts,
               simulated: listingsWereSimulated,
               year: attempt.vehicle.year,
               make: attempt.vehicle.make,
@@ -6077,6 +6100,7 @@ export class VehicleService {
               trim: attempt.vehicle.trim ?? null,
               zip: input.zip,
               radiusMiles: attempt.radiusMiles,
+              fallbackReason: fetchReason,
             },
             "LISTINGS_PROVIDER_ATTEMPT",
           );
@@ -6093,6 +6117,9 @@ export class VehicleService {
               trim: attempt.vehicle.trim,
               zip: input.zip,
               radiusMiles: attempt.radiusMiles,
+              attemptNumber,
+              maxAttempts,
+              fallbackReason: fetchReason,
             },
             "LISTINGS_LOOKUP_QUERY",
           );
@@ -6114,6 +6141,10 @@ export class VehicleService {
                   make: attempt.vehicle.make,
                   model: attempt.vehicle.model,
                   trim: attempt.vehicle.trim ?? null,
+                  attemptNumber,
+                  maxAttempts,
+                  fallbackStrategy: attempt.strategy,
+                  fallbackReason: fetchReason,
                   sourceScreen: input.sourceScreen ?? "listingsScreen",
                   caller: "VehicleService.getListings",
                   stackTag: "vehicle-listings",
@@ -6148,6 +6179,10 @@ export class VehicleService {
                   trim: attempt.vehicle.trim ?? null,
                   zip: input.zip,
                   radiusMiles: attempt.radiusMiles,
+                  attemptNumber,
+                  maxAttempts,
+                  fallbackStrategy: attempt.strategy,
+                  fallbackReason: fetchReason,
                   sourceScreen: input.sourceScreen ?? "listingsScreen",
                   caller: "VehicleService.getListings",
                   stackTag: "vehicle-listings",

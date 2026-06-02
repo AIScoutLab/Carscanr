@@ -39,6 +39,8 @@ test("listings refresh hydrates value state from cached listings", () => {
   assert.match(screenSource, /setShowAllListings\(\(current\) => !current\)/);
   assert.match(screenSource, /staleListingsClearedBeforeRequest: vehicle\.listings\.length/);
   assert.match(screenSource, /setVehicle\(\(current\) => \(current \? \{ \.\.\.current, listings: \[\] \} : current\)\)/);
+  assert.match(screenSource, /pendingListingsRequestKeyRef/);
+  assert.match(screenSource, /LISTINGS_DUPLICATE_REQUEST_BLOCKED/);
   assert.match(screenSource, /Linking\.openURL\(listingUrl\)/);
   assert.match(screenSource, /getOpenableListingUrl/);
   assert.match(serviceSource, /listingUrl: listing\.listingUrl \?\? listing\.url \?\? listing\.vdpUrl \?\? listing\.redirectUrl \?\? listing\.detailUrl \?\? null/);
@@ -65,8 +67,11 @@ test("explicit live listings can collect broader comps without flooding the UI",
   assert.match(marketCheckSource, /const MARKETCHECK_LISTINGS_ROWS = 20;/);
   assert.match(marketCheckSource, /const MARKETCHECK_VALUE_ROWS = 20;/);
   assert.match(backendServiceSource, /const MIN_BELIEVABLE_LIVE_LISTINGS = 5;/);
-  assert.match(backendServiceSource, /const MAX_LIVE_LISTING_ATTEMPTS = 6;/);
+  assert.match(backendServiceSource, /const MAX_LIVE_LISTING_ATTEMPTS = 2;/);
   assert.match(backendServiceSource, /const MAX_DISPLAY_LIVE_LISTINGS = 12;/);
+  assert.match(backendServiceSource, /effectiveForceLiveListings/);
+  assert.match(backendServiceSource, /configuredMaxLiveListingAttempts/);
+  assert.match(marketCheckSource, /attemptNumber: input\.requestMeta\?\.attemptNumber/);
   assert.match(backendServiceSource, /"adjacent-year-previous"[\s\S]*"adjacent-year-next"[\s\S]*"wider-radius-250"/);
   assert.match(backendServiceSource, /acceptedLiveListings\.length >= MIN_BELIEVABLE_LIVE_LISTINGS/);
 });

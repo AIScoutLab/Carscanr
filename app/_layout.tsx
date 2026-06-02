@@ -194,6 +194,8 @@ export default function RootLayout() {
           <Stack.Screen name="scan/camera" />
           <Stack.Screen name="scan/result" />
           <Stack.Screen name="vehicle/[id]" />
+          <Stack.Screen name="legal/privacy-policy" />
+          <Stack.Screen name="legal/terms-of-service" />
           <Stack.Screen name="paywall" options={{ presentation: "modal" }} />
         </Stack>
       </SubscriptionProvider>

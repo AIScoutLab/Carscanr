@@ -1022,6 +1022,7 @@ describe("bootstrap cost control", () => {
       radiusMiles: 100,
       mileage: 18400,
       allowLive: true,
+      forceLive: true,
       fetchReason: "user_requested_listings_refresh",
       sourceScreen: "listingsScreen",
       action: "listingsRefresh",
@@ -1312,16 +1313,16 @@ describe("bootstrap cost control", () => {
             radiusMiles: input.radiusMiles ?? null,
           });
 
-          if (input.vehicle?.model === "458" && input.vehicle?.year === 2014) {
+          if (input.vehicle?.model === "458" && input.vehicle?.year === 2013) {
             return [
               {
-                id: "listing-458-family-2014",
+                id: "listing-458-family-2013",
                 vehicleId: input.vehicleId,
-                year: 2014,
+                year: 2013,
                 make: "Ferrari",
                 model: "458",
                 trim: "Spider",
-                title: "2014 Ferrari 458 Spider",
+                title: "2013 Ferrari 458 Spider",
                 price: 249995,
                 mileage: 17600,
                 dealer: "Exotic Motors",
@@ -1353,9 +1354,10 @@ describe("bootstrap cost control", () => {
     });
 
     assert.equal(result.data.length, 1);
+    assert.equal(attempts.length, 2);
     assert.equal(attempts.some((attempt) => attempt.model === "458 Italia" && attempt.year === 2013), true);
     assert.equal(attempts.some((attempt) => attempt.model === "458" && attempt.year === 2013 && attempt.trim === ""), true);
-    assert.equal(attempts.some((attempt) => attempt.model === "458" && attempt.year === 2014), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "458" && attempt.year === 2014), false);
   });
 
   test("Cadillac CT4 listing fallback attempts exact, mixed trim, adjacent year, and wider radius before empty", async () => {
@@ -1372,10 +1374,10 @@ describe("bootstrap cost control", () => {
             radiusMiles: input.radiusMiles ?? null,
           });
 
-          if (input.vehicle?.model === "CT4" && input.vehicle?.year === 2021 && input.vehicle?.trim === "" && input.radiusMiles === 250) {
+          if (input.vehicle?.model === "CT4" && input.vehicle?.year === 2021 && input.vehicle?.trim === "" && input.radiusMiles === 50) {
             return [
               {
-                id: "listing-ct4-wider-radius",
+                id: "listing-ct4-same-year-any-trim",
                 vehicleId: input.vehicleId,
                 year: 2021,
                 make: "Cadillac",
@@ -1413,11 +1415,12 @@ describe("bootstrap cost control", () => {
     });
 
     assert.equal(result.data.length, 1);
+    assert.equal(attempts.length, 2);
     assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === "Premium Luxury"), true);
     assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === ""), true);
-    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2020 && attempt.trim === ""), true);
-    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2022 && attempt.trim === ""), true);
-    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === "" && attempt.radiusMiles === 250), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2020 && attempt.trim === ""), false);
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2022 && attempt.trim === ""), false);
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === "" && attempt.radiusMiles === 250), false);
   });
 
   test("Cadillac CT4 provider-normalized listing without URL remains usable", async () => {
@@ -1918,11 +1921,11 @@ describe("bootstrap cost control", () => {
       action: "listingsRefresh",
     });
 
-    assert.equal(attempts.length <= 6, true);
+    assert.equal(attempts.length, 1);
     assert.equal(attempts.every((attempt) => attempt.model === "4Runner"), true);
     assert.equal(attempts.some((attempt) => attempt.model === "4"), false);
     assert.equal(attempts.some((attempt) => attempt.year === 2011 && attempt.radiusMiles === 100), true);
-    assert.equal(attempts.some((attempt) => attempt.radiusMiles === 250), true);
+    assert.equal(attempts.some((attempt) => attempt.radiusMiles === 250), false);
   });
 
   test("force-live listings refresh drops generic Base trim and uses bounded fallback attempts", async () => {
@@ -1973,31 +1976,71 @@ describe("bootstrap cost control", () => {
         radiusMiles: 100,
         trim: "",
       },
-      {
-        model: "4Runner",
-        year: 2011,
-        radiusMiles: 100,
-        trim: "Base",
-      },
-      {
-        model: "4Runner",
-        year: 2010,
-        radiusMiles: 100,
-        trim: "",
-      },
-      {
-        model: "4Runner",
-        year: 2012,
-        radiusMiles: 100,
-        trim: "",
-      },
-      {
-        model: "4Runner",
-        year: 2011,
-        radiusMiles: 250,
-        trim: "",
-      },
     ]);
+  });
+
+  test("developer force-live listings refresh can broaden but remains capped", async () => {
+    const attempts: Array<{
+      model: string;
+      year: number;
+      radiusMiles: number | null;
+      trim: string | null;
+      attemptNumber: number | null;
+      maxAttempts: number | null;
+      fallbackStrategy: string | null;
+      fallbackReason: string | null;
+    }> = [];
+    setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            radiusMiles: input.radiusMiles ?? input.requestMeta?.radiusMiles ?? null,
+            trim: input.vehicle?.trim ?? null,
+            attemptNumber: input.requestMeta?.attemptNumber ?? null,
+            maxAttempts: input.requestMeta?.maxAttempts ?? null,
+            fallbackStrategy: input.requestMeta?.fallbackStrategy ?? null,
+            fallbackReason: input.requestMeta?.fallbackReason ?? null,
+          });
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    await service.getListings({
+      vehicleId: "2011-toyota-4runner-base",
+      descriptor: {
+        year: 2011,
+        make: "Toyota",
+        model: "4Runner",
+        trim: "Base",
+        vehicleType: "car",
+        bodyStyle: "SUV",
+        normalizedModel: "4runner",
+      },
+      zip: "60563",
+      radiusMiles: 100,
+      mileage: 98000,
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "debug_force_listings_refresh",
+      sourceScreen: "debugListingsScreen",
+      action: "debugForceListingsRefresh",
+    });
+
+    assert.equal(attempts.length, 2);
+    assert.deepEqual(
+      attempts.map((attempt) => attempt.attemptNumber),
+      [1, 2],
+    );
+    assert.equal(attempts.every((attempt) => attempt.maxAttempts === 2), true);
+    assert.equal(attempts.every((attempt) => attempt.fallbackReason === "unknown"), true);
+    assert.equal(attempts.every((attempt) => typeof attempt.fallbackStrategy === "string"), true);
   });
 
   test("force-live listings refresh bypasses cached zero-result listing response", async () => {
@@ -2061,7 +2104,7 @@ describe("bootstrap cost control", () => {
       action: "listingsRefresh",
     });
 
-    assert.equal(providerCalls, 5);
+    assert.equal(providerCalls, 1);
     assert.equal(result.data.length, 0);
   });
 
@@ -2316,16 +2359,16 @@ describe("bootstrap cost control", () => {
             trim: input.vehicle?.trim ?? null,
           });
 
-          if (input.vehicle?.model === "A4" && input.vehicle?.year === 2019) {
+          if (input.vehicle?.model === "A4 allroad" && input.vehicle?.year === 2018 && input.vehicle?.trim === "") {
             return [
               {
-                id: "listing-a4-family-2019",
+                id: "listing-a4-allroad-any-trim",
                 vehicleId: input.vehicleId,
-                year: 2019,
+                year: 2018,
                 make: "Audi",
-                model: "A4",
+                model: "A4 allroad",
                 trim: "Premium",
-                title: "2019 Audi A4 Premium",
+                title: "2018 Audi A4 allroad Premium",
                 price: 24995,
                 mileage: 38200,
                 dealer: "North Shore Audi",
@@ -2357,10 +2400,11 @@ describe("bootstrap cost control", () => {
     });
 
     assert.equal(result.data.length, 1);
+    assert.equal(attempts.length, 2);
     assert.equal(attempts.some((attempt) => attempt.model === "A4 allroad" && attempt.year === 2018 && attempt.trim === "Premium Plus"), true);
     assert.equal(attempts.some((attempt) => attempt.model === "A4 allroad" && attempt.year === 2018 && attempt.trim === ""), true);
-    assert.equal(attempts.some((attempt) => attempt.model === "A4" && attempt.year === 2018), true);
-    assert.equal(attempts.some((attempt) => attempt.model === "A4" && attempt.year === 2019), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "A4" && attempt.year === 2018), false);
+    assert.equal(attempts.some((attempt) => attempt.model === "A4" && attempt.year === 2019), false);
   });
 
   test("normal family cached estimated valuation still works for common vehicles", async () => {
