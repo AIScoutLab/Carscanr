@@ -34,7 +34,7 @@ const config: ExpoConfig = {
   runtimeVersion: "1.0.2",
   updates: {
     url: `https://u.expo.dev/${easProjectId}`,
-    fallbackToCacheTimeout: 0,
+    fallbackToCacheTimeout: 3000,
   },
   plugins: [
     "expo-router",
