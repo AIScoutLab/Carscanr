@@ -325,7 +325,7 @@ The app has been substantially restyled toward the premium dark automotive CarSc
   - subtle top border
   - active indicator spacing adjusted so it no longer collides with the tab label
 - Profile:
-  - redesigned guest header, stats, premium Collector Access card, settings rows, support buttons
+  - redesigned guest header, stats, premium Pro Access card, settings rows, support buttons
   - RevenueCat debug/config/user-facing diagnostics removed from the user UI
   - restore purchases and upgrade flow preserved
 - Scan:
@@ -776,7 +776,7 @@ Current paywall purchase truth:
 
 ### Specialty / exotic valuation guardrail
 
-Generic fallback valuation is now disabled for specialty / exotic makes so the app does not show normal-car depreciation estimates for collector-market vehicles.
+Generic fallback valuation is now disabled for specialty / exotic makes so the app does not show normal-car depreciation estimates for specialty-market vehicles.
 
 Protected makes:
 
@@ -868,7 +868,7 @@ Copy guard:
 - specialty/exotic vehicles should not show generic lifestyle copy like `Practical vehicle with everyday usability.`
 - specialty overview copy should instead stay in the lane of:
   - `High-performance specialty vehicle.`
-  - `Exotic sports car with collector-market pricing.`
+  - `Exotic sports car with specialty-market pricing.`
   - pricing variance by mileage, condition, options, service history, and provenance
 
 ### Result / detail pill cleanup

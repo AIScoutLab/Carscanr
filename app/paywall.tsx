@@ -106,8 +106,8 @@ export default function PaywallScreen() {
     <AppContainer>
       <BackButton fallbackHref="/(tabs)/scan" label="Back" />
       <LinearGradient colors={["rgba(216,163,104,0.18)", "rgba(216,163,104,0.06)", "rgba(5,5,6,0.22)"]} style={styles.heroBanner}>
-        <Text style={styles.heroTitle}>A cleaner performance tier</Text>
-        <Text style={styles.heroBody}>Unlimited free scans stay in front. Pro opens deeper specs, richer value context, shopping intelligence, and synced premium access.</Text>
+        <Text style={styles.heroTitle}>Unlock Pro Access</Text>
+        <Text style={styles.heroBody}>Unlock market values, live listings, pricing insights, and garage tools for every vehicle you scan.</Text>
       </LinearGradient>
       <View style={styles.heroSection}>
         {!proEntitlementActive ? <PaywallCard status={status} unlocksRemaining={freeUnlocksRemaining} unlocksLimit={freeUnlocksLimit} /> : null}
@@ -118,20 +118,20 @@ export default function PaywallScreen() {
             unlocksUsed={freeUnlocksLimit - freeUnlocksRemaining}
             unlocksRemaining={freeUnlocksRemaining}
             unlocksLimit={freeUnlocksLimit}
-            supportingText="Unlimited basic scans stay free. Unlock full details when you want."
+            supportingText="Unlimited basic scans stay free. Use Pro Access when you want market values and live listings."
           />
         ) : null}
       </View>
       {proEntitlementActive ? (
         <View style={styles.detailCard}>
           <Text style={styles.title}>Pro is active</Text>
-          <Text style={styles.subtitle}>Unlimited scans and full details are unlocked on this device.</Text>
+          <Text style={styles.subtitle}>Market values, live listings, pricing insights, and garage tools are unlocked on this device.</Text>
           <PlanColumn title="Included with Pro" items={planBenefits.pro} highlight />
         </View>
       ) : (
         <View style={styles.detailCard}>
-          <Text style={styles.title}>Everything behind Pro</Text>
-          <Text style={styles.subtitle}>Unlimited scans stay free. Use your {FREE_PRO_UNLOCKS_TOTAL} free unlocks first, then upgrade only if you want always-on full access.</Text>
+          <Text style={styles.title}>Pro Access</Text>
+          <Text style={styles.subtitle}>Unlimited scans stay free. Use your {FREE_PRO_UNLOCKS_TOTAL} free unlocks first, then upgrade when you want ongoing market tools.</Text>
           <PlanColumn title="Included" items={planBenefits.pro} highlight />
           {availableProducts.length > 0 ? (
             <View style={styles.optionGroup}>

@@ -406,7 +406,7 @@ function mapValuation(valuation: BackendValuation): ValuationResult {
           : status === "no_comps_found"
             ? "No live market comps found for this ZIP, mileage, and condition."
             : status === "specialty_unavailable"
-              ? "Load live market value. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance."
+              ? "Load live market value. Specialty pricing can vary widely by mileage, condition, options, service history, and provenance."
               : "Load live market value when you want current local pricing."),
       sourceLabel:
         valuation.sourceLabel ??

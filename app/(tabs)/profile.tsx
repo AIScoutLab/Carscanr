@@ -18,7 +18,7 @@ type IconName = keyof typeof Ionicons.glyphMap;
 const premiumFeatures: Array<{ icon: IconName; label: string }> = [
   { icon: "trending-up-outline", label: "Market Value Intelligence" },
   { icon: "location-outline", label: "Live Listings" },
-  { icon: "sparkles-outline", label: "Collector Insights" },
+  { icon: "sparkles-outline", label: "Pricing Insights" },
   { icon: "albums-outline", label: "Garage Sync" },
 ];
 
@@ -39,7 +39,7 @@ function sanitizeProfileMessage(message: string | null) {
 }
 
 function openSupportEmail(subject: string) {
-  void Linking.openURL(`mailto:support@carscanr.app?subject=${encodeURIComponent(subject)}`);
+  void Linking.openURL(`mailto:support@carscanr.com?subject=${encodeURIComponent(subject)}`);
 }
 
 export default function ProfileScreen() {
@@ -48,9 +48,7 @@ export default function ProfileScreen() {
     isLoading,
     isRestoring,
     isCancelling,
-    freeUnlocksUsed,
     freeUnlocksRemaining,
-    freeUnlocksLimit,
     feedbackMessage,
     errorMessage,
     restorePurchases,
@@ -118,11 +116,11 @@ export default function ProfileScreen() {
 
   const scansUsed = status?.scansUsed ?? status?.scansUsedToday ?? 0;
   const displayName = user?.fullName?.trim() || "Guest";
-  const memberSubtitle = user ? user.email : accessState.hasProEntitlement ? "Collector member" : "Free member";
+  const memberSubtitle = user ? user.email : accessState.hasProEntitlement ? "Pro member" : "Free member";
   const sinceLabel = new Date().toLocaleString("en-US", { month: "short", year: "numeric" });
   const garageValue = user ? "Sync" : "0";
   const remainingUnlocks = Math.max(0, freeUnlocksRemaining);
-  const unlockUsageLabel = accessState.hasProEntitlement ? "Unlimited collector access active" : `${remainingUnlocks} free unlocks remaining`;
+  const unlockUsageLabel = accessState.hasProEntitlement ? "Pro Access active" : `${remainingUnlocks} free unlocks remaining`;
   const displayFeedbackMessage = sanitizeProfileMessage(feedbackMessage);
   const displayErrorMessage = sanitizeProfileMessage(errorMessage);
 
@@ -188,30 +186,31 @@ export default function ProfileScreen() {
           </View>
 
           {!user ? (
-            <View style={styles.authActions}>
-              <GoldButton label="Create Account" onPress={() => router.push("/auth?mode=sign-up")} />
-              <DarkButton label="Sign In" onPress={() => router.push("/auth?mode=sign-in")} />
+            <View style={styles.accountCard}>
+              <Text style={styles.accountEyebrow}>ACCOUNT</Text>
+              <Text style={styles.accountTitle}>Set up your Garage</Text>
+              <Text style={styles.accountBody}>Create a free account or sign in to sync your Garage, history, and unlocks across devices.</Text>
+              <View style={styles.authActions}>
+                <GoldButton label="Create Account" onPress={() => router.push("/auth?mode=sign-up")} />
+                <DarkButton label="Sign In" onPress={() => router.push("/auth?mode=sign-in")} />
+              </View>
             </View>
           ) : null}
 
-          <LinearGradient colors={["#2A211B", "#1C1713", "#0D0B0A"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.collectorCard}>
+          <LinearGradient colors={["#221A15", "#171311", "#0A0908"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.proCard}>
             <View style={styles.premiumEyebrowRow}>
               <Ionicons name="trophy-outline" size={15} color={profileColors.goldLight} />
-              <Text style={styles.premiumEyebrow}>PREMIUM</Text>
+              <Text style={styles.premiumEyebrow}>PRO ACCESS</Text>
             </View>
-            <Text style={styles.collectorTitle}>Collector Access</Text>
-            <Text style={styles.collectorBody}>Unlock market intelligence, live listings, and collector-grade insights for every vehicle you scan.</Text>
+            <Text style={styles.proTitle}>Pro Access</Text>
+            <Text style={styles.proBody}>Unlock market values, live listings, pricing insights, and garage tools for every vehicle you scan.</Text>
             <View style={styles.featureList}>
               {premiumFeatures.map((feature) => (
                 <PremiumFeature key={feature.label} icon={feature.icon} label={feature.label} />
               ))}
             </View>
             <View style={styles.unlockPill}>
-              <View style={styles.unlockDots} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-                {Array.from({ length: Math.min(freeUnlocksLimit, 5) }).map((_, index) => (
-                  <View key={index} style={[styles.unlockDot, index < freeUnlocksUsed && styles.unlockDotActive]} />
-                ))}
-              </View>
+              <Ionicons name={accessState.hasProEntitlement ? "checkmark-circle-outline" : "flash-outline"} size={16} color={profileColors.goldLight} />
               <Text style={styles.unlockText}>{unlockUsageLabel}</Text>
             </View>
             {accessState.showPrimaryUpgradeCta ? (
@@ -477,9 +476,45 @@ const styles = StyleSheet.create({
     color: profileColors.textSoft,
   },
   authActions: {
-    gap: 12,
-    marginTop: 18,
-    marginBottom: 24,
+    gap: 11,
+    marginTop: 13,
+  },
+  accountCard: {
+    borderRadius: 20,
+    padding: 18,
+    gap: 6,
+    backgroundColor: "rgba(255,255,255,0.035)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
+    shadowColor: "#000000",
+    shadowOpacity: 0.22,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 3,
+  },
+  accountEyebrow: {
+    fontFamily,
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "900",
+    letterSpacing: 0,
+    color: profileColors.goldLight,
+  },
+  accountTitle: {
+    fontFamily,
+    fontSize: 19,
+    lineHeight: 24,
+    fontWeight: "900",
+    letterSpacing: 0,
+    color: profileColors.text,
+  },
+  accountBody: {
+    fontFamily,
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: "500",
+    letterSpacing: 0,
+    color: profileColors.textSoft,
   },
   ctaShell: {
     borderRadius: 12,
@@ -522,19 +557,19 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     color: profileColors.text,
   },
-  collectorCard: {
-    borderRadius: 25,
-    paddingHorizontal: 26,
-    paddingTop: 26,
-    paddingBottom: 24,
-    gap: 13,
+  proCard: {
+    borderRadius: 21,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 20,
+    gap: 11,
     borderWidth: 1,
-    borderColor: "rgba(214,158,93,0.26)",
+    borderColor: "rgba(214,158,93,0.2)",
     shadowColor: "#000000",
-    shadowOpacity: 0.42,
-    shadowRadius: 26,
-    shadowOffset: { width: 0, height: 18 },
-    elevation: 6,
+    shadowOpacity: 0.28,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 4,
     overflow: "hidden",
   },
   premiumEyebrowRow: {
@@ -550,26 +585,26 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     color: profileColors.goldLight,
   },
-  collectorTitle: {
-    marginTop: 7,
+  proTitle: {
+    marginTop: 5,
     fontFamily,
-    fontSize: 22,
-    lineHeight: 27,
+    fontSize: 20,
+    lineHeight: 25,
     fontWeight: "900",
     letterSpacing: 0,
     color: profileColors.text,
   },
-  collectorBody: {
+  proBody: {
     fontFamily,
     fontSize: 13,
     lineHeight: 20,
-    fontWeight: "600",
+    fontWeight: "500",
     letterSpacing: 0,
-    color: profileColors.text,
+    color: profileColors.textSoft,
   },
   featureList: {
-    gap: 13,
-    marginTop: 7,
+    gap: 10,
+    marginTop: 5,
   },
   featureRow: {
     minHeight: 32,
@@ -597,29 +632,16 @@ const styles = StyleSheet.create({
     color: profileColors.text,
   },
   unlockPill: {
-    minHeight: 40,
+    minHeight: 36,
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    gap: 8,
     marginTop: 6,
-    paddingHorizontal: 15,
+    paddingHorizontal: 13,
     borderRadius: 12,
     backgroundColor: "rgba(0,0,0,0.2)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.08)",
-  },
-  unlockDots: {
-    flexDirection: "row",
-    gap: 5,
-  },
-  unlockDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: "rgba(255,255,255,0.32)",
-  },
-  unlockDotActive: {
-    backgroundColor: profileColors.goldLight,
   },
   unlockText: {
     flex: 1,

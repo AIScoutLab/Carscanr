@@ -2633,7 +2633,7 @@ function shapeValuationRecord(input: {
         ? "Live market data could not be loaded."
         : valuation.status === "no_comps_found"
           ? "No live market comps found for this ZIP, mileage, and condition."
-          : "Load live market value. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance.");
+          : "Load live market value. Specialty pricing can vary widely by mileage, condition, options, service history, and provenance.");
     valuation.valuationSource = valuation.valuationSource ?? "unavailable";
     valuation.compCount = valuation.compCount ?? valuation.listingCount ?? null;
     valuation.rangeLow = valuation.rangeLow ?? null;
@@ -3550,7 +3550,7 @@ export class VehicleService {
             condition: normalizeCondition(input.condition),
             sourceLabel: "Live market data could not be loaded",
             confidenceLabel:
-              "Live market data could not be loaded. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance.",
+              "Live market data could not be loaded. Specialty pricing can vary widely by mileage, condition, options, service history, and provenance.",
           });
           logger.info(
             {
@@ -4945,9 +4945,9 @@ export class VehicleService {
           confidenceLabel:
             isExplicitValueRefresh
               ? explicitLiveFailureReason
-                ? "Live market data could not be loaded. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance."
-                : "No live market comps found for this ZIP, mileage, and condition. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance."
-              : "Load live market value. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance.",
+                ? "Live market data could not be loaded. Specialty pricing can vary widely by mileage, condition, options, service history, and provenance."
+                : "No live market comps found for this ZIP, mileage, and condition. Specialty pricing can vary widely by mileage, condition, options, service history, and provenance."
+              : "Load live market value. Specialty pricing can vary widely by mileage, condition, options, service history, and provenance.",
           message:
             isExplicitValueRefresh
               ? explicitLiveFailureReason

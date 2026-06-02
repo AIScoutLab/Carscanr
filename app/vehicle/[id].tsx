@@ -861,7 +861,7 @@ function buildValueStatusCardCopy(input: {
         input.specialtyValueCopy ?? {
           title: "Specialty market value unavailable",
           body: "We won't show a generic depreciation estimate for this vehicle.",
-          supportNote: "Load live market value when you want current collector-market pricing.",
+          supportNote: "Load live market value when you want current specialty pricing.",
         }
       );
     case "ready_to_load":

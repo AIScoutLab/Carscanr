@@ -22,7 +22,7 @@ export function PaywallCard({
   unlocksLimit,
   unlockCredits = 0,
   title = "Unlock Value & Listings",
-  description = "Scans stay free. Pro opens full specs, value, listings, and pricing insight when you want more depth.",
+  description = "Unlock market values, live listings, pricing insights, and garage tools for every vehicle you scan.",
   ctaLabel,
   onCtaPress,
   secondaryCtaLabel,

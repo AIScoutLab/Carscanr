@@ -10,14 +10,14 @@ export function ProLockCard({ onPress }: Props) {
   return (
     <TouchableOpacity accessibilityRole="button" onPress={onPress} style={styles.card} activeOpacity={0.86}>
       <View style={styles.blur}>
-        <Text style={styles.title}>Unlock deeper market context</Text>
+        <Text style={styles.title}>Unlock Pro Access</Text>
         <View style={styles.row}>
-          <Text style={styles.item}>Live listings near you</Text>
-          <Text style={styles.item}>Price history trends</Text>
+          <Text style={styles.item}>Market Value Intelligence</Text>
+          <Text style={styles.item}>Live Listings</Text>
         </View>
         <View style={styles.row}>
-          <Text style={styles.item}>Dealer vs private comparisons</Text>
-          <Text style={styles.item}>Advanced insights</Text>
+          <Text style={styles.item}>Pricing Insights</Text>
+          <Text style={styles.item}>Garage Sync</Text>
         </View>
         <View style={styles.ctaWrap}>
           <Text style={styles.cta}>Unlock Pro</Text>

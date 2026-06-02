@@ -107,7 +107,7 @@ export function buildSpecialtyVehicleOverview(input: {
 }) {
   const bodyStyle = String(input.bodyStyle ?? "").trim().toLowerCase();
   if (bodyStyle.includes("coupe") || bodyStyle.includes("convertible") || bodyStyle.includes("spider")) {
-    return "Exotic sports car with collector-market pricing. Market value can vary widely by mileage, condition, options, service history, and provenance.";
+    return "Exotic sports car with specialty pricing. Market value can vary widely by mileage, condition, options, service history, and provenance.";
   }
   return "High-performance specialty vehicle. Market value can vary widely by mileage, condition, options, service history, and provenance.";
 }
@@ -184,7 +184,7 @@ export function buildSpecialtyUnavailableValuation(input: {
     sourceLabel: input.sourceLabel ?? "Specialty market value unavailable",
     confidenceLabel:
       input.confidenceLabel ??
-      "Load live market value. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance.",
+      "Load live market value. Specialty pricing can vary widely by mileage, condition, options, service history, and provenance.",
     message: input.message ?? null,
     reason: input.reason ?? null,
     modelType: "specialty_unavailable",
