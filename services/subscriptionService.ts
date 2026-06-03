@@ -2,7 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { FREE_PRO_UNLOCKS_TOTAL, normalizeFreeUnlockCounter } from "@/constants/product";
 import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { applyPlanOverride } from "@/features/subscription/planOverride";
-import { getPurchaseOptionKind } from "@/lib/purchaseOptions";
+import { getPurchaseOptionKind, isSubscriptionPurchaseOptionKind } from "@/lib/purchaseOptions";
 import { isProPlan } from "@/lib/subscription";
 import { apiRequest } from "@/services/apiClient";
 import { authService } from "@/services/authService";
@@ -882,29 +882,8 @@ export const subscriptionService = {
         product.packageIdentifier === selectedProductKey ||
         product.productId === selectedProductKey,
     );
-    if (purchase.outcome === "verified" && purchase.snapshot.activeEntitlement?.isActive) {
-      status = mergeUsageStatus(await scanService.getUsage().catch(() => status), {
-        plan: "pro",
-        provider: "revenuecat",
-        productId: purchase.snapshot.activeProductId,
-        willAutoRenew: purchase.snapshot.activeEntitlement.willRenew,
-        lastVerifiedAt: purchase.snapshot.activeEntitlement.latestPurchaseDate,
-        purchaseAvailable: purchase.snapshot.purchaseAvailable,
-        purchaseAvailabilityState: purchase.snapshot.purchaseAvailabilityState,
-        availableProducts: purchase.snapshot.availableProducts,
-        renewalLabel: formatRenewalLabel("pro", purchase.snapshot.activeEntitlement.expirationDate ?? undefined),
-      });
-      console.log("[subscription] PURCHASE_ATTEMPT_SUCCESS", {
-        outcome: "verified",
-        productId: purchase.snapshot.activeProductId,
-      });
-      return {
-        outcome: "verified",
-        status,
-        message: purchase.message,
-      };
-    }
-    if (purchase.outcome === "verified" && purchasedProductId && purchasedProduct && getPurchaseOptionKind(purchasedProduct) === "unlock_pack") {
+    const purchasedOptionKind = purchasedProduct ? getPurchaseOptionKind(purchasedProduct) : null;
+    if (purchase.outcome === "verified" && purchasedProductId && purchasedOptionKind === "unlock_pack") {
       await apiRequest<BackendSubscriptionRecord>({
         path: "/api/subscription/verify",
         method: "POST",
@@ -932,8 +911,36 @@ export const subscriptionService = {
       });
       return {
         outcome: "verified",
+        purchaseKind: "unlock_pack",
         status,
-        message: "Unlock pack purchase complete. Credits will appear after RevenueCat verifies the purchase.",
+        message: "5 unlocks added. Your account now has 5 premium unlocks.",
+      };
+    }
+    if (
+      purchase.outcome === "verified" &&
+      purchase.snapshot.activeEntitlement?.isActive &&
+      isSubscriptionPurchaseOptionKind(purchasedOptionKind)
+    ) {
+      status = mergeUsageStatus(await scanService.getUsage().catch(() => status), {
+        plan: "pro",
+        provider: "revenuecat",
+        productId: purchase.snapshot.activeProductId,
+        willAutoRenew: purchase.snapshot.activeEntitlement.willRenew,
+        lastVerifiedAt: purchase.snapshot.activeEntitlement.latestPurchaseDate,
+        purchaseAvailable: purchase.snapshot.purchaseAvailable,
+        purchaseAvailabilityState: purchase.snapshot.purchaseAvailabilityState,
+        availableProducts: purchase.snapshot.availableProducts,
+        renewalLabel: formatRenewalLabel("pro", purchase.snapshot.activeEntitlement.expirationDate ?? undefined),
+      });
+      console.log("[subscription] PURCHASE_ATTEMPT_SUCCESS", {
+        outcome: "verified",
+        productId: purchase.snapshot.activeProductId,
+      });
+      return {
+        outcome: "verified",
+        purchaseKind: purchasedOptionKind ?? "other",
+        status,
+        message: purchase.message,
       };
     }
     console.log("[subscription] PURCHASE_ATTEMPT_FAILURE", { stage: purchase.outcome, message: purchase.message });

@@ -195,8 +195,12 @@ export default function PaywallScreen() {
         optionKind: getPurchaseOptionKind(selectedProduct),
       });
       const result = await purchasePro(getPurchaseOptionKey(selectedProduct));
-      console.log("[paywall] purchase result", { outcome: result.outcome, provider: result.status.provider, plan: result.status.plan });
-      if (isProPlan(result.status.plan) || result.status.provider === "backend") {
+      console.log("[paywall] purchase result", { outcome: result.outcome, purchaseKind: result.purchaseKind ?? null, provider: result.status.provider, plan: result.status.plan });
+      if (result.purchaseKind === "unlock_pack") {
+        router.replace("/unlocks-added");
+        return;
+      }
+      if (result.purchaseKind === "annual" || result.purchaseKind === "monthly" || isProPlan(result.status.plan)) {
         router.replace("/pro-activated");
       }
     } catch {

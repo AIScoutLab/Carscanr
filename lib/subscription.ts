@@ -1,4 +1,5 @@
 import { BillingProvider, PurchaseAvailabilityState, SubscriptionStatus, UserPlan } from "@/types";
+import { getPurchaseOptionKindFromProductMetadata, isSubscriptionPurchaseOptionKind } from "@/lib/purchaseOptions";
 
 export function isProPlan(plan?: UserPlan | null) {
   return plan === "pro" || plan === "pro_monthly" || plan === "pro_yearly";
@@ -41,12 +42,19 @@ function isTrustedEntitlementProvider(provider?: BillingProvider | null) {
   return provider === "backend" || provider === "revenuecat" || provider === "storekit";
 }
 
+function hasSubscriptionProduct(status?: SubscriptionStatus | null) {
+  if (isProPlan(status?.plan)) {
+    return true;
+  }
+  return isSubscriptionPurchaseOptionKind(getPurchaseOptionKindFromProductMetadata({ productId: status?.productId }));
+}
+
 export function hasAuthoritativeProEntitlement(status?: SubscriptionStatus | null) {
   if (!status || !isTrustedEntitlementProvider(status.provider)) {
     return false;
   }
   if (status.isActive === true) {
-    return true;
+    return hasSubscriptionProduct(status);
   }
   if (status.isActive === false) {
     return false;

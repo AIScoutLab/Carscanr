@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 import {
+  getPurchaseOptionKindFromProductMetadata,
   getMissingPurchaseOptionKinds,
   getPreferredPurchaseProduct,
   getPurchaseOptionKind,
   getPurchaseOptionTitle,
+  isUnlockPackProductId,
   sortPurchaseProductsForDisplay,
 } from "@/lib/purchaseOptions";
 import { SubscriptionProduct } from "@/types";
@@ -61,4 +65,23 @@ test("paywall reports missing monthly and unlock pack packages instead of hiding
   ];
 
   assert.deepEqual(getMissingPurchaseOptionKinds(products), ["monthly", "unlock_pack"]);
+});
+
+test("live product ids classify subscriptions and unlock pack distinctly", () => {
+  assert.equal(getPurchaseOptionKindFromProductMetadata({ productId: "carscanr.pro.monthly" }), "monthly");
+  assert.equal(getPurchaseOptionKindFromProductMetadata({ productId: "com.carscanr.pro.yearly" }), "annual");
+  assert.equal(getPurchaseOptionKindFromProductMetadata({ productId: "carscanr.unlockpack.5" }), "unlock_pack");
+  assert.equal(isUnlockPackProductId("carscanr.unlockpack.5"), true);
+  assert.equal(isUnlockPackProductId("carscanr.pro.monthly"), false);
+});
+
+test("unlock pack purchase routes to unlock success instead of Pro activated", () => {
+  const paywallSource = fs.readFileSync(path.join(process.cwd(), "app/paywall.tsx"), "utf8");
+  const unlockSuccessSource = fs.readFileSync(path.join(process.cwd(), "app/unlocks-added.tsx"), "utf8");
+
+  assert.match(paywallSource, /result\.purchaseKind === "unlock_pack"[\s\S]*router\.replace\("\/unlocks-added"\)/);
+  assert.match(paywallSource, /result\.purchaseKind === "annual" \|\| result\.purchaseKind === "monthly"[\s\S]*router\.replace\("\/pro-activated"\)/);
+  assert.match(unlockSuccessSource, /5 unlocks added/);
+  assert.match(unlockSuccessSource, /Your account now has/);
+  assert.doesNotMatch(unlockSuccessSource, /Pro activated|Unlimited scans/);
 });

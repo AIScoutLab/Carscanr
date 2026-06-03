@@ -74,6 +74,25 @@ test("profile treats trusted active entitlement as pro even when free usage stat
   assert.equal(resolved.showRestorePurchases, true);
 });
 
+test("profile does not treat unlock pack entitlement product as Pro", () => {
+  const resolved = resolveProfileAccessState(
+    status({
+      plan: "free",
+      provider: "revenuecat",
+      productId: "carscanr.unlockpack.5",
+      renewalLabel: "Pro active",
+      isActive: true,
+    }),
+  );
+
+  assert.equal(resolved.mode, "free");
+  assert.equal(resolved.planLabel, "Free plan");
+  assert.equal(renderedText(resolved).includes("Pro active"), false);
+  assert.equal(renderedText(resolved).includes("Pro monthly active"), false);
+  assert.equal(resolved.showUpgradeOptions, true);
+  assert.equal(resolved.showFreeUnlockUsage, true);
+});
+
 test("profile hides upgrade card, primary upgrade CTA, and free unlock usage when entitlement is active", () => {
   const resolved = resolveProfileAccessState(
     status({

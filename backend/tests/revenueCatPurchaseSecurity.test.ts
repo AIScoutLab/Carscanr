@@ -237,6 +237,30 @@ describe("RevenueCat purchase security", () => {
     assert.equal(state.unlockBalances.find((entry) => entry.userId === SIGNED_IN_USER_ID)?.unlockCredits ?? 0, 5);
   });
 
+  test("live unlock pack product credits exactly 5 without creating a subscription", async () => {
+    const { state, repositories } = createTestRepositories();
+    setRepositories(repositories);
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/revenuecat/webhook",
+      headers: { authorization: WEBHOOK_AUTH },
+      payload: revenueCatPayload({
+        id: "event-live-unlock-pack-only",
+        type: "NON_RENEWING_PURCHASE",
+        productId: LIVE_PRODUCT_IDS.unlockPack5,
+        transactionId: "tx-live-unlock-pack-only",
+        expirationAtMs: null,
+      }),
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.action, "unlock_pack_credited");
+    assert.equal(state.subscriptions.length, 0);
+    assert.equal(state.unlockBalances.find((entry) => entry.userId === SIGNED_IN_USER_ID)?.unlockCredits ?? 0, 5);
+  });
+
   test("unknown RevenueCat products are still ignored", async () => {
     const { state, repositories } = createTestRepositories();
     setRepositories(repositories);

@@ -14,18 +14,21 @@ export function getPurchaseOptionKey(product: SubscriptionProduct) {
   return product.packageIdentifier ?? product.productId;
 }
 
-export function getPurchaseOptionKind(product: SubscriptionProduct): PurchaseOptionKind {
-  if (product.optionKind) {
-    return product.optionKind;
-  }
-
+export function getPurchaseOptionKindFromProductMetadata(input: {
+  productId?: string | null;
+  packageIdentifier?: string | null;
+  packageType?: string | null;
+  title?: string | null;
+  description?: string | null;
+  billingPeriodLabel?: string | null;
+}): PurchaseOptionKind {
   const normalized = [
-    product.packageIdentifier,
-    product.packageType,
-    product.productId,
-    product.title,
-    product.description,
-    product.billingPeriodLabel,
+    input.packageIdentifier,
+    input.packageType,
+    input.productId,
+    input.title,
+    input.description,
+    input.billingPeriodLabel,
   ]
     .filter((value): value is string => typeof value === "string" && value.length > 0)
     .join(" ")
@@ -41,6 +44,22 @@ export function getPurchaseOptionKind(product: SubscriptionProduct): PurchaseOpt
     return "unlock_pack";
   }
   return "other";
+}
+
+export function isSubscriptionPurchaseOptionKind(kind?: PurchaseOptionKind | null) {
+  return kind === "annual" || kind === "monthly";
+}
+
+export function isUnlockPackProductId(productId?: string | null) {
+  return getPurchaseOptionKindFromProductMetadata({ productId }) === "unlock_pack";
+}
+
+export function getPurchaseOptionKind(product: SubscriptionProduct): PurchaseOptionKind {
+  if (product.optionKind) {
+    return product.optionKind;
+  }
+
+  return getPurchaseOptionKindFromProductMetadata(product);
 }
 
 export function sortPurchaseProductsForDisplay(products: SubscriptionProduct[]) {

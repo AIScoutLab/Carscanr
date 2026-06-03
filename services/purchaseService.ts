@@ -3,7 +3,7 @@ import { Linking } from "react-native";
 import Purchases from "react-native-purchases";
 import type { CustomerInfo, PurchasesEntitlementInfo, PurchasesPackage } from "@revenuecat/purchases-typescript-internal";
 import { mobileEnv } from "@/lib/env";
-import { getMissingPurchaseOptionKinds, getPurchaseOptionKind } from "@/lib/purchaseOptions";
+import { getMissingPurchaseOptionKinds, getPurchaseOptionKind, getPurchaseOptionKindFromProductMetadata, isSubscriptionPurchaseOptionKind } from "@/lib/purchaseOptions";
 import { authService } from "@/services/authService";
 import { guestSessionService } from "@/services/guestSessionService";
 import { PurchaseAvailabilityState, PurchaseOptionKind, SubscriptionProduct } from "@/types";
@@ -300,10 +300,21 @@ async function ensureConfigured(): Promise<RevenueCatConfigurationResult> {
 
 function resolveActiveEntitlement(customerInfo: CustomerInfo) {
   const config = getRevenueCatConfig();
-  if (config.entitlementId && customerInfo.entitlements.active[config.entitlementId]) {
-    return customerInfo.entitlements.active[config.entitlementId];
+  const configuredEntitlement = config.entitlementId ? customerInfo.entitlements.active[config.entitlementId] : null;
+  const activeEntitlements = configuredEntitlement ? [configuredEntitlement] : Object.values(customerInfo.entitlements.active);
+  const subscriptionEntitlement =
+    activeEntitlements.find((entitlement) =>
+      isSubscriptionPurchaseOptionKind(getPurchaseOptionKindFromProductMetadata({ productId: entitlement.productIdentifier })),
+    ) ?? null;
+  const ignoredEntitlementCount = activeEntitlements.filter((entitlement) => entitlement && entitlement !== subscriptionEntitlement).length;
+  if (ignoredEntitlementCount > 0) {
+    logRevenueCatDiagnostics("REVENUECAT_ENTITLEMENT_IGNORED", {
+      reason: "non_subscription_product",
+      ignoredEntitlementCount,
+      productIdentifiers: activeEntitlements.map((entitlement) => entitlement.productIdentifier ?? null),
+    });
   }
-  return Object.values(customerInfo.entitlements.active)[0] ?? null;
+  return subscriptionEntitlement;
 }
 
 export const purchaseService = {
@@ -501,7 +512,10 @@ export const purchaseService = {
       outcome: "verified" as const,
       customerInfo: result.customerInfo,
       productIdentifier: result.productIdentifier,
-      message: "Pro purchase completed successfully.",
+      message:
+        getPurchaseOptionKindFromProductMetadata({ productId: result.productIdentifier }) === "unlock_pack"
+          ? "5 unlocks added. Your account now has 5 premium unlocks."
+          : "Pro purchase completed successfully.",
     };
   },
 
