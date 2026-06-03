@@ -29,6 +29,8 @@ function revenueCatPayload(input: {
   id: string;
   type: string;
   appUserId?: string;
+  originalAppUserId?: string;
+  aliases?: string[];
   productId: string;
   transactionId?: string;
   expirationAtMs?: number | null;
@@ -40,6 +42,8 @@ function revenueCatPayload(input: {
       id: input.id,
       type: input.type,
       app_user_id: input.appUserId ?? "demo-user",
+      original_app_user_id: input.originalAppUserId,
+      aliases: input.aliases,
       product_id: input.productId,
       transaction_id: input.transactionId ?? `tx-${input.id}`,
       original_transaction_id: input.transactionId ?? `tx-${input.id}`,
@@ -214,6 +218,58 @@ describe("RevenueCat purchase security", () => {
         .length,
       1,
     );
+  });
+
+  test("guest RevenueCat unlock pack event cannot create orphaned credits", async () => {
+    const { state, repositories } = createTestRepositories();
+    setRepositories(repositories);
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/revenuecat/webhook",
+      headers: { authorization: WEBHOOK_AUTH },
+      payload: revenueCatPayload({
+        id: "event-guest-unlock-pack",
+        type: "NON_RENEWING_PURCHASE",
+        appUserId: "guest_test_purchase",
+        productId: revenueCatProductIds.unlockPack5,
+        transactionId: "tx-guest-unlock-pack",
+        expirationAtMs: null,
+      }),
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.action, "ignored");
+    assert.equal(state.unlockBalances.find((entry) => entry.userId === "guest_test_purchase")?.unlockCredits ?? 0, 0);
+    assert.equal(state.revenueCatEvents.find((event) => event.id === "event-guest-unlock-pack")?.userId, null);
+  });
+
+  test("RevenueCat signed-in alias is credited instead of guest app user id", async () => {
+    const { state, repositories } = createTestRepositories();
+    setRepositories(repositories);
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/revenuecat/webhook",
+      headers: { authorization: WEBHOOK_AUTH },
+      payload: revenueCatPayload({
+        id: "event-aliased-unlock-pack",
+        type: "NON_RENEWING_PURCHASE",
+        appUserId: "guest_before_login",
+        aliases: ["demo-user"],
+        productId: revenueCatProductIds.unlockPack5,
+        transactionId: "tx-aliased-unlock-pack",
+        expirationAtMs: null,
+      }),
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.action, "unlock_pack_credited");
+    assert.equal(state.unlockBalances.find((entry) => entry.userId === "demo-user")?.unlockCredits ?? 0, 5);
+    assert.equal(state.unlockBalances.find((entry) => entry.userId === "guest_before_login")?.unlockCredits ?? 0, 0);
+    assert.equal(state.revenueCatEvents.find((event) => event.id === "event-aliased-unlock-pack")?.userId, "demo-user");
   });
 
   test("unlock pack refund removes remaining paid credits without going negative", async () => {

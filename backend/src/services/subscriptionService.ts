@@ -98,14 +98,30 @@ function getProductPlan(productId: string | null): UserPlan | null {
 }
 
 function getAppUserId(event: RevenueCatWebhookEvent) {
-  const direct = asString(event.app_user_id);
-  if (direct) return direct;
-  const original = asString(event.original_app_user_id);
-  if (original) return original;
-  if (Array.isArray(event.aliases)) {
-    return event.aliases.map(asString).find((alias): alias is string => Boolean(alias)) ?? null;
+  const candidates = [
+    asString(event.app_user_id),
+    asString(event.original_app_user_id),
+    ...(Array.isArray(event.aliases) ? event.aliases.map(asString) : []),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  return candidates.find((candidate) => !isGuestRevenueCatAppUserId(candidate)) ?? candidates[0] ?? null;
+}
+
+function isGuestRevenueCatAppUserId(value: string | null) {
+  return Boolean(value && (value.startsWith("guest_") || value.startsWith("guest:")));
+}
+
+function getRevenueCatCreditUserId(appUserId: string | null) {
+  if (!appUserId || isGuestRevenueCatAppUserId(appUserId)) {
+    return null;
   }
-  return null;
+  return appUserId;
+}
+
+function getRevenueCatAliases(event: RevenueCatWebhookEvent) {
+  if (Array.isArray(event.aliases)) {
+    return event.aliases.map(asString).filter((alias): alias is string => Boolean(alias));
+  }
+  return [];
 }
 
 function summarizeEvent(event: RevenueCatWebhookEvent) {
@@ -206,7 +222,7 @@ export class SubscriptionService {
     const transactionId = asString(event.transaction_id);
     const originalTransactionId = asString(event.original_transaction_id);
     const appUserId = getAppUserId(event);
-    const userId = appUserId;
+    const userId = getRevenueCatCreditUserId(appUserId);
 
     logger.info(
       {
@@ -214,6 +230,9 @@ export class SubscriptionService {
         eventType,
         productId,
         appUserIdPresent: Boolean(appUserId),
+        revenueCatAliasCount: getRevenueCatAliases(event).length,
+        signedInUserIdPresent: Boolean(userId),
+        guestAppUserIdIgnored: Boolean(appUserId && !userId),
         transactionIdPresent: Boolean(transactionId),
       },
       "REVENUECAT_WEBHOOK_EVENT_PARSED",

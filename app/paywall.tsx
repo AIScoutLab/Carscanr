@@ -1,7 +1,7 @@
 import { LinearGradient } from "expo-linear-gradient";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Alert, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { AppContainer } from "@/components/AppContainer";
 import { BackButton } from "@/components/BackButton";
 import { PrimaryButton } from "@/components/PrimaryButton";
@@ -12,6 +12,13 @@ import { shadow } from "@/design/tokens";
 import { useSubscription } from "@/hooks/useSubscription";
 import { getPurchaseAvailabilityMessage, isProPlan } from "@/lib/subscription";
 import {
+  getPaywallAuthHref,
+  getPaywallSelectedOptionKind,
+  getPaidPurchaseAuthRequiredMessage,
+  requiresSignInBeforePaidPurchase,
+  UNLOCK_PACK_ACCOUNT_REQUIRED_COPY,
+} from "@/lib/paywallPurchaseAuth";
+import {
   getMissingPurchaseOptionKinds,
   getMissingPurchaseOptionMessage,
   getPreferredPurchaseProduct,
@@ -21,6 +28,7 @@ import {
   getPurchaseOptionTitle,
   sortPurchaseProductsForDisplay,
 } from "@/lib/purchaseOptions";
+import { authService } from "@/services/authService";
 import { SubscriptionProduct } from "@/types";
 
 const PRO_FEATURES = ["Market Values", "Live Listings", "Pricing Insights", "Garage Sync"] as const;
@@ -56,6 +64,7 @@ function getFreeUnlockSummary(remaining: number, limit: number) {
 }
 
 export default function PaywallScreen() {
+  const params = useLocalSearchParams<{ selectedOption?: string }>();
   const {
     status,
     isLoading,
@@ -73,7 +82,9 @@ export default function PaywallScreen() {
   const availableProducts = useMemo(() => sortPurchaseProductsForDisplay(status?.availableProducts ?? []), [status?.availableProducts]);
   const availableProductKeys = availableProducts.map(getPurchaseOptionKey).join("|");
   const [selectedProductKey, setSelectedProductKey] = useState<string | null>(null);
+  const [authGateMessage, setAuthGateMessage] = useState<string | null>(null);
   const purchaseAvailabilityState = status?.purchaseAvailabilityState ?? "not_configured";
+  const requestedOptionKind = getPaywallSelectedOptionKind(params.selectedOption);
   const preferredProduct = getPreferredPurchaseProduct(availableProducts);
   const selectedProduct =
     availableProducts.find((product) => getPurchaseOptionKey(product) === selectedProductKey) ?? preferredProduct;
@@ -107,9 +118,15 @@ export default function PaywallScreen() {
       if (current && availableProducts.some((product) => getPurchaseOptionKey(product) === current)) {
         return current;
       }
+      const requestedProduct = requestedOptionKind
+        ? availableProducts.find((product) => getPurchaseOptionKind(product) === requestedOptionKind)
+        : null;
+      if (requestedProduct) {
+        return getPurchaseOptionKey(requestedProduct);
+      }
       return preferredProduct ? getPurchaseOptionKey(preferredProduct) : null;
     });
-  }, [availableProductKeys, availableProducts, preferredProduct]);
+  }, [availableProductKeys, availableProducts, preferredProduct, requestedOptionKind]);
 
   useEffect(() => {
     availableProducts.forEach((product) => {
@@ -132,6 +149,7 @@ export default function PaywallScreen() {
   }, [availableProductKeys, availableProducts, missingOptionKinds, purchaseAvailabilityState]);
 
   const handlePrimaryPress = async () => {
+    const selectedOptionKind = selectedProduct ? getPurchaseOptionKind(selectedProduct) : null;
     console.log("[paywall] PAYWALL_CTA_TAPPED", {
       cta: "primary",
       proEntitlementActive,
@@ -140,12 +158,33 @@ export default function PaywallScreen() {
       isPurchasing,
       purchaseAvailable,
       selectedProductKey: selectedProduct ? getPurchaseOptionKey(selectedProduct) : null,
+      selectedOptionKind,
     });
     if (proEntitlementActive) {
       router.back();
       return;
     }
     if (!purchaseAvailable || !selectedProduct) {
+      return;
+    }
+    const currentUser = await authService.getCurrentUser();
+    if (
+      requiresSignInBeforePaidPurchase({
+        isSignedIn: Boolean(currentUser?.id),
+        product: selectedProduct,
+        optionKind: selectedOptionKind,
+      })
+    ) {
+      const authHref = getPaywallAuthHref(selectedOptionKind);
+      const authMessage = getPaidPurchaseAuthRequiredMessage(selectedOptionKind);
+      setAuthGateMessage(authMessage);
+      Alert.alert("Sign in required", authMessage, [
+        { text: "Not Now", style: "cancel" },
+        {
+          text: "Sign In",
+          onPress: () => router.push(authHref as never),
+        },
+      ]);
       return;
     }
     try {
@@ -222,6 +261,7 @@ export default function PaywallScreen() {
                       activeOpacity={0.86}
                       style={[styles.productOption, selected && styles.productOptionSelected]}
                       onPress={() => {
+                        setAuthGateMessage(null);
                         console.log("PAYWALL_PURCHASE_OPTION_SELECTED", {
                           source: "paywall-option",
                           productId: product.productId,
@@ -237,6 +277,7 @@ export default function PaywallScreen() {
                           {optionKind === "annual" ? <Text style={styles.bestValueBadge}>Best Value</Text> : null}
                         </View>
                         {selected ? <Text style={styles.selectedLabel}>Selected</Text> : null}
+                        {optionKind === "unlock_pack" ? <Text style={styles.productSupportText}>{UNLOCK_PACK_ACCOUNT_REQUIRED_COPY}</Text> : null}
                       </View>
                       <View style={styles.productPriceWrap}>
                         <Text style={styles.productPrice}>{getPaywallPriceLine(product)}</Text>
@@ -262,6 +303,7 @@ export default function PaywallScreen() {
                   </Text>
                 ))
               : null}
+            {authGateMessage ? <Text style={styles.authGateNotice}>{authGateMessage}</Text> : null}
             {purchaseNotice ? <Text style={styles.notice}>{purchaseNotice}</Text> : null}
           </>
         )}
@@ -348,10 +390,12 @@ const styles = StyleSheet.create({
   productPriceWrap: { alignItems: "flex-end", gap: 4 },
   productPrice: { ...Typography.bodyStrong, color: Colors.premium, textAlign: "right" },
   selectedLabel: { ...Typography.caption, color: Colors.premium, fontWeight: "800" },
+  productSupportText: { ...Typography.caption, color: Colors.textMuted },
   restoreLink: { alignSelf: "center", paddingHorizontal: 12, paddingVertical: 2 },
   restoreText: { ...Typography.caption, color: Colors.textSoft, fontWeight: "700" },
   restoreTextDisabled: { color: Colors.textFaint },
   warning: { ...Typography.caption, color: Colors.warning, textAlign: "center" },
+  authGateNotice: { ...Typography.caption, color: Colors.warning, textAlign: "center" },
   notice: { ...Typography.caption, color: Colors.textMuted, textAlign: "center" },
   feedback: { ...Typography.caption, color: Colors.textSoft, textAlign: "center" },
   error: { ...Typography.caption, color: Colors.danger, textAlign: "center" },
