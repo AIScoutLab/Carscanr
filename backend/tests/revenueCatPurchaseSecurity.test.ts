@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { InjectOptions, Response } from "light-my-request";
 import { createApp } from "../src/app.js";
-import { revenueCatProductIds } from "../src/services/subscriptionService.js";
+import { revenueCatProductIdAliases, revenueCatProductIds } from "../src/services/subscriptionService.js";
 import { setProviders } from "../src/lib/providerRegistry.js";
 import { setRepositories } from "../src/lib/repositoryRegistry.js";
 import { createTestProviders, createTestRepositories } from "./helpers/testData.js";
@@ -15,6 +15,10 @@ const WEBHOOK_AUTH = `Bearer ${process.env.REVENUECAT_WEBHOOK_AUTH_TOKEN ?? "loc
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const backendRoot = path.resolve(__dirname, "..");
 const SIGNED_IN_USER_ID = "11111111-1111-4111-8111-111111111111";
+const LIVE_PRODUCT_IDS = {
+  monthlyPro: "carscanr.pro.monthly",
+  unlockPack5: "carscanr.unlockpack.5",
+} as const;
 
 function parseJson<T>(response: Response): T {
   return JSON.parse(response.payload) as T;
@@ -172,6 +176,94 @@ describe("RevenueCat purchase security", () => {
       assert.equal(state.subscriptions[0].plan, expectedPlan);
       assert.equal(state.subscriptions[0].userId, SIGNED_IN_USER_ID);
     }
+  });
+
+  test("live App Store RevenueCat product ids grant the expected paid access", async () => {
+    const { state, repositories } = createTestRepositories();
+    setRepositories(repositories);
+
+    const monthlyResponse = await requestApp({
+      method: "POST",
+      url: "/api/revenuecat/webhook",
+      headers: { authorization: WEBHOOK_AUTH },
+      payload: revenueCatPayload({
+        id: "event-live-monthly-pro",
+        type: "INITIAL_PURCHASE",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        transactionId: "tx-live-monthly-pro",
+      }),
+    });
+    const monthlyBody = parseJson<any>(monthlyResponse);
+
+    assert.equal(monthlyResponse.statusCode, 200);
+    assert.equal(monthlyBody.data.action, "pro_granted");
+    assert.equal(state.subscriptions[0].plan, "pro_monthly");
+    assert.equal(state.subscriptions[0].productId, LIVE_PRODUCT_IDS.monthlyPro);
+
+    const yearlyResponse = await requestApp({
+      method: "POST",
+      url: "/api/revenuecat/webhook",
+      headers: { authorization: WEBHOOK_AUTH },
+      payload: revenueCatPayload({
+        id: "event-compatible-yearly-pro",
+        type: "INITIAL_PURCHASE",
+        productId: revenueCatProductIds.yearlyPro,
+        transactionId: "tx-compatible-yearly-pro",
+      }),
+    });
+    const yearlyBody = parseJson<any>(yearlyResponse);
+
+    assert.equal(yearlyResponse.statusCode, 200);
+    assert.equal(yearlyBody.data.action, "pro_granted");
+    assert.equal(state.subscriptions[0].plan, "pro_yearly");
+    assert.equal(state.subscriptions[0].productId, revenueCatProductIds.yearlyPro);
+
+    const unlockResponse = await requestApp({
+      method: "POST",
+      url: "/api/revenuecat/webhook",
+      headers: { authorization: WEBHOOK_AUTH },
+      payload: revenueCatPayload({
+        id: "event-live-unlock-pack",
+        type: "NON_RENEWING_PURCHASE",
+        productId: LIVE_PRODUCT_IDS.unlockPack5,
+        transactionId: "tx-live-unlock-pack",
+        expirationAtMs: null,
+      }),
+    });
+    const unlockBody = parseJson<any>(unlockResponse);
+
+    assert.equal(unlockResponse.statusCode, 200);
+    assert.equal(unlockBody.data.action, "unlock_pack_credited");
+    assert.equal(state.unlockBalances.find((entry) => entry.userId === SIGNED_IN_USER_ID)?.unlockCredits ?? 0, 5);
+  });
+
+  test("unknown RevenueCat products are still ignored", async () => {
+    const { state, repositories } = createTestRepositories();
+    setRepositories(repositories);
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/revenuecat/webhook",
+      headers: { authorization: WEBHOOK_AUTH },
+      payload: revenueCatPayload({
+        id: "event-unknown-product",
+        type: "INITIAL_PURCHASE",
+        productId: "carscanr.experimental.unknown",
+        transactionId: "tx-unknown-product",
+      }),
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.action, "ignored");
+    assert.equal(state.subscriptions.some((subscription) => subscription.plan !== "free"), false);
+    assert.equal(state.unlockBalances.find((entry) => entry.userId === SIGNED_IN_USER_ID)?.unlockCredits ?? 0, 0);
+  });
+
+  test("RevenueCat reprocess coverage includes live and compatible product id aliases", () => {
+    assert.deepEqual(revenueCatProductIdAliases.monthlyPro, [revenueCatProductIds.monthlyPro, LIVE_PRODUCT_IDS.monthlyPro]);
+    assert.deepEqual(revenueCatProductIdAliases.yearlyPro, [revenueCatProductIds.yearlyPro, "carscanr.pro.yearly"]);
+    assert.deepEqual(revenueCatProductIdAliases.unlockPack5, [revenueCatProductIds.unlockPack5, LIVE_PRODUCT_IDS.unlockPack5]);
   });
 
   test("verified monthly RevenueCat event grants live value access", async () => {

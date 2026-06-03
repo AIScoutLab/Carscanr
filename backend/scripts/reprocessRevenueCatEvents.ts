@@ -1,6 +1,6 @@
 import { env } from "../src/config/env.js";
 import { supabaseAdmin } from "../src/lib/supabase.js";
-import { revenueCatProductIds, SubscriptionService } from "../src/services/subscriptionService.js";
+import { revenueCatProductIdAliases, SubscriptionService } from "../src/services/subscriptionService.js";
 
 type RevenueCatEventRow = {
   id: string;
@@ -49,11 +49,7 @@ async function main() {
     throw new Error("Supabase admin client is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
   }
 
-  const productIds = [
-    revenueCatProductIds.monthlyPro,
-    revenueCatProductIds.yearlyPro,
-    revenueCatProductIds.unlockPack5,
-  ];
+  const productIds = Object.values(revenueCatProductIdAliases).flat();
   const { data, error } = await supabaseAdmin
     .from("revenuecat_events")
     .select("id, app_user_id, user_id, event_type, product_id, transaction_id, original_transaction_id, payload_summary, created_at")

@@ -12,6 +12,12 @@ const REVENUECAT_PRODUCT_IDS = {
   unlockPack5: "com.carscanr.unlock_pack_5",
 } as const;
 
+const REVENUECAT_PRODUCT_ID_ALIASES = {
+  monthlyPro: [REVENUECAT_PRODUCT_IDS.monthlyPro, "carscanr.pro.monthly"],
+  yearlyPro: [REVENUECAT_PRODUCT_IDS.yearlyPro, "carscanr.pro.yearly"],
+  unlockPack5: [REVENUECAT_PRODUCT_IDS.unlockPack5, "carscanr.unlockpack.5"],
+} as const;
+
 const UNLOCK_PACK_CREDITS = 5;
 
 type RevenueCatWebhookEvent = {
@@ -92,9 +98,13 @@ function extractRevenueCatEvent(payload: unknown): RevenueCatWebhookEvent {
 }
 
 function getProductPlan(productId: string | null): UserPlan | null {
-  if (productId === REVENUECAT_PRODUCT_IDS.yearlyPro) return "pro_yearly";
-  if (productId === REVENUECAT_PRODUCT_IDS.monthlyPro) return "pro_monthly";
+  if (isRevenueCatProductId(productId, REVENUECAT_PRODUCT_ID_ALIASES.yearlyPro)) return "pro_yearly";
+  if (isRevenueCatProductId(productId, REVENUECAT_PRODUCT_ID_ALIASES.monthlyPro)) return "pro_monthly";
   return null;
+}
+
+function isRevenueCatProductId(productId: string | null, aliases: readonly string[]) {
+  return Boolean(productId && aliases.includes(productId));
 }
 
 function isSupabaseUserId(value: string | null) {
@@ -285,7 +295,7 @@ export class SubscriptionService {
     let action: RevenueCatProcessResult["action"] = "ignored";
     let plan: UserPlan | undefined;
 
-    if (productId === REVENUECAT_PRODUCT_IDS.unlockPack5) {
+    if (isRevenueCatProductId(productId, REVENUECAT_PRODUCT_ID_ALIASES.unlockPack5)) {
       action = await this.processUnlockPackEvent({
         userId,
         eventType,
@@ -406,3 +416,4 @@ export class SubscriptionService {
 }
 
 export const revenueCatProductIds = REVENUECAT_PRODUCT_IDS;
+export const revenueCatProductIdAliases = REVENUECAT_PRODUCT_ID_ALIASES;
