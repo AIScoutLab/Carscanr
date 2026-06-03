@@ -80,7 +80,8 @@ test("unlock pack purchase routes to unlock success instead of Pro activated", (
   const unlockSuccessSource = fs.readFileSync(path.join(process.cwd(), "app/unlocks-added.tsx"), "utf8");
 
   assert.match(paywallSource, /result\.purchaseKind === "unlock_pack"[\s\S]*router\.replace\("\/unlocks-added"\)/);
-  assert.match(paywallSource, /result\.purchaseKind === "annual" \|\| result\.purchaseKind === "monthly"[\s\S]*router\.replace\("\/pro-activated"\)/);
+  assert.match(paywallSource, /result\.status\.provider === "backend"[\s\S]*router\.replace\("\/pro-activated"\)/);
+  assert.match(paywallSource, /result\.purchaseKind === "annual" \|\| result\.purchaseKind === "monthly"[\s\S]*router\.replace\("\/\(tabs\)\/profile"\)/);
   assert.match(unlockSuccessSource, /5 unlocks added/);
   assert.match(unlockSuccessSource, /Your account now has/);
   assert.doesNotMatch(unlockSuccessSource, /Pro activated|Unlimited scans/);

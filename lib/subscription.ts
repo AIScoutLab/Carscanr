@@ -39,7 +39,7 @@ export function getProActiveLabel(status?: SubscriptionStatus | null) {
 }
 
 function isTrustedEntitlementProvider(provider?: BillingProvider | null) {
-  return provider === "backend" || provider === "revenuecat" || provider === "storekit";
+  return provider === "backend";
 }
 
 function hasSubscriptionProduct(status?: SubscriptionStatus | null) {
@@ -60,6 +60,13 @@ export function hasAuthoritativeProEntitlement(status?: SubscriptionStatus | nul
     return false;
   }
   return isProPlan(status.plan);
+}
+
+function hasPendingRevenueCatProSync(status?: SubscriptionStatus | null) {
+  return (
+    status?.entitlementSyncState === "revenuecat_active_backend_pending" ||
+    (status?.provider === "revenuecat" && !isProPlan(status.plan) && isSubscriptionPurchaseOptionKind(getPurchaseOptionKindFromProductMetadata({ productId: status.productId })))
+  );
 }
 
 function isUpgradeOrFreeCopy(label: string) {
@@ -109,6 +116,7 @@ export function getPurchaseAvailabilityMessage(state: PurchaseAvailabilityState)
 export type ProfileAccessState = {
   mode: "loading" | "pro" | "free";
   hasProEntitlement: boolean;
+  hasPendingProSync: boolean;
   planLabel: string;
   renewalLabel: string | null;
   showFreeUnlockUsage: boolean;
@@ -121,27 +129,31 @@ export type ProfileAccessState = {
 
 export function resolveProfileAccessState(status?: SubscriptionStatus | null, isLoading = false): ProfileAccessState {
   const hasProEntitlement = hasAuthoritativeProEntitlement(status);
+  const hasPendingProSync = !hasProEntitlement && hasPendingRevenueCatProSync(status);
   const purchaseAvailabilityState = status?.purchaseAvailabilityState ?? "not_configured";
   const mode: ProfileAccessState["mode"] = isLoading ? "loading" : hasProEntitlement ? "pro" : "free";
   const qaConfigurationMessage = getPurchaseAvailabilityMessage(purchaseAvailabilityState);
   const primaryProLabel = getProActiveLabel(status);
-  const planLabel = mode === "loading" ? "Checking plan..." : mode === "pro" ? primaryProLabel : "Free plan";
+  const planLabel = mode === "loading" ? "Checking plan..." : mode === "pro" ? primaryProLabel : hasPendingProSync ? "Pro access syncing" : "Free plan";
   const renewalLabel =
     mode === "loading"
       ? null
       : mode === "pro"
         ? getProDetailLabel(status, primaryProLabel)
+        : hasPendingProSync
+          ? "Purchase detected. Backend access has not confirmed Pro yet."
         : qaConfigurationMessage ?? "Free unlocks are available on this account.";
 
   const resolved = {
     mode,
     hasProEntitlement,
+    hasPendingProSync,
     planLabel,
     renewalLabel,
     showFreeUnlockUsage: mode === "free",
-    showUpgradeOptions: mode === "free",
-    showPaywallCard: mode === "free",
-    showPrimaryUpgradeCta: mode === "free",
+    showUpgradeOptions: mode === "free" && !hasPendingProSync,
+    showPaywallCard: mode === "free" && !hasPendingProSync,
+    showPrimaryUpgradeCta: mode === "free" && !hasPendingProSync,
     showRestorePurchases: true,
     purchaseAvailabilityState,
   } satisfies ProfileAccessState;

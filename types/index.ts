@@ -206,6 +206,7 @@ export type GarageItem = {
 export type UserPlan = "free" | "pro" | "pro_monthly" | "pro_yearly";
 
 export type BillingProvider = "storekit" | "revenuecat" | "backend" | "placeholder";
+export type EntitlementSyncState = "none" | "revenuecat_active_backend_pending";
 
 export type PurchaseOptionKind = "annual" | "monthly" | "unlock_pack" | "other";
 
@@ -259,6 +260,7 @@ export type SubscriptionStatus = {
   purchaseAvailable?: boolean;
   purchaseAvailabilityState?: PurchaseAvailabilityState;
   availableProducts?: SubscriptionProduct[];
+  entitlementSyncState?: EntitlementSyncState;
 };
 
 export type SubscriptionVerifyPayload = {

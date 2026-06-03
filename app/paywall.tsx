@@ -200,8 +200,12 @@ export default function PaywallScreen() {
         router.replace("/unlocks-added");
         return;
       }
-      if (result.purchaseKind === "annual" || result.purchaseKind === "monthly" || isProPlan(result.status.plan)) {
+      if (result.status.provider === "backend" && result.status.isActive === true && isProPlan(result.status.plan)) {
         router.replace("/pro-activated");
+        return;
+      }
+      if (result.purchaseKind === "annual" || result.purchaseKind === "monthly") {
+        router.replace("/(tabs)/profile");
       }
     } catch {
       // The inline error state from the subscription provider handles display.

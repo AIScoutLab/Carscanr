@@ -154,6 +154,7 @@ export default function ProfileScreen() {
     isRestoring,
     isCancelling,
     freeUnlocksRemaining,
+    unlockCredits,
     feedbackMessage,
     errorMessage,
     restorePurchases,
@@ -228,6 +229,7 @@ export default function ProfileScreen() {
   const garageValue = user ? "Sync" : "0";
   const remainingUnlocks = Math.max(0, freeUnlocksRemaining);
   const unlockUsageLabel = accessState.hasProEntitlement ? "Pro Access active" : `${remainingUnlocks} free unlocks remaining`;
+  const paidUnlockCreditLabel = `${unlockCredits} paid ${unlockCredits === 1 ? "unlock credit" : "unlock credits"} ready`;
   const displayFeedbackMessage = sanitizeProfileMessage(feedbackMessage);
   const displayErrorMessage = sanitizeProfileMessage(errorMessage);
   const nativeAppVersion = mobileBuildInfo.nativeAppVersion || mobileBuildInfo.version || "Unavailable";
@@ -409,6 +411,12 @@ export default function ProfileScreen() {
                 <Text style={styles.unlockText}>{unlockUsageLabel}</Text>
               </View>
             ) : null}
+            {unlockCredits > 0 ? (
+              <View style={styles.unlockPill}>
+                <Ionicons name="key-outline" size={16} color={profileColors.goldLight} />
+                <Text style={styles.unlockText}>{paidUnlockCreditLabel}</Text>
+              </View>
+            ) : null}
             {accessState.showPrimaryUpgradeCta ? (
               <TouchableOpacity activeOpacity={0.88} accessibilityRole="button" onPress={() => router.push("/paywall")}>
                 <LinearGradient colors={["rgba(214,158,93,0.28)", "rgba(214,158,93,0.16)"]} style={styles.upgradeButton}>
@@ -419,7 +427,7 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             ) : (
               <View style={styles.activeAccessPill}>
-                <Ionicons name="checkmark-circle-outline" size={18} color={profileColors.goldLight} />
+                <Ionicons name={accessState.hasPendingProSync ? "sync-outline" : "checkmark-circle-outline"} size={18} color={profileColors.goldLight} />
                 <Text style={styles.activeAccessText}>{accessState.planLabel}</Text>
               </View>
             )}

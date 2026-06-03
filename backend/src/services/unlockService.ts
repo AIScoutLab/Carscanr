@@ -51,6 +51,7 @@ export class UnlockService {
       freeUnlocksTotal: balance.freeUnlocksTotal,
       freeUnlocksUsed: balance.freeUnlocksUsed,
       freeUnlocksRemaining: remaining,
+      unlockCreditsRemaining: balance.unlockCredits,
       unlockedVehicleIds,
     };
   }

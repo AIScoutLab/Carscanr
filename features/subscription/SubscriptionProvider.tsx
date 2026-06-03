@@ -16,6 +16,7 @@ type SubscriptionContextValue = {
   freeUnlocksUsed: number;
   freeUnlocksRemaining: number;
   freeUnlocksLimit: number;
+  unlockCredits: number;
   unlockedVehicleIds: string[];
   feedbackMessage: string | null;
   errorMessage: string | null;
@@ -44,6 +45,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const [freeUnlocksUsed, setFreeUnlocksUsed] = useState(0);
   const [freeUnlocksRemaining, setFreeUnlocksRemaining] = useState(FREE_PRO_UNLOCKS_TOTAL);
   const [freeUnlocksLimit, setFreeUnlocksLimit] = useState(FREE_PRO_UNLOCKS_TOTAL);
+  const [unlockCredits, setUnlockCredits] = useState(0);
   const [unlockedVehicleIds, setUnlockedVehicleIds] = useState<string[]>([]);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -57,6 +59,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       setFreeUnlocksUsed(unlockState.used);
       setFreeUnlocksRemaining(unlockState.remaining);
       setFreeUnlocksLimit(unlockState.limit);
+      setUnlockCredits(unlockState.unlockCredits ?? 0);
       setUnlockedVehicleIds(unlockState.unlockedVehicleIds);
       return nextStatus;
     } catch (error) {
@@ -64,6 +67,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       setFreeUnlocksUsed(0);
       setFreeUnlocksRemaining(FREE_PRO_UNLOCKS_TOTAL);
       setFreeUnlocksLimit(FREE_PRO_UNLOCKS_TOTAL);
+      setUnlockCredits(0);
       setUnlockedVehicleIds([]);
       setErrorMessage(error instanceof Error ? error.message : "Unable to refresh your plan right now.");
       return null;
@@ -77,7 +81,13 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       setIsPurchasing(true);
       setErrorMessage(null);
       const result = await subscriptionService.purchaseSubscription(selectedProductKey);
+      const unlockState = await subscriptionService.getFreeUnlockState();
       setStatus(result.status);
+      setFreeUnlocksUsed(unlockState.used);
+      setFreeUnlocksRemaining(unlockState.remaining);
+      setFreeUnlocksLimit(unlockState.limit);
+      setUnlockCredits(unlockState.unlockCredits ?? 0);
+      setUnlockedVehicleIds(unlockState.unlockedVehicleIds);
       setFeedbackMessage(result.message);
       return result;
     } catch (error) {
@@ -215,6 +225,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         setFreeUnlocksUsed(unlockState.used);
         setFreeUnlocksRemaining(unlockState.remaining);
         setFreeUnlocksLimit(unlockState.limit);
+        setUnlockCredits(unlockState.unlockCredits ?? 0);
         setUnlockedVehicleIds(unlockState.unlockedVehicleIds);
       } catch (error) {
         if (!active) return;
@@ -222,6 +233,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         setFreeUnlocksUsed(0);
         setFreeUnlocksRemaining(FREE_PRO_UNLOCKS_TOTAL);
         setFreeUnlocksLimit(FREE_PRO_UNLOCKS_TOTAL);
+        setUnlockCredits(0);
         setUnlockedVehicleIds([]);
         setErrorMessage(error instanceof Error ? error.message : "Unable to refresh your plan right now.");
       } finally {
@@ -248,6 +260,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       freeUnlocksRemaining,
       freeUnlocksLimit,
       unlockedVehicleIds,
+      unlockCredits,
       feedbackMessage,
       errorMessage,
       refreshStatus,
@@ -264,6 +277,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       freeUnlocksLimit,
       freeUnlocksRemaining,
       freeUnlocksUsed,
+      unlockCredits,
       isCancelling,
       isLoading,
       isPurchasing,

@@ -26,6 +26,7 @@ type BackendUnlockStatus = {
   freeUnlocksTotal: number;
   freeUnlocksUsed: number;
   freeUnlocksRemaining: number;
+  unlockCreditsRemaining?: number;
   unlockedVehicleIds: string[];
 };
 
@@ -521,6 +522,38 @@ function mergeUsageStatus(usage: SubscriptionStatus, overrides?: Partial<Subscri
   };
 }
 
+function getRevenueCatSubscriptionSyncOverrides(
+  usage: SubscriptionStatus,
+  snapshot: {
+    activeEntitlement: Awaited<ReturnType<typeof purchaseService.getPurchaseSnapshot>>["activeEntitlement"];
+    activeProductId: string | null;
+    purchaseAvailable: boolean;
+    purchaseAvailabilityState: SubscriptionStatus["purchaseAvailabilityState"];
+    availableProducts: SubscriptionProduct[];
+  },
+): Partial<SubscriptionStatus> {
+  const backendHasPro = isProPlan(usage.plan);
+  const revenueCatSubscriptionActive = snapshot.activeEntitlement?.isActive === true;
+
+  return {
+    plan: usage.plan,
+    provider: backendHasPro ? "backend" : revenueCatSubscriptionActive ? "revenuecat" : usage.provider,
+    productId: revenueCatSubscriptionActive ? snapshot.activeProductId : usage.productId ?? null,
+    isActive: backendHasPro,
+    willAutoRenew: backendHasPro ? (snapshot.activeEntitlement?.willRenew ?? usage.willAutoRenew ?? true) : false,
+    lastVerifiedAt: revenueCatSubscriptionActive ? snapshot.activeEntitlement?.latestPurchaseDate ?? usage.lastVerifiedAt ?? null : usage.lastVerifiedAt ?? null,
+    renewalLabel: backendHasPro
+      ? formatRenewalLabel(usage.plan, snapshot.activeEntitlement?.expirationDate ?? undefined)
+      : revenueCatSubscriptionActive
+        ? "Purchase detected. Backend access has not confirmed Pro yet."
+        : usage.renewalLabel,
+    entitlementSyncState: !backendHasPro && revenueCatSubscriptionActive ? "revenuecat_active_backend_pending" : "none",
+    purchaseAvailable: snapshot.purchaseAvailable,
+    purchaseAvailabilityState: snapshot.purchaseAvailabilityState,
+    availableProducts: snapshot.availableProducts,
+  };
+}
+
 function buildRevenueCatReceiptData(customerInfo: unknown, productId: string) {
   const info = customerInfo as {
     originalAppUserId?: string;
@@ -579,19 +612,7 @@ export const subscriptionService = {
           };
         }),
       ]);
-      status = mergeUsageStatus(usage, {
-        plan: purchaseSnapshot.activeEntitlement?.isActive ? "pro" : usage.plan,
-        provider: purchaseSnapshot.activeEntitlement?.isActive ? "revenuecat" : isProPlan(usage.plan) ? "backend" : "placeholder",
-        productId: purchaseSnapshot.activeProductId ?? status.productId ?? null,
-        willAutoRenew: purchaseSnapshot.activeEntitlement?.willRenew ?? isProPlan(usage.plan),
-        renewalLabel: purchaseSnapshot.activeEntitlement?.isActive
-          ? formatRenewalLabel("pro", purchaseSnapshot.activeEntitlement.expirationDate ?? undefined)
-          : usage.renewalLabel,
-        lastVerifiedAt: status.lastVerifiedAt ?? null,
-        purchaseAvailable: purchaseSnapshot.purchaseAvailable,
-        purchaseAvailabilityState: purchaseSnapshot.purchaseAvailabilityState,
-        availableProducts: purchaseSnapshot.availableProducts,
-      });
+      status = mergeUsageStatus(usage, getRevenueCatSubscriptionSyncOverrides(usage, purchaseSnapshot));
       console.log("ENTITLEMENT_CACHE_STATE", {
         plan: status.plan,
         provider: status.provider,
@@ -646,6 +667,7 @@ export const subscriptionService = {
         remaining: merged.remaining,
         unlockedVehicleIds: merged.unlockedVehicleIds,
         limit: merged.limit,
+        unlockCredits: 0,
       };
     }
     try {
@@ -662,6 +684,7 @@ export const subscriptionService = {
         remaining: merged.remaining,
         unlockedVehicleIds: merged.unlockedVehicleIds,
         limit: merged.limit,
+        unlockCredits: Math.max(0, status.unlockCreditsRemaining ?? 0),
       };
     } catch {
       const remaining = Math.max(0, FREE_UNLOCKS_LIMIT - localState.used);
@@ -676,6 +699,7 @@ export const subscriptionService = {
         remaining,
         unlockedVehicleIds: localState.unlockedVehicleIds,
         limit: FREE_UNLOCKS_LIMIT,
+        unlockCredits: 0,
       };
     }
   },
@@ -921,17 +945,8 @@ export const subscriptionService = {
       purchase.snapshot.activeEntitlement?.isActive &&
       isSubscriptionPurchaseOptionKind(purchasedOptionKind)
     ) {
-      status = mergeUsageStatus(await scanService.getUsage().catch(() => status), {
-        plan: "pro",
-        provider: "revenuecat",
-        productId: purchase.snapshot.activeProductId,
-        willAutoRenew: purchase.snapshot.activeEntitlement.willRenew,
-        lastVerifiedAt: purchase.snapshot.activeEntitlement.latestPurchaseDate,
-        purchaseAvailable: purchase.snapshot.purchaseAvailable,
-        purchaseAvailabilityState: purchase.snapshot.purchaseAvailabilityState,
-        availableProducts: purchase.snapshot.availableProducts,
-        renewalLabel: formatRenewalLabel("pro", purchase.snapshot.activeEntitlement.expirationDate ?? undefined),
-      });
+      const usage = await scanService.getUsage().catch(() => status);
+      status = mergeUsageStatus(usage, getRevenueCatSubscriptionSyncOverrides(usage, purchase.snapshot));
       console.log("[subscription] PURCHASE_ATTEMPT_SUCCESS", {
         outcome: "verified",
         productId: purchase.snapshot.activeProductId,
@@ -961,17 +976,37 @@ export const subscriptionService = {
     console.log("[subscription] RESTORE_PURCHASES_START");
     const restore = await purchaseService.restorePurchases();
     if (restore.outcome === "restored" && restore.snapshot.activeEntitlement?.isActive) {
-      status = mergeUsageStatus(status, {
-        plan: "pro",
-        provider: "revenuecat",
-        productId: restore.snapshot.activeProductId,
-        willAutoRenew: restore.snapshot.activeEntitlement.willRenew,
-        lastVerifiedAt: restore.snapshot.activeEntitlement.latestPurchaseDate,
-        purchaseAvailable: restore.snapshot.purchaseAvailable,
-        purchaseAvailabilityState: restore.snapshot.purchaseAvailabilityState,
-        availableProducts: restore.snapshot.availableProducts,
-        renewalLabel: formatRenewalLabel("pro", restore.snapshot.activeEntitlement.expirationDate ?? undefined),
-      });
+      const restoredProductId = restore.snapshot.activeProductId;
+      let backendRecord: BackendSubscriptionRecord | null = null;
+      if (restoredProductId) {
+        backendRecord = await apiRequest<BackendSubscriptionRecord>({
+          path: "/api/subscription/verify",
+          method: "POST",
+          body: {
+            platform: "ios",
+            productId: restoredProductId,
+            receiptData: buildRevenueCatReceiptData("customerInfo" in restore ? restore.customerInfo : null, restoredProductId),
+          },
+        }).catch((error) => {
+          console.log("[subscription] RESTORE_BACKEND_SYNC_FAILURE", {
+            productId: restoredProductId,
+            message: error instanceof Error ? error.message : "Unknown restore sync failure",
+          });
+          return null;
+        });
+      }
+      const usage = backendRecord
+        ? mergeUsageStatus(status, {
+            plan: backendRecord.plan,
+            provider: "backend",
+            productId: backendRecord.productId,
+            isActive: isProPlan(backendRecord.plan) && backendRecord.status === "active",
+            willAutoRenew: isProPlan(backendRecord.plan) && backendRecord.status === "active",
+            lastVerifiedAt: backendRecord.verifiedAt,
+            renewalLabel: formatRenewalLabel(backendRecord.plan, backendRecord.expiresAt),
+          })
+        : status;
+      status = mergeUsageStatus(usage, getRevenueCatSubscriptionSyncOverrides(usage, restore.snapshot));
       console.log("[subscription] RESTORE_PURCHASES_SUCCESS", { outcome: "restored", active: true });
       console.log("ENTITLEMENT_RESTORE_RESULT", {
         outcome: "restored",
@@ -1006,19 +1041,8 @@ export const subscriptionService = {
     console.log("[subscription] MANAGEMENT_OPEN_START");
     const management = await purchaseService.openSubscriptionManagement();
 
-    status = mergeUsageStatus(status, {
-      plan: management.snapshot.activeEntitlement?.isActive ? "pro" : status.plan,
-      provider: management.snapshot.activeEntitlement?.isActive ? "revenuecat" : status.provider,
-      productId: management.snapshot.activeProductId ?? status.productId ?? null,
-      willAutoRenew: management.snapshot.activeEntitlement?.willRenew ?? status.willAutoRenew,
-      lastVerifiedAt: management.snapshot.activeEntitlement?.latestPurchaseDate ?? status.lastVerifiedAt ?? null,
-      purchaseAvailable: management.snapshot.purchaseAvailable,
-      purchaseAvailabilityState: management.snapshot.purchaseAvailabilityState,
-      availableProducts: management.snapshot.availableProducts,
-      renewalLabel: management.snapshot.activeEntitlement?.isActive
-        ? formatRenewalLabel("pro", management.snapshot.activeEntitlement.expirationDate ?? undefined)
-        : status.renewalLabel,
-    });
+    const usage = await scanService.getUsage().catch(() => status);
+    status = mergeUsageStatus(usage, getRevenueCatSubscriptionSyncOverrides(usage, management.snapshot));
 
     if (management.outcome !== "opened") {
       console.log("[subscription] MANAGEMENT_OPEN_SKIPPED", { outcome: management.outcome, message: management.message });

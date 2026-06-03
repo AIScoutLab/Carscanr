@@ -53,24 +53,29 @@ test("profile access state never renders free plan and active pro together", () 
   assert.equal(resolved.showFreeUnlockUsage, true);
 });
 
-test("profile treats trusted active entitlement as pro even when free usage state is stale", () => {
+test("RevenueCat active monthly with backend inactive is pending instead of Pro active", () => {
   const resolved = resolveProfileAccessState(
     status({
       plan: "free",
       provider: "revenuecat",
-      productId: "com.carscanr.pro.yearly",
+      productId: "carscanr.pro.monthly",
       renewalLabel: "Pro active",
       isActive: true,
+      entitlementSyncState: "revenuecat_active_backend_pending",
     }),
   );
 
-  assert.equal(resolved.mode, "pro");
-  assert.equal(resolved.planLabel, "Pro yearly active");
+  assert.equal(resolved.mode, "free");
+  assert.equal(resolved.hasProEntitlement, false);
+  assert.equal(resolved.hasPendingProSync, true);
+  assert.equal(resolved.planLabel, "Pro access syncing");
+  assert.equal(resolved.renewalLabel, "Purchase detected. Backend access has not confirmed Pro yet.");
+  assert.equal(renderedText(resolved).includes("Pro monthly active"), false);
   assert.equal(renderedText(resolved).includes("Free plan"), false);
   assert.equal(resolved.showUpgradeOptions, false);
   assert.equal(resolved.showPrimaryUpgradeCta, false);
   assert.equal(resolved.showPaywallCard, false);
-  assert.equal(resolved.showFreeUnlockUsage, false);
+  assert.equal(resolved.showFreeUnlockUsage, true);
   assert.equal(resolved.showRestorePurchases, true);
 });
 
@@ -96,15 +101,15 @@ test("profile does not treat unlock pack entitlement product as Pro", () => {
 test("profile hides upgrade card, primary upgrade CTA, and free unlock usage when entitlement is active", () => {
   const resolved = resolveProfileAccessState(
     status({
-      plan: "pro_yearly",
-      provider: "revenuecat",
-      productId: "com.carscanr.pro.yearly",
+      plan: "pro_monthly",
+      provider: "backend",
+      productId: "carscanr.pro.monthly",
       renewalLabel: "Pro active",
       isActive: true,
     }),
   );
 
-  assert.equal(resolved.planLabel, "Pro yearly active");
+  assert.equal(resolved.planLabel, "Pro monthly active");
   assert.equal(resolved.showUpgradeOptions, false);
   assert.equal(resolved.showPrimaryUpgradeCta, false);
   assert.equal(resolved.showPaywallCard, false);
@@ -194,9 +199,34 @@ test("profile subscription card renders upgrade surfaces from access selector on
 
   assert.match(profileSource, /accessState\.showFreeUnlockUsage\s*\?\s*\(/);
   assert.match(profileSource, /accessState\.showPrimaryUpgradeCta\s*\?\s*\(/);
+  assert.match(profileSource, /accessState\.hasPendingProSync \? "sync-outline" : "checkmark-circle-outline"/);
   assert.match(profileSource, /<Text style={styles\.upgradeButtonText}>Upgrade to Pro<\/Text>/);
   assert.doesNotMatch(profileSource, /accessState\.showUpgradeOptions\s*\?\s*<PaywallCard/);
   assert.doesNotMatch(profileSource, /View Pro Status/);
+});
+
+test("profile keeps paid unlock credits visible separately from Pro status", () => {
+  const profileSource = fs.readFileSync(profileSourcePath, "utf8");
+  const providerSource = fs.readFileSync(path.join(process.cwd(), "features/subscription/SubscriptionProvider.tsx"), "utf8");
+  const subscriptionSource = fs.readFileSync(path.join(process.cwd(), "services/subscriptionService.ts"), "utf8");
+  const backendUnlockSource = fs.readFileSync(path.join(process.cwd(), "backend/src/services/unlockService.ts"), "utf8");
+
+  assert.match(profileSource, /unlockCredits > 0/);
+  assert.match(profileSource, /paid \$\{unlockCredits === 1 \? "unlock credit" : "unlock credits"\} ready/);
+  assert.match(providerSource, /unlockCredits/);
+  assert.match(subscriptionSource, /unlockCreditsRemaining/);
+  assert.match(backendUnlockSource, /unlockCreditsRemaining: balance\.unlockCredits/);
+});
+
+test("subscription service keeps backend authoritative over RevenueCat entitlements", () => {
+  const serviceSource = fs.readFileSync(path.join(process.cwd(), "services/subscriptionService.ts"), "utf8");
+
+  assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides/);
+  assert.match(serviceSource, /provider: backendHasPro \? "backend" : revenueCatSubscriptionActive \? "revenuecat"/);
+  assert.match(serviceSource, /entitlementSyncState: !backendHasPro && revenueCatSubscriptionActive \? "revenuecat_active_backend_pending" : "none"/);
+  assert.doesNotMatch(serviceSource, /plan:\s*"pro",\s*provider:\s*"revenuecat"/);
+  assert.doesNotMatch(serviceSource, /plan:\s*restore\.snapshot\.activeEntitlement\?\.isActive \? "pro"/);
+  assert.doesNotMatch(serviceSource, /plan:\s*management\.snapshot\.activeEntitlement\?\.isActive \? "pro"/);
 });
 
 test("profile legal rows use in-app routes and support rows keep mailto actions", () => {
