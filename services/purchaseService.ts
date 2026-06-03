@@ -8,6 +8,8 @@ import { authService } from "@/services/authService";
 import { guestSessionService } from "@/services/guestSessionService";
 import { PurchaseAvailabilityState, PurchaseOptionKind, SubscriptionProduct } from "@/types";
 
+const REVENUECAT_SDK_VERSION = "react-native-purchases@10.0.1";
+
 type PurchaseSnapshot = {
   purchaseAvailable: boolean;
   purchaseAvailabilityState: PurchaseAvailabilityState;
@@ -16,6 +18,12 @@ type PurchaseSnapshot = {
   activeProductId: string | null;
   managementUrl: string | null;
 };
+
+type RevenueCatConfigurationFailureReason = "missing_env" | "expo_go_preview" | "configure_failed";
+
+type RevenueCatConfigurationResult =
+  | { configured: true; appUserId: string }
+  | { configured: false; reason: RevenueCatConfigurationFailureReason; purchaseAvailabilityState: PurchaseAvailabilityState };
 
 let configuredAppUserId: string | null = null;
 let purchasesConfigured = false;
@@ -32,6 +40,72 @@ function getRevenueCatConfig() {
     entitlementId,
     configured: Boolean(apiKey && entitlementId),
   };
+}
+
+function getErrorDiagnostics(error: unknown) {
+  const candidate = error as
+    | {
+        name?: unknown;
+        message?: unknown;
+        code?: unknown;
+        userInfo?: unknown;
+        underlyingErrorMessage?: unknown;
+      }
+    | undefined;
+  return {
+    name: typeof candidate?.name === "string" ? candidate.name : error instanceof Error ? error.name : "UnknownError",
+    message: typeof candidate?.message === "string" ? candidate.message : error instanceof Error ? error.message : String(error),
+    code: typeof candidate?.code === "string" || typeof candidate?.code === "number" ? candidate.code : null,
+    underlyingErrorMessage: typeof candidate?.underlyingErrorMessage === "string" ? candidate.underlyingErrorMessage : null,
+    userInfoKeys: candidate?.userInfo && typeof candidate.userInfo === "object" ? Object.keys(candidate.userInfo as Record<string, unknown>) : [],
+  };
+}
+
+function shouldLogRevenueCatDiagnostics() {
+  const flag = mobileEnv.showQaDebug.toLowerCase();
+  return __DEV__ || flag === "1" || flag === "true";
+}
+
+function logRevenueCatDiagnostics(eventName: string, payload: Record<string, unknown>) {
+  if (shouldLogRevenueCatDiagnostics()) {
+    console.log(eventName, payload);
+  }
+}
+
+function logRevenueCatRuntimeConfig(context: string) {
+  const config = getRevenueCatConfig();
+  logRevenueCatDiagnostics("REVENUECAT_RUNTIME_CONFIG", {
+    context,
+    sdkVersion: REVENUECAT_SDK_VERSION,
+    executionEnvironment: Constants.executionEnvironment,
+    apiKeyPresent: Boolean(config.apiKey),
+    entitlementIdPresent: Boolean(config.entitlementId),
+    purchasesConfigured,
+    configured: config.configured,
+    state: config.configured ? "configured_inputs_present" : "not_configured",
+  });
+  return config;
+}
+
+function emptyPurchaseSnapshot(purchaseAvailabilityState: PurchaseAvailabilityState): PurchaseSnapshot {
+  return {
+    purchaseAvailable: false,
+    purchaseAvailabilityState,
+    availableProducts: [],
+    activeEntitlement: null,
+    activeProductId: null,
+    managementUrl: null,
+  };
+}
+
+function getUnavailablePurchaseMessage(reason: RevenueCatConfigurationFailureReason) {
+  if (reason === "expo_go_preview") {
+    return "Purchases require a development or production build. Expo Go can preview the paywall, but it cannot complete real purchases.";
+  }
+  if (reason === "configure_failed") {
+    return "RevenueCat configuration failed at runtime. Please try again later or contact support.";
+  }
+  return "RevenueCat configuration is missing from this build.";
 }
 
 function classifyPackage(pkg: PurchasesPackage): PurchaseOptionKind {
@@ -125,8 +199,8 @@ async function getAppUserId() {
   return guestSessionService.getGuestId();
 }
 
-async function ensureConfigured() {
-  const config = getRevenueCatConfig();
+async function ensureConfigured(): Promise<RevenueCatConfigurationResult> {
+  const config = logRevenueCatRuntimeConfig("ensureConfigured");
   console.log("ENTITLEMENT_LOOKUP_STARTED", {
     configured: config.configured,
     expoGo: isExpoGo(),
@@ -134,18 +208,49 @@ async function ensureConfigured() {
     hasEntitlementId: Boolean(config.entitlementId),
   });
   if (!config.configured) {
-    return { configured: false as const, reason: "missing_env" as const };
+    logRevenueCatDiagnostics("REVENUECAT_CONFIG_STATE", {
+      state: "not_configured",
+      failurePoint: "missing_runtime_env",
+      apiKeyPresent: Boolean(config.apiKey),
+      entitlementIdPresent: Boolean(config.entitlementId),
+    });
+    return { configured: false, reason: "missing_env", purchaseAvailabilityState: "not_configured" };
   }
   if (isExpoGo()) {
-    return { configured: false as const, reason: "expo_go_preview" as const };
+    logRevenueCatDiagnostics("REVENUECAT_CONFIG_STATE", {
+      state: "not_configured",
+      failurePoint: "expo_go_preview",
+      apiKeyPresent: Boolean(config.apiKey),
+      entitlementIdPresent: Boolean(config.entitlementId),
+    });
+    return { configured: false, reason: "expo_go_preview", purchaseAvailabilityState: "preview_only" };
   }
 
   const appUserId = await getAppUserId();
   if (!purchasesConfigured) {
-    Purchases.configure({
-      apiKey: config.apiKey,
-      appUserID: appUserId,
+    logRevenueCatDiagnostics("REVENUECAT_CONFIGURE_ATTEMPT", {
+      sdkVersion: REVENUECAT_SDK_VERSION,
+      apiKeyPresent: Boolean(config.apiKey),
+      entitlementIdPresent: Boolean(config.entitlementId),
+      appUserIdPresent: Boolean(appUserId),
     });
+    try {
+      Purchases.configure({
+        apiKey: config.apiKey,
+        appUserID: appUserId,
+      });
+      logRevenueCatDiagnostics("REVENUECAT_CONFIGURE_RESULT", {
+        success: true,
+        sdkVersion: REVENUECAT_SDK_VERSION,
+      });
+    } catch (error) {
+      logRevenueCatDiagnostics("REVENUECAT_CONFIGURE_RESULT", {
+        success: false,
+        sdkVersion: REVENUECAT_SDK_VERSION,
+        error: getErrorDiagnostics(error),
+      });
+      return { configured: false, reason: "configure_failed", purchaseAvailabilityState: "configure_failed" };
+    }
     if (__DEV__) {
       await Purchases.setLogLevel(Purchases.LOG_LEVEL.DEBUG);
     }
@@ -158,12 +263,30 @@ async function ensureConfigured() {
     return { configured: true as const, appUserId };
   }
 
+  logRevenueCatDiagnostics("REVENUECAT_CONFIGURE_SKIPPED", {
+    reason: "already_configured",
+    appUserIdPresent: Boolean(appUserId),
+  });
+
   if (configuredAppUserId && configuredAppUserId !== appUserId) {
-    await Purchases.logIn(appUserId).catch(async () => {
-      Purchases.configure({
-        apiKey: config.apiKey,
-        appUserID: appUserId,
+    await Purchases.logIn(appUserId).catch(async (error) => {
+      logRevenueCatDiagnostics("REVENUECAT_LOGIN_RESULT", {
+        success: false,
+        error: getErrorDiagnostics(error),
       });
+      try {
+        Purchases.configure({
+          apiKey: config.apiKey,
+          appUserID: appUserId,
+        });
+        logRevenueCatDiagnostics("REVENUECAT_RECONFIGURE_RESULT", { success: true });
+      } catch (configureError) {
+        logRevenueCatDiagnostics("REVENUECAT_RECONFIGURE_RESULT", {
+          success: false,
+          error: getErrorDiagnostics(configureError),
+        });
+        throw configureError;
+      }
     });
     configuredAppUserId = appUserId;
     console.log("ENTITLEMENT_ACCOUNT_LINK", {
@@ -195,6 +318,7 @@ export const purchaseService = {
         configured: false,
         reason: configuration.reason,
         packageCount: 0,
+        purchaseAvailabilityState: configuration.purchaseAvailabilityState,
       });
       logPackageAvailability([], {
         configured: false,
@@ -204,26 +328,91 @@ export const purchaseService = {
         configured: false,
         reason: configuration.reason,
       });
-      return {
-        purchaseAvailable: false,
-        purchaseAvailabilityState: configuration.reason === "expo_go_preview" ? "preview_only" : "not_configured",
-        availableProducts: [],
-        activeEntitlement: null,
-        activeProductId: null,
-        managementUrl: null,
-      };
+      return emptyPurchaseSnapshot(configuration.purchaseAvailabilityState);
     }
 
     console.log("PAYWALL_OFFERINGS_LOAD_STARTED", {
       configured: true,
       appUserId: configuration.appUserId,
     });
-    const [offerings, customerInfo] = await Promise.all([
-      Purchases.getOfferings(),
-      Purchases.getCustomerInfo(),
-    ]);
+    logRevenueCatDiagnostics("REVENUECAT_OFFERINGS_FETCH_ATTEMPT", {
+      configured: true,
+      sdkVersion: REVENUECAT_SDK_VERSION,
+      apiKeyPresent: true,
+      entitlementIdPresent: true,
+    });
+    let offerings: Awaited<ReturnType<typeof Purchases.getOfferings>>;
+    try {
+      offerings = await Purchases.getOfferings();
+      logRevenueCatDiagnostics("REVENUECAT_OFFERINGS_FETCH_RESULT", {
+        success: true,
+        currentOfferingPresent: Boolean(offerings.current),
+        currentOfferingIdentifier: offerings.current?.identifier ?? null,
+        packageCount: offerings.current?.availablePackages?.length ?? 0,
+        allOfferingIdentifiers: Object.keys(offerings.all ?? {}),
+      });
+    } catch (error) {
+      logRevenueCatDiagnostics("REVENUECAT_OFFERINGS_FETCH_RESULT", {
+        success: false,
+        state: "offerings_unavailable",
+        failurePoint: "offerings_request_failed",
+        error: getErrorDiagnostics(error),
+      });
+      console.log("PAYWALL_OFFERINGS_LOAD_RESULT", {
+        configured: true,
+        appUserId: configuration.appUserId,
+        packageCount: 0,
+        purchaseAvailabilityState: "offerings_unavailable",
+      });
+      return emptyPurchaseSnapshot("offerings_unavailable");
+    }
+
+    logRevenueCatDiagnostics("REVENUECAT_CUSTOMER_INFO_FETCH_ATTEMPT", {
+      configured: true,
+      sdkVersion: REVENUECAT_SDK_VERSION,
+    });
     const availableProducts = (offerings.current?.availablePackages ?? []).map(mapPackageToProduct);
+    let customerInfo: CustomerInfo;
+    try {
+      customerInfo = await Purchases.getCustomerInfo();
+      logRevenueCatDiagnostics("REVENUECAT_CUSTOMER_INFO_FETCH_RESULT", {
+        success: true,
+        activeEntitlementCount: Object.keys(customerInfo.entitlements.active ?? {}).length,
+      });
+    } catch (error) {
+      logRevenueCatDiagnostics("REVENUECAT_CUSTOMER_INFO_FETCH_RESULT", {
+        success: false,
+        state: "customer_info_unavailable",
+        failurePoint: "customer_info_request_failed",
+        packageCount: availableProducts.length,
+        error: getErrorDiagnostics(error),
+      });
+      console.log("PAYWALL_OFFERINGS_LOAD_RESULT", {
+        configured: true,
+        appUserId: configuration.appUserId,
+        currentOffering: offerings.current?.identifier ?? null,
+        packageCount: availableProducts.length,
+        purchaseAvailabilityState: "customer_info_unavailable",
+      });
+      return emptyPurchaseSnapshot("customer_info_unavailable");
+    }
     const activeEntitlement = resolveActiveEntitlement(customerInfo);
+    logRevenueCatDiagnostics("REVENUECAT_RUNTIME_STATE", {
+      state: availableProducts.length > 0 ? "configured" : "offerings_empty",
+      offeringsFetchAttempted: true,
+      offeringsFetchSucceeded: true,
+      currentOfferingPresent: Boolean(offerings.current),
+      currentOfferingIdentifier: offerings.current?.identifier ?? null,
+      packageCount: availableProducts.length,
+      entitlementIdPresent: true,
+      configuredEntitlementMatched: Boolean(activeEntitlement),
+      activeEntitlementIdentifiers: Object.keys(customerInfo.entitlements.active ?? {}),
+      availablePackages: availableProducts.map((product) => ({
+        productId: product.productId,
+        packageIdentifier: product.packageIdentifier,
+        optionKind: getPurchaseOptionKind(product),
+      })),
+    });
     console.log("PAYWALL_OFFERINGS_LOAD_RESULT", {
       configured: true,
       appUserId: configuration.appUserId,
@@ -264,10 +453,7 @@ export const purchaseService = {
       return {
         snapshot: await this.getPurchaseSnapshot(),
         outcome: "not_configured" as const,
-        message:
-          configuration.reason === "expo_go_preview"
-            ? "Purchases require a development or production build. Expo Go can preview the paywall, but it cannot complete real purchases."
-            : "RevenueCat is not configured yet. Add the iOS API key and entitlement id before enabling purchases.",
+        message: getUnavailablePurchaseMessage(configuration.reason),
       };
     }
 
@@ -332,10 +518,7 @@ export const purchaseService = {
       return {
         snapshot: await this.getPurchaseSnapshot(),
         outcome: "not_configured" as const,
-        message:
-          configuration.reason === "expo_go_preview"
-            ? "Restore requires a development or production build. Expo Go cannot restore real purchases."
-            : "RevenueCat is not configured yet. Add the iOS API key and entitlement id before enabling restore.",
+        message: getUnavailablePurchaseMessage(configuration.reason),
       };
     }
 
@@ -359,10 +542,7 @@ export const purchaseService = {
       return {
         snapshot: await this.getPurchaseSnapshot(),
         outcome: "not_configured" as const,
-        message:
-          configuration.reason === "expo_go_preview"
-            ? "Subscription management requires a development or production build."
-            : "RevenueCat is not configured yet. Add the iOS API key and entitlement id before managing subscriptions.",
+        message: getUnavailablePurchaseMessage(configuration.reason),
       };
     }
 

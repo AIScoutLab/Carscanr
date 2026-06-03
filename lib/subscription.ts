@@ -77,6 +77,27 @@ function getProDetailLabel(status: SubscriptionStatus | null | undefined, primar
   return label;
 }
 
+export function getPurchaseAvailabilityMessage(state: PurchaseAvailabilityState) {
+  switch (state) {
+    case "preview_only":
+      return "Purchases and restore require a development or production build.";
+    case "not_configured":
+      return "RevenueCat configuration is missing from this build.";
+    case "configure_failed":
+      return "RevenueCat configuration failed at runtime.";
+    case "offerings_unavailable":
+      return "RevenueCat is configured, but offerings could not be loaded.";
+    case "offerings_empty":
+      return "RevenueCat is configured, but no purchasable packages were returned.";
+    case "customer_info_unavailable":
+      return "RevenueCat is configured, but customer info could not be loaded.";
+    case "ready":
+      return null;
+    default:
+      return null;
+  }
+}
+
 export type ProfileAccessState = {
   mode: "loading" | "pro" | "free";
   hasProEntitlement: boolean;
@@ -94,14 +115,7 @@ export function resolveProfileAccessState(status?: SubscriptionStatus | null, is
   const hasProEntitlement = hasAuthoritativeProEntitlement(status);
   const purchaseAvailabilityState = status?.purchaseAvailabilityState ?? "not_configured";
   const mode: ProfileAccessState["mode"] = isLoading ? "loading" : hasProEntitlement ? "pro" : "free";
-  const qaConfigurationMessage =
-    purchaseAvailabilityState === "preview_only"
-      ? "Purchases and restore require a development or production build."
-      : purchaseAvailabilityState === "offerings_empty"
-        ? "RevenueCat is configured, but no purchasable packages were returned."
-      : purchaseAvailabilityState === "not_configured"
-        ? "RevenueCat purchases are not configured for this build."
-        : null;
+  const qaConfigurationMessage = getPurchaseAvailabilityMessage(purchaseAvailabilityState);
   const primaryProLabel = getProActiveLabel(status);
   const planLabel = mode === "loading" ? "Checking plan..." : mode === "pro" ? primaryProLabel : "Free plan";
   const renewalLabel =

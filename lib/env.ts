@@ -214,6 +214,8 @@ export function getMobileEnvDiagnostics() {
     apiBaseUrlPresent: Boolean(mobileEnv.apiBaseUrl),
     supabaseUrlPresent: Boolean(mobileEnv.supabaseUrl),
     supabaseAnonKeyPresent: Boolean(mobileEnv.supabaseAnonKey),
+    revenueCatIosApiKeyPresent: Boolean(mobileEnv.revenueCatIosApiKey),
+    revenueCatEntitlementIdPresent: Boolean(mobileEnv.revenueCatEntitlementId),
     missingKeys: requiredExpoPublicEnvKeys.filter((key) => {
       switch (key) {
         case "EXPO_PUBLIC_API_BASE_URL":

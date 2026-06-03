@@ -12,6 +12,7 @@ import {
   getPurchaseOptionTitle,
   sortPurchaseProductsForDisplay,
 } from "@/lib/purchaseOptions";
+import { getPurchaseAvailabilityMessage } from "@/lib/subscription";
 import { shadow } from "@/design/tokens";
 import { SubscriptionStatus } from "@/types";
 
@@ -55,6 +56,7 @@ export function PaywallCard({
   const limit = unlockCounter.total;
   const remaining = unlockCounter.remaining;
   const used = unlockCounter.used;
+  const purchaseAvailabilityMessage = getPurchaseAvailabilityMessage(status?.purchaseAvailabilityState ?? "not_configured");
   const usageLabel =
     usageLabelOverride ??
     (status?.plan === "free"
@@ -85,9 +87,7 @@ export function PaywallCard({
       <Text style={styles.subprice}>
         {availableProducts.length > 0
           ? "Live App Store options returned by RevenueCat."
-          : status?.purchaseAvailabilityState === "offerings_empty"
-            ? "No RevenueCat packages were returned for this build."
-            : "Purchases are unavailable until RevenueCat is configured for this build."}
+          : purchaseAvailabilityMessage ?? "Purchases are unavailable in this build."}
       </Text>
       {availableProducts.length > 0 ? (
         <View style={styles.optionList}>

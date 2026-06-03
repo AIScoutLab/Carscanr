@@ -9,7 +9,7 @@ import { PrimaryButton } from "@/components/PrimaryButton";
 import { ScanUsageMeter } from "@/components/ScanUsageMeter";
 import { planBenefits } from "@/features/subscription/planCopy";
 import { useSubscription } from "@/hooks/useSubscription";
-import { isProPlan } from "@/lib/subscription";
+import { getPurchaseAvailabilityMessage, isProPlan } from "@/lib/subscription";
 import {
   getMissingPurchaseOptionKinds,
   getMissingPurchaseOptionMessage,
@@ -49,14 +49,8 @@ export default function PaywallScreen() {
     availableProducts.find((product) => getPurchaseOptionKey(product) === selectedProductKey) ?? preferredProduct;
   const missingOptionKinds = getMissingPurchaseOptionKinds(availableProducts);
   const purchaseAvailable = status?.purchaseAvailabilityState === "ready" && Boolean(status?.purchaseAvailable && selectedProduct);
-  const purchaseNotice =
-    purchaseAvailabilityState === "preview_only"
-      ? "Purchases can be previewed here, but they require a development or production build to complete."
-      : purchaseAvailabilityState === "offerings_empty"
-        ? "RevenueCat is configured, but the current offering did not return purchasable packages. Free unlocks and free scans still work normally."
-      : purchaseAvailabilityState === "not_configured"
-        ? "Purchases are not configured for this build yet. Free unlocks and free scans still work normally."
-        : null;
+  const purchaseAvailabilityMessage = getPurchaseAvailabilityMessage(purchaseAvailabilityState);
+  const purchaseNotice = purchaseAvailabilityMessage ? `${purchaseAvailabilityMessage} Free unlocks and free scans still work normally.` : null;
   const primaryLabel = hasPro
     ? proEntitlementActive
       ? "Continue With Pro"

@@ -222,7 +222,14 @@ export type SubscriptionProduct = {
   description?: string | null;
 };
 
-export type PurchaseAvailabilityState = "ready" | "preview_only" | "not_configured" | "offerings_empty";
+export type PurchaseAvailabilityState =
+  | "ready"
+  | "preview_only"
+  | "not_configured"
+  | "configure_failed"
+  | "offerings_unavailable"
+  | "offerings_empty"
+  | "customer_info_unavailable";
 
 export type FreeUnlockReason =
   | "already_unlocked"

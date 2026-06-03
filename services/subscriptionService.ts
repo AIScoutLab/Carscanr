@@ -538,6 +538,23 @@ function buildRevenueCatReceiptData(customerInfo: unknown, productId: string) {
   return `revenuecat:${info.originalAppUserId ?? "unknown"}:${productId}:${info.requestDate ?? new Date().toISOString()}`;
 }
 
+function getSubscriptionErrorDiagnostics(error: unknown) {
+  const candidate = error as
+    | {
+        name?: unknown;
+        message?: unknown;
+        code?: unknown;
+        underlyingErrorMessage?: unknown;
+      }
+    | undefined;
+  return {
+    name: typeof candidate?.name === "string" ? candidate.name : error instanceof Error ? error.name : "UnknownError",
+    message: typeof candidate?.message === "string" ? candidate.message : error instanceof Error ? error.message : String(error),
+    code: typeof candidate?.code === "string" || typeof candidate?.code === "number" ? candidate.code : null,
+    underlyingErrorMessage: typeof candidate?.underlyingErrorMessage === "string" ? candidate.underlyingErrorMessage : null,
+  };
+}
+
 export const subscriptionService = {
   async getStatus(): Promise<SubscriptionStatus> {
     try {
@@ -546,14 +563,21 @@ export const subscriptionService = {
       });
       const [usage, purchaseSnapshot] = await Promise.all([
         scanService.getUsage(),
-        purchaseService.getPurchaseSnapshot().catch(() => ({
-          purchaseAvailable: false,
-          purchaseAvailabilityState: "not_configured" as const,
-          availableProducts: [] as SubscriptionProduct[],
-          activeEntitlement: null,
-          activeProductId: null,
-          managementUrl: null,
-        })),
+        purchaseService.getPurchaseSnapshot().catch((error) => {
+          console.log("REVENUECAT_PURCHASE_SNAPSHOT_FAILURE_CLASSIFIED", {
+            classifiedState: "offerings_unavailable",
+            failurePoint: "purchase_snapshot_error",
+            error: getSubscriptionErrorDiagnostics(error),
+          });
+          return {
+            purchaseAvailable: false,
+            purchaseAvailabilityState: "offerings_unavailable" as const,
+            availableProducts: [] as SubscriptionProduct[],
+            activeEntitlement: null,
+            activeProductId: null,
+            managementUrl: null,
+          };
+        }),
       ]);
       status = mergeUsageStatus(usage, {
         plan: purchaseSnapshot.activeEntitlement?.isActive ? "pro" : usage.plan,
@@ -577,7 +601,11 @@ export const subscriptionService = {
         activeProductId: purchaseSnapshot.activeProductId,
       });
       return status;
-    } catch {
+    } catch (error) {
+      console.log("SUBSCRIPTION_STATUS_REFRESH_FAILED", {
+        fallbackState: status.purchaseAvailabilityState,
+        error: getSubscriptionErrorDiagnostics(error),
+      });
       await wait(180);
     }
     return status;
