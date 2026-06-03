@@ -1,29 +1,59 @@
+import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
 import { AppContainer } from "@/components/AppContainer";
 import { BackButton } from "@/components/BackButton";
-import { PaywallCard } from "@/components/PaywallCard";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { ScanUsageMeter } from "@/components/ScanUsageMeter";
-import { planBenefits } from "@/features/subscription/planCopy";
+import { Colors, Radius, Typography } from "@/constants/theme";
+import { FREE_PRO_UNLOCKS_TOTAL } from "@/constants/product";
+import { cardStyles } from "@/design/patterns";
+import { shadow } from "@/design/tokens";
 import { useSubscription } from "@/hooks/useSubscription";
 import { getPurchaseAvailabilityMessage, isProPlan } from "@/lib/subscription";
 import {
   getMissingPurchaseOptionKinds,
   getMissingPurchaseOptionMessage,
   getPreferredPurchaseProduct,
-  getPurchaseOptionDescription,
   getPurchaseOptionKey,
   getPurchaseOptionKind,
   getPurchaseOptionPriceLine,
   getPurchaseOptionTitle,
   sortPurchaseProductsForDisplay,
 } from "@/lib/purchaseOptions";
-import { Colors, Radius, Typography } from "@/constants/theme";
-import { FREE_PRO_UNLOCKS_TOTAL } from "@/constants/product";
-import { cardStyles } from "@/design/patterns";
+import { SubscriptionProduct } from "@/types";
+
+const PRO_FEATURES = ["Market Values", "Live Listings", "Pricing Insights", "Garage Sync"] as const;
+
+function getPaywallProductTitle(product: SubscriptionProduct) {
+  if (getPurchaseOptionKind(product) === "unlock_pack") {
+    return "5 Unlock Pack";
+  }
+  return getPurchaseOptionTitle(product);
+}
+
+function getPaywallPriceLine(product: SubscriptionProduct) {
+  switch (getPurchaseOptionKind(product)) {
+    case "annual":
+      return "$39.99/year";
+    case "monthly":
+      return "$4.99/month";
+    case "unlock_pack":
+      return "$2.99 one-time";
+    default:
+      return getPurchaseOptionPriceLine(product);
+  }
+}
+
+function getFreeUnlockSummary(remaining: number, limit: number) {
+  const safeLimit = Math.max(0, limit || FREE_PRO_UNLOCKS_TOTAL);
+  const safeRemaining = Math.max(0, Math.min(remaining, safeLimit));
+  const used = Math.max(0, safeLimit - safeRemaining);
+  if (safeRemaining > 0) {
+    return `${safeRemaining} free premium ${safeRemaining === 1 ? "unlock" : "unlocks"} remaining.`;
+  }
+  return `${used} of ${safeLimit} free premium unlocks used.`;
+}
 
 export default function PaywallScreen() {
   const {
@@ -61,9 +91,12 @@ export default function PaywallScreen() {
       ? isPurchasing
         ? "Starting purchase..."
         : selectedProduct
-          ? `Continue • ${getPurchaseOptionPriceLine(selectedProduct)}`
+          ? `Continue • ${getPaywallPriceLine(selectedProduct)}`
           : "Start Pro"
-      : "Purchases Unavailable In This Build";
+      : "Purchases Unavailable";
+  const primaryDisabled = proEntitlementActive ? isLoading || isPurchasing : isLoading || isPurchasing || !purchaseAvailable;
+  const restoreDisabled = isLoading || isRestoring || purchaseAvailabilityState !== "ready";
+  const freeUnlockSummary = getFreeUnlockSummary(freeUnlocksRemaining, freeUnlocksLimit);
 
   useEffect(() => {
     if (!availableProducts.length) {
@@ -98,218 +131,229 @@ export default function PaywallScreen() {
     });
   }, [availableProductKeys, availableProducts, missingOptionKinds, purchaseAvailabilityState]);
 
+  const handlePrimaryPress = async () => {
+    console.log("[paywall] PAYWALL_CTA_TAPPED", {
+      cta: "primary",
+      proEntitlementActive,
+      hasPro,
+      isLoading,
+      isPurchasing,
+      purchaseAvailable,
+      selectedProductKey: selectedProduct ? getPurchaseOptionKey(selectedProduct) : null,
+    });
+    if (proEntitlementActive) {
+      router.back();
+      return;
+    }
+    if (!purchaseAvailable || !selectedProduct) {
+      return;
+    }
+    try {
+      console.log("PAYWALL_PURCHASE_OPTION_SELECTED", {
+        source: "paywall-primary",
+        productId: selectedProduct.productId,
+        packageIdentifier: selectedProduct.packageIdentifier ?? null,
+        optionKind: getPurchaseOptionKind(selectedProduct),
+      });
+      const result = await purchasePro(getPurchaseOptionKey(selectedProduct));
+      console.log("[paywall] purchase result", { outcome: result.outcome, provider: result.status.provider, plan: result.status.plan });
+      if (isProPlan(result.status.plan) || result.status.provider === "backend") {
+        router.replace("/pro-activated");
+      }
+    } catch {
+      // The inline error state from the subscription provider handles display.
+    }
+  };
+
+  const handleRestorePress = async () => {
+    if (restoreDisabled) {
+      return;
+    }
+    try {
+      const result = await restorePurchases();
+      console.log("[paywall] restore result", {
+        outcome: result.outcome,
+        provider: result.status.provider,
+        plan: result.status.plan,
+      });
+      if (result.outcome === "restored" && isProPlan(result.status.plan)) {
+        router.replace("/pro-activated");
+      }
+    } catch {
+      // Provider surfaces the inline error state.
+    }
+  };
+
   return (
-    <AppContainer>
+    <AppContainer contentContainerStyle={styles.screenContent}>
       <BackButton fallbackHref="/(tabs)/scan" label="Back" />
-      <LinearGradient colors={["rgba(216,163,104,0.18)", "rgba(216,163,104,0.06)", "rgba(5,5,6,0.22)"]} style={styles.heroBanner}>
-        <Text style={styles.heroTitle}>Unlock Pro Access</Text>
-        <Text style={styles.heroBody}>Unlock market values, live listings, pricing insights, and garage tools for every vehicle you scan.</Text>
+      <LinearGradient colors={["rgba(216,163,104,0.18)", "rgba(20,18,16,0.98)", "rgba(12,12,13,0.98)"]} style={styles.proCard}>
+        <View style={styles.headerBlock}>
+          <Text style={styles.eyebrow}>PRO ACCESS</Text>
+          <Text style={styles.unlockLabel}>Unlock:</Text>
+          <View style={styles.featureList}>
+            {PRO_FEATURES.map((feature) => (
+              <View key={feature} style={styles.featureRow}>
+                <Text style={styles.checkmark}>{"\u2713"}</Text>
+                <Text style={styles.featureText}>{feature}</Text>
+              </View>
+            ))}
+          </View>
+          <Text style={styles.supportingCopy}>Premium tools for every vehicle you scan.</Text>
+        </View>
+
+        {proEntitlementActive ? (
+          <View style={styles.activePanel}>
+            <Text style={styles.activeTitle}>Pro is active</Text>
+            <Text style={styles.activeBody}>Your premium tools are unlocked on this device.</Text>
+          </View>
+        ) : (
+          <>
+            {availableProducts.length > 0 ? (
+              <View style={styles.optionGroup}>
+                {availableProducts.map((product) => {
+                  const productKey = getPurchaseOptionKey(product);
+                  const selected = selectedProduct ? getPurchaseOptionKey(selectedProduct) === productKey : false;
+                  const optionKind = getPurchaseOptionKind(product);
+                  return (
+                    <TouchableOpacity
+                      key={productKey}
+                      accessibilityRole="button"
+                      activeOpacity={0.86}
+                      style={[styles.productOption, selected && styles.productOptionSelected]}
+                      onPress={() => {
+                        console.log("PAYWALL_PURCHASE_OPTION_SELECTED", {
+                          source: "paywall-option",
+                          productId: product.productId,
+                          packageIdentifier: product.packageIdentifier ?? null,
+                          optionKind,
+                        });
+                        setSelectedProductKey(productKey);
+                      }}
+                    >
+                      <View style={styles.productOptionText}>
+                        <View style={styles.productTitleRow}>
+                          <Text style={styles.productTitle}>{getPaywallProductTitle(product)}</Text>
+                          {optionKind === "annual" ? <Text style={styles.bestValueBadge}>Best Value</Text> : null}
+                        </View>
+                        {selected ? <Text style={styles.selectedLabel}>Selected</Text> : null}
+                      </View>
+                      <View style={styles.productPriceWrap}>
+                        <Text style={styles.productPrice}>{getPaywallPriceLine(product)}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ) : null}
+
+            <PrimaryButton label={primaryLabel} onPress={handlePrimaryPress} disabled={primaryDisabled} />
+
+            <TouchableOpacity accessibilityRole="button" activeOpacity={0.72} style={styles.restoreLink} onPress={handleRestorePress} disabled={restoreDisabled}>
+              <Text style={[styles.restoreText, restoreDisabled && styles.restoreTextDisabled]}>
+                {isRestoring ? "Restoring purchases..." : "Restore Purchases"}
+              </Text>
+            </TouchableOpacity>
+
+            {purchaseAvailabilityState === "ready"
+              ? missingOptionKinds.map((kind) => (
+                  <Text key={kind} style={styles.warning}>
+                    {getMissingPurchaseOptionMessage(kind)}
+                  </Text>
+                ))
+              : null}
+            {purchaseNotice ? <Text style={styles.notice}>{purchaseNotice}</Text> : null}
+          </>
+        )}
       </LinearGradient>
-      <View style={styles.heroSection}>
-        {!proEntitlementActive ? <PaywallCard status={status} unlocksRemaining={freeUnlocksRemaining} unlocksLimit={freeUnlocksLimit} /> : null}
-        {status && !proEntitlementActive ? (
-          <ScanUsageMeter
-            status={status}
-            mode="unlocks"
-            unlocksUsed={freeUnlocksLimit - freeUnlocksRemaining}
-            unlocksRemaining={freeUnlocksRemaining}
-            unlocksLimit={freeUnlocksLimit}
-            supportingText="Unlimited basic scans stay free. Use Pro Access when you want market values and live listings."
-          />
-        ) : null}
-      </View>
-      {proEntitlementActive ? (
-        <View style={styles.detailCard}>
-          <Text style={styles.title}>Pro is active</Text>
-          <Text style={styles.subtitle}>Market values, live listings, pricing insights, and garage tools are unlocked on this device.</Text>
-          <PlanColumn title="Included with Pro" items={planBenefits.pro} highlight />
-        </View>
-      ) : (
-        <View style={styles.detailCard}>
-          <Text style={styles.title}>Pro Access</Text>
-          <Text style={styles.subtitle}>Unlimited scans stay free. Use your {FREE_PRO_UNLOCKS_TOTAL} free unlocks first, then upgrade when you want ongoing market tools.</Text>
-          <PlanColumn title="Included" items={planBenefits.pro} highlight />
-          {availableProducts.length > 0 ? (
-            <View style={styles.optionGroup}>
-              {availableProducts.map((product) => {
-                const productKey = getPurchaseOptionKey(product);
-                const selected = selectedProduct ? getPurchaseOptionKey(selectedProduct) === productKey : false;
-                return (
-                  <TouchableOpacity
-                    key={productKey}
-                    accessibilityRole="button"
-                    activeOpacity={0.86}
-                    style={[styles.productOption, selected && styles.productOptionSelected]}
-                    onPress={() => {
-                      console.log("PAYWALL_PURCHASE_OPTION_SELECTED", {
-                        source: "paywall-option",
-                        productId: product.productId,
-                        packageIdentifier: product.packageIdentifier ?? null,
-                        optionKind: getPurchaseOptionKind(product),
-                      });
-                      setSelectedProductKey(productKey);
-                    }}
-                  >
-                    <View style={styles.productOptionText}>
-                      <Text style={styles.productTitle}>{getPurchaseOptionTitle(product)}</Text>
-                      <Text style={styles.productBody}>{getPurchaseOptionDescription(product)}</Text>
-                    </View>
-                    <View style={styles.productPriceWrap}>
-                      <Text style={styles.productPrice}>{getPurchaseOptionPriceLine(product)}</Text>
-                      {selected ? <Text style={styles.selectedLabel}>Selected</Text> : null}
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          ) : null}
-          {purchaseAvailabilityState === "offerings_empty" ? (
-            <Text style={styles.warning}>RevenueCat returned an offering with no packages. Check monthly, yearly, and unlock pack configuration.</Text>
-          ) : null}
-          {purchaseAvailabilityState === "ready"
-            ? missingOptionKinds.map((kind) => (
-                <Text key={kind} style={styles.warning}>
-                  {getMissingPurchaseOptionMessage(kind)}
-                </Text>
-              ))
-            : null}
-          {purchaseNotice ? <Text style={styles.notice}>{purchaseNotice}</Text> : null}
-        </View>
-      )}
-      <PrimaryButton
-        label={primaryLabel}
-        onPress={async () => {
-          console.log("[paywall] PAYWALL_CTA_TAPPED", {
-            cta: "primary",
-            proEntitlementActive,
-            hasPro,
-            isLoading,
-            isPurchasing,
-            purchaseAvailable,
-            selectedProductKey: selectedProduct ? getPurchaseOptionKey(selectedProduct) : null,
-          });
-          if (proEntitlementActive) {
-            router.back();
-            return;
-          }
-          if (!purchaseAvailable || !selectedProduct) {
-            return;
-          }
-          try {
-            console.log("PAYWALL_PURCHASE_OPTION_SELECTED", {
-              source: "paywall-primary",
-              productId: selectedProduct.productId,
-              packageIdentifier: selectedProduct.packageIdentifier ?? null,
-              optionKind: getPurchaseOptionKind(selectedProduct),
-            });
-            const result = await purchasePro(getPurchaseOptionKey(selectedProduct));
-            console.log("[paywall] purchase result", { outcome: result.outcome, provider: result.status.provider, plan: result.status.plan });
-            if (isProPlan(result.status.plan) || result.status.provider === "backend") {
-              router.replace("/pro-activated");
-            }
-          } catch {
-            // The inline error state from the subscription provider handles display.
-          }
-        }}
-        disabled={isLoading || isPurchasing || !purchaseAvailable}
-      />
-      {!proEntitlementActive ? (
-        <PrimaryButton
-          label={isRestoring ? "Restoring purchases..." : "Restore Purchases"}
-          secondary
-          onPress={async () => {
-            try {
-              const result = await restorePurchases();
-              console.log("[paywall] restore result", {
-                outcome: result.outcome,
-                provider: result.status.provider,
-                plan: result.status.plan,
-              });
-              if (result.outcome === "restored" && isProPlan(result.status.plan)) {
-                router.replace("/pro-activated");
-              }
-            } catch {
-              // Provider surfaces the inline error state.
-            }
-          }}
-          disabled={isLoading || isRestoring || purchaseAvailabilityState !== "ready"}
-        />
-      ) : null}
-      <PrimaryButton
-        label="Keep Free Access"
-        secondary
-        onPress={() => {
-          console.log("[paywall] PAYWALL_CTA_TAPPED", { cta: "secondary-keep-free" });
-          router.back();
-        }}
-      />
       {feedbackMessage ? <Text style={styles.feedback}>{feedbackMessage}</Text> : null}
       {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
-      {!hasPro && purchaseAvailable ? (
-        <Text style={styles.footnote}>{selectedProduct && getPurchaseOptionKind(selectedProduct) === "unlock_pack" ? "One-time purchase" : "Cancel anytime"}</Text>
-      ) : null}
+      {!proEntitlementActive ? <Text style={styles.freeUnlockFootnote}>{freeUnlockSummary}</Text> : null}
     </AppContainer>
   );
 }
 
-function PlanColumn({ title, items, highlight = false }: { title: string; items: string[]; highlight?: boolean }) {
-  return (
-    <View style={[styles.plan, highlight && styles.planHighlight]}>
-      <Text style={[styles.planTitle, highlight && styles.planTitleHighlight]}>{title}</Text>
-      {items.map((item) => (
-        <Text key={item} style={[styles.item, highlight && styles.itemHighlight]}>{`\u2022 ${item}`}</Text>
-      ))}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  heroBanner: {
-    borderRadius: Radius.xl,
-    padding: 20,
-    gap: 12,
-    borderWidth: 1,
-    borderColor: Colors.border,
+  screenContent: {
+    gap: 14,
   },
-  heroTitle: { ...Typography.title, color: Colors.textStrong },
-  heroBody: { ...Typography.body, color: Colors.textSoft },
-  heroSection: { gap: 14 },
-  detailCard: { ...cardStyles.standard, padding: 20, gap: 14 },
-  title: { ...Typography.title, color: Colors.textStrong },
-  subtitle: { ...Typography.body, color: Colors.textSoft },
-  plan: { backgroundColor: Colors.cardAlt, borderRadius: Radius.lg, padding: 16, gap: 8 },
-  planHighlight: { backgroundColor: Colors.primary },
-  planTitle: { ...Typography.heading, color: Colors.textStrong },
-  planTitleHighlight: { color: "#FFFFFF" },
-  item: { ...Typography.body, color: Colors.textSoft },
-  itemHighlight: { color: "rgba(255,255,255,0.86)" },
+  proCard: {
+    ...cardStyles.standard,
+    padding: 20,
+    gap: 18,
+    borderColor: "rgba(216, 163, 104, 0.28)",
+    ...shadow.card,
+  },
+  headerBlock: { gap: 8 },
+  eyebrow: { ...Typography.caption, color: Colors.premium, fontWeight: "800", letterSpacing: 0 },
+  unlockLabel: { ...Typography.title, color: Colors.textStrong },
+  supportingCopy: { ...Typography.body, color: Colors.textSoft },
+  featureList: {
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: Colors.borderSoft,
+    paddingVertical: 12,
+    gap: 10,
+  },
+  featureRow: { flexDirection: "row", alignItems: "center", gap: 9 },
+  checkmark: { ...Typography.bodyStrong, color: Colors.premium, width: 18, textAlign: "center" },
+  featureText: { ...Typography.bodyStrong, color: Colors.textStrong },
+  activePanel: {
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.borderSoft,
+    padding: 14,
+    gap: 4,
+  },
+  activeTitle: { ...Typography.heading, color: Colors.textStrong },
+  activeBody: { ...Typography.body, color: Colors.textSoft },
   optionGroup: {
-    gap: 6,
+    gap: 8,
   },
   productOption: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
-    backgroundColor: Colors.cardAlt,
+    minHeight: 72,
+    backgroundColor: "rgba(255,255,255,0.045)",
     borderRadius: Radius.md,
-    padding: 14,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
     borderWidth: 1,
     borderColor: Colors.borderSoft,
   },
   productOptionSelected: {
-    borderColor: Colors.accent,
-    backgroundColor: "rgba(29,125,255,0.14)",
+    borderColor: Colors.premium,
+    backgroundColor: "rgba(216,163,104,0.09)",
+    shadowColor: Colors.premium,
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 2,
   },
   productOptionText: { flex: 1, gap: 4 },
+  productTitleRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
   productTitle: { ...Typography.heading, color: Colors.textStrong },
-  productBody: { ...Typography.body, color: Colors.textSoft },
+  bestValueBadge: {
+    ...Typography.caption,
+    color: "#15100A",
+    backgroundColor: Colors.premium,
+    borderRadius: Radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    fontWeight: "800",
+  },
   productPriceWrap: { alignItems: "flex-end", gap: 4 },
   productPrice: { ...Typography.bodyStrong, color: Colors.premium, textAlign: "right" },
-  selectedLabel: { ...Typography.caption, color: Colors.accent, fontWeight: "700" },
-  warning: { ...Typography.caption, color: Colors.warning ?? Colors.premium },
+  selectedLabel: { ...Typography.caption, color: Colors.premium, fontWeight: "800" },
+  restoreLink: { alignSelf: "center", paddingHorizontal: 12, paddingVertical: 2 },
+  restoreText: { ...Typography.caption, color: Colors.textSoft, fontWeight: "700" },
+  restoreTextDisabled: { color: Colors.textFaint },
+  warning: { ...Typography.caption, color: Colors.warning, textAlign: "center" },
   notice: { ...Typography.caption, color: Colors.textMuted, textAlign: "center" },
   feedback: { ...Typography.caption, color: Colors.textSoft, textAlign: "center" },
   error: { ...Typography.caption, color: Colors.danger, textAlign: "center" },
-  footnote: { ...Typography.caption, color: Colors.textMuted, textAlign: "center" },
+  freeUnlockFootnote: { ...Typography.caption, color: Colors.textMuted, textAlign: "center" },
 });
