@@ -216,6 +216,15 @@ Expected database rows:
 - `subscriptions.plan = pro_monthly` or `pro_yearly` only after verified subscription webhooks
 - `user_unlock_balances.unlock_credits` increments only after verified unlock-pack webhooks
 
+After applying subscription schema migrations, reprocess any RevenueCat event rows that were inserted but not processed:
+
+```bash
+npm run revenuecat:reprocess
+npm run revenuecat:reprocess -- --apply
+```
+
+The first command is a dry run. If it reports no rows, resend the failed purchase event from RevenueCat's event detail page so the backend receives the original webhook payload again.
+
 Rollback:
 
 1. In RevenueCat, pause or delete the `CarScanr Render Backend` webhook configuration.

@@ -97,17 +97,37 @@ function getProductPlan(productId: string | null): UserPlan | null {
   return null;
 }
 
+function isSupabaseUserId(value: string | null) {
+  return Boolean(
+    value &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value),
+  );
+}
+
+function isRevenueCatAnonymousAppUserId(value: string | null) {
+  return Boolean(value && value.startsWith("$RCAnonymousID"));
+}
+
 function getAppUserId(event: RevenueCatWebhookEvent) {
-  const candidates = [
-    asString(event.app_user_id),
-    asString(event.original_app_user_id),
-    ...(Array.isArray(event.aliases) ? event.aliases.map(asString) : []),
-  ].filter((candidate): candidate is string => Boolean(candidate));
+  const appUserId = asString(event.app_user_id);
+  const originalAppUserId = asString(event.original_app_user_id);
+  const aliases = getRevenueCatAliases(event);
+  const candidates = [appUserId, originalAppUserId, ...aliases].filter((candidate): candidate is string =>
+    Boolean(candidate),
+  );
+  const supabaseAlias = aliases.find(isSupabaseUserId) ?? null;
+  const supabaseCandidate = candidates.find(isSupabaseUserId) ?? null;
+  if (supabaseAlias || supabaseCandidate) {
+    return supabaseAlias ?? supabaseCandidate;
+  }
+  if (isRevenueCatAnonymousAppUserId(appUserId) || isRevenueCatAnonymousAppUserId(originalAppUserId)) {
+    return appUserId ?? originalAppUserId;
+  }
   return candidates.find((candidate) => !isGuestRevenueCatAppUserId(candidate)) ?? candidates[0] ?? null;
 }
 
 function isGuestRevenueCatAppUserId(value: string | null) {
-  return Boolean(value && (value.startsWith("guest_") || value.startsWith("guest:")));
+  return Boolean(value && (value.startsWith("guest_") || value.startsWith("guest:") || isRevenueCatAnonymousAppUserId(value)));
 }
 
 function getRevenueCatCreditUserId(appUserId: string | null) {
