@@ -232,11 +232,9 @@ export default function ProfileScreen() {
   const displayErrorMessage = sanitizeProfileMessage(errorMessage);
   const nativeAppVersion = mobileBuildInfo.nativeAppVersion || mobileBuildInfo.version || "Unavailable";
   const nativeBuildNumber = mobileBuildInfo.nativeBuildNumber || mobileBuildInfo.iosBuildNumber || "Unavailable";
-  const embeddedCommit = mobileBuildInfo.embeddedGitCommit || "Unavailable";
   const activeOtaUpdateId = mobileBuildInfo.activeOtaUpdateId || (mobileBuildInfo.isEmbeddedLaunch ? "Embedded launch" : "Unavailable");
   const activeOtaCommit = mobileBuildInfo.activeOtaGitCommit || (mobileBuildInfo.isEmbeddedLaunch ? "Embedded launch" : "Unavailable");
   const runtimeVersion = mobileBuildInfo.runtimeVersion || "Unavailable";
-  const channel = mobileBuildInfo.channel || "Unavailable";
   const isEmbeddedLaunch = formatDiagnosticValue(mobileBuildInfo.isEmbeddedLaunch);
   const isEmergencyLaunch = formatDiagnosticValue(mobileBuildInfo.isEmergencyLaunch);
   const showOtaDiagnostics = __DEV__ || mobileEnv.showQaDebug === "1" || mobileEnv.showQaDebug.toLowerCase() === "true";
@@ -260,19 +258,10 @@ export default function ProfileScreen() {
     restorePurchases().catch(() => undefined);
   }, [isRestoring, restorePurchases]);
 
-  const handleCancelPro = useCallback(() => {
+  const handleManageSubscription = useCallback(() => {
     if (isCancelling) return;
-    console.log("[tap] profile-cancel-pro");
-    Alert.alert("Cancel Pro", "Move this account back to the free plan?", [
-      { text: "Keep Pro", style: "cancel" },
-      {
-        text: "Cancel Pro",
-        style: "destructive",
-        onPress: () => {
-          cancelPro().catch(() => undefined);
-        },
-      },
-    ]);
+    console.log("[tap] profile-manage-subscription");
+    cancelPro().catch(() => undefined);
   }, [cancelPro, isCancelling]);
 
   const handleSignOut = useCallback(() => {
@@ -445,12 +434,6 @@ export default function ProfileScreen() {
           <SectionLabel label="Account" />
           <View style={styles.settingsCard}>
             <SettingsRow icon="refresh-outline" label={isRestoring ? "Restoring Purchases..." : "Restore Purchases"} onPress={handleRestorePurchases} disabled={isRestoring} />
-            {accessState.hasProEntitlement ? (
-              <>
-                <View style={styles.separator} />
-                <SettingsRow icon="close-circle-outline" label={isCancelling ? "Cancelling Pro..." : "Cancel Pro"} onPress={handleCancelPro} disabled={isCancelling} />
-              </>
-            ) : null}
             {user ? (
               <>
                 <View style={styles.separator} />
@@ -481,15 +464,11 @@ export default function ProfileScreen() {
             <View style={styles.separator} />
             <InfoRow icon="construct-outline" label="Native Build" value={nativeBuildNumber} />
             <View style={styles.separator} />
-            <InfoRow icon="code-slash-outline" label="Embedded Commit" value={embeddedCommit} />
+            <InfoRow icon="cube-outline" label="Runtime" value={runtimeVersion} />
             <View style={styles.separator} />
             <InfoRow icon="cloud-download-outline" label="Active OTA Update ID" value={activeOtaUpdateId} />
             <View style={styles.separator} />
             <InfoRow icon="git-commit-outline" label="Active OTA Commit" value={activeOtaCommit} />
-            <View style={styles.separator} />
-            <InfoRow icon="cube-outline" label="Runtime" value={runtimeVersion} />
-            <View style={styles.separator} />
-            <InfoRow icon="git-branch-outline" label="Channel" value={channel} />
             <View style={styles.separator} />
             <InfoRow icon="archive-outline" label="Is Embedded Launch" value={isEmbeddedLaunch} />
             <View style={styles.separator} />
@@ -520,6 +499,20 @@ export default function ProfileScreen() {
                 </View>
               ) : null}
             </>
+          ) : null}
+
+          {accessState.hasProEntitlement ? (
+            <View style={styles.subscriptionManagementSection}>
+              <SectionLabel label="Subscription Management" />
+              <View style={styles.settingsCard}>
+                <SettingsRow
+                  icon="card-outline"
+                  label={isCancelling ? "Opening Subscription Management..." : "Manage Subscription"}
+                  onPress={handleManageSubscription}
+                  disabled={isCancelling}
+                />
+              </View>
+            </View>
           ) : null}
         </ScrollView>
       </LinearGradient>
@@ -997,6 +990,12 @@ const styles = StyleSheet.create({
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 12 },
     elevation: 4,
+  },
+  subscriptionManagementSection: {
+    marginTop: 22,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: profileColors.lineStrong,
   },
   settingsRow: {
     minHeight: 50,

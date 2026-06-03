@@ -1,4 +1,5 @@
 import Constants from "expo-constants";
+import { Linking } from "react-native";
 import Purchases from "react-native-purchases";
 import type { CustomerInfo, PurchasesEntitlementInfo, PurchasesPackage } from "@revenuecat/purchases-typescript-internal";
 import { mobileEnv } from "@/lib/env";
@@ -349,6 +350,36 @@ export const purchaseService = {
       outcome: "restored" as const,
       customerInfo,
       message: "Purchases restored successfully.",
+    };
+  },
+
+  async openSubscriptionManagement() {
+    const configuration = await ensureConfigured();
+    if (!configuration.configured) {
+      return {
+        snapshot: await this.getPurchaseSnapshot(),
+        outcome: "not_configured" as const,
+        message:
+          configuration.reason === "expo_go_preview"
+            ? "Subscription management requires a development or production build."
+            : "RevenueCat is not configured yet. Add the iOS API key and entitlement id before managing subscriptions.",
+      };
+    }
+
+    const snapshot = await this.getPurchaseSnapshot();
+    try {
+      await Purchases.showManageSubscriptions();
+    } catch (error) {
+      if (!snapshot.managementUrl) {
+        throw error;
+      }
+      await Linking.openURL(snapshot.managementUrl);
+    }
+
+    return {
+      snapshot,
+      outcome: "opened" as const,
+      message: "Subscription management opened.",
     };
   },
 };

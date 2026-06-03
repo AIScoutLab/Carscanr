@@ -968,31 +968,38 @@ export const subscriptionService = {
   },
 
   async cancelSubscription(): Promise<SubscriptionActionResult> {
-    if (!(await authService.getAccessToken())) {
-      throw new Error("Sign in to manage your subscription.");
+    console.log("[subscription] MANAGEMENT_OPEN_START");
+    const management = await purchaseService.openSubscriptionManagement();
+
+    status = mergeUsageStatus(status, {
+      plan: management.snapshot.activeEntitlement?.isActive ? "pro" : status.plan,
+      provider: management.snapshot.activeEntitlement?.isActive ? "revenuecat" : status.provider,
+      productId: management.snapshot.activeProductId ?? status.productId ?? null,
+      willAutoRenew: management.snapshot.activeEntitlement?.willRenew ?? status.willAutoRenew,
+      lastVerifiedAt: management.snapshot.activeEntitlement?.latestPurchaseDate ?? status.lastVerifiedAt ?? null,
+      purchaseAvailable: management.snapshot.purchaseAvailable,
+      purchaseAvailabilityState: management.snapshot.purchaseAvailabilityState,
+      availableProducts: management.snapshot.availableProducts,
+      renewalLabel: management.snapshot.activeEntitlement?.isActive
+        ? formatRenewalLabel("pro", management.snapshot.activeEntitlement.expirationDate ?? undefined)
+        : status.renewalLabel,
+    });
+
+    if (management.outcome !== "opened") {
+      console.log("[subscription] MANAGEMENT_OPEN_SKIPPED", { outcome: management.outcome, message: management.message });
+      return {
+        outcome: "not_configured",
+        status,
+        message: management.message,
+      };
     }
-    const record = await apiRequest<BackendSubscriptionRecord>({
-      path: "/api/subscription/cancel",
-      method: "POST",
-    });
 
-    const usage = await scanService.getUsage().catch(() => status);
-
-    status = mergeUsageStatus(usage, {
-      plan: record.plan,
-      isActive: false,
-      provider: "backend",
-      productId: null,
-      willAutoRenew: false,
-      lastVerifiedAt: record.verifiedAt,
-      purchaseAvailable: false,
-      renewalLabel: "Free plan",
-    });
+    console.log("[subscription] MANAGEMENT_OPEN_SUCCESS");
 
     return {
       outcome: "cancelled",
       status,
-      message: "Pro access cancelled. You’re back on the free plan.",
+      message: management.message,
     };
   },
 

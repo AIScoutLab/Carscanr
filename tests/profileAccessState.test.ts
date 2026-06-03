@@ -179,3 +179,92 @@ test("profile subscription card renders upgrade surfaces from access selector on
   assert.doesNotMatch(profileSource, /accessState\.showUpgradeOptions\s*\?\s*<PaywallCard/);
   assert.doesNotMatch(profileSource, /View Pro Status/);
 });
+
+test("profile legal rows use in-app routes and support rows keep mailto actions", () => {
+  const profileSource = fs.readFileSync(profileSourcePath, "utf8");
+  const supportStart = profileSource.indexOf('<SectionLabel label="Support" />');
+  const legalStart = profileSource.indexOf('<SectionLabel label="Legal" />');
+  const aboutStart = profileSource.indexOf('<SectionLabel label="About" />');
+  const supportBlock = profileSource.slice(supportStart, legalStart);
+  const legalBlock = profileSource.slice(legalStart, aboutStart);
+
+  assert.notEqual(supportStart, -1, "Support section was not found");
+  assert.notEqual(legalStart, -1, "Legal section was not found");
+  assert.notEqual(aboutStart, -1, "About section was not found");
+  assert.match(supportBlock, /label="Contact Support"/);
+  assert.match(supportBlock, /openSupportEmail\(\)/);
+  assert.match(supportBlock, /label="Report an Issue"/);
+  assert.match(supportBlock, /openSupportEmail\("CarScanr Issue Report"\)/);
+  assert.match(supportBlock, /label="Request a Feature"/);
+  assert.match(supportBlock, /openSupportEmail\("CarScanr Feature Request"\)/);
+  assert.match(legalBlock, /label="Privacy Policy"/);
+  assert.match(legalBlock, /router\.push\("\/legal\/privacy-policy" as never\)/);
+  assert.match(legalBlock, /label="Terms of Service"/);
+  assert.match(legalBlock, /router\.push\("\/legal\/terms-of-service" as never\)/);
+  assert.doesNotMatch(legalBlock, /openSupportEmail|mailto:/);
+  assert.doesNotMatch(profileSource, /Terms & Privacy|CarScanr Privacy Question|CarScanr Terms and Privacy|support@carscanr\.app/);
+});
+
+test("profile about rows keep native and OTA diagnostics visible in the requested order", () => {
+  const profileSource = fs.readFileSync(profileSourcePath, "utf8");
+  const aboutStart = profileSource.indexOf('<SectionLabel label="About" />');
+  const diagnosticsStart = profileSource.indexOf('<SectionLabel label="OTA Diagnostics" />', aboutStart);
+  const subscriptionManagementStart = profileSource.indexOf('<SectionLabel label="Subscription Management" />', aboutStart);
+  const aboutEnd = diagnosticsStart > -1 ? diagnosticsStart : subscriptionManagementStart;
+  const aboutBlock = profileSource.slice(aboutStart, aboutEnd);
+  const orderedLabels = [
+    "Native App Version",
+    "Native Build",
+    "Runtime",
+    "Active OTA Update ID",
+    "Active OTA Commit",
+    "Is Embedded Launch",
+    "Is Emergency Launch",
+  ];
+  let previousIndex = -1;
+
+  assert.notEqual(aboutStart, -1, "About section was not found");
+  assert.notEqual(aboutEnd, -1, "About section end was not found");
+  for (const label of orderedLabels) {
+    const nextIndex = aboutBlock.indexOf(`label="${label}"`);
+    assert.ok(nextIndex > previousIndex, `${label} should appear after the previous About row`);
+    previousIndex = nextIndex;
+  }
+  assert.doesNotMatch(aboutBlock, /label="Embedded Commit"|label="Channel"/);
+});
+
+test("profile separates subscription management from sign out at the bottom", () => {
+  const profileSource = fs.readFileSync(profileSourcePath, "utf8");
+  const accountStart = profileSource.indexOf('<SectionLabel label="Account" />');
+  const supportStart = profileSource.indexOf('<SectionLabel label="Support" />');
+  const legalStart = profileSource.indexOf('<SectionLabel label="Legal" />');
+  const aboutStart = profileSource.indexOf('<SectionLabel label="About" />');
+  const subscriptionManagementStart = profileSource.indexOf('<SectionLabel label="Subscription Management" />');
+  const accountBlock = profileSource.slice(accountStart, supportStart);
+
+  assert.ok(accountStart > -1 && supportStart > accountStart, "Account and Support sections should be ordered");
+  assert.ok(legalStart > supportStart, "Legal should follow Support");
+  assert.ok(aboutStart > legalStart, "About should follow Legal");
+  assert.ok(subscriptionManagementStart > aboutStart, "Subscription Management should follow About and diagnostics");
+  assert.match(accountBlock, /Restore Purchases/);
+  assert.match(accountBlock, /Sign Out/);
+  assert.doesNotMatch(accountBlock, /Manage Subscription|Cancel Pro|Cancelling Pro/);
+  assert.match(profileSource, /profile-manage-subscription/);
+  assert.match(profileSource, /label=\{isCancelling \? "Opening Subscription Management\.\.\." : "Manage Subscription"\}/);
+  assert.match(profileSource, /subscriptionManagementSection/);
+  assert.doesNotMatch(profileSource, /Cancel Pro|Cancelling Pro|Cancel Subscription/);
+});
+
+test("subscription management opens RevenueCat native management instead of backend cancel", () => {
+  const profileSource = fs.readFileSync(profileSourcePath, "utf8");
+  const purchaseSource = fs.readFileSync(path.join(process.cwd(), "services/purchaseService.ts"), "utf8");
+  const serviceSource = fs.readFileSync(path.join(process.cwd(), "services/subscriptionService.ts"), "utf8");
+  const cancelStart = serviceSource.indexOf("async cancelSubscription()");
+  const cancelEnd = serviceSource.indexOf("async syncSubscriptionToBackend", cancelStart);
+  const cancelBlock = serviceSource.slice(cancelStart, cancelEnd);
+
+  assert.match(profileSource, /handleManageSubscription/);
+  assert.match(purchaseSource, /Purchases\.showManageSubscriptions\(\)/);
+  assert.match(cancelBlock, /purchaseService\.openSubscriptionManagement\(\)/);
+  assert.doesNotMatch(cancelBlock, /\/api\/subscription\/cancel|Pro access cancelled|Free plan/);
+});

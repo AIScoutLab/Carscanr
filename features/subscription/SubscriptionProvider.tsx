@@ -125,7 +125,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       setFeedbackMessage(result.message);
       return result;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to cancel Pro right now.";
+      const message = error instanceof Error ? error.message : "Unable to open subscription management right now.";
       setErrorMessage(message);
       throw error;
     } finally {
