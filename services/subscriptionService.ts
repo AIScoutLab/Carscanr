@@ -27,6 +27,7 @@ type BackendUnlockStatus = {
   freeUnlocksUsed: number;
   freeUnlocksRemaining: number;
   unlockCreditsRemaining?: number;
+  totalUnlocksAvailable?: number;
   unlockedVehicleIds: string[];
 };
 
@@ -47,6 +48,7 @@ type FreeUnlockActionResult = {
   state: FreeUnlockState;
   remaining: number;
   limit: number;
+  unlockCredits?: number;
   alreadyUnlocked: boolean;
   reason: FreeUnlockReason;
   message: string;
@@ -531,23 +533,28 @@ function getRevenueCatSubscriptionSyncOverrides(
     purchaseAvailabilityState: SubscriptionStatus["purchaseAvailabilityState"];
     availableProducts: SubscriptionProduct[];
   },
+  options: { allowPendingSync?: boolean } = {},
 ): Partial<SubscriptionStatus> {
   const backendHasPro = isProPlan(usage.plan);
   const revenueCatSubscriptionActive = snapshot.activeEntitlement?.isActive === true;
+  const showPendingSync = !backendHasPro && revenueCatSubscriptionActive && options.allowPendingSync === true;
 
   return {
     plan: usage.plan,
-    provider: backendHasPro ? "backend" : revenueCatSubscriptionActive ? "revenuecat" : usage.provider,
-    productId: revenueCatSubscriptionActive ? snapshot.activeProductId : usage.productId ?? null,
+    provider: backendHasPro ? "backend" : showPendingSync ? "revenuecat" : usage.provider,
+    productId: backendHasPro || showPendingSync ? snapshot.activeProductId : usage.productId ?? null,
     isActive: backendHasPro,
     willAutoRenew: backendHasPro ? (snapshot.activeEntitlement?.willRenew ?? usage.willAutoRenew ?? true) : false,
-    lastVerifiedAt: revenueCatSubscriptionActive ? snapshot.activeEntitlement?.latestPurchaseDate ?? usage.lastVerifiedAt ?? null : usage.lastVerifiedAt ?? null,
+    lastVerifiedAt:
+      backendHasPro || showPendingSync
+        ? snapshot.activeEntitlement?.latestPurchaseDate ?? usage.lastVerifiedAt ?? null
+        : usage.lastVerifiedAt ?? null,
     renewalLabel: backendHasPro
       ? formatRenewalLabel(usage.plan, snapshot.activeEntitlement?.expirationDate ?? undefined)
-      : revenueCatSubscriptionActive
+      : showPendingSync
         ? "Purchase detected. Backend access has not confirmed Pro yet."
         : usage.renewalLabel,
-    entitlementSyncState: !backendHasPro && revenueCatSubscriptionActive ? "revenuecat_active_backend_pending" : "none",
+    entitlementSyncState: showPendingSync ? "revenuecat_active_backend_pending" : "none",
     purchaseAvailable: snapshot.purchaseAvailable,
     purchaseAvailabilityState: snapshot.purchaseAvailabilityState,
     availableProducts: snapshot.availableProducts,
@@ -659,7 +666,7 @@ export const subscriptionService = {
       };
     }
     const cached = scanService.getCachedUnlockStatus?.();
-    if (cached && typeof cached.freeUnlocksTotal === "number") {
+    if (cached && typeof cached.freeUnlocksTotal === "number" && typeof cached.unlockCreditsRemaining === "number") {
       const merged = mergeUnlockStates(cached.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT, cached.unlockedVehicleIds ?? [], localState);
       logFreeUnlockCounterState("scan_cache", merged);
       return {
@@ -667,7 +674,7 @@ export const subscriptionService = {
         remaining: merged.remaining,
         unlockedVehicleIds: merged.unlockedVehicleIds,
         limit: merged.limit,
-        unlockCredits: 0,
+        unlockCredits: Math.max(0, cached.unlockCreditsRemaining),
       };
     }
     try {
@@ -722,6 +729,7 @@ export const subscriptionService = {
           state: unlockState,
           remaining: Math.max(0, FREE_UNLOCKS_LIMIT - unlockState.used),
           limit: FREE_UNLOCKS_LIMIT,
+          unlockCredits: 0,
           alreadyUnlocked: true,
           reason: "already_unlocked",
           message: "This vehicle is already unlocked.",
@@ -735,6 +743,7 @@ export const subscriptionService = {
           state: unlockState,
           remaining: 0,
           limit: FREE_UNLOCKS_LIMIT,
+          unlockCredits: 0,
           alreadyUnlocked: false,
           reason: "no_free_unlocks",
           message: "No free unlocks remaining. Upgrade to Pro for full access.",
@@ -758,6 +767,7 @@ export const subscriptionService = {
         state: nextState,
         remaining: Math.max(0, FREE_UNLOCKS_LIMIT - nextState.used),
         limit: FREE_UNLOCKS_LIMIT,
+        unlockCredits: 0,
         alreadyUnlocked: false,
         reason: "consumed",
         message: "Free unlock applied. This vehicle is now fully unlocked.",
@@ -770,6 +780,7 @@ export const subscriptionService = {
         state: unlockState,
         remaining: Math.max(0, FREE_UNLOCKS_LIMIT - unlockState.used),
         limit: FREE_UNLOCKS_LIMIT,
+        unlockCredits: 0,
         alreadyUnlocked: unlockState.unlockedVehicleIds.includes(vehicleId),
         reason: "auth_required",
         message: "Sign in to keep unlocks synced across devices.",
@@ -806,6 +817,7 @@ export const subscriptionService = {
         state: unlockState,
         remaining: status.freeUnlocksRemaining ?? Math.max(0, status.freeUnlocksTotal - status.freeUnlocksUsed),
         limit: status.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT,
+        unlockCredits: Math.max(0, status.unlockCreditsRemaining ?? 0),
         alreadyUnlocked: response.entitlement.alreadyUnlocked,
         reason: response.entitlement.alreadyUnlocked
           ? "already_unlocked"
@@ -867,6 +879,7 @@ export const subscriptionService = {
         state: unlockState,
         remaining: Math.max(0, FREE_UNLOCKS_LIMIT - unlockState.used),
         limit: FREE_UNLOCKS_LIMIT,
+        unlockCredits: 0,
         alreadyUnlocked: unlockState.unlockedVehicleIds.includes(vehicleId),
         reason,
         message,
@@ -946,7 +959,7 @@ export const subscriptionService = {
       isSubscriptionPurchaseOptionKind(purchasedOptionKind)
     ) {
       const usage = await scanService.getUsage().catch(() => status);
-      status = mergeUsageStatus(usage, getRevenueCatSubscriptionSyncOverrides(usage, purchase.snapshot));
+      status = mergeUsageStatus(usage, getRevenueCatSubscriptionSyncOverrides(usage, purchase.snapshot, { allowPendingSync: true }));
       console.log("[subscription] PURCHASE_ATTEMPT_SUCCESS", {
         outcome: "verified",
         productId: purchase.snapshot.activeProductId,

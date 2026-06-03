@@ -6,6 +6,7 @@ import { ProfileAccessState, resolveProfileAccessState } from "@/lib/subscriptio
 import { SubscriptionStatus } from "@/types";
 
 const profileSourcePath = path.join(process.cwd(), "app/(tabs)/profile.tsx");
+const scanSourcePath = path.join(process.cwd(), "app/(tabs)/scan.tsx");
 
 function status(input: Partial<SubscriptionStatus>): SubscriptionStatus {
   return {
@@ -53,7 +54,32 @@ test("profile access state never renders free plan and active pro together", () 
   assert.equal(resolved.showFreeUnlockUsage, true);
 });
 
-test("RevenueCat active monthly with backend inactive is pending instead of Pro active", () => {
+test("RevenueCat active monthly with backend inactive is free unless a current subscription sync is pending", () => {
+  const resolved = resolveProfileAccessState(
+    status({
+      plan: "free",
+      provider: "revenuecat",
+      productId: "carscanr.pro.monthly",
+      renewalLabel: "Pro active",
+      isActive: true,
+      entitlementSyncState: "none",
+    }),
+  );
+
+  assert.equal(resolved.mode, "free");
+  assert.equal(resolved.hasProEntitlement, false);
+  assert.equal(resolved.hasPendingProSync, false);
+  assert.equal(resolved.planLabel, "Free plan");
+  assert.equal(renderedText(resolved).includes("Pro monthly active"), false);
+  assert.equal(renderedText(resolved).includes("Pro access syncing"), false);
+  assert.equal(resolved.showUpgradeOptions, true);
+  assert.equal(resolved.showPrimaryUpgradeCta, true);
+  assert.equal(resolved.showPaywallCard, true);
+  assert.equal(resolved.showFreeUnlockUsage, true);
+  assert.equal(resolved.showRestorePurchases, true);
+});
+
+test("current subscription purchase pending backend confirmation can show Pro syncing", () => {
   const resolved = resolveProfileAccessState(
     status({
       plan: "free",
@@ -92,8 +118,10 @@ test("profile does not treat unlock pack entitlement product as Pro", () => {
 
   assert.equal(resolved.mode, "free");
   assert.equal(resolved.planLabel, "Free plan");
+  assert.equal(resolved.hasPendingProSync, false);
   assert.equal(renderedText(resolved).includes("Pro active"), false);
   assert.equal(renderedText(resolved).includes("Pro monthly active"), false);
+  assert.equal(renderedText(resolved).includes("Pro access syncing"), false);
   assert.equal(resolved.showUpgradeOptions, true);
   assert.equal(resolved.showFreeUnlockUsage, true);
 });
@@ -210,20 +238,37 @@ test("profile keeps paid unlock credits visible separately from Pro status", () 
   const providerSource = fs.readFileSync(path.join(process.cwd(), "features/subscription/SubscriptionProvider.tsx"), "utf8");
   const subscriptionSource = fs.readFileSync(path.join(process.cwd(), "services/subscriptionService.ts"), "utf8");
   const backendUnlockSource = fs.readFileSync(path.join(process.cwd(), "backend/src/services/unlockService.ts"), "utf8");
+  const usageSource = fs.readFileSync(path.join(process.cwd(), "backend/src/services/usageService.ts"), "utf8");
 
   assert.match(profileSource, /unlockCredits > 0/);
-  assert.match(profileSource, /paid \$\{unlockCredits === 1 \? "unlock credit" : "unlock credits"\} ready/);
+  assert.match(profileSource, /purchased \$\{unlockCredits === 1 \? "unlock" : "unlocks"\} available/);
   assert.match(providerSource, /unlockCredits/);
   assert.match(subscriptionSource, /unlockCreditsRemaining/);
+  assert.match(subscriptionSource, /typeof cached\.unlockCreditsRemaining === "number"/);
   assert.match(backendUnlockSource, /unlockCreditsRemaining: balance\.unlockCredits/);
+  assert.match(backendUnlockSource, /totalUnlocksAvailable: remaining \+ balance\.unlockCredits/);
+  assert.match(usageSource, /unlockCreditsRemaining: unlockStatus\.unlockCreditsRemaining/);
+});
+
+test("scan unlock badge accounts for purchased credits separately from free unlocks", () => {
+  const scanSource = fs.readFileSync(scanSourcePath, "utf8");
+
+  assert.match(scanSource, /unlockCredits/);
+  assert.match(scanSource, /purchasedUnlockCredits/);
+  assert.match(scanSource, /totalUnlocksAvailable/);
+  assert.match(scanSource, /\$\{remainingUnlocks\} FREE • \$\{purchasedUnlockCredits\} PURCHASED/);
 });
 
 test("subscription service keeps backend authoritative over RevenueCat entitlements", () => {
   const serviceSource = fs.readFileSync(path.join(process.cwd(), "services/subscriptionService.ts"), "utf8");
+  const subscriptionSource = fs.readFileSync(path.join(process.cwd(), "lib/subscription.ts"), "utf8");
 
   assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides/);
-  assert.match(serviceSource, /provider: backendHasPro \? "backend" : revenueCatSubscriptionActive \? "revenuecat"/);
-  assert.match(serviceSource, /entitlementSyncState: !backendHasPro && revenueCatSubscriptionActive \? "revenuecat_active_backend_pending" : "none"/);
+  assert.match(serviceSource, /allowPendingSync/);
+  assert.match(serviceSource, /provider: backendHasPro \? "backend" : showPendingSync \? "revenuecat"/);
+  assert.match(serviceSource, /entitlementSyncState: showPendingSync \? "revenuecat_active_backend_pending" : "none"/);
+  assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(usage, purchase\.snapshot, \{ allowPendingSync: true \}\)/);
+  assert.match(subscriptionSource, /return status\?\.entitlementSyncState === "revenuecat_active_backend_pending"/);
   assert.doesNotMatch(serviceSource, /plan:\s*"pro",\s*provider:\s*"revenuecat"/);
   assert.doesNotMatch(serviceSource, /plan:\s*restore\.snapshot\.activeEntitlement\?\.isActive \? "pro"/);
   assert.doesNotMatch(serviceSource, /plan:\s*management\.snapshot\.activeEntitlement\?\.isActive \? "pro"/);

@@ -167,6 +167,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       setFreeUnlocksUsed(result.state.used);
       setFreeUnlocksRemaining(result.remaining);
       setFreeUnlocksLimit(result.limit);
+      setUnlockCredits(result.unlockCredits ?? 0);
       setUnlockedVehicleIds(result.state.unlockedVehicleIds);
       if (!result.ok) {
         if (result.reason === "no_free_unlocks") {

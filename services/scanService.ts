@@ -16,7 +16,15 @@ import * as FileSystem from "expo-file-system";
 let mutableRecentScans: ScanResult[] = [];
 const recentScansListeners = new Set<(scans: ScanResult[]) => void>();
 let mutableUsage: SubscriptionStatus = { ...defaultSubscriptionStatus };
-let mutableUnlockStatus = {
+let mutableUnlockStatus: {
+  freeUnlocksTotal: number;
+  freeUnlocksUsed: number;
+  freeUnlocksRemaining: number;
+  unlockCreditsRemaining?: number;
+  totalUnlocksAvailable?: number;
+  unlockedVehicleCount: number;
+  unlockedVehicleIds: string[];
+} = {
   freeUnlocksTotal: FREE_PRO_UNLOCKS_TOTAL,
   freeUnlocksUsed: 0,
   freeUnlocksRemaining: FREE_PRO_UNLOCKS_TOTAL,
@@ -66,6 +74,8 @@ type BackendUsageResponse = {
   freeUnlocksTotal?: number;
   freeUnlocksUsed?: number;
   freeUnlocksRemaining?: number;
+  unlockCreditsRemaining?: number;
+  totalUnlocksAvailable?: number;
   unlockedVehicleCount?: number;
   unlockedVehicleIds?: string[];
 };
@@ -257,6 +267,8 @@ function mapUsage(usage: BackendUsageResponse): SubscriptionStatus {
       freeUnlocksTotal: normalizedCounter.limit,
       freeUnlocksUsed: normalizedCounter.used,
       freeUnlocksRemaining: normalizedCounter.remaining,
+      unlockCreditsRemaining: typeof usage.unlockCreditsRemaining === "number" ? Math.max(0, usage.unlockCreditsRemaining) : undefined,
+      totalUnlocksAvailable: typeof usage.totalUnlocksAvailable === "number" ? Math.max(0, usage.totalUnlocksAvailable) : undefined,
       unlockedVehicleCount: usage.unlockedVehicleCount ?? 0,
       unlockedVehicleIds: Array.isArray(usage.unlockedVehicleIds) ? usage.unlockedVehicleIds : mutableUnlockStatus.unlockedVehicleIds,
     };

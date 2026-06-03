@@ -63,10 +63,7 @@ export function hasAuthoritativeProEntitlement(status?: SubscriptionStatus | nul
 }
 
 function hasPendingRevenueCatProSync(status?: SubscriptionStatus | null) {
-  return (
-    status?.entitlementSyncState === "revenuecat_active_backend_pending" ||
-    (status?.provider === "revenuecat" && !isProPlan(status.plan) && isSubscriptionPurchaseOptionKind(getPurchaseOptionKindFromProductMetadata({ productId: status.productId })))
-  );
+  return status?.entitlementSyncState === "revenuecat_active_backend_pending";
 }
 
 function isUpgradeOrFreeCopy(label: string) {

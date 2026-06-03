@@ -90,7 +90,7 @@ export default function ScanScreen() {
   const activeFlowIdRef = useRef(0);
   const stagedProgress = useRef(new Animated.Value(0)).current;
   const factOpacity = useRef(new Animated.Value(1)).current;
-  const { status: usage, freeUnlocksUsed, freeUnlocksRemaining, freeUnlocksLimit, refreshStatus } = useSubscription();
+  const { status: usage, freeUnlocksUsed, freeUnlocksRemaining, freeUnlocksLimit, unlockCredits, refreshStatus } = useSubscription();
   const samplePhotos = getSampleScanPhotos();
   const [loadingStageIndex, setLoadingStageIndex] = useState(0);
   const [activeFactIndex, setActiveFactIndex] = useState(0);
@@ -293,8 +293,12 @@ export default function ScanScreen() {
 
   const isPro = isProPlan(usage?.plan);
   const remainingUnlocks = Math.max(0, freeUnlocksRemaining);
+  const purchasedUnlockCredits = Math.max(0, unlockCredits);
+  const totalUnlocksAvailable = remainingUnlocks + purchasedUnlockCredits;
   const unlockSummaryLabel = isPro
     ? "PRO ACCESS ACTIVE"
+    : purchasedUnlockCredits > 0
+      ? `${remainingUnlocks} FREE • ${purchasedUnlockCredits} PURCHASED`
     : `${remainingUnlocks} FREE UNLOCK${remainingUnlocks === 1 ? "" : "S"}`;
   const unlockDotCount = Math.max(1, Math.min(freeUnlocksLimit, 5));
 
@@ -740,7 +744,7 @@ export default function ScanScreen() {
             <View style={styles.unlockMeta}>
               <View style={styles.unlockDots} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
                 {Array.from({ length: unlockDotCount }).map((_, index) => (
-                  <View key={index} style={[styles.unlockDot, index < remainingUnlocks && styles.unlockDotAvailable]} />
+                  <View key={index} style={[styles.unlockDot, index < totalUnlocksAvailable && styles.unlockDotAvailable]} />
                 ))}
               </View>
               <Text style={styles.unlockLabel}>{unlockSummaryLabel}</Text>

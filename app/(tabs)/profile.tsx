@@ -229,7 +229,7 @@ export default function ProfileScreen() {
   const garageValue = user ? "Sync" : "0";
   const remainingUnlocks = Math.max(0, freeUnlocksRemaining);
   const unlockUsageLabel = accessState.hasProEntitlement ? "Pro Access active" : `${remainingUnlocks} free unlocks remaining`;
-  const paidUnlockCreditLabel = `${unlockCredits} paid ${unlockCredits === 1 ? "unlock credit" : "unlock credits"} ready`;
+  const paidUnlockCreditLabel = `${unlockCredits} purchased ${unlockCredits === 1 ? "unlock" : "unlocks"} available`;
   const displayFeedbackMessage = sanitizeProfileMessage(feedbackMessage);
   const displayErrorMessage = sanitizeProfileMessage(errorMessage);
   const nativeAppVersion = mobileBuildInfo.nativeAppVersion || mobileBuildInfo.version || "Unavailable";
