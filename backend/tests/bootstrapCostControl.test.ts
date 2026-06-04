@@ -1360,7 +1360,7 @@ describe("bootstrap cost control", () => {
     assert.equal(attempts.some((attempt) => attempt.model === "458" && attempt.year === 2014), false);
   });
 
-  test("Cadillac CT4 listing fallback attempts exact, mixed trim, adjacent year, and wider radius before empty", async () => {
+  test("Cadillac CT4 listing fallback attempts exact, mixed trim, and wider radius before empty", async () => {
     const attempts: Array<{ model: string; year: number; trim: string | null; radiusMiles: number | null }> = [];
     setProviders({
       ...createTestProviders(),
@@ -1415,12 +1415,219 @@ describe("bootstrap cost control", () => {
     });
 
     assert.equal(result.data.length, 1);
-    assert.equal(attempts.length, 2);
+    assert.equal(attempts.length, 3);
     assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === "Premium Luxury"), true);
     assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === ""), true);
     assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2020 && attempt.trim === ""), false);
     assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2022 && attempt.trim === ""), false);
-    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === "" && attempt.radiusMiles === 250), false);
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === "" && attempt.radiusMiles === 250), true);
+  });
+
+  test("Audi blank-trim listings refresh uses no-trim query and bounded fallback", async () => {
+    const attempts: Array<{ model: string; year: number; trim: string | null; radiusMiles: number | null }> = [];
+    setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            trim: input.vehicle?.trim ?? null,
+            radiusMiles: input.radiusMiles ?? null,
+          });
+
+          if (input.vehicle?.model === "A5" && input.vehicle?.year === 2023 && input.vehicle?.trim === "" && input.radiusMiles === 100) {
+            return [
+              {
+                id: "listing-a5-blank-trim",
+                vehicleId: input.vehicleId,
+                year: 2023,
+                make: "Audi",
+                model: "A5",
+                trim: "Premium",
+                title: "2023 Audi A5 Premium",
+                price: 41995,
+                mileage: 18400,
+                dealer: "Audi Aurora",
+                distanceMiles: 18,
+                location: "Aurora, IL",
+                imageUrl: "https://dealer.example.test/a5.jpg",
+                listingUrl: null,
+                listedAt: "2026-05-15T00:00:00.000Z",
+              },
+            ];
+          }
+
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getListings({
+      vehicleId: "manual-search-audi-a5",
+      descriptor: {
+        year: 2023,
+        make: "Audi",
+        model: "A5",
+        trim: "",
+        vehicleType: "car",
+        bodyStyle: "Coupe",
+        normalizedModel: "a5",
+      },
+      zip: "60502",
+      radiusMiles: 100,
+      mileage: 18400,
+      allowLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+    });
+
+    assert.equal(result.data.length, 1);
+    assert.equal(attempts.length <= 3, true);
+    assert.equal(attempts[0]?.model, "A5");
+    assert.equal(attempts[0]?.trim, "");
+  });
+
+  test("Audi quattro trim-like value does not over-filter listings", async () => {
+    const attempts: Array<{ model: string; year: number; trim: string | null; radiusMiles: number | null }> = [];
+    setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            trim: input.vehicle?.trim ?? null,
+            radiusMiles: input.radiusMiles ?? null,
+          });
+
+          if (input.vehicle?.model === "A5" && input.vehicle?.year === 2023 && input.vehicle?.trim === "") {
+            return [
+              {
+                id: "listing-a5-quattro-dropped",
+                vehicleId: input.vehicleId,
+                year: 2023,
+                make: "Audi",
+                model: "A5",
+                trim: "Premium Plus",
+                title: "2023 Audi A5 Premium Plus quattro",
+                price: 43995,
+                mileage: 18400,
+                dealer: "Audi Naperville",
+                distanceMiles: 22,
+                location: "Naperville, IL",
+                imageUrl: "https://dealer.example.test/a5-quattro.jpg",
+                listingUrl: null,
+                listedAt: "2026-05-15T00:00:00.000Z",
+              },
+            ];
+          }
+
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getListings({
+      vehicleId: "manual-search-audi-a5-quattro",
+      descriptor: {
+        year: 2023,
+        make: "Audi",
+        model: "A5",
+        trim: "quattro",
+        vehicleType: "car",
+        bodyStyle: "Coupe",
+        normalizedModel: "a5",
+      },
+      zip: "60502",
+      radiusMiles: 100,
+      mileage: 18400,
+      allowLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+    });
+
+    assert.equal(result.data.length, 1);
+    assert.equal(attempts.length <= 3, true);
+    assert.equal(attempts.some((attempt) => attempt.trim === "quattro"), false);
+    assert.equal(attempts.some((attempt) => attempt.model === "A5" && attempt.trim === ""), true);
+  });
+
+  test("specialty listings refresh does not use broad radius or adjacent-year comps", async () => {
+    const attempts: Array<{ model: string; year: number; trim: string | null; radiusMiles: number | null }> = [];
+    setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            trim: input.vehicle?.trim ?? null,
+            radiusMiles: input.radiusMiles ?? null,
+          });
+
+          if (input.vehicle?.model === "F430" && input.radiusMiles === 250) {
+            return [
+              {
+                id: "listing-f430-too-broad",
+                vehicleId: input.vehicleId,
+                year: 2008,
+                make: "Ferrari",
+                model: "F430",
+                trim: "Spider",
+                title: "2008 Ferrari F430 Spider",
+                price: 189995,
+                mileage: 11200,
+                dealer: "Specialty Dealer",
+                distanceMiles: 210,
+                location: "Detroit, MI",
+                imageUrl: "https://dealer.example.test/f430.jpg",
+                listingUrl: null,
+                listedAt: "2026-05-15T00:00:00.000Z",
+              },
+            ];
+          }
+
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getListings({
+      vehicleId: "manual-search-ferrari-f430",
+      descriptor: {
+        year: 2007,
+        make: "Ferrari",
+        model: "F430",
+        trim: "Base",
+        vehicleType: "car",
+        bodyStyle: "Coupe",
+        normalizedModel: "f430",
+      },
+      zip: "60502",
+      radiusMiles: 100,
+      mileage: 18400,
+      allowLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+    });
+
+    assert.equal(result.data.length, 0);
+    assert.equal(attempts.length, 1);
+    assert.equal(attempts.some((attempt) => attempt.radiusMiles === 250), false);
+    assert.equal(attempts.some((attempt) => attempt.year !== 2007), false);
   });
 
   test("Cadillac CT4 provider-normalized listing without URL remains usable", async () => {
@@ -1921,11 +2128,11 @@ describe("bootstrap cost control", () => {
       action: "listingsRefresh",
     });
 
-    assert.equal(attempts.length, 1);
+    assert.equal(attempts.length, 3);
     assert.equal(attempts.every((attempt) => attempt.model === "4Runner"), true);
     assert.equal(attempts.some((attempt) => attempt.model === "4"), false);
     assert.equal(attempts.some((attempt) => attempt.year === 2011 && attempt.radiusMiles === 100), true);
-    assert.equal(attempts.some((attempt) => attempt.radiusMiles === 250), false);
+    assert.equal(attempts.some((attempt) => attempt.radiusMiles === 250), true);
   });
 
   test("force-live listings refresh drops generic Base trim and uses bounded fallback attempts", async () => {
@@ -1973,6 +2180,18 @@ describe("bootstrap cost control", () => {
       {
         model: "4Runner",
         year: 2011,
+        radiusMiles: 100,
+        trim: "",
+      },
+      {
+        model: "4Runner",
+        year: 2011,
+        radiusMiles: 250,
+        trim: "",
+      },
+      {
+        model: "4Runner",
+        year: 2010,
         radiusMiles: 100,
         trim: "",
       },
@@ -2033,12 +2252,12 @@ describe("bootstrap cost control", () => {
       action: "debugForceListingsRefresh",
     });
 
-    assert.equal(attempts.length, 2);
+    assert.equal(attempts.length, 3);
     assert.deepEqual(
       attempts.map((attempt) => attempt.attemptNumber),
-      [1, 2],
+      [1, 2, 3],
     );
-    assert.equal(attempts.every((attempt) => attempt.maxAttempts === 2), true);
+    assert.equal(attempts.every((attempt) => attempt.maxAttempts === 3), true);
     assert.equal(attempts.every((attempt) => attempt.fallbackReason === "unknown"), true);
     assert.equal(attempts.every((attempt) => typeof attempt.fallbackStrategy === "string"), true);
   });
@@ -2104,7 +2323,7 @@ describe("bootstrap cost control", () => {
       action: "listingsRefresh",
     });
 
-    assert.equal(providerCalls, 1);
+    assert.equal(providerCalls, 3);
     assert.equal(result.data.length, 0);
   });
 
@@ -2400,10 +2619,10 @@ describe("bootstrap cost control", () => {
     });
 
     assert.equal(result.data.length, 1);
-    assert.equal(attempts.length, 2);
+    assert.equal(attempts.length, 3);
     assert.equal(attempts.some((attempt) => attempt.model === "A4 allroad" && attempt.year === 2018 && attempt.trim === "Premium Plus"), true);
     assert.equal(attempts.some((attempt) => attempt.model === "A4 allroad" && attempt.year === 2018 && attempt.trim === ""), true);
-    assert.equal(attempts.some((attempt) => attempt.model === "A4" && attempt.year === 2018), false);
+    assert.equal(attempts.some((attempt) => attempt.model === "A4" && attempt.year === 2018), true);
     assert.equal(attempts.some((attempt) => attempt.model === "A4" && attempt.year === 2019), false);
   });
 
@@ -2699,7 +2918,7 @@ describe("bootstrap cost control", () => {
       action: "listingsRefresh",
     });
 
-    assert.equal(listingsProviderCalls, 1);
+    assert.equal(listingsProviderCalls, 3);
     assert.equal(valueProviderCalls, 0);
     assert.equal(specsProviderCalls, 0);
     assert.equal(providerTrims[0], "");

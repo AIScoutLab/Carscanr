@@ -50,6 +50,8 @@ const DEFAULT_UNLOCK_EVALUATION_RADIUS_MILES = 50;
 const LISTING_DERIVATION_RADIUS_MILES = [50, 100, 250, 500];
 const MIN_BELIEVABLE_LIVE_LISTINGS = 5;
 const MAX_LIVE_LISTING_ATTEMPTS = 2;
+const MAX_NORMAL_LIVE_LISTING_ATTEMPTS = 3;
+const MAX_SPECIALTY_LIVE_LISTING_ATTEMPTS = 2;
 const MAX_DISPLAY_LIVE_LISTINGS = 12;
 
 function nowIso() {
@@ -203,7 +205,7 @@ function isNormalListingsRefresh(input: {
 }
 
 function isGenericListingsTrimValue(value: string | null | undefined) {
-  const normalized = normalizeVehicleLookupText(value);
+  const normalized = normalizeLookupText(value).replace(/-/g, " ");
   return (
     normalized.length === 0 ||
     normalized === "base" ||
@@ -214,6 +216,28 @@ function isGenericListingsTrimValue(value: string | null | undefined) {
     normalized === "visual" ||
     normalized === "estimated"
   );
+}
+
+function isDrivetrainOnlyListingsTrimValue(value: string | null | undefined) {
+  const normalized = normalizeLookupText(value).replace(/-/g, " ");
+  return (
+    normalized === "quattro" ||
+    normalized === "awd" ||
+    normalized === "4wd" ||
+    normalized === "4x4" ||
+    normalized === "all wheel drive" ||
+    normalized === "allwheel drive" ||
+    normalized === "allwheel" ||
+    normalized === "xdrive" ||
+    normalized === "4matic" ||
+    normalized === "4motion" ||
+    normalized === "fwd" ||
+    normalized === "rwd"
+  );
+}
+
+function isNonStrictListingsTrimValue(value: string | null | undefined) {
+  return isGenericListingsTrimValue(value) || isDrivetrainOnlyListingsTrimValue(value);
 }
 
 function isAdjacentOrExpandedListingsStrategy(strategy: ListingsLookupAttempt["strategy"]) {
@@ -239,33 +263,66 @@ function selectMarketCheckListingsProviderAttempts(input: {
   }
 
   const liveSafeAttempts = input.attempts.filter((attempt) => !isAdjacentOrExpandedListingsStrategy(attempt.strategy));
-  const genericTrim = isGenericListingsTrimValue(input.requestedTrim);
+  const requestedTrim = input.requestedTrim ?? null;
+  const nonStrictTrim = isNonStrictListingsTrimValue(requestedTrim);
+  const explicitNonStrictTrim = hasExplicitTrimValue(requestedTrim) && nonStrictTrim;
+  const requestedVehicle = input.attempts[0]?.vehicle ?? null;
+  const specialtyVehicle = requestedVehicle ? isSpecialtyExoticMake(requestedVehicle.make) : false;
+  const maxAttempts =
+    specialtyVehicle && input.forceLive !== true
+      ? 1
+      : specialtyVehicle
+        ? MAX_SPECIALTY_LIVE_LISTING_ATTEMPTS
+        : MAX_NORMAL_LIVE_LISTING_ATTEMPTS;
   if (input.forceLive !== true) {
-    const preferredAttempt =
-      genericTrim
-        ? liveSafeAttempts.find((attempt) => attempt.strategy === "same-year-any-trim") ??
-          liveSafeAttempts.find((attempt) => attempt.strategy === "same-year-family-model") ??
-          liveSafeAttempts.find((attempt) => attempt.strategy === "exact-year-make-model")
-        : liveSafeAttempts.find((attempt) => attempt.strategy === "exact-year-make-model") ??
-          liveSafeAttempts.find((attempt) => attempt.strategy === "same-year-any-trim") ??
-          liveSafeAttempts.find((attempt) => attempt.strategy === "same-year-family-model");
-
-    return preferredAttempt ? [preferredAttempt] : liveSafeAttempts.slice(0, 1);
+    const preferredStrategies: ListingsLookupAttempt["strategy"][] = specialtyVehicle
+      ? explicitNonStrictTrim
+        ? ["same-year-any-trim", "same-year-family-model", "exact-year-make-model"]
+        : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model"]
+      : explicitNonStrictTrim
+        ? ["same-year-any-trim", "same-year-family-model", "wider-radius-250", "adjacent-year-previous", "adjacent-year-next", "exact-year-make-model"]
+        : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model", "wider-radius-250", "adjacent-year-previous", "adjacent-year-next"];
+    const selected = selectListingsAttemptsByStrategy({
+      attempts: input.attempts,
+      liveSafeAttempts,
+      preferredStrategies,
+      includeExpanded: !specialtyVehicle,
+    });
+    return selected.length > 0 ? selected.slice(0, maxAttempts) : liveSafeAttempts.slice(0, 1);
   }
 
-  const preferredStrategies: ListingsLookupAttempt["strategy"][] = genericTrim
-    ? ["same-year-any-trim", "same-year-family-model", "exact-year-make-model", "adjacent-year-previous", "adjacent-year-next", "wider-radius-250"]
-    : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model", "adjacent-year-previous", "adjacent-year-next", "wider-radius-250"];
+  const preferredStrategies: ListingsLookupAttempt["strategy"][] = specialtyVehicle
+    ? explicitNonStrictTrim
+      ? ["same-year-any-trim", "same-year-family-model", "exact-year-make-model"]
+      : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model"]
+    : explicitNonStrictTrim
+      ? ["same-year-any-trim", "same-year-family-model", "wider-radius-250", "adjacent-year-previous", "adjacent-year-next", "exact-year-make-model"]
+      : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model", "wider-radius-250", "adjacent-year-previous", "adjacent-year-next"];
+  const selected = selectListingsAttemptsByStrategy({
+    attempts: input.attempts,
+    liveSafeAttempts,
+    preferredStrategies,
+    includeExpanded: !specialtyVehicle,
+  });
+
+  return selected.length > 0 ? selected.slice(0, maxAttempts) : liveSafeAttempts.slice(0, 1);
+}
+
+function selectListingsAttemptsByStrategy(input: {
+  attempts: ListingsLookupAttempt[];
+  liveSafeAttempts: ListingsLookupAttempt[];
+  preferredStrategies: ListingsLookupAttempt["strategy"][];
+  includeExpanded: boolean;
+}) {
   const selected: ListingsLookupAttempt[] = [];
-  for (const strategy of preferredStrategies) {
+  for (const strategy of input.preferredStrategies) {
     const attempt =
-      (isAdjacentOrExpandedListingsStrategy(strategy) ? input.attempts : liveSafeAttempts).find((entry) => entry.strategy === strategy) ?? null;
+      (input.includeExpanded && isAdjacentOrExpandedListingsStrategy(strategy) ? input.attempts : input.liveSafeAttempts).find((entry) => entry.strategy === strategy) ?? null;
     if (attempt && !selected.some((entry) => listingsAttemptKey(entry) === listingsAttemptKey(attempt))) {
       selected.push(attempt);
     }
   }
-
-  return selected.length > 0 ? selected.slice(0, MAX_LIVE_LISTING_ATTEMPTS) : liveSafeAttempts.slice(0, 1);
+  return selected;
 }
 
 function isMissingSupabaseRelationError(error: unknown, relationName: string) {
@@ -1966,6 +2023,7 @@ const GENERIC_MODEL_VARIANT_SUFFIXES = new Set([
   "gt",
   "gts",
   "italia",
+  "quattro",
   "roadster",
   "sedan",
   "spider",
@@ -5850,6 +5908,14 @@ export class VehicleService {
                 fallbackAttempts[0],
               ].filter((attempt): attempt is ListingsLookupAttempt => Boolean(attempt))
           : fallbackAttempts;
+      const originalListingsQuery = {
+        year: lookupBaseVehicle?.year ?? descriptor?.year ?? null,
+        make: lookupBaseVehicle?.make ?? descriptor?.make ?? null,
+        model: lookupBaseVehicle?.model ?? descriptor?.model ?? null,
+        trim: lookupBaseVehicle?.trim ?? descriptor?.trim ?? null,
+        zip: input.zip,
+        radiusMiles: input.radiusMiles,
+      };
       const blockedLiveListingsAttempts =
         providers.listingsProviderName === "marketcheck"
           ? fallbackAttempts.filter((attempt) => !providerListingsAttempts.some((entry) => listingsAttemptKey(entry) === listingsAttemptKey(attempt)))
@@ -5985,6 +6051,15 @@ export class VehicleService {
             fetchReason,
             requestedForceLive: input.forceLive ?? null,
             effectiveForceLive: effectiveForceLiveListings,
+            originalQuery: originalListingsQuery,
+            selectedFallbackQueries: providerListingsAttempts.map((attempt) => ({
+              strategy: attempt.strategy,
+              year: attempt.vehicle.year,
+              make: attempt.vehicle.make,
+              model: attempt.vehicle.model,
+              trim: attempt.vehicle.trim || null,
+              radiusMiles: attempt.radiusMiles,
+            })),
           },
           "LISTINGS_LIVE_ATTEMPT_COUNT",
         );
@@ -6072,6 +6147,15 @@ export class VehicleService {
               attemptNumber,
               maxAttempts,
               fallbackReason: fetchReason,
+              originalQuery: originalListingsQuery,
+              fallbackQuery: {
+                year: attempt.vehicle.year,
+                make: attempt.vehicle.make,
+                model: attempt.vehicle.model,
+                trim: attempt.vehicle.trim || null,
+                zip: input.zip,
+                radiusMiles: attempt.radiusMiles,
+              },
             },
             "LISTINGS_FALLBACK_ATTEMPT",
           );
@@ -6268,6 +6352,15 @@ export class VehicleService {
               attemptType: attempt.strategy,
               rawCount: liveListings.length,
               believableCount: believableListings.length,
+              originalQuery: originalListingsQuery,
+              fallbackQuery: {
+                year: attempt.vehicle.year,
+                make: attempt.vehicle.make,
+                model: attempt.vehicle.model,
+                trim: attempt.vehicle.trim || null,
+                zip: input.zip,
+                radiusMiles: attempt.radiusMiles,
+              },
             },
             "LISTINGS_ATTEMPT_RESULT",
           );
@@ -6500,6 +6593,9 @@ export class VehicleService {
               liveListingsFinalStrategy === "adjacent-year-next-2",
             fallbackReason: liveListingsFinalStrategy ?? "provider-match",
             acceptedStrategies: acceptedLiveListingsStrategies,
+            finalListingsCount: displayableLiveListings.length,
+            attempts: liveListingsAttempts,
+            originalQuery: originalListingsQuery,
           },
           "LISTINGS_FINAL_RESOLUTION",
         );
@@ -6601,6 +6697,9 @@ export class VehicleService {
           model: vehicle?.model ?? null,
           trim: vehicle?.trim ?? null,
           attemptedStrategies: fallbackAttempts.map((attempt) => attempt.strategy),
+          selectedAttemptStrategies: providerListingsAttempts.map((attempt) => attempt.strategy),
+          finalListingsCount: 0,
+          originalQuery: originalListingsQuery,
         },
         "LISTINGS_FAILED",
       );
@@ -6620,6 +6719,8 @@ export class VehicleService {
                   : "no-believable-listings-found",
           rawAttemptCount: liveListingsAttempts.length,
           attempts: liveListingsAttempts,
+          originalQuery: originalListingsQuery,
+          finalSelectedListingsCount: 0,
         },
         "LISTINGS_EMPTY_REASON",
       );
