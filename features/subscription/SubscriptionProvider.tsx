@@ -28,7 +28,7 @@ type SubscriptionContextValue = {
     vehicleId: string,
     linkedVehicleIds?: string[],
     lookup?: FreeUnlockVehicleLookup | null,
-  ) => Promise<{ ok: boolean; message: string; reason: FreeUnlockReason; alreadyUnlocked: boolean }>;
+  ) => Promise<{ ok: boolean; message: string; reason: FreeUnlockReason; alreadyUnlocked: boolean; unlockCredits?: number }>;
   isVehicleUnlocked: (vehicleId: string) => boolean;
   clearFeedback: () => void;
 };
@@ -192,6 +192,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         message: result.message,
         reason: result.reason,
         alreadyUnlocked: result.alreadyUnlocked,
+        unlockCredits: result.unlockCredits,
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to use a free unlock right now.";

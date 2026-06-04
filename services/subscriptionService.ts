@@ -665,18 +665,6 @@ export const subscriptionService = {
         limit: FREE_UNLOCKS_LIMIT,
       };
     }
-    const cached = scanService.getCachedUnlockStatus?.();
-    if (cached && typeof cached.freeUnlocksTotal === "number" && typeof cached.unlockCreditsRemaining === "number") {
-      const merged = mergeUnlockStates(cached.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT, cached.unlockedVehicleIds ?? [], localState);
-      logFreeUnlockCounterState("scan_cache", merged);
-      return {
-        used: merged.used,
-        remaining: merged.remaining,
-        unlockedVehicleIds: merged.unlockedVehicleIds,
-        limit: merged.limit,
-        unlockCredits: Math.max(0, cached.unlockCreditsRemaining),
-      };
-    }
     try {
       if (!user?.id) {
         throw new Error("No user session available.");
@@ -684,6 +672,7 @@ export const subscriptionService = {
       const status = await apiRequest<BackendUnlockStatus>({
         path: "/api/unlocks/status",
       });
+      scanService.updateCachedUnlockStatus?.(status);
       const merged = mergeUnlockStates(status.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT, status.unlockedVehicleIds ?? [], localState);
       logFreeUnlockCounterState("backend_status", merged);
       return {
@@ -694,6 +683,18 @@ export const subscriptionService = {
         unlockCredits: Math.max(0, status.unlockCreditsRemaining ?? 0),
       };
     } catch {
+      const cached = scanService.getCachedUnlockStatus?.();
+      if (cached && typeof cached.freeUnlocksTotal === "number" && typeof cached.unlockCreditsRemaining === "number") {
+        const merged = mergeUnlockStates(cached.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT, cached.unlockedVehicleIds ?? [], localState);
+        logFreeUnlockCounterState("scan_cache_fallback", merged);
+        return {
+          used: merged.used,
+          remaining: merged.remaining,
+          unlockedVehicleIds: merged.unlockedVehicleIds,
+          limit: merged.limit,
+          unlockCredits: Math.max(0, cached.unlockCreditsRemaining),
+        };
+      }
       const remaining = Math.max(0, FREE_UNLOCKS_LIMIT - localState.used);
       logFreeUnlockCounterState("local_fallback", {
         used: localState.localUsed ?? localState.used,
@@ -806,6 +807,10 @@ export const subscriptionService = {
         unlockedVehicleIds: dedupeUnlockIds([...(status.unlockedVehicleIds ?? []), vehicleId, ...linkedVehicleIds]),
       };
       await saveFreeUnlockState(user.id, unlockState);
+      scanService.updateCachedUnlockStatus?.({
+        ...status,
+        unlockedVehicleIds: unlockState.unlockedVehicleIds,
+      });
       logFreeUnlockCounterState("backend_unlock_status", {
         used: unlockState.used,
         remaining: status.freeUnlocksRemaining ?? Math.max(0, status.freeUnlocksTotal - status.freeUnlocksUsed),

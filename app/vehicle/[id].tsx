@@ -21,6 +21,7 @@ import { completeCanonicalSpecs, formatCanonicalModelName, sanitizeSpecValue } f
 import { formatHorsepowerLabel } from "@/lib/vehicleData";
 import { mobileBuildInfo } from "@/lib/env";
 import { isProPlan } from "@/lib/subscription";
+import { formatPurchasedUnlockPackRemaining } from "@/lib/unlockCreditDisplay";
 import { buildSpecialtyVehicleOverview, isSpecialtyExoticMake } from "@/lib/specialtyVehicles";
 import { buildVehicleDescription } from "@/lib/vehicleDescription";
 import { MarketAreaZipSource, isValidMarketAreaZip, normalizeMarketAreaZip } from "@/lib/marketAreaZip";
@@ -1810,6 +1811,7 @@ export default function VehicleDetailScreen() {
     status: usage,
     freeUnlocksRemaining,
     freeUnlocksLimit,
+    unlockCredits,
     isUnlocking,
     isVehicleUnlocked,
     useFreeUnlockForVehicle,
@@ -2111,14 +2113,19 @@ export default function VehicleDetailScreen() {
       ]);
     });
   };
+  const purchasedUnlockCredits = Math.max(0, unlockCredits);
+  const totalUnlocksAvailable = Math.max(0, freeUnlocksRemaining) + purchasedUnlockCredits;
   const confirmVehicleMarketUnlockSpend = useCallback(async () => {
     if (marketUnlockConfirmationOpenRef.current) {
       return false;
     }
     marketUnlockConfirmationOpenRef.current = true;
-    const remainingLine = Number.isFinite(freeUnlocksRemaining)
-      ? `\n\nYou have ${freeUnlocksRemaining} ${freeUnlocksRemaining === 1 ? "unlock" : "unlocks"} remaining.`
-      : "";
+    const remainingLine =
+      purchasedUnlockCredits > 0
+        ? `\n\n${formatPurchasedUnlockPackRemaining(purchasedUnlockCredits)}.`
+        : Number.isFinite(freeUnlocksRemaining)
+          ? `\n\nYou have ${freeUnlocksRemaining} ${freeUnlocksRemaining === 1 ? "unlock" : "unlocks"} remaining.`
+          : "";
     const confirmed = await new Promise<boolean>((resolve) => {
       Alert.alert(
         "Use 1 unlock?",
@@ -2138,15 +2145,18 @@ export default function VehicleDetailScreen() {
     });
     marketUnlockConfirmationOpenRef.current = false;
     return confirmed;
-  }, [freeUnlocksRemaining]);
-  const buildVehicleMarketUnlockSuccessBody = useCallback((alreadyUnlocked: boolean) => {
+  }, [freeUnlocksRemaining, purchasedUnlockCredits]);
+  const buildVehicleMarketUnlockSuccessBody = useCallback((alreadyUnlocked: boolean, nextPurchasedCredits?: number) => {
+    if (typeof nextPurchasedCredits === "number" && (purchasedUnlockCredits > 0 || nextPurchasedCredits > 0)) {
+      return `Live market value and nearby listings are unlocked for this vehicle.\n\n${formatPurchasedUnlockPackRemaining(nextPurchasedCredits)}.`;
+    }
     const nextRemaining = Number.isFinite(freeUnlocksRemaining)
       ? alreadyUnlocked
         ? freeUnlocksRemaining
         : Math.max(0, freeUnlocksRemaining - 1)
       : null;
     return `Live market value and nearby listings are unlocked for this vehicle.${nextRemaining != null ? `\n\n${nextRemaining} ${nextRemaining === 1 ? "unlock" : "unlocks"} remaining.` : ""}`;
-  }, [freeUnlocksRemaining]);
+  }, [freeUnlocksRemaining, purchasedUnlockCredits]);
   const trustedUnlockedYear = vehicle?.year || Number.parseInt(typeof yearLabel === "string" ? yearLabel : "", 10) || null;
   const trustedUnlockedMake = vehicle?.make || (typeof make === "string" ? make : "");
   const trustedUnlockedModel = vehicle?.model || (typeof model === "string" ? model : "");
@@ -3025,7 +3035,7 @@ export default function VehicleDetailScreen() {
       loadVehicleMarketSections();
       return;
     }
-    if (freeUnlocksRemaining <= 0) {
+    if (totalUnlocksAvailable <= 0) {
       router.push("/paywall");
       return;
     }
@@ -3049,7 +3059,7 @@ export default function VehicleDetailScreen() {
         loadVehicleMarketSections();
         Alert.alert(
           "Value & Listings unlocked",
-          buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked),
+          buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked, result.unlockCredits),
         );
         return;
       }
@@ -3083,6 +3093,7 @@ export default function VehicleDetailScreen() {
     marketUnlockPrimaryId,
     refreshStatus,
     requestExplicitLiveValue,
+    totalUnlocksAvailable,
     useFreeUnlockForVehicle,
     valuationLoading,
   ]);
@@ -3099,7 +3110,7 @@ export default function VehicleDetailScreen() {
       requestExplicitLiveValue();
       return;
     }
-    if (freeUnlocksRemaining <= 0) {
+    if (totalUnlocksAvailable <= 0) {
       router.push("/paywall");
       return;
     }
@@ -3123,7 +3134,7 @@ export default function VehicleDetailScreen() {
         loadVehicleMarketSections();
         Alert.alert(
           "Value & Listings unlocked",
-          buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked),
+          buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked, result.unlockCredits),
         );
         return;
       }
@@ -3155,6 +3166,7 @@ export default function VehicleDetailScreen() {
     refreshStatus,
     loadVehicleMarketSections,
     requestExplicitLiveValue,
+    totalUnlocksAvailable,
     useFreeUnlockForVehicle,
     valuationLoading,
   ]);
@@ -3171,7 +3183,7 @@ export default function VehicleDetailScreen() {
       requestExplicitLiveListings();
       return;
     }
-    if (freeUnlocksRemaining <= 0) {
+    if (totalUnlocksAvailable <= 0) {
       router.push("/paywall");
       return;
     }
@@ -3195,7 +3207,7 @@ export default function VehicleDetailScreen() {
         loadVehicleMarketSections();
         Alert.alert(
           "Value & Listings unlocked",
-          buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked),
+          buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked, result.unlockCredits),
         );
         return;
       }
@@ -3228,6 +3240,7 @@ export default function VehicleDetailScreen() {
     marketUnlockPrimaryId,
     refreshStatus,
     requestExplicitLiveListings,
+    totalUnlocksAvailable,
     useFreeUnlockForVehicle,
   ]);
 

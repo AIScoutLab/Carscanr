@@ -80,14 +80,15 @@ test("value and listings free unlocks require explicit spend confirmation", () =
     assert.match(source, /Use Unlock/, `${label} must expose an explicit confirmation action`);
     assert.match(source, /Cancel/, `${label} must allow cancellation`);
     assert.match(source, /Value & Listings unlocked/, `${label} must clearly confirm a successful unlock`);
-    assert.match(source, /unlocks"\} remaining/, `${label} should show remaining unlock count copy`);
+    assert.match(source, /formatPurchasedUnlockPackRemaining/, `${label} should show purchased unlock count copy when credits are used`);
   }
 
   const detailConfirmIndex = detailSource.indexOf("confirmVehicleMarketUnlockSpend");
   const detailSpendIndex = detailSource.indexOf("useFreeUnlockForVehicle(marketUnlockPrimaryId");
   assert.ok(detailConfirmIndex > -1 && detailSpendIndex > -1 && detailConfirmIndex < detailSpendIndex);
   assert.match(detailSource, /hasFullAccess \|\| isPro\) \{\s*loadVehicleMarketSections\(\);/s);
-  assert.match(detailSource, /freeUnlocksRemaining <= 0\) \{\s*router\.push\("\/paywall"\);/s);
+  assert.match(detailSource, /totalUnlocksAvailable <= 0\) \{\s*router\.push\("\/paywall"\);/s);
+  assert.doesNotMatch(detailSource, /freeUnlocksRemaining <= 0\) \{\s*router\.push\("\/paywall"\);/s);
   assert.match(detailSource, /marketUnlockSpendInFlightRef\.current/);
 
   const resultConfirmIndex = resultSource.indexOf("confirmVehicleMarketUnlockSpend");

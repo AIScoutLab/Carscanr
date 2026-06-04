@@ -11,6 +11,7 @@ import { Typography } from "@/constants/theme";
 import { useSubscription } from "@/hooks/useSubscription";
 import { mobileBuildInfo, mobileEnv } from "@/lib/env";
 import { resolveProfileAccessState } from "@/lib/subscription";
+import { formatPurchasedUnlockPackRemaining } from "@/lib/unlockCreditDisplay";
 import { supabase } from "@/lib/supabase";
 import { authService } from "@/services/authService";
 import { AuthUser } from "@/types";
@@ -229,7 +230,7 @@ export default function ProfileScreen() {
   const garageValue = user ? "Sync" : "0";
   const remainingUnlocks = Math.max(0, freeUnlocksRemaining);
   const unlockUsageLabel = accessState.hasProEntitlement ? "Pro Access active" : `${remainingUnlocks} free unlocks remaining`;
-  const paidUnlockCreditLabel = `${unlockCredits} purchased ${unlockCredits === 1 ? "unlock" : "unlocks"} available`;
+  const paidUnlockCreditLabel = formatPurchasedUnlockPackRemaining(unlockCredits);
   const displayFeedbackMessage = sanitizeProfileMessage(feedbackMessage);
   const displayErrorMessage = sanitizeProfileMessage(errorMessage);
   const nativeAppVersion = mobileBuildInfo.nativeAppVersion || mobileBuildInfo.version || "Unavailable";

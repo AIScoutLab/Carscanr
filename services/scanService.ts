@@ -470,6 +470,48 @@ export const scanService = {
     return mutableUnlockStatus;
   },
 
+  updateCachedUnlockStatus(status: {
+    freeUnlocksTotal?: number;
+    freeUnlocksUsed?: number;
+    freeUnlocksRemaining?: number;
+    unlockCreditsRemaining?: number;
+    totalUnlocksAvailable?: number;
+    unlockedVehicleIds?: string[];
+  }) {
+    const normalizedCounter = normalizeFreeUnlockCounter({
+      total: status.freeUnlocksTotal ?? mutableUnlockStatus.freeUnlocksTotal,
+      used: status.freeUnlocksUsed ?? mutableUnlockStatus.freeUnlocksUsed,
+      remaining:
+        status.freeUnlocksRemaining ??
+        Math.max(0, (status.freeUnlocksTotal ?? mutableUnlockStatus.freeUnlocksTotal) - (status.freeUnlocksUsed ?? mutableUnlockStatus.freeUnlocksUsed)),
+    });
+    mutableUnlockStatus = {
+      freeUnlocksTotal: normalizedCounter.limit,
+      freeUnlocksUsed: normalizedCounter.used,
+      freeUnlocksRemaining: normalizedCounter.remaining,
+      unlockCreditsRemaining:
+        typeof status.unlockCreditsRemaining === "number"
+          ? Math.max(0, status.unlockCreditsRemaining)
+          : mutableUnlockStatus.unlockCreditsRemaining,
+      totalUnlocksAvailable:
+        typeof status.totalUnlocksAvailable === "number"
+          ? Math.max(0, status.totalUnlocksAvailable)
+          : normalizedCounter.remaining + Math.max(0, mutableUnlockStatus.unlockCreditsRemaining ?? 0),
+      unlockedVehicleCount: status.unlockedVehicleIds?.length ?? mutableUnlockStatus.unlockedVehicleCount,
+      unlockedVehicleIds: Array.isArray(status.unlockedVehicleIds) ? status.unlockedVehicleIds : mutableUnlockStatus.unlockedVehicleIds,
+    };
+    console.log("FREE_UNLOCK_COUNTER_STATE", {
+      source: "scan_cache_updated_after_unlock",
+      used: mutableUnlockStatus.freeUnlocksUsed,
+      remaining: mutableUnlockStatus.freeUnlocksRemaining,
+      limit: mutableUnlockStatus.freeUnlocksTotal,
+      unlockCreditsRemaining: mutableUnlockStatus.unlockCreditsRemaining ?? 0,
+      totalUnlocksAvailable: mutableUnlockStatus.totalUnlocksAvailable ?? mutableUnlockStatus.freeUnlocksRemaining,
+      unlockedVehicleCount: mutableUnlockStatus.unlockedVehicleIds.length,
+    });
+    return mutableUnlockStatus;
+  },
+
   beginNewScanFlow(input: { source: "camera" | "library" | "sample"; route: string; imageUri?: string | null }) {
     console.log("[SCAN_ENTRY]", { file: input.route, action: input.source, imageUri: input.imageUri ?? null, forceFreshRequest: true });
     void clearOfflineScanCache();
