@@ -48,6 +48,7 @@ import {
   ImageCacheRepository,
   ListingResultsRepository,
   ProviderApiUsageLogsRepository,
+  GrantUnlockResult,
   ScansRepository,
   VehicleGlobalTrendingRepository,
   VehicleScanPopularityRepository,
@@ -2667,6 +2668,198 @@ export class SupabaseUnlockBalanceRepository implements UnlockBalanceRepository 
 export class SupabaseVehicleUnlockRepository implements VehicleUnlockRepository {
   constructor(private readonly client: DbClient) {}
 
+  private buildGrantResult(input: {
+    allowed: boolean;
+    alreadyUnlocked: boolean;
+    usedUnlock: boolean;
+    usedUnlockCredit: boolean;
+    balance: UnlockBalanceRecord;
+  }): GrantUnlockResult {
+    return {
+      allowed: input.allowed,
+      alreadyUnlocked: input.alreadyUnlocked,
+      usedUnlock: input.usedUnlock,
+      usedUnlockCredit: input.usedUnlockCredit,
+      freeUnlocksTotal: input.balance.freeUnlocksTotal,
+      freeUnlocksUsed: input.balance.freeUnlocksUsed,
+      freeUnlocksRemaining: Math.max(0, input.balance.freeUnlocksTotal - input.balance.freeUnlocksUsed),
+      unlockCreditsRemaining: Math.max(0, input.balance.unlockCredits),
+    };
+  }
+
+  private async deleteUnlockAfterFailedBalanceUpdate(input: { userId: string; unlockKey: string }) {
+    const { error } = await this.client
+      .from("user_vehicle_unlocks")
+      .delete()
+      .eq("user_id", input.userId)
+      .eq("unlock_key", input.unlockKey);
+    if (error) {
+      logger.error(
+        {
+          label: "UNLOCK_GRANT_FALLBACK_ROLLBACK_FAILED",
+          userId: input.userId,
+          code: error.code ?? null,
+          message: error.message,
+          details: error.details ?? null,
+          hint: error.hint ?? null,
+        },
+        "UNLOCK_GRANT_FALLBACK_ROLLBACK_FAILED",
+      );
+    }
+  }
+
+  private async grantUnlockWithoutRpc(
+    input: {
+      userId: string;
+      unlockKey: string;
+      unlockType: string;
+      vin?: string | null;
+      vinKey?: string | null;
+      vehicleKey?: string | null;
+      listingKey?: string | null;
+      sourceVehicleId?: string | null;
+      scanId?: string | null;
+    },
+    rpcError: any,
+  ): Promise<GrantUnlockResult> {
+    logger.warn(
+      {
+        label: "UNLOCK_GRANT_RPC_FALLBACK_STARTED",
+        userId: input.userId,
+        unlockType: input.unlockType,
+        hasVehicleKey: Boolean(input.vehicleKey),
+        hasSourceVehicleId: Boolean(input.sourceVehicleId),
+        scanId: input.scanId ?? null,
+        rpcCode: rpcError?.code ?? null,
+        rpcMessage: rpcError?.message ?? null,
+      },
+      "UNLOCK_GRANT_RPC_FALLBACK_STARTED",
+    );
+
+    const balanceRepository = new SupabaseUnlockBalanceRepository(this.client);
+    const existing = await this.findByUserAndKey(input.userId, input.unlockKey);
+    const balance = await balanceRepository.getOrCreate(input.userId);
+    if (existing) {
+      logger.info(
+        {
+          label: "UNLOCK_GRANT_FALLBACK_RESULT",
+          userId: input.userId,
+          reason: "already_unlocked",
+          usedUnlock: false,
+          usedUnlockCredit: false,
+          freeUnlocksRemaining: Math.max(0, balance.freeUnlocksTotal - balance.freeUnlocksUsed),
+          unlockCreditsRemaining: Math.max(0, balance.unlockCredits),
+        },
+        "UNLOCK_GRANT_FALLBACK_RESULT",
+      );
+      return this.buildGrantResult({
+        allowed: true,
+        alreadyUnlocked: true,
+        usedUnlock: false,
+        usedUnlockCredit: false,
+        balance,
+      });
+    }
+
+    const freeUnlocksRemaining = Math.max(0, balance.freeUnlocksTotal - balance.freeUnlocksUsed);
+    const unlockCreditsRemaining = Math.max(0, balance.unlockCredits);
+    if (freeUnlocksRemaining <= 0 && unlockCreditsRemaining <= 0) {
+      logger.warn(
+        {
+          label: "UNLOCK_GRANT_FALLBACK_DENIED",
+          userId: input.userId,
+          reason: "insufficient_unlocks",
+          freeUnlocksRemaining,
+          unlockCreditsRemaining,
+        },
+        "UNLOCK_GRANT_FALLBACK_DENIED",
+      );
+      return this.buildGrantResult({
+        allowed: false,
+        alreadyUnlocked: false,
+        usedUnlock: false,
+        usedUnlockCredit: false,
+        balance,
+      });
+    }
+
+    try {
+      await this.create({
+        id: crypto.randomUUID(),
+        userId: input.userId,
+        unlockKey: input.unlockKey,
+        unlockType: input.unlockType,
+        vin: input.vin ?? null,
+        vinKey: input.vinKey ?? null,
+        vehicleKey: input.vehicleKey ?? null,
+        listingKey: input.listingKey ?? null,
+        sourceVehicleId: input.sourceVehicleId ?? null,
+        scanId: input.scanId ?? null,
+        createdAt: new Date().toISOString(),
+      });
+    } catch (error: any) {
+      if (error?.code === "23505") {
+        logger.info(
+          {
+            label: "UNLOCK_GRANT_FALLBACK_RESULT",
+            userId: input.userId,
+            reason: "already_unlocked_unique_violation",
+            usedUnlock: false,
+            usedUnlockCredit: false,
+            freeUnlocksRemaining,
+            unlockCreditsRemaining,
+          },
+          "UNLOCK_GRANT_FALLBACK_RESULT",
+        );
+        return this.buildGrantResult({
+          allowed: true,
+          alreadyUnlocked: true,
+          usedUnlock: false,
+          usedUnlockCredit: false,
+          balance,
+        });
+      }
+      throw new AppError(500, "SUPABASE_INSERT_FAILED", "Failed to create vehicle unlock.", error);
+    }
+
+    const consumePurchasedCredit = freeUnlocksRemaining <= 0 && unlockCreditsRemaining > 0;
+    const updatedBalance: UnlockBalanceRecord = {
+      ...balance,
+      freeUnlocksUsed: consumePurchasedCredit ? balance.freeUnlocksUsed : balance.freeUnlocksUsed + 1,
+      unlockCredits: consumePurchasedCredit ? Math.max(0, balance.unlockCredits - 1) : balance.unlockCredits,
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      const savedBalance = await balanceRepository.update(updatedBalance);
+      logger.info(
+        {
+          label: "UNLOCK_GRANT_FALLBACK_RESULT",
+          userId: input.userId,
+          reason: consumePurchasedCredit ? "purchased_credit_consumed" : "free_unlock_consumed",
+          usedUnlock: true,
+          usedUnlockCredit: consumePurchasedCredit,
+          freeUnlocksRemaining: Math.max(0, savedBalance.freeUnlocksTotal - savedBalance.freeUnlocksUsed),
+          unlockCreditsRemaining: Math.max(0, savedBalance.unlockCredits),
+        },
+        "UNLOCK_GRANT_FALLBACK_RESULT",
+      );
+      return this.buildGrantResult({
+        allowed: true,
+        alreadyUnlocked: false,
+        usedUnlock: true,
+        usedUnlockCredit: consumePurchasedCredit,
+        balance: savedBalance,
+      });
+    } catch (error) {
+      await this.deleteUnlockAfterFailedBalanceUpdate({
+        userId: input.userId,
+        unlockKey: input.unlockKey,
+      });
+      throw error;
+    }
+  }
+
   async findByUserAndKey(userId: string, unlockKey: string): Promise<UserVehicleUnlockRecord | null> {
     const { data, error } = await this.client
       .from("user_vehicle_unlocks")
@@ -2736,7 +2929,28 @@ export class SupabaseVehicleUnlockRepository implements VehicleUnlockRepository 
         },
         "UNLOCK_GRANT_RPC_FAILED",
       );
-      throw new AppError(500, "SUPABASE_RPC_FAILED", "Failed to grant vehicle unlock.", error);
+      try {
+        return await this.grantUnlockWithoutRpc(input, error);
+      } catch (fallbackError) {
+        logger.error(
+          {
+            label: "UNLOCK_GRANT_RPC_FALLBACK_FAILED",
+            userId: input.userId,
+            unlockType: input.unlockType,
+            hasVehicleKey: Boolean(input.vehicleKey),
+            hasSourceVehicleId: Boolean(input.sourceVehicleId),
+            rpcCode: error.code ?? null,
+            rpcMessage: error.message,
+            fallbackMessage: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+            fallbackCode:
+              typeof fallbackError === "object" && fallbackError !== null && "code" in fallbackError
+                ? (fallbackError as { code?: unknown }).code
+                : null,
+          },
+          "UNLOCK_GRANT_RPC_FALLBACK_FAILED",
+        );
+        throw new AppError(500, "SUPABASE_RPC_FAILED", "Failed to grant vehicle unlock.", error);
+      }
     }
     const row = Array.isArray(data) ? data[0] : data;
     if (!row) {

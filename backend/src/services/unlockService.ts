@@ -145,14 +145,22 @@ export class UnlockService {
       scanId: input.scanId ?? null,
     });
 
-    logger.info(
+    logger[result.allowed ? "info" : "warn"](
       {
-        label: "UNLOCK_ALLOWED",
+        label: result.allowed ? "UNLOCK_ALLOWED" : "UNLOCK_DENIED",
         userId: input.userId,
         vehicleId: input.vehicle.id,
+        vehicleKey,
+        alreadyUnlocked: result.alreadyUnlocked,
+        usedUnlock: result.usedUnlock,
+        usedUnlockCredit: result.usedUnlockCredit,
+        allowed: result.allowed,
+        freeUnlocksRemaining: result.freeUnlocksRemaining,
+        unlockCreditsRemaining: result.unlockCreditsRemaining,
+        reason: result.allowed ? (result.alreadyUnlocked ? "already_unlocked" : "consumed") : "no_free_unlocks",
         payloadStrength: payloadEvaluation.payloadStrength,
       },
-      "UNLOCK_ALLOWED",
+      result.allowed ? "UNLOCK_ALLOWED" : "UNLOCK_DENIED",
     );
 
     return {
@@ -297,9 +305,9 @@ export class UnlockService {
       scanId: input.scanId ?? null,
     });
 
-    logger.info(
+    logger[result.allowed ? "info" : "warn"](
       {
-        label: "UNLOCK_ALLOWED",
+        label: result.allowed ? "UNLOCK_ALLOWED" : "UNLOCK_DENIED",
         userId: input.userId,
         vehicleKey,
         sourceVehicleId: input.vehicleId ?? null,
@@ -309,8 +317,9 @@ export class UnlockService {
         allowed: result.allowed,
         freeUnlocksRemaining: result.freeUnlocksRemaining,
         unlockCreditsRemaining: result.unlockCreditsRemaining,
+        reason: result.allowed ? (result.alreadyUnlocked ? "already_unlocked" : "consumed") : "no_free_unlocks",
       },
-      "UNLOCK_ALLOWED",
+      result.allowed ? "UNLOCK_ALLOWED" : "UNLOCK_DENIED",
     );
 
     return {

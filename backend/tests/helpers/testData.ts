@@ -89,6 +89,7 @@ export function createTestRepositories(seed?: {
   subscriptions?: SubscriptionRecord[];
   revenueCatEvents?: RevenueCatEventRecord[];
   usageCounters?: UsageCounterRecord[];
+  unlockBalances?: UnlockBalanceRecord[];
   garageItems?: GarageItemRecord[];
   scans?: ScanRecord[];
   visionDebug?: VisionDebugRecord[];
@@ -142,7 +143,7 @@ export function createTestRepositories(seed?: {
     canonicalVehicles: [...(seed?.canonicalVehicles ?? [])],
     cachedAnalysis: [] as CachedAnalysisRecord[],
     imageCache: [] as ImageCacheRecord[],
-    unlockBalances: [] as UnlockBalanceRecord[],
+    unlockBalances: [...(seed?.unlockBalances ?? [])],
     vehicleUnlocks: [] as UserVehicleUnlockRecord[],
     vehicleScanPopularity: [],
     vehicleGlobalTrending: [],
@@ -313,24 +314,30 @@ export function createTestRepositories(seed?: {
             allowed: true,
             alreadyUnlocked: true,
             usedUnlock: false,
+            usedUnlockCredit: false,
             freeUnlocksTotal: balance.freeUnlocksTotal,
             freeUnlocksUsed: balance.freeUnlocksUsed,
             freeUnlocksRemaining: Math.max(0, balance.freeUnlocksTotal - balance.freeUnlocksUsed),
+            unlockCreditsRemaining: balance.unlockCredits,
           };
         }
-        if (balance.freeUnlocksUsed >= balance.freeUnlocksTotal) {
+        if (balance.freeUnlocksUsed >= balance.freeUnlocksTotal && balance.unlockCredits <= 0) {
           return {
             allowed: false,
             alreadyUnlocked: false,
             usedUnlock: false,
+            usedUnlockCredit: false,
             freeUnlocksTotal: balance.freeUnlocksTotal,
             freeUnlocksUsed: balance.freeUnlocksUsed,
             freeUnlocksRemaining: 0,
+            unlockCreditsRemaining: balance.unlockCredits,
           };
         }
+        const consumedCredit = balance.freeUnlocksUsed >= balance.freeUnlocksTotal && balance.unlockCredits > 0;
         const updatedBalance = {
           ...balance,
-          freeUnlocksUsed: balance.freeUnlocksUsed + 1,
+          freeUnlocksUsed: consumedCredit ? balance.freeUnlocksUsed : balance.freeUnlocksUsed + 1,
+          unlockCredits: consumedCredit ? Math.max(0, balance.unlockCredits - 1) : balance.unlockCredits,
           updatedAt: new Date().toISOString(),
         };
         await repositories.unlockBalances.update(updatedBalance);
@@ -352,9 +359,11 @@ export function createTestRepositories(seed?: {
           allowed: true,
           alreadyUnlocked: false,
           usedUnlock: true,
+          usedUnlockCredit: consumedCredit,
           freeUnlocksTotal: updatedBalance.freeUnlocksTotal,
           freeUnlocksUsed: updatedBalance.freeUnlocksUsed,
           freeUnlocksRemaining: Math.max(0, updatedBalance.freeUnlocksTotal - updatedBalance.freeUnlocksUsed),
+          unlockCreditsRemaining: updatedBalance.unlockCredits,
         };
       },
     },

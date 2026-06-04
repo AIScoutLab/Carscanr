@@ -285,6 +285,199 @@ describe("premium market access security", () => {
     assert.equal(exhaustedBody.data.entitlement.reason, "no_free_unlocks");
   });
 
+  test("purchased unlock credits grant vehicle access after free unlocks are exhausted", async () => {
+    setRepositories(
+      createTestRepositories({
+        unlockBalances: [
+          {
+            userId: "demo-user",
+            freeUnlocksTotal: 3,
+            freeUnlocksUsed: 3,
+            unlockCredits: 5,
+            createdAt: "2026-06-04T12:00:00.000Z",
+            updatedAt: "2026-06-04T12:00:00.000Z",
+          },
+        ],
+      }).repositories,
+    );
+    let listingsProviderCalled = false;
+    setProviders({
+      ...createTestProviders(),
+      listingsProvider: {
+        async getListings(input) {
+          listingsProviderCalled = true;
+          return [
+            {
+              id: `listing-${input.vehicleId}`,
+              vehicleId: input.vehicleId,
+              title: "2021 Cadillac CT4 Premium Luxury",
+              price: 31995,
+              mileage: 11820,
+              dealer: "Lakefront Auto",
+              distanceMiles: 12,
+              location: "Chicago, IL",
+              imageUrl: "https://example.com/cadillac-ct4.jpg",
+              listedAt: new Date("2026-04-18T12:00:00.000Z").toISOString(),
+            },
+          ];
+        },
+      },
+    });
+
+    const unlockResponse = await requestApp({
+      method: "POST",
+      url: "/api/unlocks/use",
+      headers: {
+        ...authHeaders(),
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({
+        year: 2021,
+        make: "Cadillac",
+        model: "CT4",
+        trim: "Premium Luxury",
+        vehicleType: "car",
+      }),
+    });
+    const unlockBody = parseJson<any>(unlockResponse);
+
+    assert.equal(unlockResponse.statusCode, 200);
+    assert.equal(unlockBody.success, true);
+    assert.equal(unlockBody.data.entitlement.allowed, true);
+    assert.equal(unlockBody.data.entitlement.usedUnlock, true);
+    assert.equal(unlockBody.data.status.freeUnlocksRemaining, 0);
+    assert.equal(unlockBody.data.status.unlockCreditsRemaining, 4);
+    assert.equal(unlockBody.data.status.totalUnlocksAvailable, 4);
+
+    const listingsResponse = await requestApp({
+      method: "GET",
+      url:
+        "/api/vehicle/listings?year=2021&make=Cadillac&model=CT4&trim=Premium%20Luxury&vehicleType=car&zip=60502&radiusMiles=50" +
+        "&allowLive=true&forceLive=true&fetchReason=user_requested_listings_refresh&sourceScreen=listingsScreen&action=listingsRefresh",
+      headers: authHeaders(),
+    });
+    const listingsBody = parseJson<any>(listingsResponse);
+
+    assert.equal(listingsResponse.statusCode, 200);
+    assert.equal(listingsBody.success, true);
+    assert.equal(listingsProviderCalled, true);
+  });
+
+  test("manual-search estimate unlock consumes purchased credit and unlocks matching market key", async () => {
+    const testRepositories = createTestRepositories({
+      unlockBalances: [
+        {
+          userId: "demo-user",
+          freeUnlocksTotal: 3,
+          freeUnlocksUsed: 3,
+          unlockCredits: 5,
+          createdAt: "2026-06-04T12:00:00.000Z",
+          updatedAt: "2026-06-04T12:00:00.000Z",
+        },
+      ],
+    });
+    setRepositories(testRepositories.repositories);
+    let valueProviderCalled = false;
+    let listingsProviderCalled = false;
+    setProviders({
+      ...createTestProviders(),
+      valueProvider: {
+        async getValuation(input) {
+          valueProviderCalled = true;
+          return {
+            id: `valuation-${input.vehicleId}`,
+            vehicleId: input.vehicleId,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition as any,
+            tradeIn: 34200,
+            privateParty: 36500,
+            dealerRetail: 39800,
+            currency: "USD",
+            generatedAt: new Date().toISOString(),
+            sourceLabel: "Based on market data",
+            modelType: "provider_range",
+          };
+        },
+      },
+      listingsProvider: {
+        async getListings(input) {
+          listingsProviderCalled = true;
+          return [
+            {
+              id: `listing-${input.vehicleId}`,
+              vehicleId: input.vehicleId,
+              title: "2023 Audi A5 Premium Plus quattro",
+              price: 41995,
+              mileage: 18200,
+              dealer: "North Shore Audi",
+              distanceMiles: 18,
+              location: "Chicago, IL",
+              imageUrl: "https://example.com/audi-a5.jpg",
+              listedAt: new Date("2026-06-04T12:00:00.000Z").toISOString(),
+            },
+          ];
+        },
+      },
+    });
+
+    const unlockResponse = await requestApp({
+      method: "POST",
+      url: "/api/unlocks/use",
+      headers: {
+        ...authHeaders(),
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({
+        vehicleId: "estimate:manual-search:2023-audi-a5-quattro",
+        year: 2023,
+        make: "Audi",
+        model: "A5",
+        trim: "Premium Plus quattro",
+        vehicleType: "car",
+      }),
+    });
+    const unlockBody = parseJson<any>(unlockResponse);
+
+    assert.equal(unlockResponse.statusCode, 200);
+    assert.equal(unlockBody.success, true);
+    assert.equal(unlockBody.data.entitlement.allowed, true);
+    assert.equal(unlockBody.data.entitlement.usedUnlock, true);
+    assert.equal(unlockBody.data.status.freeUnlocksRemaining, 0);
+    assert.equal(unlockBody.data.status.unlockCreditsRemaining, 4);
+    assert.equal(testRepositories.state.vehicleUnlocks.length, 1);
+    assert.equal(
+      testRepositories.state.vehicleUnlocks[0].unlockKey,
+      testRepositories.state.vehicleUnlocks[0].vehicleKey,
+    );
+
+    const valueResponse = await requestApp({
+      method: "GET",
+      url:
+        "/api/vehicle/value?year=2023&make=Audi&model=A5&trim=Premium%20Plus%20quattro&vehicleType=car&zip=60502&mileage=18000&condition=good" +
+        "&allowLive=true&forceLive=true&fetchReason=user_requested_value_refresh&sourceScreen=valueScreen&action=valueRefresh",
+      headers: authHeaders(),
+    });
+    const valueBody = parseJson<any>(valueResponse);
+
+    assert.equal(valueResponse.statusCode, 200);
+    assert.equal(valueBody.success, true);
+    assert.equal(valueProviderCalled, true);
+
+    const listingsResponse = await requestApp({
+      method: "GET",
+      url:
+        "/api/vehicle/listings?year=2023&make=Audi&model=A5&trim=Premium%20Plus%20quattro&vehicleType=car&zip=60502&radiusMiles=50" +
+        "&allowLive=true&forceLive=true&fetchReason=user_requested_listings_refresh&sourceScreen=listingsScreen&action=listingsRefresh",
+      headers: authHeaders(),
+    });
+    const listingsBody = parseJson<any>(listingsResponse);
+
+    assert.equal(listingsResponse.statusCode, 200);
+    assert.equal(listingsBody.success, true);
+    assert.equal(listingsProviderCalled, true);
+  });
+
   test("Pro yearly users can request live value without a free unlock", async () => {
     setRepositories(
       createTestRepositories({
