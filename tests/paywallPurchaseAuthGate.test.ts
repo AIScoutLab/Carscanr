@@ -73,7 +73,12 @@ test("auth return target is consumed and keyboard-safe while preserving paywall 
   assert.match(authSource, /consumePendingAuthReturnTarget\(explicitReturnTo \?\? returnTo\)/);
   assert.match(authSource, /router\.replace\(target as Href\)/);
   assert.match(authSource, /automaticallyAdjustKeyboardInsets=\{Platform\.OS === "ios"\}/);
-  assert.match(authSource, /scrollViewRef\.current\?\.scrollToEnd\(\{ animated: true \}\)/);
-  assert.match(authSource, /paddingBottom: Math\.max\(insets\.bottom \+ 132, 180\)/);
+  assert.match(authSource, /Keyboard\.addListener\(keyboardShowEvent/);
+  assert.match(authSource, /Keyboard\.addListener\("keyboardDidShow"/);
+  assert.match(authSource, /setKeyboardHeight\(event\.endCoordinates\?\.height \?\? 0\)/);
+  assert.match(authSource, /isKeyboardVisible && styles\.contentKeyboardVisible/);
+  assert.match(authSource, /keyboardHeight \+ 72/);
+  assert.match(authSource, /styles\.cardKeyboardVisible/);
+  assert.match(authSource, /!isKeyboardVisible \? <View style=\{styles\.guestNoteCard\}>/);
   assert.equal(getPaywallAuthHref("monthly"), "/auth?mode=sign-in&returnTo=%2Fpaywall%3FselectedOption%3Dmonthly");
 });

@@ -17,6 +17,7 @@ import {
   normalizeLookupText,
 } from "../lib/providerCache.js";
 import { mapCanonicalVehicleToRecord, resolveStoredVehicleRecordById, upsertCanonicalVehicleFromProvider } from "../lib/canonicalVehicleCatalog.js";
+import { applyCuratedSpecialtySpecs } from "../lib/curatedSpecialtySpecs.js";
 import { logger } from "../lib/logger.js";
 import { providers } from "../lib/providerRegistry.js";
 import { repositories } from "../lib/repositoryRegistry.js";
@@ -1693,9 +1694,10 @@ function ensureListingsAttempts(input: {
 }
 
 async function buildPartialSpecFallbackVehicle(vehicle: VehicleRecord): Promise<VehicleRecord | null> {
+  const curatedVehicle = applyCuratedSpecialtySpecs(vehicle);
   const descriptor = buildCacheDescriptor({ vehicle });
   if (!descriptor) {
-    return hasUsefulSpecBundle(vehicle) ? applyInferredHorsepower(vehicle) : null;
+    return hasUsefulSpecBundle(curatedVehicle) ? applyInferredHorsepower(curatedVehicle) : null;
   }
 
   const familyCandidates = await repositories.canonicalVehicles.searchPromoted({
@@ -1710,24 +1712,26 @@ async function buildPartialSpecFallbackVehicle(vehicle: VehicleRecord): Promise<
 
   const nearest = mappedCandidates[0] ?? null;
   if (!nearest) {
-    return hasUsefulSpecBundle(vehicle) ? applyInferredHorsepower(vehicle) : null;
+    return hasUsefulSpecBundle(curatedVehicle) ? applyInferredHorsepower(curatedVehicle) : null;
   }
 
-  return applyInferredHorsepower({
-    ...vehicle,
-    bodyStyle: coalesceString(vehicle.bodyStyle, nearest.bodyStyle) ?? vehicle.bodyStyle,
-    engine: coalesceString(vehicle.engine, nearest.engine) ?? vehicle.engine,
-    horsepower: coalescePositiveNumber(vehicle.horsepower, nearest.horsepower),
-    torque: coalesceString(vehicle.torque, nearest.torque) ?? vehicle.torque,
-    transmission: coalesceString(vehicle.transmission, nearest.transmission) ?? vehicle.transmission,
-    drivetrain: coalesceString(vehicle.drivetrain, nearest.drivetrain) ?? vehicle.drivetrain,
-    mpgOrRange: coalesceString(vehicle.mpgOrRange, nearest.mpgOrRange) ?? vehicle.mpgOrRange,
-    msrp: coalescePositiveNumber(vehicle.msrp, nearest.msrp) ?? vehicle.msrp,
-    engineDisplacementL: coalescePositiveNumber(vehicle.engineDisplacementL, nearest.engineDisplacementL),
-    cylinders: coalescePositiveNumber(vehicle.cylinders, nearest.cylinders),
-    fuelType: coalesceString(vehicle.fuelType, nearest.fuelType),
-    doors: coalescePositiveNumber(vehicle.doors, nearest.doors),
-  });
+  return applyInferredHorsepower(
+    applyCuratedSpecialtySpecs({
+      ...curatedVehicle,
+      bodyStyle: coalesceString(curatedVehicle.bodyStyle, nearest.bodyStyle) ?? curatedVehicle.bodyStyle,
+      engine: coalesceString(curatedVehicle.engine, nearest.engine) ?? curatedVehicle.engine,
+      horsepower: coalescePositiveNumber(curatedVehicle.horsepower, nearest.horsepower),
+      torque: coalesceString(curatedVehicle.torque, nearest.torque) ?? curatedVehicle.torque,
+      transmission: coalesceString(curatedVehicle.transmission, nearest.transmission) ?? curatedVehicle.transmission,
+      drivetrain: coalesceString(curatedVehicle.drivetrain, nearest.drivetrain) ?? curatedVehicle.drivetrain,
+      mpgOrRange: coalesceString(curatedVehicle.mpgOrRange, nearest.mpgOrRange) ?? curatedVehicle.mpgOrRange,
+      msrp: coalescePositiveNumber(curatedVehicle.msrp, nearest.msrp) ?? curatedVehicle.msrp,
+      engineDisplacementL: coalescePositiveNumber(curatedVehicle.engineDisplacementL, nearest.engineDisplacementL),
+      cylinders: coalescePositiveNumber(curatedVehicle.cylinders, nearest.cylinders),
+      fuelType: coalesceString(curatedVehicle.fuelType, nearest.fuelType),
+      doors: coalescePositiveNumber(curatedVehicle.doors, nearest.doors),
+    }),
+  );
 }
 
 function inferHorsepowerFromVehicle(vehicle: VehicleRecord): number | null {
@@ -2991,7 +2995,7 @@ export class VehicleService {
     const descriptor = lookup.cacheDescriptor;
 
     if (vehicle) {
-      const enrichedVehicle = applyInferredHorsepower(vehicle);
+      const enrichedVehicle = applyCuratedSpecialtySpecs(applyInferredHorsepower(vehicle));
       return {
         data: enrichedVehicle,
         source: "cache",
@@ -3012,7 +3016,7 @@ export class VehicleService {
         if (!canonicalVehicle) {
           // Conservative: only promoted rows with populated specs_json are authoritative.
         } else {
-          const enrichedCanonicalVehicle = applyInferredHorsepower(canonicalVehicle);
+          const enrichedCanonicalVehicle = applyCuratedSpecialtySpecs(applyInferredHorsepower(canonicalVehicle));
           await repositories.canonicalVehicles.incrementPopularity(promotedCanonical.canonicalKey);
           return {
             data: enrichedCanonicalVehicle,
@@ -3056,8 +3060,9 @@ export class VehicleService {
                 trim: descriptor?.trim ?? null,
                 resultCount: 1,
               });
+              const enrichedCachedVehicle = applyCuratedSpecialtySpecs(applyInferredHorsepower(cached.responseJson.data));
               return {
-                data: cached.responseJson.data,
+                data: enrichedCachedVehicle,
                 source: "cache",
                 fetchedAt: cached.fetchedAt,
                 expiresAt: cached.expiresAt,
@@ -3264,7 +3269,7 @@ export class VehicleService {
       }
 
       if (liveVehicle) {
-        const enrichedVehicle = applyInferredHorsepower(liveVehicle.vin ? await enrichVehicleWithNhtsa(liveVehicle) : liveVehicle);
+        const enrichedVehicle = applyCuratedSpecialtySpecs(applyInferredHorsepower(liveVehicle.vin ? await enrichVehicleWithNhtsa(liveVehicle) : liveVehicle));
         logCommonVehicleDetailTrace({
           phase: "specs",
           requestId: request.requestId,
@@ -3309,7 +3314,7 @@ export class VehicleService {
       }
 
       const partialSpecFallback = lookup.lookupVehicle ? await buildPartialSpecFallbackVehicle(lookup.lookupVehicle) : null;
-      const enrichedPartialSpecFallback = partialSpecFallback ? applyInferredHorsepower(partialSpecFallback) : null;
+      const enrichedPartialSpecFallback = partialSpecFallback ? applyCuratedSpecialtySpecs(applyInferredHorsepower(partialSpecFallback)) : null;
       if (enrichedPartialSpecFallback && hasUsefulSpecBundle(enrichedPartialSpecFallback)) {
         logCommonVehicleDetailTrace({
           phase: "specs",

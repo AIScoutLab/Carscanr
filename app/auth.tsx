@@ -1,6 +1,6 @@
 import { Href, router, useLocalSearchParams, usePathname } from "expo-router";
-import { useEffect, useRef, useState } from "react";
-import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Alert, Keyboard, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -17,6 +17,9 @@ export default function AuthScreen() {
   const insets = useSafeAreaInsets();
   const scrollViewRef = useRef<ScrollView | null>(null);
   const passwordInputRef = useRef<TextInput | null>(null);
+  const [formTop, setFormTop] = useState(0);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
@@ -109,16 +112,44 @@ export default function AuthScreen() {
     }
   }, [hasApiBaseUrl, hasSupabaseAnonKey, hasSupabaseUrl]);
 
-  const scrollFormIntoView = () => {
+  const scrollFormIntoView = useCallback((delayMs = 120) => {
     setTimeout(() => {
+      if (formTop > 0) {
+        scrollViewRef.current?.scrollTo({ y: Math.max(0, formTop - 14), animated: true });
+      }
       scrollViewRef.current?.scrollToEnd({ animated: true });
-    }, 90);
-  };
+    }, delayMs);
+  }, [formTop]);
 
   const clearPendingReturnTarget = async () => {
     await startupPreferences.clearPendingAuthReturnTarget();
     setPendingReturnTo(null);
   };
+
+  useEffect(() => {
+    const keyboardShowEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const keyboardHideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const showSubscription = Keyboard.addListener(keyboardShowEvent, (event) => {
+      setIsKeyboardVisible(true);
+      setKeyboardHeight(event.endCoordinates?.height ?? 0);
+      scrollFormIntoView(Platform.OS === "ios" ? 220 : 120);
+    });
+    const didShowSubscription = Keyboard.addListener("keyboardDidShow", (event) => {
+      setIsKeyboardVisible(true);
+      setKeyboardHeight(event.endCoordinates?.height ?? 0);
+      scrollFormIntoView(40);
+    });
+    const hideSubscription = Keyboard.addListener(keyboardHideEvent, () => {
+      setIsKeyboardVisible(false);
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSubscription.remove();
+      didShowSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [scrollFormIntoView]);
 
   const navigateAfterAuthSuccess = async () => {
     const target = await startupPreferences.consumePendingAuthReturnTarget(explicitReturnTo ?? returnTo);
@@ -230,13 +261,17 @@ export default function AuthScreen() {
         <ScrollView
           ref={scrollViewRef}
           style={styles.flex}
-          contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom + 132, 180) }]}
+          contentContainerStyle={[
+            styles.content,
+            isKeyboardVisible && styles.contentKeyboardVisible,
+            { paddingBottom: Math.max(insets.bottom + keyboardHeight + 72, isKeyboardVisible ? 300 : 128) },
+          ]}
           automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
         >
-          <View style={styles.contentInner}>
+          <View style={[styles.contentInner, isKeyboardVisible && styles.contentInnerKeyboardVisible]}>
             <View style={styles.topBar}>
               <TouchableOpacity
                 style={[styles.topBarButton, styles.backButton]}
@@ -273,24 +308,30 @@ export default function AuthScreen() {
               </TouchableOpacity>
             </View>
 
-            <View style={styles.heroCopy}>
-              <Text style={styles.title}>{mode === "sign-in" ? "Welcome back." : "Create your account."}</Text>
-              <Text style={styles.subtitle}>
-                {mode === "sign-in"
-                  ? "Sign in to sync your Garage, saved scans, and unlocks across devices."
-                  : "Create an account to sync your Garage, history, and unlocks across devices."}
+            <View style={[styles.heroCopy, isKeyboardVisible && styles.heroCopyKeyboardVisible]}>
+              <Text style={[styles.title, isKeyboardVisible && styles.titleKeyboardVisible]}>
+                {mode === "sign-in" ? "Welcome back." : "Create your account."}
               </Text>
+              {!isKeyboardVisible ? (
+                <Text style={styles.subtitle}>
+                  {mode === "sign-in"
+                    ? "Sign in to sync your Garage, saved scans, and unlocks across devices."
+                    : "Create an account to sync your Garage, history, and unlocks across devices."}
+                </Text>
+              ) : null}
             </View>
-            <RuntimeDebugStamp
-              screen="auth-v4-return"
-              lines={[
-                `explicitReturnTo ${explicitReturnTo ? explicitReturnTo.slice(0, 72) : "none"}`,
-                `pendingReturnTo ${pendingReturnTo ? pendingReturnTo.slice(0, 72) : "none"}`,
-                `mode ${mode}`,
-              ]}
-            />
+            {!isKeyboardVisible ? (
+              <RuntimeDebugStamp
+                screen="auth-v4-return"
+                lines={[
+                  `explicitReturnTo ${explicitReturnTo ? explicitReturnTo.slice(0, 72) : "none"}`,
+                  `pendingReturnTo ${pendingReturnTo ? pendingReturnTo.slice(0, 72) : "none"}`,
+                  `mode ${mode}`,
+                ]}
+              />
+            ) : null}
 
-            <View style={styles.guestNoteCard}>
+            {!isKeyboardVisible ? <View style={styles.guestNoteCard}>
               <View style={styles.sectionEyebrowRow}>
                 <View style={styles.goldDot} />
                 <Text style={styles.guestNoteTitle}>Account Optional</Text>
@@ -330,9 +371,14 @@ export default function AuthScreen() {
                   <Text style={styles.secondaryButtonLabel}>Continue as Guest</Text>
                 </TouchableOpacity>
               </View>
-            </View>
+            </View> : null}
 
-            <View style={styles.card}>
+            <View
+              style={[styles.card, isKeyboardVisible && styles.cardKeyboardVisible]}
+              onLayout={(event) => {
+                setFormTop(event.nativeEvent.layout.y);
+              }}
+            >
               <Text style={styles.formLabel}>{mode === "sign-in" ? "Already have an account" : "Create with email"}</Text>
               <View style={styles.inputStack}>
                 <TextInput
@@ -345,7 +391,7 @@ export default function AuthScreen() {
                   style={styles.input}
                   placeholder="Email"
                   placeholderTextColor="#7E8797"
-                  onFocus={scrollFormIntoView}
+                  onFocus={() => scrollFormIntoView()}
                   onSubmitEditing={() => passwordInputRef.current?.focus()}
                 />
                 <TextInput
@@ -357,7 +403,7 @@ export default function AuthScreen() {
                   placeholder="Password"
                   placeholderTextColor="#7E8797"
                   returnKeyType="done"
-                  onFocus={scrollFormIntoView}
+                  onFocus={() => scrollFormIntoView()}
                   onSubmitEditing={() => {
                     void submit();
                   }}
@@ -398,18 +444,20 @@ export default function AuthScreen() {
                   <Text style={styles.primaryButtonLabel}>{isSubmitting ? "Working..." : mode === "sign-in" ? "Sign In" : "Create Account"}</Text>
                 </LinearGradient>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.authButton, styles.appleButton]}
-                activeOpacity={0.86}
-                accessibilityRole="button"
-                onPress={() => {
-                  console.log("[tap] auth-apple-placeholder");
-                  Alert.alert("Apple sign-in unavailable", "Apple sign-in is not wired yet. Please use email and password for now.");
-                }}
-              >
-                <Ionicons name="logo-apple" size={18} color={Colors.textStrong} />
-                <Text style={styles.secondaryButtonLabel}>Continue with Apple</Text>
-              </TouchableOpacity>
+              {!isKeyboardVisible ? (
+                <TouchableOpacity
+                  style={[styles.authButton, styles.appleButton]}
+                  activeOpacity={0.86}
+                  accessibilityRole="button"
+                  onPress={() => {
+                    console.log("[tap] auth-apple-placeholder");
+                    Alert.alert("Apple sign-in unavailable", "Apple sign-in is not wired yet. Please use email and password for now.");
+                  }}
+                >
+                  <Ionicons name="logo-apple" size={18} color={Colors.textStrong} />
+                  <Text style={styles.secondaryButtonLabel}>Continue with Apple</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           </View>
         </ScrollView>
@@ -449,8 +497,14 @@ const styles = StyleSheet.create({
     paddingTop: 6,
     paddingHorizontal: 22,
   },
+  contentKeyboardVisible: {
+    paddingTop: 2,
+  },
   contentInner: {
     gap: 18,
+  },
+  contentInnerKeyboardVisible: {
+    gap: 10,
   },
   topBar: {
     flexDirection: "row",
@@ -486,6 +540,10 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 4,
   },
+  heroCopyKeyboardVisible: {
+    gap: 0,
+    marginTop: 0,
+  },
   title: {
     ...Typography.largeTitle,
     fontFamily: Platform.select({ ios: "AvenirNext-Bold", default: "sans-serif" }),
@@ -494,6 +552,10 @@ const styles = StyleSheet.create({
     color: Colors.text,
     lineHeight: 41,
     paddingTop: 2,
+  },
+  titleKeyboardVisible: {
+    fontSize: 27,
+    lineHeight: 32,
   },
   subtitle: {
     ...Typography.body,
@@ -592,6 +654,10 @@ const styles = StyleSheet.create({
     gap: 13,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.10)",
+  },
+  cardKeyboardVisible: {
+    padding: 16,
+    gap: 11,
   },
   formLabel: {
     ...Typography.caption,

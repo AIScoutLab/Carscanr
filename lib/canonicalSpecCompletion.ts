@@ -1,3 +1,4 @@
+import { applyCuratedSpecialtySpecs } from "@/lib/curatedSpecialtySpecs";
 import type { VehicleSpecs } from "@/types";
 
 const UNKNOWN_SPEC_VALUES = new Set(["unknown", "unavailable", "see live listing", "vehicle"]);
@@ -111,7 +112,7 @@ export function completeCanonicalSpecs(input: {
             normalizedEngine.includes(rule.engineIncludes),
         ) ?? null;
 
-  return {
+  const baseSpecs = {
     ...input.specs,
     engine: cleanSpecText(input.specs.engine) ?? "Unknown",
     horsepower: isPositiveNumber(input.specs.horsepower) ? input.specs.horsepower! : completion?.specs.horsepower ?? null,
@@ -122,4 +123,11 @@ export function completeCanonicalSpecs(input: {
     exteriorColors: input.specs.exteriorColors ?? [],
     msrp: isPositiveNumber(input.specs.msrp) ? input.specs.msrp! : 0,
   } satisfies VehicleSpecs;
+
+  return applyCuratedSpecialtySpecs({
+    year: input.year,
+    make: input.make,
+    model: input.model,
+    specs: baseSpecs,
+  });
 }
