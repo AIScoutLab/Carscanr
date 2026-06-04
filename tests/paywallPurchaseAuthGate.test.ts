@@ -61,7 +61,19 @@ test("paywall gates purchase before RevenueCat purchase and keeps restore availa
   assert.ok(purchaseIndex > -1, "paywall must still call purchasePro for eligible users");
   assert.ok(authGateIndex < purchaseIndex, "auth gate must run before purchasePro");
   assert.ok(restoreIndex > -1, "restore purchases should remain available");
-  assert.match(paywallSource, /router\.push\(authHref as never\)/);
+  assert.match(paywallSource, /router\.replace\(authHref as never\)/);
+  assert.doesNotMatch(paywallSource, /router\.push\(authHref as never\)/);
   assert.equal(paywallSource.includes("UNLOCK_PACK_ACCOUNT_REQUIRED_COPY"), true);
   assert.equal(UNLOCK_PACK_ACCOUNT_REQUIRED_COPY, "Account required so credits can be saved.");
+});
+
+test("auth return target is consumed and keyboard-safe while preserving paywall selection", () => {
+  const authSource = fs.readFileSync(path.join(repoRoot, "app/auth.tsx"), "utf8");
+
+  assert.match(authSource, /consumePendingAuthReturnTarget\(explicitReturnTo \?\? returnTo\)/);
+  assert.match(authSource, /router\.replace\(target as Href\)/);
+  assert.match(authSource, /automaticallyAdjustKeyboardInsets=\{Platform\.OS === "ios"\}/);
+  assert.match(authSource, /scrollViewRef\.current\?\.scrollToEnd\(\{ animated: true \}\)/);
+  assert.match(authSource, /paddingBottom: Math\.max\(insets\.bottom \+ 132, 180\)/);
+  assert.equal(getPaywallAuthHref("monthly"), "/auth?mode=sign-in&returnTo=%2Fpaywall%3FselectedOption%3Dmonthly");
 });

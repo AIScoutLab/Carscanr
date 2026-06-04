@@ -182,7 +182,7 @@ export default function PaywallScreen() {
         { text: "Not Now", style: "cancel" },
         {
           text: "Sign In",
-          onPress: () => router.push(authHref as never),
+          onPress: () => router.replace(authHref as never),
         },
       ]);
       return;

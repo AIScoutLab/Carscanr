@@ -15,6 +15,7 @@ export default function AuthScreen() {
   const pathname = usePathname();
   const params = useLocalSearchParams<{ mode?: "sign-in" | "sign-up"; returnTo?: string }>();
   const insets = useSafeAreaInsets();
+  const scrollViewRef = useRef<ScrollView | null>(null);
   const passwordInputRef = useRef<TextInput | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -108,15 +109,20 @@ export default function AuthScreen() {
     }
   }, [hasApiBaseUrl, hasSupabaseAnonKey, hasSupabaseUrl]);
 
-  const resolveAuthSuccessTarget = async () => {
-    const persisted = await startupPreferences.getPendingAuthReturnTarget();
-    const target = persisted ?? explicitReturnTo ?? returnTo;
-    setPendingReturnTo(target);
-    return target;
+  const scrollFormIntoView = () => {
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 90);
+  };
+
+  const clearPendingReturnTarget = async () => {
+    await startupPreferences.clearPendingAuthReturnTarget();
+    setPendingReturnTo(null);
   };
 
   const navigateAfterAuthSuccess = async () => {
-    const target = await resolveAuthSuccessTarget();
+    const target = await startupPreferences.consumePendingAuthReturnTarget(explicitReturnTo ?? returnTo);
+    setPendingReturnTo(null);
     console.log("[auth] redirecting after submit", {
       reason: "auth-submit-success",
       pathname,
@@ -126,8 +132,6 @@ export default function AuthScreen() {
       hasReturnTo: target !== "/(tabs)/scan",
     });
     router.replace(target as Href);
-    await startupPreferences.clearPendingAuthReturnTarget();
-    setPendingReturnTo(null);
   };
 
   const submit = async () => {
@@ -224,11 +228,13 @@ export default function AuthScreen() {
       />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={0}>
         <ScrollView
+          ref={scrollViewRef}
           style={styles.flex}
-          contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom + 44, 72) }]}
+          contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom + 132, 180) }]}
+          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
+          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
         >
           <View style={styles.contentInner}>
             <View style={styles.topBar}>
@@ -238,11 +244,15 @@ export default function AuthScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Back"
                 onPress={() => {
-                  if (router.canGoBack()) {
-                    router.back();
-                    return;
-                  }
-                  router.replace("/(tabs)/scan");
+                  clearPendingReturnTarget()
+                    .catch(() => undefined)
+                    .finally(() => {
+                      if (router.canGoBack()) {
+                        router.back();
+                        return;
+                      }
+                      router.replace("/(tabs)/scan");
+                    });
                 }}
               >
                 <Ionicons name="chevron-back" size={20} color={Colors.textStrong} />
@@ -251,7 +261,13 @@ export default function AuthScreen() {
                 style={styles.topBarButton}
                 activeOpacity={0.86}
                 accessibilityRole="button"
-                onPress={() => router.replace("/(tabs)/scan")}
+                onPress={() => {
+                  clearPendingReturnTarget()
+                    .catch(() => undefined)
+                    .finally(() => {
+                      router.replace("/(tabs)/scan");
+                    });
+                }}
               >
                 <Text style={styles.topBarButtonLabel}>Close</Text>
               </TouchableOpacity>
@@ -303,7 +319,11 @@ export default function AuthScreen() {
                       .setHasSeenOnboarding()
                       .catch(() => undefined)
                       .finally(() => {
-                        router.replace("/(tabs)/scan");
+                        clearPendingReturnTarget()
+                          .catch(() => undefined)
+                          .finally(() => {
+                            router.replace("/(tabs)/scan");
+                          });
                       });
                   }}
                 >
@@ -325,6 +345,7 @@ export default function AuthScreen() {
                   style={styles.input}
                   placeholder="Email"
                   placeholderTextColor="#7E8797"
+                  onFocus={scrollFormIntoView}
                   onSubmitEditing={() => passwordInputRef.current?.focus()}
                 />
                 <TextInput
@@ -336,6 +357,7 @@ export default function AuthScreen() {
                   placeholder="Password"
                   placeholderTextColor="#7E8797"
                   returnKeyType="done"
+                  onFocus={scrollFormIntoView}
                   onSubmitEditing={() => {
                     void submit();
                   }}
