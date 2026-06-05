@@ -72,13 +72,28 @@ test("auth return target is consumed and keyboard-safe while preserving paywall 
 
   assert.match(authSource, /consumePendingAuthReturnTarget\(explicitReturnTo \?\? returnTo\)/);
   assert.match(authSource, /router\.replace\(target as Href\)/);
-  assert.match(authSource, /automaticallyAdjustKeyboardInsets=\{Platform\.OS === "ios"\}/);
   assert.match(authSource, /Keyboard\.addListener\(keyboardShowEvent/);
-  assert.match(authSource, /Keyboard\.addListener\("keyboardDidShow"/);
-  assert.match(authSource, /setKeyboardHeight\(event\.endCoordinates\?\.height \?\? 0\)/);
   assert.match(authSource, /isKeyboardVisible && styles\.contentKeyboardVisible/);
-  assert.match(authSource, /keyboardHeight \+ 72/);
   assert.match(authSource, /styles\.cardKeyboardVisible/);
+  assert.match(authSource, /onFocus=\{\(\) => setFocusedField\("email"\)\}/);
+  assert.match(authSource, /onFocus=\{\(\) => setFocusedField\("password"\)\}/);
   assert.match(authSource, /!isKeyboardVisible \? <View style=\{styles\.guestNoteCard\}>/);
+  assert.doesNotMatch(authSource, /scrollToEnd/);
+  assert.doesNotMatch(authSource, /scrollTo\(\{ y:/);
+  assert.doesNotMatch(authSource, /automaticallyAdjustKeyboardInsets/);
+  assert.doesNotMatch(authSource, /keyboardHeight \+ 72/);
   assert.equal(getPaywallAuthHref("monthly"), "/auth?mode=sign-in&returnTo=%2Fpaywall%3FselectedOption%3Dmonthly");
+});
+
+test("create account mode uses the same compact keyboard-safe form without auto-scroll", () => {
+  const authSource = fs.readFileSync(path.join(repoRoot, "app/auth.tsx"), "utf8");
+
+  assert.match(authSource, /mode === "sign-in" \? "Welcome back\." : "Create your account\."/);
+  assert.match(authSource, /mode === "sign-in" \? "Sign In" : "Create Account"/);
+  assert.match(authSource, /mode === "sign-in" \? "Already have an account" : "Create with email"/);
+  assert.match(authSource, /contentInnerKeyboardVisible/);
+  assert.match(authSource, /titleKeyboardVisible/);
+  assert.match(authSource, /cardKeyboardVisible/);
+  assert.doesNotMatch(authSource, /scrollFormIntoView/);
+  assert.doesNotMatch(authSource, /formTop/);
 });

@@ -1,5 +1,5 @@
 import { Href, router, useLocalSearchParams, usePathname } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Keyboard, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -15,11 +15,9 @@ export default function AuthScreen() {
   const pathname = usePathname();
   const params = useLocalSearchParams<{ mode?: "sign-in" | "sign-up"; returnTo?: string }>();
   const insets = useSafeAreaInsets();
-  const scrollViewRef = useRef<ScrollView | null>(null);
   const passwordInputRef = useRef<TextInput | null>(null);
-  const [formTop, setFormTop] = useState(0);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+  const [focusedField, setFocusedField] = useState<"email" | "password" | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
@@ -112,15 +110,6 @@ export default function AuthScreen() {
     }
   }, [hasApiBaseUrl, hasSupabaseAnonKey, hasSupabaseUrl]);
 
-  const scrollFormIntoView = useCallback((delayMs = 120) => {
-    setTimeout(() => {
-      if (formTop > 0) {
-        scrollViewRef.current?.scrollTo({ y: Math.max(0, formTop - 14), animated: true });
-      }
-      scrollViewRef.current?.scrollToEnd({ animated: true });
-    }, delayMs);
-  }, [formTop]);
-
   const clearPendingReturnTarget = async () => {
     await startupPreferences.clearPendingAuthReturnTarget();
     setPendingReturnTo(null);
@@ -129,27 +118,19 @@ export default function AuthScreen() {
   useEffect(() => {
     const keyboardShowEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const keyboardHideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
-    const showSubscription = Keyboard.addListener(keyboardShowEvent, (event) => {
+    const showSubscription = Keyboard.addListener(keyboardShowEvent, () => {
       setIsKeyboardVisible(true);
-      setKeyboardHeight(event.endCoordinates?.height ?? 0);
-      scrollFormIntoView(Platform.OS === "ios" ? 220 : 120);
-    });
-    const didShowSubscription = Keyboard.addListener("keyboardDidShow", (event) => {
-      setIsKeyboardVisible(true);
-      setKeyboardHeight(event.endCoordinates?.height ?? 0);
-      scrollFormIntoView(40);
     });
     const hideSubscription = Keyboard.addListener(keyboardHideEvent, () => {
       setIsKeyboardVisible(false);
-      setKeyboardHeight(0);
+      setFocusedField(null);
     });
 
     return () => {
       showSubscription.remove();
-      didShowSubscription.remove();
       hideSubscription.remove();
     };
-  }, [scrollFormIntoView]);
+  }, []);
 
   const navigateAfterAuthSuccess = async () => {
     const target = await startupPreferences.consumePendingAuthReturnTarget(explicitReturnTo ?? returnTo);
@@ -257,16 +238,14 @@ export default function AuthScreen() {
         end={{ x: 1, y: 0.7 }}
         style={styles.topSheen}
       />
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={0}>
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? Math.max(insets.top - 8, 0) : 0}>
         <ScrollView
-          ref={scrollViewRef}
           style={styles.flex}
           contentContainerStyle={[
             styles.content,
             isKeyboardVisible && styles.contentKeyboardVisible,
-            { paddingBottom: Math.max(insets.bottom + keyboardHeight + 72, isKeyboardVisible ? 300 : 128) },
+            { paddingBottom: isKeyboardVisible ? Math.max(insets.bottom + 36, 56) : Math.max(insets.bottom + 96, 128) },
           ]}
-          automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
@@ -373,12 +352,7 @@ export default function AuthScreen() {
               </View>
             </View> : null}
 
-            <View
-              style={[styles.card, isKeyboardVisible && styles.cardKeyboardVisible]}
-              onLayout={(event) => {
-                setFormTop(event.nativeEvent.layout.y);
-              }}
-            >
+            <View style={[styles.card, isKeyboardVisible && styles.cardKeyboardVisible]}>
               <Text style={styles.formLabel}>{mode === "sign-in" ? "Already have an account" : "Create with email"}</Text>
               <View style={styles.inputStack}>
                 <TextInput
@@ -388,10 +362,10 @@ export default function AuthScreen() {
                   autoCorrect={false}
                   keyboardType="email-address"
                   returnKeyType="next"
-                  style={styles.input}
+                  style={[styles.input, focusedField === "email" && styles.inputFocused]}
                   placeholder="Email"
                   placeholderTextColor="#7E8797"
-                  onFocus={() => scrollFormIntoView()}
+                  onFocus={() => setFocusedField("email")}
                   onSubmitEditing={() => passwordInputRef.current?.focus()}
                 />
                 <TextInput
@@ -399,11 +373,11 @@ export default function AuthScreen() {
                   value={password}
                   onChangeText={setPassword}
                   secureTextEntry
-                  style={styles.input}
+                  style={[styles.input, focusedField === "password" && styles.inputFocused]}
                   placeholder="Password"
                   placeholderTextColor="#7E8797"
                   returnKeyType="done"
-                  onFocus={() => scrollFormIntoView()}
+                  onFocus={() => setFocusedField("password")}
                   onSubmitEditing={() => {
                     void submit();
                   }}
@@ -498,13 +472,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 22,
   },
   contentKeyboardVisible: {
-    paddingTop: 2,
+    paddingTop: 0,
+    justifyContent: "flex-start",
   },
   contentInner: {
     gap: 18,
   },
   contentInnerKeyboardVisible: {
-    gap: 10,
+    gap: 8,
   },
   topBar: {
     flexDirection: "row",
@@ -554,8 +529,8 @@ const styles = StyleSheet.create({
     paddingTop: 2,
   },
   titleKeyboardVisible: {
-    fontSize: 27,
-    lineHeight: 32,
+    fontSize: 24,
+    lineHeight: 29,
   },
   subtitle: {
     ...Typography.body,
@@ -656,8 +631,8 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.10)",
   },
   cardKeyboardVisible: {
-    padding: 16,
-    gap: 11,
+    padding: 14,
+    gap: 10,
   },
   formLabel: {
     ...Typography.caption,
@@ -679,6 +654,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.12)",
     ...Typography.body,
+  },
+  inputFocused: {
+    borderColor: "rgba(216,164,111,0.72)",
+    backgroundColor: "rgba(47,47,50,0.94)",
   },
   forgotPasswordButton: {
     alignSelf: "flex-end",
