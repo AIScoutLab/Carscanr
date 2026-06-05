@@ -28,6 +28,72 @@ test("manual and scan unlock routes consider purchased credits before paywall", 
   assert.doesNotMatch(resultSource, /if \(freeUnlocksRemaining > 0 && approximateUnlockId\)/);
 });
 
+test("manual Value and Listings unlock entry points require ZIP before auth, paywall, or backend unlock", () => {
+  const detailSource = read("app/vehicle/[id].tsx");
+  const resultSource = read("app/scan/result.tsx");
+  const expectedMessage = "Enter a ZIP code before unlocking market value and listings.";
+
+  assert.match(detailSource, new RegExp(expectedMessage.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(resultSource, new RegExp(expectedMessage.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(detailSource, /Alert\.alert\("ZIP required", MARKET_UNLOCK_ZIP_REQUIRED_MESSAGE\)/);
+  assert.match(resultSource, /Alert\.alert\("ZIP required", MARKET_UNLOCK_ZIP_REQUIRED_MESSAGE\)/);
+  assert.match(resultSource, /marketAreaZipService\.getInitialMarketAreaZip\(\)/);
+  assert.match(detailSource, /const handleMarketPaywallAction = useCallback/);
+  assert.match(detailSource, /onUpgrade=\{handleMarketPaywallAction\}/);
+  assert.doesNotMatch(detailSource, /Enter a valid market area ZIP before loading nearby listings\./);
+
+  for (const [label, handlerName, guardCall, nextHandlerName] of [
+    ["bundle", "handleVehicleMarketBundleAction", "requireMarketZipForUnlock(\"bundle\")", "handleMarketValueAction"],
+    ["value", "handleMarketValueAction", "requireMarketZipForUnlock(\"value\")", "handleMarketListingsAction"],
+    ["listings", "handleMarketListingsAction", "requireMarketZipForUnlock(\"listings\")", "useEffect(() => {"],
+  ] as const) {
+    const handlerStart = detailSource.indexOf(`const ${handlerName} = useCallback`);
+    const handlerEnd = detailSource.indexOf(nextHandlerName, handlerStart + 1);
+    assert.ok(handlerStart > -1, `${label} handler missing`);
+    assert.ok(handlerEnd > handlerStart, `${label} handler end missing`);
+
+    const handlerSource = detailSource.slice(handlerStart, handlerEnd);
+    const guardIndex = handlerSource.indexOf(guardCall);
+    const authIndex = handlerSource.indexOf("ensureAuthenticatedForLiveMarket()");
+    const paywallIndex = handlerSource.indexOf('router.push("/paywall")');
+    const unlockIndex = handlerSource.indexOf("useFreeUnlockForVehicle(marketUnlockPrimaryId");
+
+    assert.ok(guardIndex > -1, `${label} must guard missing ZIP`);
+    assert.ok(authIndex === -1 || guardIndex < authIndex, `${label} must check ZIP before auth`);
+    assert.ok(paywallIndex === -1 || guardIndex < paywallIndex, `${label} must check ZIP before paywall`);
+    assert.ok(unlockIndex === -1 || guardIndex < unlockIndex, `${label} must check ZIP before backend unlock`);
+  }
+
+  for (const [label, handlerName, guardCall, nextHandlerName] of [
+    [
+      "scan override",
+      "handleHighConfidenceVisualOverrideAction",
+      "ensureMarketZipAvailableForScanUnlock(source)",
+      "const handleOpenBestMatch",
+    ],
+    [
+      "scan primary",
+      "handlePrimaryResultAction",
+      "ensureMarketZipAvailableForScanUnlock(\"primary-result-cta\")",
+      "fallbackConfidenceLabel",
+    ],
+  ] as const) {
+    const handlerStart = resultSource.indexOf(`const ${handlerName} = async`);
+    const handlerEnd = resultSource.indexOf(nextHandlerName, handlerStart + 1);
+    assert.ok(handlerStart > -1, `${label} handler missing`);
+    assert.ok(handlerEnd > handlerStart, `${label} handler end missing`);
+
+    const handlerSource = resultSource.slice(handlerStart, handlerEnd);
+    const guardIndex = handlerSource.indexOf(guardCall);
+    const paywallIndex = handlerSource.indexOf('router.push("/paywall")');
+    const unlockIndex = handlerSource.indexOf("useFreeUnlockForVehicle");
+
+    assert.ok(guardIndex > -1, `${label} must guard missing ZIP`);
+    assert.ok(paywallIndex === -1 || guardIndex < paywallIndex, `${label} must check ZIP before paywall`);
+    assert.ok(unlockIndex === -1 || guardIndex < unlockIndex, `${label} must check ZIP before backend unlock`);
+  }
+});
+
 test("successful unlock refreshes cached and backend unlock balance", () => {
   const serviceSource = read("services/subscriptionService.ts");
   const scanServiceSource = read("services/scanService.ts");

@@ -18,7 +18,9 @@ import { parseHorsepower } from "@/lib/vehicleData";
 import { generateVehicleInsight } from "@/lib/vehicleInsights";
 import { isProPlan } from "@/lib/subscription";
 import { formatPurchasedUnlockPackRemaining } from "@/lib/unlockCreditDisplay";
+import { isValidMarketAreaZip } from "@/lib/marketAreaZip";
 import { garageService } from "@/services/garageService";
+import { marketAreaZipService } from "@/services/marketAreaZipService";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { scanService } from "@/services/scanService";
 import { buildVehicleSoftUnlockId, buildVehicleUnlockId } from "@/services/subscriptionService";
@@ -72,6 +74,7 @@ type ResultSpecValues = {
   msrp: string | null;
   bodyStyle: string | null;
 };
+const MARKET_UNLOCK_ZIP_REQUIRED_MESSAGE = "Enter a ZIP code before unlocking market value and listings.";
 type CuratedSampleResultDetails = {
   acceleration: string | null;
   range: string | null;
@@ -2069,6 +2072,24 @@ export default function ScanResultScreen() {
       : null;
     return `Live market value and nearby listings are unlocked for this vehicle.${nextRemaining != null ? `\n\n${nextRemaining} ${nextRemaining === 1 ? "unlock" : "unlocks"} remaining.` : ""}`;
   };
+  const ensureMarketZipAvailableForScanUnlock = async (source: string) => {
+    const result = await marketAreaZipService.getInitialMarketAreaZip().catch((error) => {
+      console.warn("[scan-result] MARKET_ZIP_LOOKUP_FAILED_BEFORE_UNLOCK", {
+        source,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    });
+    if (result && isValidMarketAreaZip(result.zip)) {
+      return true;
+    }
+    console.log("[scan-result] MARKET_UNLOCK_MISSING_ZIP", {
+      source,
+      zipSource: result?.zipSource ?? "unknown",
+    });
+    Alert.alert("ZIP required", MARKET_UNLOCK_ZIP_REQUIRED_MESSAGE);
+    return false;
+  };
   const handleHighConfidenceVisualOverrideAction = async (source: string) => {
     if (isUnlocking || unlockSpendInFlightRef.current) {
       return;
@@ -2093,6 +2114,9 @@ export default function ScanResultScreen() {
         });
       }
       Alert.alert("Unlock protected", unlockWorthinessMessage);
+      return;
+    }
+    if (!(await ensureMarketZipAvailableForScanUnlock(source))) {
       return;
     }
     if (totalUnlocksAvailable > 0 && approximateUnlockId) {
@@ -2150,6 +2174,9 @@ export default function ScanResultScreen() {
     console.log("[tap] result-use-free-unlock", { vehicleId: bestMatch.id });
     if (!bestMatch.id) {
       console.log("[scan-result] FALLBACK_CARD_TAPPED", { source: "primary-result-cta", scanId: normalized?.id ?? null });
+      return;
+    }
+    if (!(await ensureMarketZipAvailableForScanUnlock("primary-result-cta"))) {
       return;
     }
     const confirmed = await confirmVehicleMarketUnlockSpend();

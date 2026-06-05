@@ -53,6 +53,7 @@ const conditionOptions = ["Fair", "Good", "Excellent"];
 const marketInputAccessoryViewID = "vehicle-market-input-accessory";
 const MAX_VISIBLE_LIVE_LISTINGS = 12;
 const INITIAL_VISIBLE_LIVE_LISTINGS = 6;
+const MARKET_UNLOCK_ZIP_REQUIRED_MESSAGE = "Enter a ZIP code before unlocking market value and listings.";
 
 function coerceDetailTab(value: unknown): DetailTab | null {
   if (value === "Specs") {
@@ -3023,9 +3024,36 @@ export default function VehicleDetailScreen() {
     return false;
   }, [routeToAuthForLiveMarket]);
 
+  const requireMarketZipForUnlock = useCallback((source: string) => {
+    const normalizedZip = normalizeMarketAreaZip(zipCode);
+    if (isValidMarketAreaZip(normalizedZip)) {
+      return true;
+    }
+    setLiveMarketRuntimeDebug((current) => ({
+      ...current,
+      action: "market-unlock-missing-zip",
+      requestPath: null,
+      requestUrl: null,
+      marketCheckTrace: `blocked ${source}: missing market ZIP before unlock`,
+    }));
+    Alert.alert("ZIP required", MARKET_UNLOCK_ZIP_REQUIRED_MESSAGE);
+    return false;
+  }, [zipCode]);
+
+  const handleMarketPaywallAction = useCallback(() => {
+    Keyboard.dismiss();
+    if (!requireMarketZipForUnlock("market-paywall")) {
+      return;
+    }
+    router.push("/paywall");
+  }, [requireMarketZipForUnlock]);
+
   const handleVehicleMarketBundleAction = useCallback(async () => {
     Keyboard.dismiss();
     if (valuationLoading || listingsRefreshLoading || isUnlocking || isSampleDetail || marketUnlockSpendInFlightRef.current) {
+      return;
+    }
+    if (!requireMarketZipForUnlock("bundle")) {
       return;
     }
     if (!(await ensureAuthenticatedForLiveMarket())) {
@@ -3092,6 +3120,7 @@ export default function VehicleDetailScreen() {
     marketUnlockLookup,
     marketUnlockPrimaryId,
     refreshStatus,
+    requireMarketZipForUnlock,
     requestExplicitLiveValue,
     totalUnlocksAvailable,
     useFreeUnlockForVehicle,
@@ -3101,6 +3130,9 @@ export default function VehicleDetailScreen() {
   const handleMarketValueAction = useCallback(async () => {
     Keyboard.dismiss();
     if (valuationLoading || isUnlocking || isSampleDetail || marketUnlockSpendInFlightRef.current) {
+      return;
+    }
+    if (!requireMarketZipForUnlock("value")) {
       return;
     }
     if (!(await ensureAuthenticatedForLiveMarket())) {
@@ -3164,6 +3196,7 @@ export default function VehicleDetailScreen() {
     marketUnlockLookup,
     marketUnlockPrimaryId,
     refreshStatus,
+    requireMarketZipForUnlock,
     loadVehicleMarketSections,
     requestExplicitLiveValue,
     totalUnlocksAvailable,
@@ -3174,6 +3207,9 @@ export default function VehicleDetailScreen() {
   const handleMarketListingsAction = useCallback(async () => {
     Keyboard.dismiss();
     if (listingsRefreshLoading || isUnlocking || isSampleDetail || marketUnlockSpendInFlightRef.current) {
+      return;
+    }
+    if (!requireMarketZipForUnlock("listings")) {
       return;
     }
     if (!(await ensureAuthenticatedForLiveMarket())) {
@@ -3192,7 +3228,7 @@ export default function VehicleDetailScreen() {
       return;
     }
     if (!canRequestLiveListings) {
-      Alert.alert("Market ZIP required", "Enter a valid market area ZIP before loading nearby listings.");
+      Alert.alert("ZIP required", MARKET_UNLOCK_ZIP_REQUIRED_MESSAGE);
       return;
     }
     const confirmed = await confirmVehicleMarketUnlockSpend();
@@ -3239,6 +3275,7 @@ export default function VehicleDetailScreen() {
     marketUnlockLookup,
     marketUnlockPrimaryId,
     refreshStatus,
+    requireMarketZipForUnlock,
     requestExplicitLiveListings,
     totalUnlocksAvailable,
     useFreeUnlockForVehicle,
@@ -5637,7 +5674,7 @@ export default function VehicleDetailScreen() {
               disabled={marketListingsActionDisabled}
               isUnlocking={isUnlocking}
               onUnlock={handleMarketListingsAction}
-              onUpgrade={() => router.push("/paywall")}
+              onUpgrade={handleMarketPaywallAction}
             />
           ) : null}
         </>
