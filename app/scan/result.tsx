@@ -2072,6 +2072,14 @@ export default function ScanResultScreen() {
       : null;
     return `Live market value and nearby listings are unlocked for this vehicle.${nextRemaining != null ? `\n\n${nextRemaining} ${nextRemaining === 1 ? "unlock" : "unlocks"} remaining.` : ""}`;
   };
+  const unlockSuccessTitle = (resultType?: string) =>
+    resultType === "pro_access"
+      ? "Pro access active"
+      : resultType === "already_unlocked"
+        ? "Already unlocked"
+        : resultType === "purchased_unlock_consumed"
+          ? "Purchased unlock applied"
+          : "Free unlock applied";
   const ensureMarketZipAvailableForScanUnlock = async (source: string) => {
     const result = await marketAreaZipService.getInitialMarketAreaZip().catch((error) => {
       console.warn("[scan-result] MARKET_ZIP_LOOKUP_FAILED_BEFORE_UNLOCK", {
@@ -2134,7 +2142,7 @@ export default function ScanResultScreen() {
         if (result.ok) {
           await refreshStatus();
           Alert.alert(
-            "Value & Listings unlocked",
+            unlockSuccessTitle(result.resultType),
             buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked, result.unlockCredits),
           );
           openVehicleDetail(bestMatch, `${source}-unlocked`);
@@ -2189,7 +2197,7 @@ export default function ScanResultScreen() {
       if (result.ok) {
         await refreshStatus();
         Alert.alert(
-          "Value & Listings unlocked",
+          unlockSuccessTitle(result.resultType),
           buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked, result.unlockCredits),
         );
         openVehicleDetail(bestMatch, "free-unlock-continue");

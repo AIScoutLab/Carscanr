@@ -1823,6 +1823,14 @@ export default function VehicleDetailScreen() {
   } = useSubscription();
   const unlockFailureTitle = (reason?: string) =>
     reason === "payload_too_thin" ? "Unlock protected" : reason === "backend_error" ? "Unlock service unavailable" : "Unlock unavailable";
+  const unlockSuccessTitle = (resultType?: string) =>
+    resultType === "pro_access"
+      ? "Pro access active"
+      : resultType === "already_unlocked"
+        ? "Already unlocked"
+        : resultType === "purchased_unlock_consumed"
+          ? "Purchased unlock applied"
+          : "Free unlock applied";
   const isEstimateMode = estimate === "1" || id.startsWith("estimate:");
   const isSampleDetail =
     sampleVehicleParam === "1" ||
@@ -1986,11 +1994,18 @@ export default function VehicleDetailScreen() {
     vehicle,
     yearLabel,
   ]);
-  const unlockStatusTitle = hasFullAccess
-    ? feedbackMessage?.toLowerCase().includes("free unlock")
-      ? "Free unlock applied"
-      : "Value & Listings unlocked"
-    : "Value & Listings locked";
+  const feedbackUnlockMessage = feedbackMessage?.toLowerCase() ?? "";
+  const unlockStatusTitle = !hasFullAccess
+    ? "Value & Listings locked"
+    : feedbackUnlockMessage.includes("purchased unlock")
+      ? "Purchased unlock applied"
+      : feedbackUnlockMessage.includes("already unlocked")
+        ? "Already unlocked"
+        : feedbackUnlockMessage.includes("pro access active")
+          ? "Pro access active"
+          : feedbackUnlockMessage.includes("free unlock")
+            ? "Free unlock applied"
+            : "Value & Listings unlocked";
   const unlockStatusBody = hasFullAccess
     ? "This vehicle is now fully unlocked"
     : "Unlock once to load live market value and nearby listings.";
@@ -3086,7 +3101,7 @@ export default function VehicleDetailScreen() {
         await refreshStatus();
         loadVehicleMarketSections();
         Alert.alert(
-          "Value & Listings unlocked",
+          unlockSuccessTitle(result.resultType),
           buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked, result.unlockCredits),
         );
         return;
@@ -3165,7 +3180,7 @@ export default function VehicleDetailScreen() {
         await refreshStatus();
         loadVehicleMarketSections();
         Alert.alert(
-          "Value & Listings unlocked",
+          unlockSuccessTitle(result.resultType),
           buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked, result.unlockCredits),
         );
         return;
@@ -3242,7 +3257,7 @@ export default function VehicleDetailScreen() {
         await refreshStatus();
         loadVehicleMarketSections();
         Alert.alert(
-          "Value & Listings unlocked",
+          unlockSuccessTitle(result.resultType),
           buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked, result.unlockCredits),
         );
         return;
@@ -5389,7 +5404,7 @@ export default function VehicleDetailScreen() {
                 const result = await useFreeUnlockForVehicle(vehicle.id);
                 if (result.ok) {
                   await refreshStatus();
-                  Alert.alert("Free unlock applied", result.message);
+                  Alert.alert(unlockSuccessTitle(result.resultType), result.message);
                   setTab("Specs");
                 } else {
                   Alert.alert(

@@ -31,14 +31,25 @@ type BackendUnlockStatus = {
   unlockedVehicleIds: string[];
 };
 
+type UnlockResultType =
+  | "pro_access"
+  | "already_unlocked"
+  | "free_unlock_consumed"
+  | "purchased_unlock_consumed"
+  | "not_allowed";
+
 type BackendUnlockUseResponse = {
   entitlement: {
     isPro: boolean;
     alreadyUnlocked: boolean;
     usedUnlock: boolean;
+    usedUnlockCredit?: boolean;
     remainingUnlocks: number;
+    freeUnlocksRemaining?: number;
+    unlockCreditsRemaining?: number;
     allowed: boolean;
     reason: string;
+    resultType?: UnlockResultType;
   };
   status: BackendUnlockStatus;
 };
@@ -50,6 +61,9 @@ type FreeUnlockActionResult = {
   limit: number;
   unlockCredits?: number;
   alreadyUnlocked: boolean;
+  usedUnlock: boolean;
+  usedUnlockCredit: boolean;
+  resultType: UnlockResultType;
   reason: FreeUnlockReason;
   message: string;
 };
@@ -89,6 +103,40 @@ function normalizeFamilyBucket(make: string | null | undefined, model: string | 
     .replace(/\b(series|class|edition|sport|touring|limited|premium|platinum|lariat|xl|xlt|se|sel|le|xle|lx|ex|gt)\b/g, "")
     .replace(/:+/g, ":")
     .trim();
+}
+
+function getUnlockResultType(entitlement: BackendUnlockUseResponse["entitlement"]): UnlockResultType {
+  if (entitlement.resultType) {
+    return entitlement.resultType;
+  }
+  if (entitlement.isPro) {
+    return "pro_access";
+  }
+  if (entitlement.alreadyUnlocked) {
+    return "already_unlocked";
+  }
+  if (entitlement.allowed && entitlement.usedUnlock && entitlement.usedUnlockCredit) {
+    return "purchased_unlock_consumed";
+  }
+  if (entitlement.allowed && entitlement.usedUnlock) {
+    return "free_unlock_consumed";
+  }
+  return "not_allowed";
+}
+
+function getUnlockSuccessMessage(resultType: UnlockResultType) {
+  switch (resultType) {
+    case "pro_access":
+      return "Pro access active. Value & Listings are unlocked.";
+    case "already_unlocked":
+      return "This vehicle is already unlocked.";
+    case "purchased_unlock_consumed":
+      return "Purchased unlock applied. This vehicle is now fully unlocked.";
+    case "free_unlock_consumed":
+      return "Free unlock applied. This vehicle is now fully unlocked.";
+    default:
+      return "No free unlocks remaining. Upgrade to Pro for full access.";
+  }
 }
 
 function isGenerationSensitiveEstimateFamily(input: {
@@ -732,6 +780,9 @@ export const subscriptionService = {
           limit: FREE_UNLOCKS_LIMIT,
           unlockCredits: 0,
           alreadyUnlocked: true,
+          usedUnlock: false,
+          usedUnlockCredit: false,
+          resultType: "already_unlocked",
           reason: "already_unlocked",
           message: "This vehicle is already unlocked.",
         };
@@ -746,6 +797,9 @@ export const subscriptionService = {
           limit: FREE_UNLOCKS_LIMIT,
           unlockCredits: 0,
           alreadyUnlocked: false,
+          usedUnlock: false,
+          usedUnlockCredit: false,
+          resultType: "not_allowed",
           reason: "no_free_unlocks",
           message: "No free unlocks remaining. Upgrade to Pro for full access.",
         };
@@ -770,8 +824,11 @@ export const subscriptionService = {
         limit: FREE_UNLOCKS_LIMIT,
         unlockCredits: 0,
         alreadyUnlocked: false,
+        usedUnlock: true,
+        usedUnlockCredit: false,
+        resultType: "free_unlock_consumed",
         reason: "consumed",
-        message: "Free unlock applied. This vehicle is now fully unlocked.",
+        message: getUnlockSuccessMessage("free_unlock_consumed"),
       };
     }
     if (!user?.id) {
@@ -783,6 +840,9 @@ export const subscriptionService = {
         limit: FREE_UNLOCKS_LIMIT,
         unlockCredits: 0,
         alreadyUnlocked: unlockState.unlockedVehicleIds.includes(vehicleId),
+        usedUnlock: false,
+        usedUnlockCredit: false,
+        resultType: "not_allowed",
         reason: "auth_required",
         message: "Sign in to keep unlocks synced across devices.",
       };
@@ -799,7 +859,21 @@ export const subscriptionService = {
         method: "POST",
         body: buildBackendUnlockRequestBody(vehicleId, lookup),
       });
-      const status = response.status;
+      const resultType = getUnlockResultType(response.entitlement);
+      let status = response.status;
+      if (response.entitlement.allowed) {
+        try {
+          status = await apiRequest<BackendUnlockStatus>({
+            path: "/api/unlocks/status",
+          });
+        } catch (refreshError) {
+          console.log("[subscription] BACKEND_UNLOCK_STATUS_REFRESH_FAILED", {
+            vehicleId,
+            resultType,
+            message: refreshError instanceof Error ? refreshError.message : String(refreshError),
+          });
+        }
+      }
       const existingLocalState = await loadFreeUnlockStateForUser(user.id);
       const unlockState = {
         used: status.freeUnlocksUsed,
@@ -817,6 +891,20 @@ export const subscriptionService = {
         limit: status.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT,
         unlockedVehicleIds: unlockState.unlockedVehicleIds,
       });
+      console.log("[subscription] BACKEND_UNLOCK_RESULT", {
+        vehicleId,
+        resultType,
+        allowed: response.entitlement.allowed,
+        alreadyUnlocked: response.entitlement.alreadyUnlocked,
+        usedUnlock: response.entitlement.usedUnlock,
+        usedUnlockCredit: Boolean(response.entitlement.usedUnlockCredit),
+        freeUnlocksRemaining: status.freeUnlocksRemaining ?? Math.max(0, status.freeUnlocksTotal - status.freeUnlocksUsed),
+        unlockCreditsRemaining: Math.max(0, status.unlockCreditsRemaining ?? 0),
+        totalUnlocksAvailable:
+          status.totalUnlocksAvailable ??
+          (status.freeUnlocksRemaining ?? Math.max(0, status.freeUnlocksTotal - status.freeUnlocksUsed)) +
+            Math.max(0, status.unlockCreditsRemaining ?? 0),
+      });
       return {
         ok: response.entitlement.allowed,
         state: unlockState,
@@ -824,6 +912,9 @@ export const subscriptionService = {
         limit: status.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT,
         unlockCredits: Math.max(0, status.unlockCreditsRemaining ?? 0),
         alreadyUnlocked: response.entitlement.alreadyUnlocked,
+        usedUnlock: response.entitlement.usedUnlock,
+        usedUnlockCredit: Boolean(response.entitlement.usedUnlockCredit),
+        resultType,
         reason: response.entitlement.alreadyUnlocked
           ? "already_unlocked"
           : response.entitlement.allowed
@@ -831,12 +922,10 @@ export const subscriptionService = {
             : response.entitlement.reason === "payload_too_thin"
               ? "payload_too_thin"
             : "no_free_unlocks",
-        message: response.entitlement.alreadyUnlocked
-          ? "This vehicle is already unlocked."
-          : response.entitlement.allowed
-            ? "Free unlock applied. This vehicle is now fully unlocked."
-            : response.entitlement.reason === "payload_too_thin"
-              ? "We found the vehicle, but there is not enough useful detail yet to make an unlock worth it."
+        message: response.entitlement.allowed
+          ? getUnlockSuccessMessage(resultType)
+          : response.entitlement.reason === "payload_too_thin"
+            ? "We found the vehicle, but there is not enough useful detail yet to make an unlock worth it."
             : "No free unlocks remaining. Upgrade to Pro for full access.",
       };
     } catch (error) {
@@ -886,6 +975,9 @@ export const subscriptionService = {
         limit: FREE_UNLOCKS_LIMIT,
         unlockCredits: 0,
         alreadyUnlocked: unlockState.unlockedVehicleIds.includes(vehicleId),
+        usedUnlock: false,
+        usedUnlockCredit: false,
+        resultType: "not_allowed",
         reason,
         message,
       };

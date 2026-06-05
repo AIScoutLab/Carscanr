@@ -13,9 +13,18 @@ export type UnlockEntitlementResult = {
   isPro: boolean;
   alreadyUnlocked: boolean;
   usedUnlock: boolean;
+  usedUnlockCredit: boolean;
   remainingUnlocks: number;
+  freeUnlocksRemaining: number;
+  unlockCreditsRemaining: number;
   allowed: boolean;
   reason: string;
+  resultType:
+    | "pro_access"
+    | "already_unlocked"
+    | "free_unlock_consumed"
+    | "purchased_unlock_consumed"
+    | "not_allowed";
 };
 
 export class UnlockService {
@@ -81,9 +90,13 @@ export class UnlockService {
         isPro: true,
         alreadyUnlocked: true,
         usedUnlock: false,
+        usedUnlockCredit: false,
         remainingUnlocks: Number.POSITIVE_INFINITY,
+        freeUnlocksRemaining: 0,
+        unlockCreditsRemaining: 0,
         allowed: true,
         reason: "pro",
+        resultType: "pro_access",
       };
     }
 
@@ -107,9 +120,13 @@ export class UnlockService {
         isPro: false,
         alreadyUnlocked: false,
         usedUnlock: false,
+        usedUnlockCredit: false,
         remainingUnlocks: remaining,
+        freeUnlocksRemaining: remaining,
+        unlockCreditsRemaining: balance.unlockCredits,
         allowed: false,
         reason: "unlock_not_requested",
+        resultType: "not_allowed",
       };
     }
 
@@ -130,9 +147,13 @@ export class UnlockService {
         isPro: false,
         alreadyUnlocked: false,
         usedUnlock: false,
+        usedUnlockCredit: false,
         remainingUnlocks: Math.max(0, balance.freeUnlocksTotal - balance.freeUnlocksUsed),
+        freeUnlocksRemaining: Math.max(0, balance.freeUnlocksTotal - balance.freeUnlocksUsed),
+        unlockCreditsRemaining: balance.unlockCredits,
         allowed: false,
         reason: "payload_too_thin",
+        resultType: "not_allowed",
       };
     }
 
@@ -167,9 +188,19 @@ export class UnlockService {
       isPro: false,
       alreadyUnlocked: result.alreadyUnlocked,
       usedUnlock: result.usedUnlock,
+      usedUnlockCredit: result.usedUnlockCredit,
       remainingUnlocks: result.freeUnlocksRemaining,
+      freeUnlocksRemaining: result.freeUnlocksRemaining,
+      unlockCreditsRemaining: result.unlockCreditsRemaining,
       allowed: result.allowed,
       reason: result.allowed ? (result.alreadyUnlocked ? "already_unlocked" : "consumed") : "no_free_unlocks",
+      resultType: result.allowed
+        ? result.alreadyUnlocked
+          ? "already_unlocked"
+          : result.usedUnlockCredit
+            ? "purchased_unlock_consumed"
+            : "free_unlock_consumed"
+        : "not_allowed",
     };
   }
 
@@ -217,9 +248,13 @@ export class UnlockService {
         isPro: true,
         alreadyUnlocked: true,
         usedUnlock: false,
+        usedUnlockCredit: false,
         remainingUnlocks: Number.POSITIVE_INFINITY,
+        freeUnlocksRemaining: 0,
+        unlockCreditsRemaining: 0,
         allowed: true,
         reason: "pro",
+        resultType: "pro_access",
       };
     }
 
@@ -326,9 +361,19 @@ export class UnlockService {
       isPro: false,
       alreadyUnlocked: result.alreadyUnlocked,
       usedUnlock: result.usedUnlock,
+      usedUnlockCredit: result.usedUnlockCredit,
       remainingUnlocks: result.freeUnlocksRemaining,
+      freeUnlocksRemaining: result.freeUnlocksRemaining,
+      unlockCreditsRemaining: result.unlockCreditsRemaining,
       allowed: result.allowed,
       reason: result.allowed ? (result.alreadyUnlocked ? "already_unlocked" : "consumed") : "no_free_unlocks",
+      resultType: result.allowed
+        ? result.alreadyUnlocked
+          ? "already_unlocked"
+          : result.usedUnlockCredit
+            ? "purchased_unlock_consumed"
+            : "free_unlock_consumed"
+        : "not_allowed",
     };
   }
 }

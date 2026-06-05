@@ -29,7 +29,16 @@ type SubscriptionContextValue = {
     vehicleId: string,
     linkedVehicleIds?: string[],
     lookup?: FreeUnlockVehicleLookup | null,
-  ) => Promise<{ ok: boolean; message: string; reason: FreeUnlockReason; alreadyUnlocked: boolean; unlockCredits?: number }>;
+  ) => Promise<{
+    ok: boolean;
+    message: string;
+    reason: FreeUnlockReason;
+    alreadyUnlocked: boolean;
+    usedUnlock?: boolean;
+    usedUnlockCredit?: boolean;
+    resultType?: "pro_access" | "already_unlocked" | "free_unlock_consumed" | "purchased_unlock_consumed" | "not_allowed";
+    unlockCredits?: number;
+  }>;
   isVehicleUnlocked: (vehicleId: string) => boolean;
   clearFeedback: () => void;
 };
@@ -152,6 +161,9 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         message: "Unlock already in progress.",
         reason: "unknown",
         alreadyUnlocked: false,
+        usedUnlock: false,
+        usedUnlockCredit: false,
+        resultType: "not_allowed",
       };
     }
     if (!vehicleId) {
@@ -160,6 +172,9 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         message: "This vehicle cannot be unlocked yet.",
         reason: "vehicle_not_found",
         alreadyUnlocked: false,
+        usedUnlock: false,
+        usedUnlockCredit: false,
+        resultType: "not_allowed",
       };
     }
     try {
@@ -182,6 +197,9 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
           message: result.message,
           reason: result.reason,
           alreadyUnlocked: result.alreadyUnlocked,
+          usedUnlock: result.usedUnlock,
+          usedUnlockCredit: result.usedUnlockCredit,
+          resultType: result.resultType,
         };
       }
       if (result.alreadyUnlocked) {
@@ -194,6 +212,9 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         message: result.message,
         reason: result.reason,
         alreadyUnlocked: result.alreadyUnlocked,
+        usedUnlock: result.usedUnlock,
+        usedUnlockCredit: result.usedUnlockCredit,
+        resultType: result.resultType,
         unlockCredits: result.unlockCredits,
       };
     } catch (error) {
@@ -204,6 +225,9 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         message,
         reason: "unknown",
         alreadyUnlocked: false,
+        usedUnlock: false,
+        usedUnlockCredit: false,
+        resultType: "not_allowed",
       };
     } finally {
       setIsUnlocking(false);

@@ -363,6 +363,114 @@ describe("premium market access security", () => {
     assert.equal(listingsProviderCalled, true);
   });
 
+  test("sequential purchased unlock credits decrement for each new vehicle unlock", async () => {
+    const testRepositories = createTestRepositories({
+      unlockBalances: [
+        {
+          userId: "demo-user",
+          freeUnlocksTotal: 3,
+          freeUnlocksUsed: 3,
+          unlockCredits: 4,
+          createdAt: "2026-06-05T14:30:00.000Z",
+          updatedAt: "2026-06-05T14:30:00.000Z",
+        },
+      ],
+    });
+    setRepositories(testRepositories.repositories);
+
+    const firstUnlockResponse = await requestApp({
+      method: "POST",
+      url: "/api/unlocks/use",
+      headers: {
+        ...authHeaders(),
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({
+        vehicleId: "estimate:manual-search:2023-audi-a5-quattro",
+        year: 2023,
+        make: "Audi",
+        model: "A5",
+        trim: "Premium Plus quattro",
+        vehicleType: "car",
+      }),
+    });
+    const firstUnlockBody = parseJson<any>(firstUnlockResponse);
+
+    assert.equal(firstUnlockResponse.statusCode, 200);
+    assert.equal(firstUnlockBody.success, true);
+    assert.equal(firstUnlockBody.data.entitlement.allowed, true);
+    assert.equal(firstUnlockBody.data.entitlement.usedUnlock, true);
+    assert.equal(firstUnlockBody.data.entitlement.usedUnlockCredit, true);
+    assert.equal(firstUnlockBody.data.entitlement.alreadyUnlocked, false);
+    assert.equal(firstUnlockBody.data.entitlement.resultType, "purchased_unlock_consumed");
+    assert.equal(firstUnlockBody.data.entitlement.unlockCreditsRemaining, 3);
+    assert.equal(firstUnlockBody.data.status.freeUnlocksRemaining, 0);
+    assert.equal(firstUnlockBody.data.status.unlockCreditsRemaining, 3);
+    assert.equal(firstUnlockBody.data.status.totalUnlocksAvailable, 3);
+
+    const secondUnlockResponse = await requestApp({
+      method: "POST",
+      url: "/api/unlocks/use",
+      headers: {
+        ...authHeaders(),
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({
+        vehicleId: "estimate:manual-search:2022-bmw-330i",
+        year: 2022,
+        make: "BMW",
+        model: "3 Series",
+        trim: "330i",
+        vehicleType: "car",
+      }),
+    });
+    const secondUnlockBody = parseJson<any>(secondUnlockResponse);
+
+    assert.equal(secondUnlockResponse.statusCode, 200);
+    assert.equal(secondUnlockBody.success, true);
+    assert.equal(secondUnlockBody.data.entitlement.allowed, true);
+    assert.equal(secondUnlockBody.data.entitlement.usedUnlock, true);
+    assert.equal(secondUnlockBody.data.entitlement.usedUnlockCredit, true);
+    assert.equal(secondUnlockBody.data.entitlement.alreadyUnlocked, false);
+    assert.equal(secondUnlockBody.data.entitlement.resultType, "purchased_unlock_consumed");
+    assert.equal(secondUnlockBody.data.entitlement.unlockCreditsRemaining, 2);
+    assert.equal(secondUnlockBody.data.status.freeUnlocksRemaining, 0);
+    assert.equal(secondUnlockBody.data.status.unlockCreditsRemaining, 2);
+    assert.equal(secondUnlockBody.data.status.totalUnlocksAvailable, 2);
+    assert.equal(testRepositories.state.unlockBalances.find((entry) => entry.userId === "demo-user")?.unlockCredits, 2);
+    assert.equal(testRepositories.state.vehicleUnlocks.length, 2);
+
+    const alreadyUnlockedResponse = await requestApp({
+      method: "POST",
+      url: "/api/unlocks/use",
+      headers: {
+        ...authHeaders(),
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({
+        vehicleId: "estimate:manual-search:2023-audi-a5-quattro",
+        year: 2023,
+        make: "Audi",
+        model: "A5",
+        trim: "Premium Plus quattro",
+        vehicleType: "car",
+      }),
+    });
+    const alreadyUnlockedBody = parseJson<any>(alreadyUnlockedResponse);
+
+    assert.equal(alreadyUnlockedResponse.statusCode, 200);
+    assert.equal(alreadyUnlockedBody.success, true);
+    assert.equal(alreadyUnlockedBody.data.entitlement.allowed, true);
+    assert.equal(alreadyUnlockedBody.data.entitlement.usedUnlock, false);
+    assert.equal(alreadyUnlockedBody.data.entitlement.usedUnlockCredit, false);
+    assert.equal(alreadyUnlockedBody.data.entitlement.alreadyUnlocked, true);
+    assert.equal(alreadyUnlockedBody.data.entitlement.resultType, "already_unlocked");
+    assert.equal(alreadyUnlockedBody.data.entitlement.unlockCreditsRemaining, 2);
+    assert.equal(alreadyUnlockedBody.data.status.unlockCreditsRemaining, 2);
+    assert.equal(testRepositories.state.unlockBalances.find((entry) => entry.userId === "demo-user")?.unlockCredits, 2);
+    assert.equal(testRepositories.state.vehicleUnlocks.length, 2);
+  });
+
   test("manual-search estimate unlock consumes purchased credit and unlocks matching market key", async () => {
     const testRepositories = createTestRepositories({
       unlockBalances: [

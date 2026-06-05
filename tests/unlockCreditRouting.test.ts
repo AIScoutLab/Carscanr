@@ -120,6 +120,32 @@ test("popup, profile, and scan badge use purchased unlock pack remaining copy", 
   assert.match(scanSource, /formatPurchasedUnlockPackRemaining\(purchasedUnlockCredits\)/);
 });
 
+test("unlock success copy uses backend result type instead of generic free unlock copy", () => {
+  const serviceSource = read("services/subscriptionService.ts");
+  const providerSource = read("features/subscription/SubscriptionProvider.tsx");
+  const detailSource = read("app/vehicle/[id].tsx");
+  const resultSource = read("app/scan/result.tsx");
+
+  assert.match(serviceSource, /usedUnlockCredit\?: boolean/);
+  assert.match(serviceSource, /resultType\?: UnlockResultType/);
+  assert.match(serviceSource, /purchased_unlock_consumed/);
+  assert.match(serviceSource, /Purchased unlock applied\. This vehicle is now fully unlocked\./);
+  assert.match(serviceSource, /BACKEND_UNLOCK_RESULT/);
+  assert.match(serviceSource, /path: "\/api\/unlocks\/status"/);
+  assert.match(providerSource, /resultType\?: "pro_access" \| "already_unlocked" \| "free_unlock_consumed" \| "purchased_unlock_consumed" \| "not_allowed"/);
+
+  for (const [label, source] of [
+    ["vehicle detail", detailSource],
+    ["scan result", resultSource],
+  ] as const) {
+    assert.match(source, /const unlockSuccessTitle = \(resultType\?: string\)/, `${label} must use result-type title helper`);
+    assert.match(source, /Purchased unlock applied/, `${label} must expose purchased unlock success title`);
+    assert.match(source, /Already unlocked/, `${label} must expose already-unlocked success title`);
+    assert.doesNotMatch(source, /Alert\.alert\("Free unlock applied"/, `${label} must not hard-code every success as free`);
+    assert.match(source, /unlockSuccessTitle\(result\.resultType\)/, `${label} must render backend result type`);
+  }
+});
+
 test("unlocked manual-search listings regression exercises provider after access grant", () => {
   const backendMarketAccessSource = read("backend/tests/marketAccessSecurity.test.ts");
 
