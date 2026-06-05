@@ -29,7 +29,7 @@ import {
   sortPurchaseProductsForDisplay,
 } from "@/lib/purchaseOptions";
 import { authService } from "@/services/authService";
-import { SubscriptionProduct } from "@/types";
+import { SubscriptionProduct, SubscriptionStatus } from "@/types";
 
 const PRO_FEATURES = ["Market Values", "Live Listings", "Pricing Insights", "Garage Sync"] as const;
 
@@ -76,9 +76,11 @@ export default function PaywallScreen() {
     errorMessage,
     purchasePro,
     restorePurchases,
+    manageSubscription,
   } = useSubscription();
   const hasPro = isProPlan(status?.plan);
   const proEntitlementActive = hasPro && (status?.provider === "backend" || status?.provider === "revenuecat" || status?.provider === "storekit" || status?.isActive);
+  const monthlyProActive = proEntitlementActive && status?.plan === "pro_monthly";
   const availableProducts = useMemo(() => sortPurchaseProductsForDisplay(status?.availableProducts ?? []), [status?.availableProducts]);
   const availableProductKeys = availableProducts.map(getPurchaseOptionKey).join("|");
   const [selectedProductKey, setSelectedProductKey] = useState<string | null>(null);
@@ -88,13 +90,16 @@ export default function PaywallScreen() {
   const preferredProduct = getPreferredPurchaseProduct(availableProducts);
   const selectedProduct =
     availableProducts.find((product) => getPurchaseOptionKey(product) === selectedProductKey) ?? preferredProduct;
+  const yearlyProduct = availableProducts.find((product) => getPurchaseOptionKind(product) === "annual") ?? null;
   const missingOptionKinds = getMissingPurchaseOptionKinds(availableProducts);
   const purchaseAvailable = status?.purchaseAvailabilityState === "ready" && Boolean(status?.purchaseAvailable && selectedProduct);
   const purchaseAvailabilityMessage = getPurchaseAvailabilityMessage(purchaseAvailabilityState);
   const purchaseNotice = purchaseAvailabilityMessage ? `${purchaseAvailabilityMessage} Free unlocks and free scans still work normally.` : null;
   const primaryLabel = hasPro
     ? proEntitlementActive
-      ? "Continue With Pro"
+      ? monthlyProActive
+        ? "Switch to yearly in Apple subscription options"
+        : "Manage Subscription"
       : isPurchasing
         ? "Activating Pro..."
         : "Activate Pro Access"
@@ -161,6 +166,14 @@ export default function PaywallScreen() {
       selectedOptionKind,
     });
     if (proEntitlementActive) {
+      if (monthlyProActive || hasManageablePro(status)) {
+        try {
+          await manageSubscription();
+        } catch {
+          // Provider surfaces the inline error state.
+        }
+        return;
+      }
       router.back();
       return;
     }
@@ -250,10 +263,27 @@ export default function PaywallScreen() {
         </View>
 
         {proEntitlementActive ? (
-          <View style={styles.activePanel}>
-            <Text style={styles.activeTitle}>Pro is active</Text>
-            <Text style={styles.activeBody}>Your premium tools are unlocked on this device.</Text>
-          </View>
+          <>
+            <View style={styles.activePanel}>
+              <Text style={styles.activeTitle}>{monthlyProActive ? "Monthly Pro is active" : "Pro is active"}</Text>
+              <Text style={styles.activeBody}>
+                {monthlyProActive
+                  ? "Switch or manage renewal timing in Apple subscription options."
+                  : "Your premium tools are unlocked on this device."}
+              </Text>
+            </View>
+            {monthlyProActive ? (
+              <View style={styles.switchPanel}>
+                <View style={styles.productTitleRow}>
+                  <Text style={styles.productTitle}>Yearly Pro</Text>
+                  <Text style={styles.bestValueBadge}>Best Value</Text>
+                </View>
+                <Text style={styles.productPrice}>{yearlyProduct ? getPaywallPriceLine(yearlyProduct) : "$39.99/year"}</Text>
+                <Text style={styles.switchCopy}>Switch to yearly in Apple subscription options. Apple manages upgrade timing and billing.</Text>
+              </View>
+            ) : null}
+            <PrimaryButton label={primaryLabel} onPress={handlePrimaryPress} disabled={primaryDisabled} />
+          </>
         ) : (
           <>
             {availableProducts.length > 0 ? (
@@ -358,6 +388,16 @@ const styles = StyleSheet.create({
   },
   activeTitle: { ...Typography.heading, color: Colors.textStrong },
   activeBody: { ...Typography.body, color: Colors.textSoft },
+  switchPanel: {
+    backgroundColor: "rgba(255,255,255,0.045)",
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: "rgba(216,163,104,0.28)",
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    gap: 6,
+  },
+  switchCopy: { ...Typography.caption, color: Colors.textMuted },
   optionGroup: {
     gap: 8,
   },
@@ -409,3 +449,7 @@ const styles = StyleSheet.create({
   error: { ...Typography.caption, color: Colors.danger, textAlign: "center" },
   freeUnlockFootnote: { ...Typography.caption, color: Colors.textMuted, textAlign: "center" },
 });
+
+function hasManageablePro(status: SubscriptionStatus | null | undefined) {
+  return Boolean(status && isProPlan(status.plan));
+}

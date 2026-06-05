@@ -138,7 +138,7 @@ export function resolveProfileAccessState(status?: SubscriptionStatus | null, is
       : mode === "pro"
         ? getProDetailLabel(status, primaryProLabel)
         : hasPendingProSync
-          ? "Purchase detected. Backend access has not confirmed Pro yet."
+          ? "Purchase or restore detected. Backend access has not confirmed Pro yet."
         : qaConfigurationMessage ?? "Free unlocks are available on this account.";
 
   const resolved = {

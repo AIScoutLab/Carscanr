@@ -95,7 +95,7 @@ test("current subscription purchase pending backend confirmation can show Pro sy
   assert.equal(resolved.hasProEntitlement, false);
   assert.equal(resolved.hasPendingProSync, true);
   assert.equal(resolved.planLabel, "Pro access syncing");
-  assert.equal(resolved.renewalLabel, "Purchase detected. Backend access has not confirmed Pro yet.");
+  assert.equal(resolved.renewalLabel, "Purchase or restore detected. Backend access has not confirmed Pro yet.");
   assert.equal(renderedText(resolved).includes("Pro monthly active"), false);
   assert.equal(renderedText(resolved).includes("Free plan"), false);
   assert.equal(resolved.showUpgradeOptions, false);
@@ -344,6 +344,8 @@ test("profile separates subscription management from sign out at the bottom", ()
   assert.match(accountBlock, /Sign Out/);
   assert.doesNotMatch(accountBlock, /Manage Subscription|Cancel Pro|Cancelling Pro/);
   assert.match(profileSource, /profile-manage-subscription/);
+  assert.match(profileSource, /profile-switch-to-yearly/);
+  assert.match(profileSource, /label="Switch to Yearly Pro"/);
   assert.match(profileSource, /label=\{isCancelling \? "Opening Subscription Management\.\.\." : "Manage Subscription"\}/);
   assert.match(profileSource, /subscriptionManagementSection/);
   assert.doesNotMatch(profileSource, /Cancel Pro|Cancelling Pro|Cancel Subscription/);
@@ -351,14 +353,30 @@ test("profile separates subscription management from sign out at the bottom", ()
 
 test("subscription management opens RevenueCat native management instead of backend cancel", () => {
   const profileSource = fs.readFileSync(profileSourcePath, "utf8");
+  const providerSource = fs.readFileSync(path.join(process.cwd(), "features/subscription/SubscriptionProvider.tsx"), "utf8");
   const purchaseSource = fs.readFileSync(path.join(process.cwd(), "services/purchaseService.ts"), "utf8");
   const serviceSource = fs.readFileSync(path.join(process.cwd(), "services/subscriptionService.ts"), "utf8");
-  const cancelStart = serviceSource.indexOf("async cancelSubscription()");
-  const cancelEnd = serviceSource.indexOf("async syncSubscriptionToBackend", cancelStart);
-  const cancelBlock = serviceSource.slice(cancelStart, cancelEnd);
+  const manageStart = serviceSource.indexOf("async manageSubscription()");
+  const manageEnd = serviceSource.indexOf("async cancelSubscription", manageStart);
+  const manageBlock = serviceSource.slice(manageStart, manageEnd);
 
   assert.match(profileSource, /handleManageSubscription/);
+  assert.match(providerSource, /manageSubscription/);
   assert.match(purchaseSource, /Purchases\.showManageSubscriptions\(\)/);
-  assert.match(cancelBlock, /purchaseService\.openSubscriptionManagement\(\)/);
-  assert.doesNotMatch(cancelBlock, /\/api\/subscription\/cancel|Pro access cancelled|Free plan/);
+  assert.match(manageBlock, /purchaseService\.openSubscriptionManagement\(\)/);
+  assert.match(manageBlock, /outcome: "management_opened"/);
+  assert.doesNotMatch(manageBlock, /\/api\/subscription\/cancel|Pro access cancelled|Free plan/);
+});
+
+test("monthly Pro users have a yearly switch path through Apple subscription options", () => {
+  const profileSource = fs.readFileSync(profileSourcePath, "utf8");
+  const paywallSource = fs.readFileSync(path.join(process.cwd(), "app/paywall.tsx"), "utf8");
+
+  assert.match(profileSource, /const isMonthlyPro = accessState\.hasProEntitlement && status\?\.plan === "pro_monthly"/);
+  assert.match(profileSource, /router\.push\("\/paywall\?selectedOption=annual" as never\)/);
+  assert.match(paywallSource, /monthlyProActive/);
+  assert.match(paywallSource, /Switch to yearly in Apple subscription options/);
+  assert.match(paywallSource, /Apple manages upgrade timing and billing/);
+  assert.match(paywallSource, /manageSubscription\(\)/);
+  assert.doesNotMatch(paywallSource, /manually change backend plan|\/api\/subscription\/cancel/);
 });

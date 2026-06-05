@@ -23,6 +23,7 @@ type SubscriptionContextValue = {
   refreshStatus: () => Promise<SubscriptionStatus | null>;
   purchasePro: (selectedProductKey?: string | null) => Promise<SubscriptionActionResult>;
   restorePurchases: () => Promise<SubscriptionActionResult>;
+  manageSubscription: () => Promise<SubscriptionActionResult>;
   cancelPro: () => Promise<SubscriptionActionResult>;
   useFreeUnlockForVehicle: (
     vehicleId: string,
@@ -126,11 +127,11 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     }
   }, [freeUnlocksLimit, freeUnlocksRemaining, freeUnlocksUsed]);
 
-  const cancelPro = useCallback(async () => {
+  const manageSubscription = useCallback(async () => {
     try {
       setIsCancelling(true);
       setErrorMessage(null);
-      const result = await subscriptionService.cancelSubscription();
+      const result = await subscriptionService.manageSubscription();
       setStatus(result.status);
       setFeedbackMessage(result.message);
       return result;
@@ -142,6 +143,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       setIsCancelling(false);
     }
   }, []);
+  const cancelPro = manageSubscription;
 
   const useFreeUnlockForVehicle = useCallback<SubscriptionContextValue["useFreeUnlockForVehicle"]>(async (vehicleId, linkedVehicleIds = [], lookup = null) => {
     if (isUnlocking) {
@@ -268,6 +270,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       refreshStatus,
       purchasePro,
       restorePurchases,
+      manageSubscription,
       cancelPro,
       useFreeUnlockForVehicle,
       isVehicleUnlocked,
@@ -290,6 +293,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       refreshStatus,
       purchasePro,
       restorePurchases,
+      manageSubscription,
       cancelPro,
       useFreeUnlockForVehicle,
       isVehicleUnlocked,

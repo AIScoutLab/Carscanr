@@ -159,7 +159,7 @@ export default function ProfileScreen() {
     feedbackMessage,
     errorMessage,
     restorePurchases,
-    cancelPro,
+    manageSubscription,
   } = useSubscription();
   const [user, setUser] = useState<AuthUser | null>(authService.getCurrentUserSync());
   const [isCheckingForUpdate, setIsCheckingForUpdate] = useState(false);
@@ -261,11 +261,18 @@ export default function ProfileScreen() {
     restorePurchases().catch(() => undefined);
   }, [isRestoring, restorePurchases]);
 
+  const isMonthlyPro = accessState.hasProEntitlement && status?.plan === "pro_monthly";
+
   const handleManageSubscription = useCallback(() => {
     if (isCancelling) return;
     console.log("[tap] profile-manage-subscription");
-    cancelPro().catch(() => undefined);
-  }, [cancelPro, isCancelling]);
+    manageSubscription().catch(() => undefined);
+  }, [isCancelling, manageSubscription]);
+
+  const handleSwitchToYearly = useCallback(() => {
+    console.log("[tap] profile-switch-to-yearly");
+    router.push("/paywall?selectedOption=annual" as never);
+  }, []);
 
   const handleSignOut = useCallback(() => {
     console.log("[tap] profile-sign-out");
@@ -514,6 +521,12 @@ export default function ProfileScreen() {
             <View style={styles.subscriptionManagementSection}>
               <SectionLabel label="Subscription Management" />
               <View style={styles.settingsCard}>
+                {isMonthlyPro ? (
+                  <>
+                    <SettingsRow icon="swap-horizontal-outline" label="Switch to Yearly Pro" onPress={handleSwitchToYearly} />
+                    <View style={styles.separator} />
+                  </>
+                ) : null}
                 <SettingsRow
                   icon="card-outline"
                   label={isCancelling ? "Opening Subscription Management..." : "Manage Subscription"}

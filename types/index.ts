@@ -271,7 +271,7 @@ export type SubscriptionVerifyPayload = {
 };
 
 export type SubscriptionActionResult = {
-  outcome: "verified" | "restored" | "cancelled" | "not_configured";
+  outcome: "verified" | "restored" | "cancelled" | "management_opened" | "not_configured";
   purchaseKind?: PurchaseOptionKind;
   status: SubscriptionStatus;
   message: string;

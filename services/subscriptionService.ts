@@ -552,7 +552,7 @@ function getRevenueCatSubscriptionSyncOverrides(
     renewalLabel: backendHasPro
       ? formatRenewalLabel(usage.plan, snapshot.activeEntitlement?.expirationDate ?? undefined)
       : showPendingSync
-        ? "Purchase detected. Backend access has not confirmed Pro yet."
+        ? "Purchase or restore detected. Backend access has not confirmed Pro yet."
         : usage.renewalLabel,
     entitlementSyncState: showPendingSync ? "revenuecat_active_backend_pending" : "none",
     purchaseAvailable: snapshot.purchaseAvailable,
@@ -1055,7 +1055,7 @@ export const subscriptionService = {
     };
   },
 
-  async cancelSubscription(): Promise<SubscriptionActionResult> {
+  async manageSubscription(): Promise<SubscriptionActionResult> {
     console.log("[subscription] MANAGEMENT_OPEN_START");
     const management = await purchaseService.openSubscriptionManagement();
 
@@ -1074,10 +1074,14 @@ export const subscriptionService = {
     console.log("[subscription] MANAGEMENT_OPEN_SUCCESS");
 
     return {
-      outcome: "cancelled",
+      outcome: "management_opened",
       status,
       message: management.message,
     };
+  },
+
+  async cancelSubscription(): Promise<SubscriptionActionResult> {
+    return this.manageSubscription();
   },
 
   async syncSubscriptionToBackend(payload: SubscriptionVerifyPayload): Promise<SubscriptionActionResult> {
