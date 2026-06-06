@@ -1,0 +1,118 @@
+name: Backend Render Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-deploy:
+    name: Validate backend and trigger Render
+    runs-on: ubuntu-latest
+    env:
+      PRODUCTION_BRANCH: main
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Confirm production branch
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF_NAME}" != "${PRODUCTION_BRANCH}" ]]; then
+            echo "::error title=Wrong branch::Backend production deploys only run from '${PRODUCTION_BRANCH}'. Current branch is '${GITHUB_REF_NAME}'. Re-run this workflow from '${PRODUCTION_BRANCH}'."
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Typecheck backend
+        working-directory: backend
+        run: npm run typecheck
+
+      - name: Build backend
+        working-directory: backend
+        run: npm run build
+
+      - name: Run backend deploy tests when available
+        working-directory: backend
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+
+          if [[ "$(npm pkg get scripts.test:deploy)" == "{}" ]]; then
+            echo "No backend test:deploy script is defined; skipping optional deploy test step."
+            exit 0
+          fi
+
+          npm run test:deploy
+
+      - name: Require Render deploy hook secret
+        env:
+          RENDER_BACKEND_DEPLOY_HOOK_URL: ${{ secrets.RENDER_BACKEND_DEPLOY_HOOK_URL }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${RENDER_BACKEND_DEPLOY_HOOK_URL}" ]]; then
+            echo "::error title=Missing Render deploy hook secret::Add repository secret RENDER_BACKEND_DEPLOY_HOOK_URL in GitHub Actions secrets. In Render, open the carscanr-backend service, go to Settings, copy the Deploy Hook URL, and save it as that exact GitHub secret name."
+            exit 1
+          fi
+
+      - name: Trigger Render deploy
+        env:
+          RENDER_BACKEND_DEPLOY_HOOK_URL: ${{ secrets.RENDER_BACKEND_DEPLOY_HOOK_URL }}
+        run: |
+          set -euo pipefail
+
+          response_file="$(mktemp)"
+          separator="?"
+          if [[ "${RENDER_BACKEND_DEPLOY_HOOK_URL}" == *"?"* ]]; then
+            separator="&"
+          fi
+          deploy_url="${RENDER_BACKEND_DEPLOY_HOOK_URL}${separator}ref=${GITHUB_SHA}"
+
+          set +e
+          http_code="$(curl -sS -X POST -o "${response_file}" -w "%{http_code}" "${deploy_url}")"
+          curl_exit=$?
+          set -e
+
+          if [[ "${curl_exit}" -ne 0 ]]; then
+            echo "::error title=Render deploy hook failed::curl failed with exit code ${curl_exit}. Check that RENDER_BACKEND_DEPLOY_HOOK_URL is the deploy hook for the carscanr-backend service."
+            if [[ -s "${response_file}" ]]; then
+              sed -n '1,20p' "${response_file}"
+            fi
+            exit "${curl_exit}"
+          fi
+
+          if [[ "${http_code}" -lt 200 || "${http_code}" -ge 300 ]]; then
+            echo "::error title=Render deploy hook rejected request::Render returned HTTP ${http_code}. Check the deploy hook secret and confirm commit ${GITHUB_SHA} is available on ${PRODUCTION_BRANCH}."
+            if [[ -s "${response_file}" ]]; then
+              sed -n '1,20p' "${response_file}"
+            fi
+            exit 1
+          fi
+
+          {
+            echo "### Backend Render deploy"
+            echo "- Branch: \`${GITHUB_REF_NAME}\`"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Render deploy hook accepted the request with HTTP ${http_code}."
+            echo "- Verify completion in the Render dashboard for \`carscanr-backend\`, then confirm \`/health\` reports this commit."
+          } >> "${GITHUB_STEP_SUMMARY}"
