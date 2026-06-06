@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { AppError } from "../errors/appError.js";
-import { buildUnlockKey, buildVehicleKey } from "../lib/cacheKeys.js";
+import { buildMarketAccessVehicleKey, buildUnlockKey, buildVehicleKey } from "../lib/cacheKeys.js";
 import { resolveStoredVehicleRecordById } from "../lib/canonicalVehicleCatalog.js";
 import { sendSuccess } from "../lib/http.js";
 import { logger } from "../lib/logger.js";
@@ -78,6 +78,23 @@ function readOptionalBoolean(queryValue: unknown): boolean | undefined {
   return undefined;
 }
 
+function isCompatibleVehicleUnlockKey(input: { candidateKey: string; existingKey: string }) {
+  const candidateParts = input.candidateKey.split(":");
+  const existingParts = input.existingKey.split(":");
+  if (candidateParts.length !== 6 || existingParts.length !== 6) {
+    return false;
+  }
+  if (candidateParts[0] !== "vehicle" || existingParts[0] !== "vehicle") {
+    return false;
+  }
+  return (
+    candidateParts[1] === existingParts[1] &&
+    candidateParts[2] === existingParts[2] &&
+    candidateParts[3] === existingParts[3] &&
+    candidateParts[5] === existingParts[5]
+  );
+}
+
 export class VehicleController {
   constructor(
     private readonly vehicleService: VehicleService,
@@ -107,11 +124,19 @@ export class VehicleController {
     );
   }
 
-  private async resolveUnlockKeyForRequest(input: {
+  private async resolveUnlockKeysForRequest(input: {
     vehicleId?: string | null;
     descriptor: VehicleLookupDescriptor | null;
   }) {
     const descriptorVehicleKey = input.descriptor
+      ? buildMarketAccessVehicleKey({
+          year: input.descriptor.year,
+          make: input.descriptor.make,
+          model: input.descriptor.model,
+          vehicleType: input.descriptor.vehicleType,
+        })
+      : null;
+    const descriptorLegacyVehicleKey = input.descriptor
       ? buildVehicleKey({
           year: input.descriptor.year,
           make: input.descriptor.make,
@@ -122,6 +147,14 @@ export class VehicleController {
       : null;
     const storedVehicle = !descriptorVehicleKey && input.vehicleId ? await resolveStoredVehicleRecordById(input.vehicleId) : null;
     const storedVehicleKey = storedVehicle
+      ? buildMarketAccessVehicleKey({
+          year: storedVehicle.year,
+          make: storedVehicle.make,
+          model: storedVehicle.model,
+          vehicleType: storedVehicle.vehicleType,
+        })
+      : null;
+    const storedLegacyVehicleKey = storedVehicle
       ? buildVehicleKey({
           year: storedVehicle.year,
           make: storedVehicle.make,
@@ -130,8 +163,13 @@ export class VehicleController {
           vehicleType: storedVehicle.vehicleType,
         })
       : null;
-    const unlock = buildUnlockKey({ vehicleKey: descriptorVehicleKey ?? storedVehicleKey });
-    return unlock.key;
+    return Array.from(
+      new Set(
+        [descriptorVehicleKey, storedVehicleKey, descriptorLegacyVehicleKey, storedLegacyVehicleKey]
+          .map((vehicleKey) => buildUnlockKey({ vehicleKey }).key)
+          .filter((key): key is string => Boolean(key)),
+      ),
+    );
   }
 
   private async assertLiveMarketAccess(input: {
@@ -185,10 +223,28 @@ export class VehicleController {
       return;
     }
 
-    const unlockKey = await this.resolveUnlockKeyForRequest({
+    const unlockKeys = await this.resolveUnlockKeysForRequest({
       vehicleId: input.vehicleId,
       descriptor: input.descriptor,
     });
+    const unlockKey = unlockKeys[0] ?? null;
+    logger.info(
+      {
+        label: input.kind === "value" ? "VALUE_ACCESS_KEY" : "LISTINGS_ACCESS_KEY",
+        requestId: input.requestId ?? null,
+        kind: input.kind,
+        userId: auth.userId,
+        vehicleId: input.vehicleId ?? null,
+        unlockKey,
+        candidateUnlockKeys: unlockKeys,
+        descriptorYear: input.descriptor?.year ?? null,
+        descriptorMake: input.descriptor?.make ?? null,
+        descriptorModel: input.descriptor?.model ?? null,
+        descriptorTrim: input.descriptor?.trim ?? null,
+        descriptorVehicleType: input.descriptor?.vehicleType ?? null,
+      },
+      input.kind === "value" ? "VALUE_ACCESS_KEY" : "LISTINGS_ACCESS_KEY",
+    );
     if (!unlockKey) {
       logger.warn(
         {
@@ -206,8 +262,33 @@ export class VehicleController {
       throw new AppError(400, "UNLOCK_KEY_MISSING", "Unable to verify vehicle unlock for this market request.");
     }
 
-    const existingUnlock = await repositories.vehicleUnlocks.findByUserAndKey(auth.userId, unlockKey);
-    if (!existingUnlock) {
+    let existingUnlockFound = false;
+    let matchedUnlockKey: string | null = null;
+    for (const candidateUnlockKey of unlockKeys) {
+      const existingUnlock = await repositories.vehicleUnlocks.findByUserAndKey(auth.userId, candidateUnlockKey);
+      if (existingUnlock) {
+        existingUnlockFound = true;
+        matchedUnlockKey = candidateUnlockKey;
+        break;
+      }
+    }
+    if (!existingUnlockFound) {
+      const userUnlocks = await repositories.vehicleUnlocks.listByUser(auth.userId);
+      const compatibleUnlock = userUnlocks.find((unlock) =>
+        unlock.unlockType === "vehicle" &&
+        unlockKeys.some((candidateUnlockKey) =>
+          isCompatibleVehicleUnlockKey({
+            candidateKey: candidateUnlockKey,
+            existingKey: unlock.unlockKey,
+          }),
+        ),
+      );
+      if (compatibleUnlock) {
+        existingUnlockFound = true;
+        matchedUnlockKey = compatibleUnlock.unlockKey;
+      }
+    }
+    if (!existingUnlockFound) {
       logger.warn(
         {
           label: "LIVE_MARKET_ACCESS_DENIED",
@@ -217,6 +298,7 @@ export class VehicleController {
           userIdPresent: true,
           plan,
           unlockKey,
+          candidateUnlockKeys: unlockKeys,
           vehicleIdPresent: Boolean(input.vehicleId),
           descriptorPresent: Boolean(input.descriptor),
           descriptorYear: input.descriptor?.year ?? null,
@@ -239,7 +321,8 @@ export class VehicleController {
         reason: "vehicle_unlock_found",
         userIdPresent: true,
         plan,
-        unlockKey,
+        unlockKey: matchedUnlockKey ?? unlockKey,
+        candidateUnlockKeys: unlockKeys,
         vehicleIdPresent: Boolean(input.vehicleId),
         descriptorPresent: Boolean(input.descriptor),
         descriptorYear: input.descriptor?.year ?? null,

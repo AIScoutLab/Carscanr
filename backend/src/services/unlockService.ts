@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { AppError } from "../errors/appError.js";
-import { buildUnlockKey, buildVehicleKey } from "../lib/cacheKeys.js";
+import { buildMarketAccessVehicleKey, buildUnlockKey, buildVehicleKey } from "../lib/cacheKeys.js";
 import { resolveStoredVehicleRecordById } from "../lib/canonicalVehicleCatalog.js";
 import { logger } from "../lib/logger.js";
 import { repositories } from "../lib/repositoryRegistry.js";
@@ -100,11 +100,17 @@ export class UnlockService {
       };
     }
 
-    const vehicleKey = buildVehicleKey({
+    const displayVehicleKey = buildVehicleKey({
       year: input.vehicle.year,
       make: input.vehicle.make,
       model: input.vehicle.model,
       trim: input.vehicle.trim,
+      vehicleType: input.vehicle.vehicleType,
+    });
+    const vehicleKey = buildMarketAccessVehicleKey({
+      year: input.vehicle.year,
+      make: input.vehicle.make,
+      model: input.vehicle.model,
       vehicleType: input.vehicle.vehicleType,
     });
 
@@ -172,6 +178,8 @@ export class UnlockService {
         userId: input.userId,
         vehicleId: input.vehicle.id,
         vehicleKey,
+        displayVehicleKey,
+        unlockKey: unlockKeyResult.key,
         alreadyUnlocked: result.alreadyUnlocked,
         usedUnlock: result.usedUnlock,
         usedUnlockCredit: result.usedUnlockCredit,
@@ -183,6 +191,28 @@ export class UnlockService {
       },
       result.allowed ? "UNLOCK_ALLOWED" : "UNLOCK_DENIED",
     );
+    if (result.allowed) {
+      logger.info(
+        {
+          label: "UNLOCK_GRANTED_KEY",
+          userId: input.userId,
+          vehicleId: input.vehicle.id,
+          unlockKey: unlockKeyResult.key,
+          vehicleKey,
+          displayVehicleKey,
+          resultType: result.alreadyUnlocked
+            ? "already_unlocked"
+            : result.usedUnlockCredit
+              ? "purchased_unlock_consumed"
+              : "free_unlock_consumed",
+          alreadyUnlocked: result.alreadyUnlocked,
+          usedUnlockCredit: result.usedUnlockCredit,
+          freeUnlocksRemaining: result.freeUnlocksRemaining,
+          unlockCreditsRemaining: result.unlockCreditsRemaining,
+        },
+        "UNLOCK_GRANTED_KEY",
+      );
+    }
 
     return {
       isPro: false,
@@ -205,11 +235,10 @@ export class UnlockService {
   }
 
   buildUnlockFromVehicle(vehicle: VehicleRecord) {
-    const vehicleKey = buildVehicleKey({
+    const vehicleKey = buildMarketAccessVehicleKey({
       year: vehicle.year,
       make: vehicle.make,
       model: vehicle.model,
-      trim: vehicle.trim,
       vehicleType: vehicle.vehicleType,
     });
     const unlock = buildUnlockKey({ vehicleKey });
@@ -295,11 +324,17 @@ export class UnlockService {
       throw new AppError(400, "UNLOCK_DESCRIPTOR_MISSING", "Vehicle identity is required to grant an unlock.");
     }
 
-    const vehicleKey = buildVehicleKey({
+    const displayVehicleKey = buildVehicleKey({
       year: input.descriptor.year,
       make: input.descriptor.make,
       model: input.descriptor.model,
       trim: input.descriptor.trim,
+      vehicleType: input.descriptor.vehicleType,
+    });
+    const vehicleKey = buildMarketAccessVehicleKey({
+      year: input.descriptor.year,
+      make: input.descriptor.make,
+      model: input.descriptor.model,
       vehicleType: input.descriptor.vehicleType,
     });
     const unlockKeyResult = buildUnlockKey({ vehicleKey });
@@ -323,6 +358,7 @@ export class UnlockService {
         label: "UNLOCK_DESCRIPTOR_GRANT_ATTEMPT",
         userId: input.userId,
         vehicleKey,
+        displayVehicleKey,
         unlockType: unlockKeyResult.type,
         hasSourceVehicleId: Boolean(input.vehicleId),
         sourceVehicleId: input.vehicleId ?? null,
@@ -345,6 +381,8 @@ export class UnlockService {
         label: result.allowed ? "UNLOCK_ALLOWED" : "UNLOCK_DENIED",
         userId: input.userId,
         vehicleKey,
+        displayVehicleKey,
+        unlockKey: unlockKeyResult.key,
         sourceVehicleId: input.vehicleId ?? null,
         alreadyUnlocked: result.alreadyUnlocked,
         usedUnlock: result.usedUnlock,
@@ -356,6 +394,28 @@ export class UnlockService {
       },
       result.allowed ? "UNLOCK_ALLOWED" : "UNLOCK_DENIED",
     );
+    if (result.allowed) {
+      logger.info(
+        {
+          label: "UNLOCK_GRANTED_KEY",
+          userId: input.userId,
+          vehicleId: input.vehicleId ?? null,
+          unlockKey: unlockKeyResult.key,
+          vehicleKey,
+          displayVehicleKey,
+          resultType: result.alreadyUnlocked
+            ? "already_unlocked"
+            : result.usedUnlockCredit
+              ? "purchased_unlock_consumed"
+              : "free_unlock_consumed",
+          alreadyUnlocked: result.alreadyUnlocked,
+          usedUnlockCredit: result.usedUnlockCredit,
+          freeUnlocksRemaining: result.freeUnlocksRemaining,
+          unlockCreditsRemaining: result.unlockCreditsRemaining,
+        },
+        "UNLOCK_GRANTED_KEY",
+      );
+    }
 
     return {
       isPro: false,

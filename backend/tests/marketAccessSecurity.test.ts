@@ -586,6 +586,178 @@ describe("premium market access security", () => {
     assert.equal(listingsProviderCalled, true);
   });
 
+  test("manual-search unlock grants immediate value and listings access when trim metadata changes", async () => {
+    const testRepositories = createTestRepositories({
+      unlockBalances: [
+        {
+          userId: "demo-user",
+          freeUnlocksUsed: 3,
+          freeUnlocksTotal: 3,
+          unlockCredits: 5,
+        },
+      ],
+    });
+    setRepositories(testRepositories.repositories);
+
+    let valueProviderCalled = false;
+    let listingsProviderCalled = false;
+    setProviders({
+      ...createTestProviders(),
+      valueProvider: {
+        async getValuation(input) {
+          valueProviderCalled = true;
+          return {
+            id: `valuation-${input.vehicleId}`,
+            vehicleId: input.vehicleId,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition as any,
+            tradeIn: 34200,
+            privateParty: 36500,
+            dealerRetail: 39800,
+            currency: "USD",
+            generatedAt: new Date().toISOString(),
+            sourceLabel: "Based on market data",
+            modelType: "provider_range",
+          };
+        },
+      },
+      listingsProvider: {
+        async getListings(input) {
+          listingsProviderCalled = true;
+          return [
+            {
+              id: `listing-${input.vehicleId}`,
+              vehicleId: input.vehicleId,
+              title: "2023 Audi A5 Premium Plus quattro",
+              price: 41995,
+              mileage: 18200,
+              dealer: "North Shore Audi",
+              distanceMiles: 18,
+              location: "Chicago, IL",
+              imageUrl: "https://example.com/audi-a5.jpg",
+              listedAt: new Date("2026-06-04T12:00:00.000Z").toISOString(),
+            },
+          ];
+        },
+      },
+    });
+
+    const unlockResponse = await requestApp({
+      method: "POST",
+      url: "/api/unlocks/use",
+      headers: {
+        ...authHeaders(),
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({
+        vehicleId: "estimate:manual-search:2023-audi-a5-quattro",
+        year: 2023,
+        make: "Audi",
+        model: "A5",
+        trim: "Premium Plus quattro",
+        vehicleType: "car",
+      }),
+    });
+    const unlockBody = parseJson<any>(unlockResponse);
+
+    assert.equal(unlockResponse.statusCode, 200);
+    assert.equal(unlockBody.success, true);
+    assert.equal(unlockBody.data.entitlement.allowed, true);
+    assert.equal(unlockBody.data.entitlement.resultType, "purchased_unlock_consumed");
+    assert.equal(unlockBody.data.status.unlockCreditsRemaining, 4);
+
+    const valueResponse = await requestApp({
+      method: "GET",
+      url:
+        "/api/vehicle/value?year=2023&make=Audi&model=A5&vehicleType=car&zip=60502&mileage=18000&condition=good" +
+        "&allowLive=true&forceLive=true&fetchReason=user_requested_value_refresh&sourceScreen=valueScreen&action=valueRefresh",
+      headers: authHeaders(),
+    });
+    const valueBody = parseJson<any>(valueResponse);
+
+    assert.equal(valueResponse.statusCode, 200);
+    assert.equal(valueBody.success, true);
+    assert.equal(valueProviderCalled, true);
+
+    const listingsResponse = await requestApp({
+      method: "GET",
+      url:
+        "/api/vehicle/listings?year=2023&make=Audi&model=A5&vehicleType=car&zip=60502&radiusMiles=50" +
+        "&allowLive=true&forceLive=true&fetchReason=user_requested_listings_refresh&sourceScreen=listingsScreen&action=listingsRefresh",
+      headers: authHeaders(),
+    });
+    const listingsBody = parseJson<any>(listingsResponse);
+
+    assert.equal(listingsResponse.statusCode, 200);
+    assert.equal(listingsBody.success, true);
+    assert.equal(listingsProviderCalled, true);
+  });
+
+  test("legacy exact-trim unlock rows still authorize trimless market access", async () => {
+    const testRepositories = createTestRepositories({
+      unlockBalances: [
+        {
+          userId: "demo-user",
+          freeUnlocksUsed: 3,
+          freeUnlocksTotal: 3,
+          unlockCredits: 4,
+        },
+      ],
+    });
+    testRepositories.state.vehicleUnlocks.push({
+      id: "legacy-exact-trim-unlock",
+      userId: "demo-user",
+      unlockKey: "vehicle:2023:audi:a5:premium-plus-quattro:car",
+      unlockType: "vehicle",
+      vin: null,
+      vinKey: null,
+      vehicleKey: "vehicle:2023:audi:a5:premium-plus-quattro:car",
+      listingKey: null,
+      sourceVehicleId: "estimate:manual-search:2023-audi-a5-quattro",
+      scanId: null,
+      createdAt: new Date().toISOString(),
+    });
+    setRepositories(testRepositories.repositories);
+
+    let valueProviderCalled = false;
+    setProviders({
+      ...createTestProviders(),
+      valueProvider: {
+        async getValuation(input) {
+          valueProviderCalled = true;
+          return {
+            id: `valuation-${input.vehicleId}`,
+            vehicleId: input.vehicleId,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition as any,
+            tradeIn: 34200,
+            privateParty: 36500,
+            dealerRetail: 39800,
+            currency: "USD",
+            generatedAt: new Date().toISOString(),
+            sourceLabel: "Based on market data",
+            modelType: "provider_range",
+          };
+        },
+      },
+    });
+
+    const valueResponse = await requestApp({
+      method: "GET",
+      url:
+        "/api/vehicle/value?year=2023&make=Audi&model=A5&vehicleType=car&zip=60502&mileage=18000&condition=good" +
+        "&allowLive=true&forceLive=true&fetchReason=user_requested_value_refresh&sourceScreen=valueScreen&action=valueRefresh",
+      headers: authHeaders(),
+    });
+    const valueBody = parseJson<any>(valueResponse);
+
+    assert.equal(valueResponse.statusCode, 200);
+    assert.equal(valueBody.success, true);
+    assert.equal(valueProviderCalled, true);
+  });
+
   test("Pro yearly users can request live value without a free unlock", async () => {
     setRepositories(
       createTestRepositories({

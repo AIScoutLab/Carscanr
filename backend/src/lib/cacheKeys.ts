@@ -52,6 +52,21 @@ export function buildVehicleKey(input: {
   ]);
 }
 
+export function buildMarketAccessVehicleKey(input: {
+  year?: number | null;
+  make?: string | null;
+  model?: string | null;
+  vehicleType?: string | null;
+}) {
+  return buildVehicleKey({
+    year: input.year,
+    make: input.make,
+    model: input.model,
+    trim: null,
+    vehicleType: input.vehicleType,
+  });
+}
+
 export function buildVehicleKeyFromRecord(vehicle: VehicleRecord | null | undefined) {
   if (!vehicle) return null;
   return buildVehicleKey({
