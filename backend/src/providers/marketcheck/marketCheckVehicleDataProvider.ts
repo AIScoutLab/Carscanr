@@ -80,6 +80,8 @@ type SearchDescriptor = {
 
 const DEFAULT_TIMEOUT_MS = 12000;
 const MONTHLY_SUMMARY_CACHE_MS = 60 * 1000;
+const MARKETCHECK_VALUE_ROWS = 20;
+const MARKETCHECK_LISTINGS_ROWS = 20;
 const MARKETCHECK_BLOCKED_SOURCE_SCREENS = new Set([
   "scan",
   "scanResult",
@@ -129,6 +131,50 @@ function summarizeInventoryResponse(operation: string, response: InventorySearch
     listingsCount: Array.isArray(response.listings) ? response.listings.length : 0,
     hasStats: Boolean(response.stats),
   };
+}
+
+function getMarketCheckCredentialDiagnostics(apiKey: string) {
+  const trimmedKey = apiKey.trim();
+  return {
+    authMethod: "query_param_api_key",
+    credentialSource: "MARKETCHECK_API_KEY",
+    keyPresent: trimmedKey.length > 0,
+    keyLength: trimmedKey.length,
+  };
+}
+
+function summarizeMarketCheckErrorBody(bodyText: string) {
+  if (!bodyText.trim()) {
+    return { message: null, length: 0 };
+  }
+
+  try {
+    const parsed = JSON.parse(bodyText) as { message?: unknown; error?: unknown; code?: unknown };
+    return {
+      message: typeof parsed.message === "string" ? parsed.message.slice(0, 160) : null,
+      error: typeof parsed.error === "string" ? parsed.error.slice(0, 160) : null,
+      code: typeof parsed.code === "string" || typeof parsed.code === "number" ? String(parsed.code).slice(0, 80) : null,
+      length: bodyText.length,
+    };
+  } catch {
+    return {
+      message: bodyText.slice(0, 160),
+      length: bodyText.length,
+    };
+  }
+}
+
+function mapMarketCheckFailureCode(status: number) {
+  if (status === 401) {
+    return "MARKETCHECK_AUTH_FAILED";
+  }
+  if (status === 403) {
+    return "MARKETCHECK_ACCESS_DENIED";
+  }
+  if (status === 429) {
+    return "MARKETCHECK_RATE_LIMITED";
+  }
+  return "MARKETCHECK_REQUEST_FAILED";
 }
 
 function normalizeSourceScreen(value: string | null | undefined) {
@@ -184,7 +230,7 @@ function shouldBlockExternalMarketCheckForSource(requestMeta?: MarketCheckReques
 function isExplicitMarketCheckActionAllowed(operation: InventoryOperation, requestMeta?: MarketCheckRequestMeta) {
   const sourceScreen = normalizeSourceScreen(requestMeta?.sourceScreen);
   const action = requestMeta?.action ?? null;
-  const forceLive = requestMeta?.forceLive === true;
+  const forceLive = isDeveloperForceLiveMarketCheckRequest(requestMeta);
   const allowLive = requestMeta?.allowLive === true;
   const reason = requestMeta?.reason ?? null;
 
@@ -197,6 +243,36 @@ function isExplicitMarketCheckActionAllowed(operation: InventoryOperation, reque
   }
 
   return false;
+}
+
+function isDeveloperForceLiveMarketCheckRequest(requestMeta?: MarketCheckRequestMeta) {
+  if (requestMeta?.forceLive !== true) {
+    return false;
+  }
+  const sourceScreen = String(requestMeta.sourceScreen ?? "").toLowerCase();
+  const action = String(requestMeta.action ?? "").toLowerCase();
+  const reason = String(requestMeta.reason ?? "").toLowerCase();
+  return (
+    sourceScreen.includes("admin") ||
+    sourceScreen.includes("debug") ||
+    sourceScreen.includes("developer") ||
+    action.includes("admin") ||
+    action.includes("debug") ||
+    action.includes("force") ||
+    reason.includes("admin") ||
+    reason.includes("debug") ||
+    reason.includes("force")
+  );
+}
+
+function shouldBypassZeroResultCache(operation: InventoryOperation, requestMeta?: MarketCheckRequestMeta) {
+  if (operation === "values") {
+    return isDeveloperForceLiveMarketCheckRequest(requestMeta);
+  }
+  if (operation === "listings") {
+    return isDeveloperForceLiveMarketCheckRequest(requestMeta);
+  }
+  return isExplicitMarketCheckActionAllowed(operation, requestMeta);
 }
 
 function normalizeMarketCheckKeyPart(value: string | number | undefined | null) {
@@ -248,6 +324,11 @@ function mapOperationToSummaryEndpoint(operation: InventoryOperation): "specs" |
 }
 
 function titleCase(value: string) {
+  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (normalized === "4runner") return "4Runner";
+  if (normalized === "ct4") return "CT4";
+  if (normalized === "ct5") return "CT5";
+  if (normalized === "f 150" || normalized === "f150") return "F-150";
   return value
     .split(" ")
     .filter(Boolean)
@@ -531,10 +612,10 @@ function mapListingToVehicle(listing: MarketCheckListing): VehicleRecord | null 
   const colors = compact([listing.base_ext_color, listing.exterior_color]).map(titleCase);
   const cityMpg = listing.city_mpg ?? listing.build?.city_mpg;
   const highwayMpg = listing.highway_mpg ?? listing.build?.highway_mpg;
-  const mpg = cityMpg && highwayMpg ? `${cityMpg} city / ${highwayMpg} hwy` : "See live listing";
-  const engine = listing.engine ?? listing.build?.engine ?? "See live listing";
-  const drivetrain = listing.drivetrain ?? listing.build?.drivetrain ?? "See live listing";
-  const transmission = listing.transmission ?? listing.build?.transmission ?? "See live listing";
+  const mpg = cityMpg && highwayMpg ? `${cityMpg} city / ${highwayMpg} hwy` : "Unknown";
+  const engine = listing.engine ?? listing.build?.engine ?? "Unknown";
+  const drivetrain = listing.drivetrain ?? listing.build?.drivetrain ?? "Unknown";
+  const transmission = listing.transmission ?? listing.build?.transmission ?? "Unknown";
   const parsedHorsepower = resolveHorsepower(
     listing.horsepower,
     listing.engine_hp,
@@ -577,7 +658,7 @@ function mapListingToVehicle(listing: MarketCheckListing): VehicleRecord | null 
     msrp: listing.msrp ?? listing.price ?? 0,
     engine,
     horsepower: parsedHorsepower,
-    torque: "See live listing",
+    torque: "Unknown",
     transmission,
     drivetrain,
     mpgOrRange: mpg,
@@ -726,6 +807,10 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
       forceLive: input.requestMeta?.forceLive ?? null,
       cacheKey: input.cacheKey,
       retryAttempt: input.retryAttempt ?? input.requestMeta?.retryAttempt ?? 0,
+      attemptNumber: input.requestMeta?.attemptNumber ?? null,
+      maxAttempts: input.requestMeta?.maxAttempts ?? null,
+      fallbackStrategy: input.requestMeta?.fallbackStrategy ?? null,
+      fallbackReason: input.requestMeta?.fallbackReason ?? null,
       zip: input.requestMeta?.zip ?? null,
       radiusMiles: input.requestMeta?.radiusMiles ?? null,
       mileage: input.requestMeta?.mileage ?? null,
@@ -790,31 +875,75 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
     const blockedSourceDecision = shouldBlockExternalMarketCheckForSource(requestMeta);
     const cached = this.responseCache.get(cacheKey);
     if (cached && cached.expiresAtMs > Date.now()) {
-      logger.info(
-        {
-          label: "MARKETCHECK_API_CACHE_HIT",
-          ...requestContext,
-          cacheHit: true,
-          statusCode: cached.statusCode,
-          resultCount: Array.isArray(cached.payload.listings) ? cached.payload.listings.length : 0,
-        },
-        "MARKETCHECK_API_CACHE_HIT",
-      );
-      await this.writeUsageEvent({
-        endpointType: mapOperationToSummaryEndpoint(typedOperation) === "value" ? "values" : mapOperationToSummaryEndpoint(typedOperation) === "listings" ? "listings" : "specs",
-        eventType: "cache_hit",
-        cacheKey,
-        requestMeta,
-        requestSummary: requestContext,
-        responseSummary: {
-          statusCode: cached.statusCode,
-          resultCount: Array.isArray(cached.payload.listings) ? cached.payload.listings.length : 0,
-          cacheHit: true,
-        },
-      });
-      this.invalidateMonthlySummaryCache();
-      await this.logMarketCheckSummary("cache-hit");
-      return cached.payload;
+      const cachedResultCount = Array.isArray(cached.payload.listings) ? cached.payload.listings.length : 0;
+      const shouldBypassZeroCache = cachedResultCount === 0 && shouldBypassZeroResultCache(typedOperation, requestMeta);
+      if (shouldBypassZeroCache) {
+        logger.info(
+          {
+            label: "MARKETCHECK_ZERO_CACHE_BYPASSED",
+            ...requestContext,
+            cacheHit: true,
+            statusCode: cached.statusCode,
+            resultCount: cachedResultCount,
+            reason: "explicit-refresh-zero-result-cache",
+          },
+          "MARKETCHECK_ZERO_CACHE_BYPASSED",
+        );
+      } else {
+        if (typedOperation === "values" && cachedResultCount === 0) {
+          logger.info(
+            {
+              label: "VALUE_ZERO_CACHE_RESPECTED",
+              ...requestContext,
+              cacheHit: true,
+              statusCode: cached.statusCode,
+              resultCount: cachedResultCount,
+              requestedForceLive: requestMeta?.forceLive ?? null,
+              reason: "normal-value-refresh-zero-result-cache",
+            },
+            "VALUE_ZERO_CACHE_RESPECTED",
+          );
+        }
+        if (typedOperation === "listings" && cachedResultCount === 0) {
+          logger.info(
+            {
+              label: "LISTINGS_ZERO_CACHE_RESPECTED",
+              ...requestContext,
+              cacheHit: true,
+              statusCode: cached.statusCode,
+              resultCount: cachedResultCount,
+              requestedForceLive: requestMeta?.forceLive ?? null,
+              reason: "normal-listings-refresh-zero-result-cache",
+            },
+            "LISTINGS_ZERO_CACHE_RESPECTED",
+          );
+        }
+        logger.info(
+          {
+            label: "MARKETCHECK_API_CACHE_HIT",
+            ...requestContext,
+            cacheHit: true,
+            statusCode: cached.statusCode,
+            resultCount: cachedResultCount,
+          },
+          "MARKETCHECK_API_CACHE_HIT",
+        );
+        await this.writeUsageEvent({
+          endpointType: mapOperationToSummaryEndpoint(typedOperation) === "value" ? "values" : mapOperationToSummaryEndpoint(typedOperation) === "listings" ? "listings" : "specs",
+          eventType: "cache_hit",
+          cacheKey,
+          requestMeta,
+          requestSummary: requestContext,
+          responseSummary: {
+            statusCode: cached.statusCode,
+            resultCount: cachedResultCount,
+            cacheHit: true,
+          },
+        });
+        this.invalidateMonthlySummaryCache();
+        await this.logMarketCheckSummary("cache-hit");
+        return cached.payload;
+      }
     }
 
     const inflight = this.inflightRequests.get(cacheKey);
@@ -946,10 +1075,12 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
       const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
       const startedAt = Date.now();
       this.marketCheckCallCount += 1;
+      const credentialDiagnostics = getMarketCheckCredentialDiagnostics(this.apiKey);
       logger.info(
         {
           label: "MARKETCHECK_API_REQUEST_START",
           ...requestContext,
+          ...credentialDiagnostics,
           cacheHit: false,
           marketCheckCallCount: this.marketCheckCallCount,
           appEnv: env.APP_ENV,
@@ -976,14 +1107,16 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
 
         if (!response.ok) {
           const bodyText = await response.text().catch(() => "");
+          const bodySummary = summarizeMarketCheckErrorBody(bodyText);
           throw new AppError(
             response.status,
-            response.status === 429 ? "MARKETCHECK_RATE_LIMITED" : "MARKETCHECK_REQUEST_FAILED",
+            mapMarketCheckFailureCode(response.status),
             `MarketCheck inventory search failed with status ${response.status}.`,
             {
               operation,
               status: response.status,
-              body: bodyText.slice(0, 500),
+              bodySummary,
+              ...credentialDiagnostics,
             },
           );
         }
@@ -1018,6 +1151,8 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
           requestSummary: requestContext,
           responseSummary: {
             message: error instanceof Error ? error.message : "Unknown MarketCheck failure",
+            code: typeof error === "object" && error && "code" in error ? (error as { code?: unknown }).code : undefined,
+            details: typeof error === "object" && error && "details" in error ? (error as { details?: unknown }).details : undefined,
           },
         });
         this.invalidateMonthlySummaryCache();
@@ -1027,6 +1162,7 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
             endpoint,
             provider: "marketcheck",
             operation,
+            ...credentialDiagnostics,
             durationMs: Date.now() - startedAt,
             reason: requestMeta?.reason ?? null,
             caller: requestMeta?.caller ?? null,
@@ -1181,7 +1317,7 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
       trim: descriptor.trim,
       zip: input.zip,
       radius: input.requestMeta?.radiusMiles ?? env.MARKETCHECK_VALUE_RADIUS_MILES,
-      rows: 16,
+      rows: MARKETCHECK_VALUE_ROWS,
       stats: "price",
       car_type: "used",
       miles_range: `${Math.max(0, input.mileage - 15000)}-${input.mileage + 15000}`,
@@ -1290,7 +1426,7 @@ export class MarketCheckVehicleDataProvider implements VehicleSpecsProvider, Veh
       trim: descriptor.trim,
       zip: input.zip,
       radius: input.radiusMiles,
-      rows: 8,
+      rows: MARKETCHECK_LISTINGS_ROWS,
       start: 0,
       car_type: "used",
     }, {

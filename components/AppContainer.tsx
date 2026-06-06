@@ -76,7 +76,7 @@ const styles = StyleSheet.create({
     width: 180,
     height: 180,
     borderRadius: 180,
-    backgroundColor: Colors.cyanGlow,
+    backgroundColor: Colors.warmGlow,
     opacity: 0.18,
   },
   scroll: {

@@ -1,6 +1,7 @@
 import { Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Colors, Typography } from "@/constants/theme";
+import { toVehicleImageSource } from "@/constants/vehicleImages";
 import { formatHorsepowerLabel } from "@/lib/vehicleData";
 import { VehicleRecord } from "@/types";
 import { cardStyles } from "@/design/patterns";
@@ -21,7 +22,7 @@ export function VehicleCard({ vehicle, subtitle, onPress }: Props) {
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.86} accessibilityRole="button">
       <View style={styles.imageWrap}>
-        <Image source={{ uri: vehicle.heroImage }} style={styles.image} />
+        <Image source={toVehicleImageSource(vehicle.heroImage)} style={styles.image} />
         <LinearGradient colors={["rgba(4,8,18,0)", "rgba(4,8,18,0.88)"]} style={styles.imageOverlay} />
         <View style={styles.titleOverlay}>
           <Text style={styles.title}>{title}</Text>

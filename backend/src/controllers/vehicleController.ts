@@ -1,9 +1,14 @@
 import { Request, Response } from "express";
+import { AppError } from "../errors/appError.js";
+import { buildMarketAccessVehicleKey, buildUnlockKey, buildVehicleKey } from "../lib/cacheKeys.js";
+import { resolveStoredVehicleRecordById } from "../lib/canonicalVehicleCatalog.js";
 import { sendSuccess } from "../lib/http.js";
 import { logger } from "../lib/logger.js";
 import { repositories } from "../lib/repositoryRegistry.js";
+import { isProPlan } from "../lib/subscription.js";
 import { normalizeVehicleBadgeAlias } from "../lib/vehicleAliases.js";
 import { env, getStartupDiagnostics } from "../config/env.js";
+import { SubscriptionService } from "../services/subscriptionService.js";
 import { VehicleService } from "../services/vehicleService.js";
 import { VehicleLookupDescriptor, VehicleType } from "../types/domain.js";
 
@@ -73,8 +78,260 @@ function readOptionalBoolean(queryValue: unknown): boolean | undefined {
   return undefined;
 }
 
+function isCompatibleVehicleUnlockKey(input: { candidateKey: string; existingKey: string }) {
+  const candidateParts = input.candidateKey.split(":");
+  const existingParts = input.existingKey.split(":");
+  if (candidateParts.length !== 6 || existingParts.length !== 6) {
+    return false;
+  }
+  if (candidateParts[0] !== "vehicle" || existingParts[0] !== "vehicle") {
+    return false;
+  }
+  return (
+    candidateParts[1] === existingParts[1] &&
+    candidateParts[2] === existingParts[2] &&
+    candidateParts[3] === existingParts[3] &&
+    candidateParts[5] === existingParts[5]
+  );
+}
+
 export class VehicleController {
-  constructor(private readonly vehicleService: VehicleService) {}
+  constructor(
+    private readonly vehicleService: VehicleService,
+    private readonly subscriptionService = new SubscriptionService(),
+  ) {}
+
+  private isLiveMarketRequest(input: {
+    allowLive?: boolean;
+    forceLive?: boolean;
+    fetchReason?: string | null;
+    sourceScreen?: string | null;
+    action?: string | null;
+    kind: "value" | "listings";
+  }) {
+    const fetchReason = String(input.fetchReason ?? "");
+    const sourceScreen = String(input.sourceScreen ?? "");
+    const action = String(input.action ?? "");
+    const userRequestedReason =
+      input.kind === "value" ? "user_requested_value_refresh" : "user_requested_listings_refresh";
+    const refreshAction = input.kind === "value" ? "valueRefresh" : "listingsRefresh";
+    const refreshScreen = input.kind === "value" ? "valueScreen" : "listingsScreen";
+    return (
+      input.forceLive === true ||
+      action === refreshAction ||
+      fetchReason === userRequestedReason ||
+      (input.allowLive === true && sourceScreen === refreshScreen)
+    );
+  }
+
+  private async resolveUnlockKeysForRequest(input: {
+    vehicleId?: string | null;
+    descriptor: VehicleLookupDescriptor | null;
+  }) {
+    const descriptorVehicleKey = input.descriptor
+      ? buildMarketAccessVehicleKey({
+          year: input.descriptor.year,
+          make: input.descriptor.make,
+          model: input.descriptor.model,
+          vehicleType: input.descriptor.vehicleType,
+        })
+      : null;
+    const descriptorLegacyVehicleKey = input.descriptor
+      ? buildVehicleKey({
+          year: input.descriptor.year,
+          make: input.descriptor.make,
+          model: input.descriptor.model,
+          trim: input.descriptor.trim,
+          vehicleType: input.descriptor.vehicleType,
+        })
+      : null;
+    const storedVehicle = !descriptorVehicleKey && input.vehicleId ? await resolveStoredVehicleRecordById(input.vehicleId) : null;
+    const storedVehicleKey = storedVehicle
+      ? buildMarketAccessVehicleKey({
+          year: storedVehicle.year,
+          make: storedVehicle.make,
+          model: storedVehicle.model,
+          vehicleType: storedVehicle.vehicleType,
+        })
+      : null;
+    const storedLegacyVehicleKey = storedVehicle
+      ? buildVehicleKey({
+          year: storedVehicle.year,
+          make: storedVehicle.make,
+          model: storedVehicle.model,
+          trim: storedVehicle.trim,
+          vehicleType: storedVehicle.vehicleType,
+        })
+      : null;
+    return Array.from(
+      new Set(
+        [descriptorVehicleKey, storedVehicleKey, descriptorLegacyVehicleKey, storedLegacyVehicleKey]
+          .map((vehicleKey) => buildUnlockKey({ vehicleKey }).key)
+          .filter((key): key is string => Boolean(key)),
+      ),
+    );
+  }
+
+  private async assertLiveMarketAccess(input: {
+    req: Request;
+    requestId?: string;
+    kind: "value" | "listings";
+    vehicleId?: string | null;
+    descriptor: VehicleLookupDescriptor | null;
+  }) {
+    const auth = input.req.auth;
+    if (!auth || auth.isGuest) {
+      logger.warn(
+        {
+          label: "LIVE_MARKET_ACCESS_DENIED",
+          requestId: input.requestId ?? null,
+          kind: input.kind,
+          reason: "auth_required",
+          authPresent: Boolean(auth),
+          userIdPresent: Boolean(auth?.userId),
+          isGuest: auth?.isGuest ?? null,
+          vehicleIdPresent: Boolean(input.vehicleId),
+          descriptorPresent: Boolean(input.descriptor),
+          descriptorYear: input.descriptor?.year ?? null,
+          descriptorMake: input.descriptor?.make ?? null,
+          descriptorModel: input.descriptor?.model ?? null,
+        },
+        "LIVE_MARKET_ACCESS_DENIED",
+      );
+      throw new AppError(
+        401,
+        "AUTH_REQUIRED",
+        "Sign in and unlock this vehicle before loading live market value and nearby listings.",
+      );
+    }
+
+    const plan = await this.subscriptionService.getActivePlan(auth.userId);
+    if (isProPlan(plan)) {
+      logger.info(
+        {
+          label: "LIVE_MARKET_ACCESS_ALLOWED",
+          requestId: input.requestId ?? null,
+          kind: input.kind,
+          reason: "pro_plan",
+          userIdPresent: true,
+          plan,
+          vehicleIdPresent: Boolean(input.vehicleId),
+          descriptorPresent: Boolean(input.descriptor),
+        },
+        "LIVE_MARKET_ACCESS_ALLOWED",
+      );
+      return;
+    }
+
+    const unlockKeys = await this.resolveUnlockKeysForRequest({
+      vehicleId: input.vehicleId,
+      descriptor: input.descriptor,
+    });
+    const unlockKey = unlockKeys[0] ?? null;
+    logger.info(
+      {
+        label: input.kind === "value" ? "VALUE_ACCESS_KEY" : "LISTINGS_ACCESS_KEY",
+        requestId: input.requestId ?? null,
+        kind: input.kind,
+        userId: auth.userId,
+        vehicleId: input.vehicleId ?? null,
+        unlockKey,
+        candidateUnlockKeys: unlockKeys,
+        descriptorYear: input.descriptor?.year ?? null,
+        descriptorMake: input.descriptor?.make ?? null,
+        descriptorModel: input.descriptor?.model ?? null,
+        descriptorTrim: input.descriptor?.trim ?? null,
+        descriptorVehicleType: input.descriptor?.vehicleType ?? null,
+      },
+      input.kind === "value" ? "VALUE_ACCESS_KEY" : "LISTINGS_ACCESS_KEY",
+    );
+    if (!unlockKey) {
+      logger.warn(
+        {
+          label: "LIVE_MARKET_ACCESS_DENIED",
+          requestId: input.requestId ?? null,
+          kind: input.kind,
+          reason: "unlock_key_missing",
+          userIdPresent: true,
+          plan,
+          vehicleIdPresent: Boolean(input.vehicleId),
+          descriptorPresent: Boolean(input.descriptor),
+        },
+        "LIVE_MARKET_ACCESS_DENIED",
+      );
+      throw new AppError(400, "UNLOCK_KEY_MISSING", "Unable to verify vehicle unlock for this market request.");
+    }
+
+    let existingUnlockFound = false;
+    let matchedUnlockKey: string | null = null;
+    for (const candidateUnlockKey of unlockKeys) {
+      const existingUnlock = await repositories.vehicleUnlocks.findByUserAndKey(auth.userId, candidateUnlockKey);
+      if (existingUnlock) {
+        existingUnlockFound = true;
+        matchedUnlockKey = candidateUnlockKey;
+        break;
+      }
+    }
+    if (!existingUnlockFound) {
+      const userUnlocks = await repositories.vehicleUnlocks.listByUser(auth.userId);
+      const compatibleUnlock = userUnlocks.find((unlock) =>
+        unlock.unlockType === "vehicle" &&
+        unlockKeys.some((candidateUnlockKey) =>
+          isCompatibleVehicleUnlockKey({
+            candidateKey: candidateUnlockKey,
+            existingKey: unlock.unlockKey,
+          }),
+        ),
+      );
+      if (compatibleUnlock) {
+        existingUnlockFound = true;
+        matchedUnlockKey = compatibleUnlock.unlockKey;
+      }
+    }
+    if (!existingUnlockFound) {
+      logger.warn(
+        {
+          label: "LIVE_MARKET_ACCESS_DENIED",
+          requestId: input.requestId ?? null,
+          kind: input.kind,
+          reason: "premium_access_required",
+          userIdPresent: true,
+          plan,
+          unlockKey,
+          candidateUnlockKeys: unlockKeys,
+          vehicleIdPresent: Boolean(input.vehicleId),
+          descriptorPresent: Boolean(input.descriptor),
+          descriptorYear: input.descriptor?.year ?? null,
+          descriptorMake: input.descriptor?.make ?? null,
+          descriptorModel: input.descriptor?.model ?? null,
+        },
+        "LIVE_MARKET_ACCESS_DENIED",
+      );
+      throw new AppError(
+        403,
+        "PREMIUM_ACCESS_REQUIRED",
+        "Unlock Value & Listings for this vehicle before loading live market data.",
+      );
+    }
+    logger.info(
+      {
+        label: "LIVE_MARKET_ACCESS_ALLOWED",
+        requestId: input.requestId ?? null,
+        kind: input.kind,
+        reason: "vehicle_unlock_found",
+        userIdPresent: true,
+        plan,
+        unlockKey: matchedUnlockKey ?? unlockKey,
+        candidateUnlockKeys: unlockKeys,
+        vehicleIdPresent: Boolean(input.vehicleId),
+        descriptorPresent: Boolean(input.descriptor),
+        descriptorYear: input.descriptor?.year ?? null,
+        descriptorMake: input.descriptor?.make ?? null,
+        descriptorModel: input.descriptor?.model ?? null,
+      },
+      "LIVE_MARKET_ACCESS_ALLOWED",
+    );
+  }
 
   getMarketCheckDebugSummary = async (_req: Request, res: Response) => {
     const sinceIso = new Date(Date.now() - 10 * 60 * 1000).toISOString();
@@ -266,20 +523,38 @@ export class VehicleController {
       );
       if (allowLive || forceLive || fetchReason === "user_requested_value_refresh" || sourceScreen === "valueScreen") {
         logger.info(
-        {
-          label: "VALUE_LIVE_REFRESH_REQUESTED",
-          requestId: res.locals.requestId,
-          rawQuery: req.query,
-          vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
+          {
+            label: "VALUE_LIVE_REFRESH_REQUESTED",
+            requestId: res.locals.requestId,
+            rawQuery: req.query,
+            vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
             allowLive: allowLive ?? null,
-          fetchReason: fetchReason ?? null,
-          sourceScreen: sourceScreen ?? null,
-          action: action ?? null,
-          forceLive: forceLive ?? null,
-          zipSource: zipSource ?? null,
+            fetchReason: fetchReason ?? null,
+            sourceScreen: sourceScreen ?? null,
+            action: action ?? null,
+            forceLive: forceLive ?? null,
+            zipSource: zipSource ?? null,
           },
           "VALUE_LIVE_REFRESH_REQUESTED",
         );
+      }
+      if (
+        this.isLiveMarketRequest({
+          kind: "value",
+          allowLive,
+          forceLive,
+          fetchReason,
+          sourceScreen,
+          action,
+        })
+      ) {
+        await this.assertLiveMarketAccess({
+          req,
+          requestId: res.locals.requestId,
+          kind: "value",
+          vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
+          descriptor,
+        });
       }
       logger.info(
         {
@@ -338,6 +613,11 @@ export class VehicleController {
   getListings = async (req: Request, res: Response) => {
     try {
       const descriptor = readLookupDescriptor(req.query);
+      const forceLive = readOptionalBoolean(req.query.forceLive);
+      const allowLive = readOptionalBoolean(req.query.allowLive);
+      const fetchReason = typeof req.query.fetchReason === "string" ? req.query.fetchReason : undefined;
+      const sourceScreen = typeof req.query.sourceScreen === "string" ? req.query.sourceScreen : undefined;
+      const action = typeof req.query.action === "string" ? req.query.action : undefined;
       logger.info(
         {
           label: "FORSALE_PIPELINE_START",
@@ -385,6 +665,24 @@ export class VehicleController {
         },
         "LISTINGS_API_INPUTS",
       );
+      if (
+        this.isLiveMarketRequest({
+          kind: "listings",
+          allowLive,
+          forceLive: forceLive ?? undefined,
+          fetchReason,
+          sourceScreen,
+          action,
+        })
+      ) {
+        await this.assertLiveMarketAccess({
+          req,
+          requestId: res.locals.requestId,
+          kind: "listings",
+          vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
+          descriptor,
+        });
+      }
       const result = await this.vehicleService.getListings({
         requestId: res.locals.requestId,
         vehicleId: typeof req.query.vehicleId === "string" ? req.query.vehicleId : null,
@@ -392,10 +690,11 @@ export class VehicleController {
         zip: req.query.zip as string,
         radiusMiles: Number(req.query.radiusMiles),
         mileage: typeof req.query.mileage === "number" ? req.query.mileage : req.query.mileage != null ? Number(req.query.mileage) : undefined,
-        allowLive: readOptionalBoolean(req.query.allowLive),
-        fetchReason: typeof req.query.fetchReason === "string" ? req.query.fetchReason : undefined,
-        sourceScreen: typeof req.query.sourceScreen === "string" ? req.query.sourceScreen : undefined,
-        action: typeof req.query.action === "string" ? req.query.action : undefined,
+        allowLive,
+        fetchReason,
+        sourceScreen,
+        action,
+        forceLive: forceLive ?? null,
       });
       return sendSuccess(res, result.data, {
         count: result.data.length,

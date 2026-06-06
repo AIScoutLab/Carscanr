@@ -1,4 +1,5 @@
 export type VehicleType = "car" | "motorcycle";
+export type VehicleLookupVehicleType = VehicleType | "truck";
 export type UserPlan = "free" | "pro" | "pro_monthly" | "pro_yearly";
 export type VehicleCondition = "excellent" | "very_good" | "good" | "fair" | "poor";
 export type CanonicalVehiclePromotionStatus = "candidate" | "promoted";
@@ -36,7 +37,7 @@ export type VehicleLookupDescriptor = {
     start: number;
     end: number;
   } | null;
-  vehicleType?: VehicleType | null;
+  vehicleType?: VehicleLookupVehicleType | null;
   bodyStyle?: string | null;
   normalizedModel?: string | null;
 };
@@ -118,6 +119,12 @@ export type VisionProviderResult = {
 export type MatchedVehicleCandidate = {
   vehicleId: string;
   year: number;
+  displayYearLabel?: string | null;
+  yearRange?: {
+    start: number;
+    end: number;
+  } | null;
+  yearConfidence?: VisionResult["yearConfidence"] | null;
   make: string;
   model: string;
   trim: string;
@@ -193,7 +200,7 @@ export type ValuationRecord = {
   generatedAt: string;
   sourceLabel?: string;
   confidenceLabel?: string;
-  valuationSource?: "provider" | "cache" | "listing_comps" | "unavailable" | null;
+  valuationSource?: "provider" | "cache" | "listing_comps" | "modeled_fallback" | "unavailable" | null;
   compCount?: number | null;
   confidence?: "high" | "moderate" | "limited" | "unavailable" | null;
   rangeLow?: number | null;
@@ -254,6 +261,21 @@ export type SubscriptionRecord = {
   productId?: string;
   expiresAt?: string;
   verifiedAt: string;
+};
+
+export type RevenueCatEventRecord = {
+  id: string;
+  appUserId?: string | null;
+  userId?: string | null;
+  eventType: string;
+  productId?: string | null;
+  transactionId?: string | null;
+  originalTransactionId?: string | null;
+  processed: boolean;
+  processedAction?: string | null;
+  payloadSummary?: Record<string, unknown> | null;
+  createdAt: string;
+  processedAt?: string | null;
 };
 
 export type UsageCounterRecord = {

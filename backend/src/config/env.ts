@@ -13,6 +13,18 @@ const appEnvSchema = z.enum(["local", "preview", "production"]);
 const forceProviderModeSchema = z.enum(["live", "mock", "success", "quota_exhausted"]);
 const trendingPreseedModeSchema = z.enum(["bootstrap", "growth"]);
 const vehicleVisionProviderSchema = z.enum(["mock", "openai", "google", "aws", "clarifai", "ensemble"]);
+const DEFAULT_LOCAL_REVENUECAT_WEBHOOK_TOKEN = "local-dev-revenuecat-webhook-token";
+const MARKETCHECK_API_KEY_PLACEHOLDERS = new Set([
+  "your_marketcheck_api_key",
+  "your-marketcheck-api-key",
+  "marketcheck_api_key",
+  "marketcheck-api-key",
+  "changeme",
+  "change_me",
+  "replace_me",
+  "test_key",
+  "placeholder",
+]);
 
 function booleanEnv(defaultValue: boolean) {
   return z.preprocess((value) => {
@@ -101,6 +113,7 @@ const envSchema = z.object({
   MARKETCHECK_ENABLE_AUTO_SPECS: booleanEnv(false),
   MARKETCHECK_ENABLE_AUTO_LISTINGS: booleanEnv(false),
   MARKETCHECK_ENABLE_BACKGROUND_REFRESH: booleanEnv(false),
+  REVENUECAT_WEBHOOK_AUTH_TOKEN: z.string().default(DEFAULT_LOCAL_REVENUECAT_WEBHOOK_TOKEN),
   PROVIDER_SPECS_CACHE_TTL_HOURS: z.coerce.number().default(24 * 30),
   PROVIDER_VALUES_CACHE_TTL_HOURS: z.coerce.number().default(24),
   PROVIDER_LISTINGS_CACHE_TTL_HOURS: z.coerce.number().default(6),
@@ -140,12 +153,26 @@ function logStartupEnvDiagnostics(env: typeof parsedEnv) {
       enableBackgroundMarketCheck: env.ENABLE_BACKGROUND_MARKETCHECK,
       enableUserImageAutoApproval: env.ENABLE_USER_IMAGE_AUTO_APPROVAL,
       marketCheckConfigured: Boolean(env.MARKETCHECK_API_KEY),
+      marketCheckCredentialState: getMarketCheckCredentialState(env.MARKETCHECK_API_KEY),
+      marketCheckCredentialSource: "MARKETCHECK_API_KEY",
+      marketCheckAuthMethod: "query_param_api_key",
+      marketCheckApiKeyLength: env.MARKETCHECK_API_KEY.trim().length,
+      revenueCatWebhookConfigured: Boolean(env.REVENUECAT_WEBHOOK_AUTH_TOKEN),
     }),
   );
 }
 
 function isHostedLikeAppEnv(appEnv: z.infer<typeof appEnvSchema>) {
   return appEnv === "preview" || appEnv === "production";
+}
+
+function getMarketCheckCredentialState(apiKey: string) {
+  const normalized = apiKey.trim().toLowerCase();
+  if (!normalized) {
+    return "missing";
+  }
+
+  return MARKETCHECK_API_KEY_PLACEHOLDERS.has(normalized) ? "placeholder" : "configured";
 }
 
 export function isLiveProviderCallsEnabledForEnv(input: {
@@ -211,8 +238,18 @@ function validateEnv(env: typeof parsedEnv) {
     issues.push("VEHICLE_LISTINGS_PROVIDER cannot be mock for preview and production deployments.");
   }
 
-  if (usingMarketCheck && !env.MARKETCHECK_API_KEY) {
+  const marketCheckCredentialState = getMarketCheckCredentialState(env.MARKETCHECK_API_KEY);
+
+  if (usingMarketCheck && marketCheckCredentialState === "missing") {
     issues.push("MARKETCHECK_API_KEY is required when any MarketCheck provider is enabled.");
+  }
+
+  if (hostedLike && usingMarketCheck && marketCheckCredentialState === "placeholder") {
+    issues.push("MARKETCHECK_API_KEY must be a real backend-only MarketCheck credential for preview and production deployments.");
+  }
+
+  if (hostedLike && (!env.REVENUECAT_WEBHOOK_AUTH_TOKEN || env.REVENUECAT_WEBHOOK_AUTH_TOKEN === DEFAULT_LOCAL_REVENUECAT_WEBHOOK_TOKEN)) {
+    issues.push("REVENUECAT_WEBHOOK_AUTH_TOKEN must be set to a production secret for preview and production deployments.");
   }
 
   if (!env.CORS_ORIGIN) {
@@ -303,5 +340,10 @@ export function getStartupDiagnostics() {
     enableBackgroundMarketCheck: env.ENABLE_BACKGROUND_MARKETCHECK,
     enableUserImageAutoApproval: env.ENABLE_USER_IMAGE_AUTO_APPROVAL,
     marketCheckConfigured: Boolean(env.MARKETCHECK_API_KEY),
+    marketCheckCredentialState: getMarketCheckCredentialState(env.MARKETCHECK_API_KEY),
+    marketCheckCredentialSource: "MARKETCHECK_API_KEY",
+    marketCheckAuthMethod: "query_param_api_key",
+    marketCheckApiKeyLength: env.MARKETCHECK_API_KEY.trim().length,
+    revenueCatWebhookConfigured: Boolean(env.REVENUECAT_WEBHOOK_AUTH_TOKEN),
   };
 }

@@ -17,6 +17,7 @@ import {
   normalizeLookupText,
 } from "../lib/providerCache.js";
 import { mapCanonicalVehicleToRecord, resolveStoredVehicleRecordById, upsertCanonicalVehicleFromProvider } from "../lib/canonicalVehicleCatalog.js";
+import { applyCuratedSpecialtySpecs } from "../lib/curatedSpecialtySpecs.js";
 import { logger } from "../lib/logger.js";
 import { providers } from "../lib/providerRegistry.js";
 import { repositories } from "../lib/repositoryRegistry.js";
@@ -46,7 +47,13 @@ const DEFAULT_UNLOCK_EVALUATION_ZIP = "";
 const DEFAULT_UNLOCK_EVALUATION_MILEAGE = 25000;
 const DEFAULT_UNLOCK_EVALUATION_CONDITION = "good";
 const DEFAULT_UNLOCK_EVALUATION_RADIUS_MILES = 50;
-const LISTING_DERIVATION_RADIUS_MILES = [50, 100, 250, 500];
+const MAX_MARKETCHECK_LISTINGS_RADIUS_MILES = 100;
+const LISTING_DERIVATION_RADIUS_MILES = [50, MAX_MARKETCHECK_LISTINGS_RADIUS_MILES];
+const MIN_BELIEVABLE_LIVE_LISTINGS = 5;
+const MAX_LIVE_LISTING_ATTEMPTS = 2;
+const MAX_NORMAL_LIVE_LISTING_ATTEMPTS = 3;
+const MAX_SPECIALTY_LIVE_LISTING_ATTEMPTS = 2;
+const MAX_DISPLAY_LIVE_LISTINGS = 12;
 
 function nowIso() {
   return new Date().toISOString();
@@ -75,10 +82,88 @@ function isExplicitUserRequestedValueRefresh(input: {
   const action = input.action ?? null;
   const fetchReason = input.fetchReason ?? null;
   return (
-    input.forceLive === true ||
+    isDeveloperForceLiveValueRefresh(input) ||
     action === "valueRefresh" ||
     (input.allowLive === true && fetchReason === "user_requested_value_refresh") ||
     (input.allowLive === true && sourceScreen === "valueScreen")
+  );
+}
+
+function isNormalValueScreenRefresh(input: {
+  allowLive?: boolean;
+  fetchReason?: string | null;
+  sourceScreen?: string | null;
+  action?: string | null;
+}) {
+  const sourceScreen = input.sourceScreen ?? "valueScreen";
+  const action = input.action ?? null;
+  const fetchReason = input.fetchReason ?? null;
+  return (
+    sourceScreen === "valueScreen" &&
+    (action === "valueRefresh" || fetchReason === "user_requested_value_refresh" || input.allowLive === true)
+  );
+}
+
+function isDeveloperForceLiveValueRefresh(input: {
+  fetchReason?: string | null;
+  sourceScreen?: string | null;
+  action?: string | null;
+  forceLive?: boolean | null;
+}) {
+  if (input.forceLive !== true) {
+    return false;
+  }
+  const sourceScreen = String(input.sourceScreen ?? "").toLowerCase();
+  const action = String(input.action ?? "").toLowerCase();
+  const fetchReason = String(input.fetchReason ?? "").toLowerCase();
+  return (
+    sourceScreen.includes("admin") ||
+    sourceScreen.includes("debug") ||
+    sourceScreen.includes("developer") ||
+    action.includes("admin") ||
+    action.includes("debug") ||
+    action.includes("force") ||
+    fetchReason.includes("admin") ||
+    fetchReason.includes("debug") ||
+    fetchReason.includes("force")
+  );
+}
+
+function isAdjacentYearValueStrategy(strategy: ValueLookupAttempt["strategy"]) {
+  return strategy.startsWith("adjacent-year");
+}
+
+function selectMarketCheckValueProviderAttempts(input: {
+  attempts: ValueLookupAttempt[];
+  normalValueScreenRefresh: boolean;
+}) {
+  const nonAdjacentAttempts = input.attempts.filter((attempt) => !isAdjacentYearValueStrategy(attempt.strategy));
+  const liveSafeAttempts = nonAdjacentAttempts.length > 0 ? nonAdjacentAttempts : input.attempts;
+  return input.normalValueScreenRefresh ? liveSafeAttempts.slice(0, 1) : liveSafeAttempts;
+}
+
+function isDeveloperForceLiveListingsRefresh(input: {
+  fetchReason?: string | null;
+  sourceScreen?: string | null;
+  action?: string | null;
+  forceLive?: boolean | null;
+}) {
+  if (input.forceLive !== true) {
+    return false;
+  }
+  const sourceScreen = String(input.sourceScreen ?? "").toLowerCase();
+  const action = String(input.action ?? "").toLowerCase();
+  const fetchReason = String(input.fetchReason ?? "").toLowerCase();
+  return (
+    sourceScreen.includes("admin") ||
+    sourceScreen.includes("debug") ||
+    sourceScreen.includes("developer") ||
+    action.includes("admin") ||
+    action.includes("debug") ||
+    action.includes("force") ||
+    fetchReason.includes("admin") ||
+    fetchReason.includes("debug") ||
+    fetchReason.includes("force")
   );
 }
 
@@ -93,11 +178,151 @@ function isExplicitUserRequestedListingsRefresh(input: {
   const action = input.action ?? null;
   const fetchReason = input.fetchReason ?? null;
   return (
-    input.forceLive === true ||
+    isDeveloperForceLiveListingsRefresh(input) ||
     action === "listingsRefresh" ||
     (input.allowLive === true && fetchReason === "user_requested_listings_refresh") ||
     (input.allowLive === true && sourceScreen === "listingsScreen")
   );
+}
+
+function isNormalListingsRefresh(input: {
+  allowLive?: boolean;
+  fetchReason?: string | null;
+  sourceScreen?: string | null;
+  action?: string | null;
+  forceLive?: boolean | null;
+}) {
+  if (isDeveloperForceLiveListingsRefresh(input)) {
+    return false;
+  }
+  const sourceScreen = input.sourceScreen ?? "listingsScreen";
+  const action = input.action ?? null;
+  const fetchReason = input.fetchReason ?? null;
+  return (
+    action === "listingsRefresh" ||
+    fetchReason === "user_requested_listings_refresh" ||
+    (input.allowLive === true && (sourceScreen === "listingsScreen" || sourceScreen === "valueScreen"))
+  );
+}
+
+function isGenericListingsTrimValue(value: string | null | undefined) {
+  const normalized = normalizeLookupText(value).replace(/-/g, " ");
+  return (
+    normalized.length === 0 ||
+    normalized === "base" ||
+    normalized === "standard" ||
+    normalized === "unknown" ||
+    normalized === "unspecified" ||
+    normalized === "visual only" ||
+    normalized === "visual" ||
+    normalized === "estimated"
+  );
+}
+
+function isDrivetrainOnlyListingsTrimValue(value: string | null | undefined) {
+  const normalized = normalizeLookupText(value).replace(/-/g, " ");
+  return (
+    normalized === "quattro" ||
+    normalized === "awd" ||
+    normalized === "4wd" ||
+    normalized === "4x4" ||
+    normalized === "all wheel drive" ||
+    normalized === "allwheel drive" ||
+    normalized === "allwheel" ||
+    normalized === "xdrive" ||
+    normalized === "4matic" ||
+    normalized === "4motion" ||
+    normalized === "fwd" ||
+    normalized === "rwd"
+  );
+}
+
+function isNonStrictListingsTrimValue(value: string | null | undefined) {
+  return isGenericListingsTrimValue(value) || isDrivetrainOnlyListingsTrimValue(value);
+}
+
+function isAdjacentOrExpandedListingsStrategy(strategy: ListingsLookupAttempt["strategy"]) {
+  return (
+    strategy === "adjacent-year-previous" ||
+    strategy === "adjacent-year-next" ||
+    strategy === "adjacent-year-previous-2" ||
+    strategy === "adjacent-year-next-2" ||
+    strategy === "adjacent-year-family-model" ||
+    strategy === "wider-radius-100"
+  );
+}
+
+function selectMarketCheckListingsProviderAttempts(input: {
+  attempts: ListingsLookupAttempt[];
+  normalListingsRefresh: boolean;
+  requestedTrim?: string | null;
+  forceLive?: boolean | null;
+}) {
+  if (!input.normalListingsRefresh && input.forceLive !== true) {
+    return input.attempts.slice(0, MAX_LIVE_LISTING_ATTEMPTS);
+  }
+
+  const liveSafeAttempts = input.attempts.filter((attempt) => !isAdjacentOrExpandedListingsStrategy(attempt.strategy));
+  const requestedTrim = input.requestedTrim ?? null;
+  const nonStrictTrim = isNonStrictListingsTrimValue(requestedTrim);
+  const explicitNonStrictTrim = hasExplicitTrimValue(requestedTrim) && nonStrictTrim;
+  const requestedVehicle = input.attempts[0]?.vehicle ?? null;
+  const specialtyVehicle = requestedVehicle ? isSpecialtyExoticMake(requestedVehicle.make) : false;
+  const maxAttempts =
+    specialtyVehicle && input.forceLive !== true
+      ? 1
+      : specialtyVehicle
+        ? MAX_SPECIALTY_LIVE_LISTING_ATTEMPTS
+        : MAX_NORMAL_LIVE_LISTING_ATTEMPTS;
+  if (input.forceLive !== true) {
+    const preferredStrategies: ListingsLookupAttempt["strategy"][] = specialtyVehicle
+      ? explicitNonStrictTrim
+        ? ["same-year-any-trim", "same-year-family-model", "exact-year-make-model"]
+        : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model"]
+      : explicitNonStrictTrim
+        ? ["same-year-any-trim", "same-year-family-model", "wider-radius-100", "adjacent-year-previous", "adjacent-year-next", "exact-year-make-model"]
+        : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model", "wider-radius-100", "adjacent-year-previous", "adjacent-year-next"];
+    const selected = selectListingsAttemptsByStrategy({
+      attempts: input.attempts,
+      liveSafeAttempts,
+      preferredStrategies,
+      includeExpanded: !specialtyVehicle,
+    });
+    return selected.length > 0 ? selected.slice(0, maxAttempts) : liveSafeAttempts.slice(0, 1);
+  }
+
+  const preferredStrategies: ListingsLookupAttempt["strategy"][] = specialtyVehicle
+    ? explicitNonStrictTrim
+      ? ["same-year-any-trim", "same-year-family-model", "exact-year-make-model"]
+      : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model"]
+    : explicitNonStrictTrim
+      ? ["same-year-any-trim", "same-year-family-model", "wider-radius-100", "adjacent-year-previous", "adjacent-year-next", "exact-year-make-model"]
+      : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model", "wider-radius-100", "adjacent-year-previous", "adjacent-year-next"];
+  const selected = selectListingsAttemptsByStrategy({
+    attempts: input.attempts,
+    liveSafeAttempts,
+    preferredStrategies,
+    includeExpanded: !specialtyVehicle,
+  });
+
+  return selected.length > 0 ? selected.slice(0, maxAttempts) : liveSafeAttempts.slice(0, 1);
+}
+
+function selectListingsAttemptsByStrategy(input: {
+  attempts: ListingsLookupAttempt[];
+  liveSafeAttempts: ListingsLookupAttempt[];
+  preferredStrategies: ListingsLookupAttempt["strategy"][];
+  includeExpanded: boolean;
+}) {
+  const selected: ListingsLookupAttempt[] = [];
+  for (const strategy of input.preferredStrategies) {
+    const attempt =
+      (input.includeExpanded && isAdjacentOrExpandedListingsStrategy(strategy) ? input.attempts : input.liveSafeAttempts).find((entry) => entry.strategy === strategy) ?? null;
+    if (attempt && !selected.some((entry) => listingsAttemptKey(entry) === listingsAttemptKey(attempt))) {
+      selected.push(attempt);
+    }
+  }
+  return selected;
 }
 
 function isMissingSupabaseRelationError(error: unknown, relationName: string) {
@@ -199,8 +424,7 @@ type ListingsLookupAttempt = {
     | "adjacent-year-previous-2"
     | "adjacent-year-next-2"
     | "adjacent-year-family-model"
-    | "wider-radius-250"
-    | "wider-radius-500";
+    | "wider-radius-100";
   vehicle: VehicleRecord;
   radiusMiles: number;
 };
@@ -558,8 +782,7 @@ function resolveListingsDebugMode(strategy: ListingsLookupAttempt["strategy"] | 
     strategy === "adjacent-year-next" ||
     strategy === "adjacent-year-previous-2" ||
     strategy === "adjacent-year-next-2" ||
-    strategy === "wider-radius-250" ||
-    strategy === "wider-radius-500"
+    strategy === "wider-radius-100"
   ) {
     return "adjacent_year_mixed_trims";
   }
@@ -578,7 +801,7 @@ function buildLookupVehicleFromDescriptor(descriptor: ReturnType<typeof buildCac
     model: descriptor.model,
     trim: descriptor.trim ?? "",
     bodyStyle: "",
-    vehicleType: descriptor.vehicleType === "motorcycle" ? "motorcycle" : "car",
+    vehicleType: normalizeDescriptorVehicleType(descriptor.vehicleType),
     msrp: 0,
     engine: "",
     horsepower: null,
@@ -602,7 +825,7 @@ function buildLookupVehicleFromRawDescriptor(descriptor: VehicleLookupDescriptor
     model: descriptor.model,
     trim: descriptor.trim ?? "",
     bodyStyle: descriptor.bodyStyle ?? "",
-    vehicleType: descriptor.vehicleType === "motorcycle" ? "motorcycle" : "car",
+    vehicleType: normalizeDescriptorVehicleType(descriptor.vehicleType),
     msrp: 0,
     engine: "",
     horsepower: null,
@@ -685,7 +908,7 @@ async function resolveLookupContext(input: {
           make: effectiveDescriptor.make,
           model: effectiveDescriptor.model,
           trim: effectiveDescriptor.trim ?? undefined,
-          vehicleType: effectiveDescriptor.vehicleType ?? undefined,
+          vehicleType: normalizeDescriptorVehicleType(effectiveDescriptor.vehicleType),
         },
       })
     : null;
@@ -748,7 +971,7 @@ function vehicleLookupKey(vehicle: VehicleRecord, radiusMiles: number) {
     vehicle.year,
     normalizeVehicleLookupText(vehicle.make),
     normalizeVehicleLookupText(vehicle.model),
-    normalizeVehicleLookupText(vehicle.trim),
+    normalizeLookupText(vehicle.trim),
     normalizeVehicleLookupText(vehicle.bodyStyle),
     radiusMiles,
   ].join("|");
@@ -772,10 +995,22 @@ function isGenerationSensitiveVehicle(vehicle: VehicleRecord) {
   const body = normalizeVehicleLookupText(vehicle.bodyStyle);
   const combined = `${make} ${model}`.trim();
   return (
+    isHighRetentionOffRoadVehicle(vehicle) ||
     /wrangler|gladiator/.test(combined) ||
     /f 150|f150|silverado|sierra|ram|tacoma|tundra|ranger|colorado|canyon/.test(combined) ||
     /mustang|camaro|challenger|charger|corvette/.test(combined) ||
     /truck|pickup/.test(body)
+  );
+}
+
+function isHighRetentionOffRoadVehicle(vehicle: VehicleRecord) {
+  const make = normalizeVehicleLookupText(vehicle.make);
+  const model = normalizeVehicleLookupText(vehicle.model);
+  const combined = `${make} ${model}`.trim();
+  return (
+    /\btoyota 4runner\b|\btoyota tacoma\b|\btoyota land cruiser\b/.test(combined) ||
+    /\bjeep wrangler\b|\bjeep gladiator\b/.test(combined) ||
+    /\blexus gx\b|\blexus lx\b/.test(combined)
   );
 }
 
@@ -819,12 +1054,22 @@ function preferMeaningfulRequiredText(primary: string, fallback: string | null |
   return primary;
 }
 
-function preferVehicleType(primary: VehicleType, fallback: VehicleType | null | undefined) {
-  return primary ?? fallback ?? "car";
+function preferVehicleType(primary: VehicleType, fallback: VehicleLookupDescriptor["vehicleType"] | null | undefined): VehicleType {
+  return primary ?? normalizeDescriptorVehicleType(fallback);
+}
+
+function normalizeDescriptorVehicleType(vehicleType: VehicleLookupDescriptor["vehicleType"] | null | undefined): VehicleType {
+  if (vehicleType === "motorcycle") {
+    return "motorcycle";
+  }
+  return "car";
 }
 
 function inferMsrpAnchorFromVehicle(vehicle: VehicleRecord) {
   if (isSpecialtyExoticMake(vehicle.make)) {
+    return null;
+  }
+  if (isHighRetentionOffRoadVehicle(vehicle)) {
     return null;
   }
   const directMsrp = typeof vehicle.msrp === "number" && Number.isFinite(vehicle.msrp) && vehicle.msrp > 0 ? vehicle.msrp : null;
@@ -839,14 +1084,17 @@ function inferMsrpAnchorFromVehicle(vehicle: VehicleRecord) {
   const engine = normalizeVehicleLookupText(vehicle.engine);
   const family = `${make} ${model} ${trim} ${body} ${engine}`.trim();
 
-  let anchorMsrp = 26000;
+  let anchorMsrp: number | null = null;
   if (vehicle.vehicleType === "motorcycle") {
     anchorMsrp = 14000;
   } else if (/rolls royce|bentley|ferrari|lamborghini|mclaren|aston martin|porsche|maserati/.test(make)) {
     anchorMsrp = 95000;
   } else if (/bmw|mercedes|audi|lexus|cadillac|lincoln|genesis|infiniti|acura|volvo|land rover/.test(make)) {
     anchorMsrp = 52000;
-  } else if (/pickup|truck/.test(body) || /\bf 150\b|\bsilverado\b|\bsierra\b|\bram 1500\b|\btacoma\b|\btundra\b/.test(family)) {
+  } else if (
+    /pickup|truck/.test(body) ||
+    /\bf 150\b|\bf150\b|\bsilverado\b|\bsierra\b|\bram 1500\b|\btacoma\b|\btundra\b|\branger\b|\bfrontier\b|\bcanyon\b|\bcolorado\b|\bridgeline\b|\bmaverick\b|\bgladiator\b|\bsanta cruz\b/.test(family)
+  ) {
     anchorMsrp = 42000;
   } else if (/suv|crossover|utility/.test(body) || /\bcr v\b|\brav4\b|\bpilot\b|\bhighlander\b|\bexplorer\b|\bwrangler\b/.test(family)) {
     anchorMsrp = 34000;
@@ -858,6 +1106,10 @@ function inferMsrpAnchorFromVehicle(vehicle: VehicleRecord) {
     anchorMsrp = 24000;
   } else if (/camry|accord|altima|malibu|sonata|k5/.test(family)) {
     anchorMsrp = 29000;
+  }
+
+  if (anchorMsrp == null) {
+    return null;
   }
 
   return { anchorMsrp, modelType: "estimated_family_model" as const };
@@ -966,7 +1218,7 @@ function buildDerivedValuationFromListings(input: {
       ? `Based on ${prices.length} nearby comparable listings. Market confidence is moderate.`
       : prices.length >= 3
         ? `Based on ${prices.length} nearby comparable listings. Limited market confidence.`
-        : `Based on ${prices.length} nearby comparable listing${prices.length === 1 ? "" : "s"}. Limited market confidence.`;
+        : `Based on ${prices.length} nearby comparable listing${prices.length === 1 ? "" : "s"}. Very limited market confidence.`;
   const confidence = prices.length >= 6 ? "moderate" : "limited";
 
   return {
@@ -1158,7 +1410,7 @@ async function buildValueFallbackAttempts(vehicle: VehicleRecord): Promise<Value
   };
 
   pushAttempt({ strategy: "exact-year-make-model", vehicle: { ...vehicle } });
-  if (normalizeVehicleLookupText(vehicle.trim)) {
+  if (hasExplicitTrimValue(vehicle.trim)) {
     pushAttempt({ strategy: "same-year-any-trim", vehicle: { ...vehicle, trim: "" } });
   }
   pushAttempt(
@@ -1251,7 +1503,7 @@ function ensureValueAttempts(vehicle: VehicleRecord, attempts: ValueLookupAttemp
   }
 
   const fallbackAttempts: ValueLookupAttempt[] = [{ strategy: "exact-year-make-model", vehicle: { ...vehicle } }];
-  if (normalizeVehicleLookupText(vehicle.trim)) {
+  if (hasExplicitTrimValue(vehicle.trim)) {
     fallbackAttempts.push({ strategy: "same-year-any-trim", vehicle: { ...vehicle, trim: "" } });
   }
   const familyVariant = buildSpecialtyFamilyVehicleVariant(vehicle);
@@ -1367,18 +1619,12 @@ async function buildListingsFallbackAttempts(input: {
         }
       : null,
   );
-  if (isSpecialtyExoticMake(input.vehicle.make)) {
+  if (!isSpecialtyExoticMake(input.vehicle.make)) {
     pushAttempt({
       label: "LISTINGS_WIDER_RADIUS",
-      strategy: "wider-radius-250",
+      strategy: "wider-radius-100",
       vehicle: { ...input.vehicle, trim: "" },
-      radiusMiles: Math.max(input.radiusMiles, 250),
-    });
-    pushAttempt({
-      label: "LISTINGS_WIDER_RADIUS",
-      strategy: "wider-radius-500",
-      vehicle: { ...input.vehicle, trim: "" },
-      radiusMiles: Math.max(input.radiusMiles, 500),
+      radiusMiles: Math.min(MAX_MARKETCHECK_LISTINGS_RADIUS_MILES, Math.max(input.radiusMiles, 100)),
     });
   }
 
@@ -1465,27 +1711,22 @@ function ensureListingsAttempts(input: {
       radiusMiles: Math.max(input.radiusMiles, 100),
     });
   }
-  if (isSpecialtyExoticMake(input.vehicle.make)) {
+  if (!isSpecialtyExoticMake(input.vehicle.make)) {
     fallbackAttempts.push({
       label: "LISTINGS_WIDER_RADIUS",
-      strategy: "wider-radius-250",
+      strategy: "wider-radius-100",
       vehicle: { ...input.vehicle, trim: "" },
-      radiusMiles: Math.max(input.radiusMiles, 250),
-    });
-    fallbackAttempts.push({
-      label: "LISTINGS_WIDER_RADIUS",
-      strategy: "wider-radius-500",
-      vehicle: { ...input.vehicle, trim: "" },
-      radiusMiles: Math.max(input.radiusMiles, 500),
+      radiusMiles: Math.min(MAX_MARKETCHECK_LISTINGS_RADIUS_MILES, Math.max(input.radiusMiles, 100)),
     });
   }
   return fallbackAttempts;
 }
 
 async function buildPartialSpecFallbackVehicle(vehicle: VehicleRecord): Promise<VehicleRecord | null> {
+  const curatedVehicle = applyCuratedSpecialtySpecs(vehicle);
   const descriptor = buildCacheDescriptor({ vehicle });
   if (!descriptor) {
-    return hasUsefulSpecBundle(vehicle) ? applyInferredHorsepower(vehicle) : null;
+    return hasUsefulSpecBundle(curatedVehicle) ? applyInferredHorsepower(curatedVehicle) : null;
   }
 
   const familyCandidates = await repositories.canonicalVehicles.searchPromoted({
@@ -1500,24 +1741,26 @@ async function buildPartialSpecFallbackVehicle(vehicle: VehicleRecord): Promise<
 
   const nearest = mappedCandidates[0] ?? null;
   if (!nearest) {
-    return hasUsefulSpecBundle(vehicle) ? applyInferredHorsepower(vehicle) : null;
+    return hasUsefulSpecBundle(curatedVehicle) ? applyInferredHorsepower(curatedVehicle) : null;
   }
 
-  return applyInferredHorsepower({
-    ...vehicle,
-    bodyStyle: coalesceString(vehicle.bodyStyle, nearest.bodyStyle) ?? vehicle.bodyStyle,
-    engine: coalesceString(vehicle.engine, nearest.engine) ?? vehicle.engine,
-    horsepower: coalescePositiveNumber(vehicle.horsepower, nearest.horsepower),
-    torque: coalesceString(vehicle.torque, nearest.torque) ?? vehicle.torque,
-    transmission: coalesceString(vehicle.transmission, nearest.transmission) ?? vehicle.transmission,
-    drivetrain: coalesceString(vehicle.drivetrain, nearest.drivetrain) ?? vehicle.drivetrain,
-    mpgOrRange: coalesceString(vehicle.mpgOrRange, nearest.mpgOrRange) ?? vehicle.mpgOrRange,
-    msrp: coalescePositiveNumber(vehicle.msrp, nearest.msrp) ?? vehicle.msrp,
-    engineDisplacementL: coalescePositiveNumber(vehicle.engineDisplacementL, nearest.engineDisplacementL),
-    cylinders: coalescePositiveNumber(vehicle.cylinders, nearest.cylinders),
-    fuelType: coalesceString(vehicle.fuelType, nearest.fuelType),
-    doors: coalescePositiveNumber(vehicle.doors, nearest.doors),
-  });
+  return applyInferredHorsepower(
+    applyCuratedSpecialtySpecs({
+      ...curatedVehicle,
+      bodyStyle: coalesceString(curatedVehicle.bodyStyle, nearest.bodyStyle) ?? curatedVehicle.bodyStyle,
+      engine: coalesceString(curatedVehicle.engine, nearest.engine) ?? curatedVehicle.engine,
+      horsepower: coalescePositiveNumber(curatedVehicle.horsepower, nearest.horsepower),
+      torque: coalesceString(curatedVehicle.torque, nearest.torque) ?? curatedVehicle.torque,
+      transmission: coalesceString(curatedVehicle.transmission, nearest.transmission) ?? curatedVehicle.transmission,
+      drivetrain: coalesceString(curatedVehicle.drivetrain, nearest.drivetrain) ?? curatedVehicle.drivetrain,
+      mpgOrRange: coalesceString(curatedVehicle.mpgOrRange, nearest.mpgOrRange) ?? curatedVehicle.mpgOrRange,
+      msrp: coalescePositiveNumber(curatedVehicle.msrp, nearest.msrp) ?? curatedVehicle.msrp,
+      engineDisplacementL: coalescePositiveNumber(curatedVehicle.engineDisplacementL, nearest.engineDisplacementL),
+      cylinders: coalescePositiveNumber(curatedVehicle.cylinders, nearest.cylinders),
+      fuelType: coalesceString(curatedVehicle.fuelType, nearest.fuelType),
+      doors: coalescePositiveNumber(curatedVehicle.doors, nearest.doors),
+    }),
+  );
 }
 
 function inferHorsepowerFromVehicle(vehicle: VehicleRecord): number | null {
@@ -1533,6 +1776,11 @@ function inferHorsepowerFromVehicle(vehicle: VehicleRecord): number | null {
       return 204;
     }
     return 190;
+  }
+
+  if (make === "toyota" && model === "4runner" && engine.includes("4 0l") && engine.includes("v6")) {
+    if (vehicle.year >= 2010 && vehicle.year <= 2024) return 270;
+    if (vehicle.year >= 2005 && vehicle.year <= 2009) return 236;
   }
 
   if (engine.includes("1 5l turbo i4")) return 190;
@@ -1675,6 +1923,38 @@ function isBelievableListing(listing: ListingRecord) {
   );
 }
 
+function listingDedupeKey(listing: ListingRecord) {
+  const url = typeof listing.listingUrl === "string" ? listing.listingUrl.trim().toLowerCase() : "";
+  if (url.length > 0) {
+    return `url:${url}`;
+  }
+  const id = typeof listing.id === "string" ? listing.id.trim().toLowerCase() : "";
+  if (id.length > 0) {
+    return `id:${id}`;
+  }
+  return [
+    listing.year ?? "",
+    normalizeListingStrictText(listing.make),
+    normalizeListingStrictText(listing.model),
+    normalizeListingStrictText(listing.title),
+    listing.price ?? "",
+    listing.mileage ?? "",
+  ].join("|");
+}
+
+function appendUniqueListings(current: ListingRecord[], additions: ListingRecord[]) {
+  const seen = new Set(current.map(listingDedupeKey));
+  const next = [...current];
+  for (const listing of additions) {
+    const key = listingDedupeKey(listing);
+    if (!seen.has(key)) {
+      seen.add(key);
+      next.push(listing);
+    }
+  }
+  return next;
+}
+
 function normalizeListingStrictText(value: string | number | null | undefined) {
   return normalizeVehicleLookupText(typeof value === "number" ? String(value) : value).replace(/[^a-z0-9]+/g, "");
 }
@@ -1688,6 +1968,9 @@ function isStrictListingUrl(url: string | null | undefined) {
 }
 
 function hasOpenableListingUrl(listing: ListingRecord) {
+  if (typeof listing.listingUrl !== "string" || listing.listingUrl.trim().length === 0) {
+    return true;
+  }
   return isStrictListingUrl(listing.listingUrl);
 }
 
@@ -1712,6 +1995,7 @@ const GENERIC_MODEL_VARIANT_SUFFIXES = new Set([
   "gt",
   "gts",
   "italia",
+  "quattro",
   "roadster",
   "sedan",
   "spider",
@@ -1849,8 +2133,7 @@ function getListingsSourceLabel(strategy: ListingsLookupAttempt["strategy"] | nu
     strategy === "adjacent-year-next" ||
     strategy === "adjacent-year-previous-2" ||
     strategy === "adjacent-year-next-2" ||
-    strategy === "wider-radius-250" ||
-    strategy === "wider-radius-500"
+    strategy === "wider-radius-100"
   ) {
     return "Limited comps from a wider live MarketCheck search";
   }
@@ -1903,7 +2186,8 @@ function filterDisplayableListings(
       return false;
     }
 
-    if (!hasOpenableListingUrl(listing)) {
+    const rawListingUrl = typeof listing.listingUrl === "string" ? listing.listingUrl.trim() : "";
+    if (!hasOpenableListingUrl(listing) && rawListingUrl.length > 0) {
       if (!sampleRejectedInvalidUrl) {
         sampleRejectedInvalidUrl = {
           listingId: listing.id,
@@ -1924,6 +2208,16 @@ function filterDisplayableListings(
         "LISTING_REJECTED_INVALID_URL",
       );
       return false;
+    }
+    if (!hasOpenableListingUrl(listing)) {
+      logger.info(
+        {
+          label: "LISTING_URL_MISSING_ALLOWED",
+          listingId: listing.id,
+          vehicleId: listing.vehicleId,
+        },
+        "LISTING_URL_MISSING_ALLOWED",
+      );
     }
     afterUrlCount += 1;
 
@@ -2051,6 +2345,7 @@ function isCommonVehicleFamily(input: {
   const model = normalizeVehicleLookupText(input.model);
   const family = `${make} ${model}`.trim();
   return [
+    "cadillac ct4",
     "honda cr v",
     "toyota corolla",
     "toyota camry",
@@ -2371,7 +2666,7 @@ function shapeValuationRecord(input: {
         ? "Live market data could not be loaded."
         : valuation.status === "no_comps_found"
           ? "No live market comps found for this ZIP, mileage, and condition."
-          : "Load live market value. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance.");
+          : "Load live market value. Specialty pricing can vary widely by mileage, condition, options, service history, and provenance.");
     valuation.valuationSource = valuation.valuationSource ?? "unavailable";
     valuation.compCount = valuation.compCount ?? valuation.listingCount ?? null;
     valuation.rangeLow = valuation.rangeLow ?? null;
@@ -2480,11 +2775,18 @@ function shapeValuationRecord(input: {
         ? "Estimated from vehicle family data"
         : "Estimated from vehicle data";
 
-  valuation.confidenceLabel = confidenceLabel;
-  valuation.sourceLabel = sourceLabel;
+  const preserveModeledFallbackLabel = valuation.valuationSource === "modeled_fallback";
+  valuation.confidenceLabel = preserveModeledFallbackLabel ? valuation.confidenceLabel ?? confidenceLabel : confidenceLabel;
+  valuation.sourceLabel = preserveModeledFallbackLabel ? valuation.sourceLabel ?? sourceLabel : sourceLabel;
   valuation.confidence =
     valuation.confidence ??
-    (modelType === "provider_range" ? (exactTrimMatch ? "high" : "moderate") : modelType === "listing_derived" ? "limited" : "moderate");
+    (modelType === "provider_range"
+      ? exactTrimMatch
+        ? "high"
+        : "moderate"
+      : modelType === "listing_derived" || preserveModeledFallbackLabel
+        ? "limited"
+        : "moderate");
   logger.info(
     {
       label: "VALUE_CONFIDENCE_COMPUTED",
@@ -2722,8 +3024,9 @@ export class VehicleService {
     const descriptor = lookup.cacheDescriptor;
 
     if (vehicle) {
+      const enrichedVehicle = applyCuratedSpecialtySpecs(applyInferredHorsepower(vehicle));
       return {
-        data: vehicle,
+        data: enrichedVehicle,
         source: "cache",
         fetchedAt: currentIso,
         expiresAt: currentIso,
@@ -2742,9 +3045,10 @@ export class VehicleService {
         if (!canonicalVehicle) {
           // Conservative: only promoted rows with populated specs_json are authoritative.
         } else {
+          const enrichedCanonicalVehicle = applyCuratedSpecialtySpecs(applyInferredHorsepower(canonicalVehicle));
           await repositories.canonicalVehicles.incrementPopularity(promotedCanonical.canonicalKey);
           return {
-            data: canonicalVehicle,
+            data: enrichedCanonicalVehicle,
             source: "cache",
             fetchedAt: promotedCanonical.updatedAt,
             expiresAt: promotedCanonical.updatedAt,
@@ -2785,8 +3089,9 @@ export class VehicleService {
                 trim: descriptor?.trim ?? null,
                 resultCount: 1,
               });
+              const enrichedCachedVehicle = applyCuratedSpecialtySpecs(applyInferredHorsepower(cached.responseJson.data));
               return {
-                data: cached.responseJson.data,
+                data: enrichedCachedVehicle,
                 source: "cache",
                 fetchedAt: cached.fetchedAt,
                 expiresAt: cached.expiresAt,
@@ -2993,7 +3298,7 @@ export class VehicleService {
       }
 
       if (liveVehicle) {
-        const enrichedVehicle = applyInferredHorsepower(liveVehicle.vin ? await enrichVehicleWithNhtsa(liveVehicle) : liveVehicle);
+        const enrichedVehicle = applyCuratedSpecialtySpecs(applyInferredHorsepower(liveVehicle.vin ? await enrichVehicleWithNhtsa(liveVehicle) : liveVehicle));
         logCommonVehicleDetailTrace({
           phase: "specs",
           requestId: request.requestId,
@@ -3038,12 +3343,13 @@ export class VehicleService {
       }
 
       const partialSpecFallback = lookup.lookupVehicle ? await buildPartialSpecFallbackVehicle(lookup.lookupVehicle) : null;
-      if (partialSpecFallback && hasUsefulSpecBundle(partialSpecFallback)) {
+      const enrichedPartialSpecFallback = partialSpecFallback ? applyCuratedSpecialtySpecs(applyInferredHorsepower(partialSpecFallback)) : null;
+      if (enrichedPartialSpecFallback && hasUsefulSpecBundle(enrichedPartialSpecFallback)) {
         logCommonVehicleDetailTrace({
           phase: "specs",
           requestId: request.requestId,
           descriptorResolved: Boolean(lookup.effectiveDescriptor),
-          vehicle: partialSpecFallback,
+          vehicle: enrichedPartialSpecFallback,
           descriptor: lookup.effectiveDescriptor,
           specsCandidateCount: specAttempts.length,
           valueCandidateCount: 0,
@@ -3051,7 +3357,7 @@ export class VehicleService {
           thinReason: "partial-spec-fallback",
         });
         return {
-          data: partialSpecFallback,
+          data: enrichedPartialSpecFallback,
           source: "cache",
           fetchedAt: currentIso,
           expiresAt: currentIso,
@@ -3100,6 +3406,36 @@ export class VehicleService {
     forceLive?: boolean | null;
   }): Promise<CachedServiceResult<ValuationRecord>> {
     try {
+      logger.info(
+        {
+          label: "VALUE_PIPELINE_STARTED",
+          requestId: input.requestId,
+          vehicleId: input.vehicleId ?? null,
+          descriptor: input.descriptor ?? null,
+          zip: input.zip,
+          zipSource: input.zipSource ?? null,
+          mileage: input.mileage,
+          condition: input.condition,
+          allowLive: input.allowLive ?? null,
+          fetchReason: input.fetchReason ?? null,
+          sourceScreen: input.sourceScreen ?? null,
+          action: input.action ?? null,
+          forceLive: input.forceLive ?? null,
+        },
+        "VALUE_PIPELINE_STARTED",
+      );
+      logger.info(
+        {
+          label: "VALUE_PIPELINE_INPUT",
+          requestId: input.requestId,
+          vehicleId: input.vehicleId ?? null,
+          descriptor: input.descriptor ?? null,
+          zip: input.zip,
+          mileage: input.mileage,
+          condition: input.condition,
+        },
+        "VALUE_PIPELINE_INPUT",
+      );
       const currentIso = nowIso();
       const lookup = await resolveLookupContext(input);
       const vehicle = lookup.vehicle;
@@ -3119,6 +3455,7 @@ export class VehicleService {
           bodyStyle: vehicle?.bodyStyle ?? input.descriptor?.bodyStyle ?? null,
           zip: input.zip,
           zipSource: input.zipSource ?? null,
+          radiusMiles: env.MARKETCHECK_VALUE_RADIUS_MILES,
           mileage: input.mileage,
           condition: input.condition,
         },
@@ -3173,6 +3510,38 @@ export class VehicleService {
         action: input.action,
         forceLive: input.forceLive,
       });
+      logger.info(
+        {
+          label: "VALUE_REFRESH_STARTED",
+          requestId: input.requestId,
+          vehicleId: lookupVehicleId,
+          explicitRefresh: isExplicitValueRefresh,
+          allowLive,
+          fetchReason,
+          sourceScreen: input.sourceScreen ?? null,
+          action: input.action ?? null,
+          forceLive: input.forceLive ?? null,
+        },
+        "VALUE_REFRESH_STARTED",
+      );
+      if (isExplicitValueRefresh) {
+        logger.info(
+          {
+            label: "VALUE_FALLBACK_CHAIN_STARTED",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            make: lookupBaseVehicle?.make ?? descriptor?.make ?? null,
+            model: lookupBaseVehicle?.model ?? descriptor?.model ?? null,
+            trim: lookupBaseVehicle?.trim ?? descriptor?.trim ?? null,
+            year: lookupBaseVehicle?.year ?? descriptor?.year ?? null,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition,
+            specialtySuppressed: isSpecialtyLookupVehicle,
+          },
+          "VALUE_FALLBACK_CHAIN_STARTED",
+        );
+      }
       const shouldBypassNegativeValueCache =
         isExplicitValueRefresh || fetchReason === "cached_listings_value_sync";
       if (isSpecialtyLookupVehicle && isExplicitValueRefresh) {
@@ -3215,7 +3584,7 @@ export class VehicleService {
             condition: normalizeCondition(input.condition),
             sourceLabel: "Live market data could not be loaded",
             confidenceLabel:
-              "Live market data could not be loaded. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance.",
+              "Live market data could not be loaded. Specialty pricing can vary widely by mileage, condition, options, service history, and provenance.",
           });
           logger.info(
             {
@@ -3676,18 +4045,73 @@ export class VehicleService {
       let liveValueStrategy: ValueLookupAttempt["strategy"] | null = null;
       let valueWasSimulated = false;
       let providerFailureReason: string | null = null;
+      const normalValueScreenRefresh = isNormalValueScreenRefresh({
+        allowLive,
+        fetchReason,
+        sourceScreen: input.sourceScreen,
+        action: input.action,
+      });
+      const effectiveForceLive = isDeveloperForceLiveValueRefresh({
+        fetchReason,
+        sourceScreen: input.sourceScreen,
+        action: input.action,
+        forceLive: input.forceLive,
+      });
       const providerValueAttempts =
         providers.valueProviderName === "marketcheck"
-          ? isSpecialtyLookupVehicle && isExplicitValueRefresh
-            ? valueAttempts
-            : valueAttempts.slice(0, 1)
+          ? selectMarketCheckValueProviderAttempts({
+              attempts: isExplicitValueRefresh ? valueAttempts : valueAttempts.slice(0, 1),
+              normalValueScreenRefresh,
+            })
           : valueAttempts;
+      const blockedAdjacentValueAttempts =
+        providers.valueProviderName === "marketcheck" ? valueAttempts.filter((attempt) => isAdjacentYearValueStrategy(attempt.strategy)) : [];
+      if (providers.valueProviderName === "marketcheck" && blockedAdjacentValueAttempts.length > 0) {
+        logger.info(
+          {
+            label: "VALUE_ADJACENT_YEAR_LIVE_BLOCKED",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            blockedCount: blockedAdjacentValueAttempts.length,
+            blockedAttempts: blockedAdjacentValueAttempts.map((attempt) => ({
+              strategy: attempt.strategy,
+              year: attempt.vehicle.year,
+              make: attempt.vehicle.make,
+              model: attempt.vehicle.model,
+              trim: attempt.vehicle.trim || null,
+            })),
+          },
+          "VALUE_ADJACENT_YEAR_LIVE_BLOCKED",
+        );
+      }
+      if (providers.valueProviderName === "marketcheck" && providerValueAttempts.length < valueAttempts.length) {
+        logger.info(
+          {
+            label: "VALUE_LIVE_ATTEMPT_CAPPED",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            originalAttemptCount: valueAttempts.length,
+            cappedAttemptCount: providerValueAttempts.length,
+            normalValueScreenRefresh,
+            requestedForceLive: input.forceLive ?? null,
+            effectiveForceLive,
+            selectedAttempts: providerValueAttempts.map((attempt) => ({
+              strategy: attempt.strategy,
+              year: attempt.vehicle.year,
+              make: attempt.vehicle.make,
+              model: attempt.vehicle.model,
+              trim: attempt.vehicle.trim || null,
+            })),
+          },
+          "VALUE_LIVE_ATTEMPT_CAPPED",
+        );
+      }
       const valueDecision = isValueLiveFetchAllowed({
         allowLive,
         fetchReason,
         sourceScreen: input.sourceScreen,
         action: input.action,
-        forceLive: input.forceLive,
+        forceLive: effectiveForceLive,
       })
         ? providerBudgetService.evaluate({
             provider: providers.valueProviderName,
@@ -3711,6 +4135,38 @@ export class VehicleService {
             shouldSimulateSuccess: false,
             shouldSimulateQuotaExhausted: false,
           };
+      logger.info(
+        {
+          label: "VALUE_REFRESH_DIRECT_ATTEMPT",
+          requestId: input.requestId,
+          vehicleId: lookupVehicleId,
+          allowLiveProvider: valueDecision.allowLiveProvider,
+          provider: providers.valueProviderName,
+          attemptCount: providerValueAttempts.length,
+          attempts: providerValueAttempts.map((attempt) => ({
+            strategy: attempt.strategy,
+            year: attempt.vehicle.year,
+            make: attempt.vehicle.make,
+            model: attempt.vehicle.model,
+            trim: attempt.vehicle.trim || null,
+          })),
+        },
+        "VALUE_REFRESH_DIRECT_ATTEMPT",
+      );
+      logger.info(
+        {
+          label: "VALUE_LIVE_ATTEMPT_COUNT",
+          requestId: input.requestId,
+          vehicleId: lookupVehicleId,
+          provider: providers.valueProviderName,
+          liveAttemptCount: providerValueAttempts.length,
+          candidateAttemptCount: valueAttempts.length,
+          normalValueScreenRefresh,
+          requestedForceLive: input.forceLive ?? null,
+          effectiveForceLive,
+        },
+        "VALUE_LIVE_ATTEMPT_COUNT",
+      );
       if (isExplicitValueRefresh && !valueDecision.allowLiveProvider && !valueDecision.shouldSimulateSuccess) {
         const blockedReason = env.MARKETCHECK_DISABLE_EXTERNAL_CALLS ? "external-calls-disabled" : valueDecision.reason;
         logger.warn(
@@ -3777,6 +4233,7 @@ export class VehicleService {
             zip: input.zip,
             mileage: input.mileage,
             condition: input.condition,
+            radiusMiles: env.MARKETCHECK_VALUE_RADIUS_MILES,
           });
           logger.info(
             {
@@ -3789,6 +4246,9 @@ export class VehicleService {
               make: attempt.vehicle.make,
               model: attempt.vehicle.model,
               trim: attempt.vehicle.trim,
+              zip: input.zip,
+              radiusMiles: env.MARKETCHECK_VALUE_RADIUS_MILES,
+              mileage: input.mileage,
               condition: input.condition,
             },
             "VALUE_LOOKUP_QUERY",
@@ -3804,7 +4264,7 @@ export class VehicleService {
                 requestMeta: {
                   requestId: input.requestId,
                   allowLive,
-                  forceLive: input.forceLive ?? null,
+                  forceLive: effectiveForceLive,
                   action: input.action ?? "valueRefresh",
                   vehicleId: lookupVehicleId,
                   cacheKey,
@@ -3814,6 +4274,10 @@ export class VehicleService {
                   make: attempt.vehicle.make,
                   model: attempt.vehicle.model,
                   trim: attempt.vehicle.trim ?? null,
+                  zip: input.zip,
+                  radiusMiles: env.MARKETCHECK_VALUE_RADIUS_MILES,
+                  mileage: input.mileage,
+                  condition: input.condition,
                   sourceScreen: input.sourceScreen ?? "valueScreen",
                   route: "/api/vehicle/value",
                   caller: "VehicleService.getValue",
@@ -3837,10 +4301,9 @@ export class VehicleService {
                   requestId: input.requestId,
                   reason: fetchReason,
                   allowLive,
-                  forceLive: input.forceLive ?? null,
+                  forceLive: effectiveForceLive,
                   action: input.action ?? "valueRefresh",
                   vehicleId: lookupVehicleId,
-                  cacheKey,
                   year: attempt.vehicle.year,
                   yearRangeStart: input.descriptor?.yearRange?.start ?? null,
                   yearRangeEnd: input.descriptor?.yearRange?.end ?? null,
@@ -3849,7 +4312,7 @@ export class VehicleService {
                   trim: attempt.vehicle.trim ?? null,
                   zip: input.zip,
                   zipSource: input.zipSource ?? null,
-                  radiusMiles: isSpecialtyLookupVehicle && isExplicitValueRefresh ? env.MARKETCHECK_VALUE_RADIUS_MILES : null,
+                  radiusMiles: env.MARKETCHECK_VALUE_RADIUS_MILES,
                   mileage: input.mileage,
                   condition: input.condition,
                   sourceScreen: input.sourceScreen ?? "valueScreen",
@@ -3966,6 +4429,7 @@ export class VehicleService {
             payload: normalizedLiveValue,
             zip: input.zip,
             mileage: input.mileage,
+            condition: input.condition,
           }),
         );
         if (familyCacheKey) {
@@ -3977,6 +4441,7 @@ export class VehicleService {
               payload: normalizedLiveValue,
               zip: input.zip,
               mileage: input.mileage,
+              condition: input.condition,
             }),
           );
         }
@@ -4083,6 +4548,19 @@ export class VehicleService {
           listingsCandidateCount: 0,
           valuation: normalizedLiveValue,
         });
+        logger.info(
+          {
+            label: "VALUE_REFRESH_FINAL_STATE",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            status: normalizedLiveValue.status ?? null,
+            valuationSource: normalizedLiveValue.valuationSource ?? normalizedLiveValue.modelType ?? "provider",
+            listingCount: normalizedLiveValue.listingCount ?? null,
+            confidence: normalizedLiveValue.confidence ?? null,
+            source: "direct_value",
+          },
+          "VALUE_REFRESH_FINAL_STATE",
+        );
         return {
           data: shapeValuationRecord({
             valuation: normalizedLiveValue,
@@ -4185,6 +4663,31 @@ export class VehicleService {
       }
 
       if (!fallbackValue && lookupBaseVehicle) {
+        if (isExplicitValueRefresh) {
+          logger.info(
+            {
+              label: "VALUE_FALLBACK_STEP",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              step: "local-listing-comps",
+              source: "cached_or_stored_listings",
+            },
+            "VALUE_FALLBACK_STEP",
+          );
+        }
+        logger.info(
+          {
+            label: "VALUE_COMP_SOURCE",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition,
+            source: "cached_or_stored_listings",
+            reason: normalizedLiveValue ? "provider_value_unusable" : "provider_value_unavailable",
+          },
+          "VALUE_COMP_SOURCE",
+        );
         const derivedFromListings = await deriveValuationFromSimilarVehicles({
           vehicle: lookupBaseVehicle,
           vehicleId: lookupVehicleId,
@@ -4194,6 +4697,31 @@ export class VehicleService {
         });
         if (derivedFromListings) {
           fallbackValue = derivedFromListings;
+          if (isExplicitValueRefresh) {
+            logger.info(
+              {
+                label: "VALUE_FALLBACK_RESULT",
+                requestId: input.requestId,
+                vehicleId: lookupVehicleId,
+                step: "local-listing-comps",
+                status: "resolved",
+                source: derivedFromListings.valuationSource ?? derivedFromListings.modelType ?? null,
+                listingCount: derivedFromListings.listingCount ?? null,
+              },
+              "VALUE_FALLBACK_RESULT",
+            );
+          }
+          logger.info(
+            {
+              label: "VALUE_REFRESH_LISTINGS_REUSED",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              source: "cached_or_stored_listings",
+              listingCount: derivedFromListings.listingCount ?? null,
+              confidence: derivedFromListings.confidence ?? null,
+            },
+            "VALUE_REFRESH_LISTINGS_REUSED",
+          );
           logger.error(
             {
               label: "VALUE_LOOKUP_SUCCESS",
@@ -4202,9 +4730,128 @@ export class VehicleService {
               vehicleId: lookupVehicleId,
               listingCount: derivedFromListings.listingCount ?? null,
               sourceLabel: derivedFromListings.sourceLabel,
+          },
+          "VALUE_LOOKUP_SUCCESS",
+        );
+        }
+      }
+
+      if (!fallbackValue && isExplicitValueRefresh && lookupBaseVehicle && !isSpecialtyLookupVehicle) {
+        logger.info(
+          {
+            label: "VALUE_REFRESH_COMP_FETCH_STARTED",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition,
+            radiusMiles: DEFAULT_UNLOCK_EVALUATION_RADIUS_MILES,
+            reason: "direct-value-unavailable",
+          },
+          "VALUE_REFRESH_COMP_FETCH_STARTED",
+        );
+        logger.info(
+          {
+            label: "VALUE_FALLBACK_STEP",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            step: "broadened-listing-comps",
+            source: "listings-provider-fallback-chain",
+          },
+          "VALUE_FALLBACK_STEP",
+        );
+        const listingsForValue = await this.getListings({
+          requestId: input.requestId,
+          vehicleId: input.vehicleId ?? lookupVehicleId,
+          descriptor: input.descriptor ?? null,
+          zip: input.zip,
+          radiusMiles: DEFAULT_UNLOCK_EVALUATION_RADIUS_MILES,
+          mileage: input.mileage,
+          allowLive: true,
+          fetchReason: "user_requested_listings_refresh",
+          sourceScreen: "valueScreen",
+          action: "listingsRefresh",
+        }).catch((error) => {
+          logger.warn(
+            {
+              label: "VALUE_REFRESH_COMP_FETCH_RESULT",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              status: "error",
+              message: error instanceof Error ? error.message : String(error),
             },
-            "VALUE_LOOKUP_SUCCESS",
+            "VALUE_REFRESH_COMP_FETCH_RESULT",
           );
+          return null;
+        });
+
+        logger.info(
+          {
+            label: "VALUE_REFRESH_COMP_FETCH_RESULT",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            status: listingsForValue ? "loaded" : "unavailable",
+            source: listingsForValue?.source ?? null,
+            listingCount: listingsForValue?.data.length ?? 0,
+            sourceLabel: listingsForValue?.meta?.sourceLabel ?? null,
+            fallbackReason: listingsForValue?.meta?.fallbackReason ?? null,
+          },
+          "VALUE_REFRESH_COMP_FETCH_RESULT",
+        );
+
+        if (listingsForValue?.data.length) {
+          logger.info(
+            {
+              label: "VALUE_REFRESH_LISTINGS_FETCHED",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              listingCount: listingsForValue.data.length,
+              source: listingsForValue.source,
+              fallbackReason: listingsForValue.meta?.fallbackReason ?? null,
+            },
+            "VALUE_REFRESH_LISTINGS_FETCHED",
+          );
+          const derivedFromFetchedListings = buildDerivedValuationFromListings({
+            vehicle: lookupBaseVehicle,
+            vehicleId: lookupVehicleId,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition,
+            listings: listingsForValue.data,
+          });
+          if (derivedFromFetchedListings) {
+            fallbackValue = derivedFromFetchedListings;
+            logger.info(
+              {
+                label: "VALUE_FALLBACK_RESULT",
+                requestId: input.requestId,
+                vehicleId: lookupVehicleId,
+                step: "broadened-listing-comps",
+                status: "resolved",
+                source: derivedFromFetchedListings.valuationSource ?? derivedFromFetchedListings.modelType ?? null,
+                listingCount: derivedFromFetchedListings.listingCount ?? null,
+                confidence: derivedFromFetchedListings.confidence ?? null,
+              },
+              "VALUE_FALLBACK_RESULT",
+            );
+            logger.info(
+              {
+                label: "VALUE_COMP_DERIVATION_RESULT",
+                requestId: input.requestId,
+                vehicleId: lookupVehicleId,
+                acceptedListingsCount: listingsForValue.data.length,
+                listingCount: derivedFromFetchedListings.listingCount ?? null,
+                sourceLabel: derivedFromFetchedListings.sourceLabel ?? null,
+                confidenceLabel: derivedFromFetchedListings.confidenceLabel ?? null,
+                confidence: derivedFromFetchedListings.confidence ?? null,
+                low: derivedFromFetchedListings.low ?? null,
+                median: derivedFromFetchedListings.median ?? null,
+                high: derivedFromFetchedListings.high ?? null,
+                source: "explicit-value-comp-fetch",
+              },
+              "VALUE_COMP_DERIVATION_RESULT",
+            );
+          }
         }
       }
 
@@ -4229,7 +4876,19 @@ export class VehicleService {
           : null;
       }
 
-      if (!fallbackValue && lookupBaseVehicle && !isSpecialtyLookupVehicle && !isExplicitValueRefresh) {
+      if (!fallbackValue && lookupBaseVehicle && !isSpecialtyLookupVehicle) {
+        if (isExplicitValueRefresh) {
+          logger.info(
+            {
+              label: "VALUE_FALLBACK_STEP",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              step: "generation-model-family-baseline",
+              source: "canonical_vehicle_model",
+            },
+            "VALUE_FALLBACK_STEP",
+          );
+        }
         fallbackValue = buildEstimatedMarketRangeFromVehicle({
           vehicle: lookupBaseVehicle,
           vehicleId: lookupVehicleId,
@@ -4238,6 +4897,35 @@ export class VehicleService {
           condition: input.condition,
         });
         if (fallbackValue) {
+          if (isExplicitValueRefresh) {
+            fallbackValue = {
+              ...fallbackValue,
+              sourceLabel:
+                fallbackValue.modelType === "estimated_family_model"
+                  ? "Regional model-family estimate"
+                  : "Limited vehicle-data estimate",
+              confidenceLabel:
+                "Low market confidence. Nearby listings were unavailable, so this uses vehicle and model-family data instead of live local comps.",
+              valuationSource: "modeled_fallback",
+              confidence: "limited",
+              sourceBasis: "modeled_condition_adjusted",
+              listingCount: 0,
+              compCount: 0,
+              reason: "modeled_baseline_after_no_local_comps",
+            };
+            logger.info(
+              {
+                label: "VALUE_FALLBACK_RESULT",
+                requestId: input.requestId,
+                vehicleId: lookupVehicleId,
+                step: "generation-model-family-baseline",
+                status: "resolved",
+                source: fallbackValue.valuationSource ?? fallbackValue.modelType ?? null,
+                confidence: fallbackValue.confidence ?? null,
+              },
+              "VALUE_FALLBACK_RESULT",
+            );
+          }
           logger.error(
             {
               label: "VALUE_LOOKUP_SUCCESS",
@@ -4246,6 +4934,18 @@ export class VehicleService {
               vehicleId: lookupVehicleId,
             },
             "VALUE_LOOKUP_SUCCESS",
+          );
+        } else if (isExplicitValueRefresh) {
+          logger.info(
+            {
+              label: "VALUE_FALLBACK_RESULT",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              step: "generation-model-family-baseline",
+              status: "skipped",
+              reason: "no_safe_baseline_data",
+            },
+            "VALUE_FALLBACK_RESULT",
           );
         }
       }
@@ -4279,9 +4979,9 @@ export class VehicleService {
           confidenceLabel:
             isExplicitValueRefresh
               ? explicitLiveFailureReason
-                ? "Live market data could not be loaded. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance."
-                : "No live market comps found for this ZIP, mileage, and condition. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance."
-              : "Load live market value. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance.",
+                ? "Live market data could not be loaded. Specialty pricing can vary widely by mileage, condition, options, service history, and provenance."
+                : "No live market comps found for this ZIP, mileage, and condition. Specialty pricing can vary widely by mileage, condition, options, service history, and provenance."
+              : "Load live market value. Specialty pricing can vary widely by mileage, condition, options, service history, and provenance.",
           message:
             isExplicitValueRefresh
               ? explicitLiveFailureReason
@@ -4310,7 +5010,31 @@ export class VehicleService {
         );
       }
 
-      if (!fallbackValue && isExplicitValueRefresh && lookupBaseVehicle && !isSpecialtyLookupVehicle) {
+      const finalUnavailableReason =
+        explicitLiveFailureReason ??
+        (!lookupBaseVehicle
+          ? "missing_required_vehicle_identity"
+          : !isSpecialtyLookupVehicle
+            ? "no_safe_baseline_data"
+            : "no_comps_found");
+      const finalUnavailableSourceLabel =
+        finalUnavailableReason === "no_safe_baseline_data"
+          ? "No safe baseline data available"
+          : finalUnavailableReason === "missing_required_vehicle_identity"
+            ? "Vehicle identity required"
+          : explicitLiveFailureReason
+            ? "Live market data could not be loaded"
+            : "No live market comps found";
+      const finalUnavailableMessage =
+        finalUnavailableReason === "no_safe_baseline_data"
+          ? "No safe baseline data is available for this vehicle after direct value, cached comps, listings, and modeled fallback checks."
+          : finalUnavailableReason === "missing_required_vehicle_identity"
+            ? "Year, make, and model are required before loading market value."
+          : explicitLiveFailureReason
+            ? "Live market data could not be loaded."
+            : "No live market comps found for this ZIP, mileage, and condition.";
+
+      if (!fallbackValue && isExplicitValueRefresh && !isSpecialtyLookupVehicle) {
         fallbackValue = {
           id: `market-value-unavailable:${lookupVehicleId}:${input.zip}:${input.mileage}`,
           vehicleId: lookupVehicleId,
@@ -4326,16 +5050,15 @@ export class VehicleService {
           median: null,
           currency: "USD",
           generatedAt: new Date().toISOString(),
-          sourceLabel: explicitLiveFailureReason ? "Live market data could not be loaded" : "No live market comps found",
-          confidenceLabel: explicitLiveFailureReason
-            ? "Live market data could not be loaded."
-            : "No live market comps found for this ZIP, mileage, and condition.",
-          message: explicitLiveFailureReason
-            ? "Live market data could not be loaded."
-            : "No live market comps found for this ZIP, mileage, and condition.",
-          reason: explicitLiveFailureReason ?? "no_comps_found",
+          sourceLabel: finalUnavailableSourceLabel,
+          confidenceLabel: finalUnavailableMessage,
+          message: finalUnavailableMessage,
+          reason: finalUnavailableReason,
           modelType: "modeled",
           listingCount: 0,
+          valuationSource: "unavailable",
+          confidence: "unavailable",
+          unavailableReason: finalUnavailableReason,
         };
         logger.info(
           {
@@ -4345,9 +5068,34 @@ export class VehicleService {
             zip: input.zip,
             mileage: input.mileage,
             condition: input.condition,
-            reason: explicitLiveFailureReason ?? "no_comps_found",
+            reason: finalUnavailableReason,
           },
           "VALUE_UNAVAILABLE_REASON",
+        );
+        logger.info(
+          {
+            label: "VALUE_UNAVAILABLE_FINAL_REASON",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition,
+            reason: finalUnavailableReason,
+          },
+          "VALUE_UNAVAILABLE_FINAL_REASON",
+        );
+        logger.info(
+          {
+            label: "VALUE_FALLBACK_FINAL_RESULT",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            status: fallbackValue.status ?? null,
+            valuationSource: fallbackValue.valuationSource ?? fallbackValue.modelType ?? "unavailable",
+            confidence: fallbackValue.confidence ?? null,
+            sourceLabel: fallbackValue.sourceLabel ?? null,
+            unavailableReason: fallbackValue.unavailableReason ?? fallbackValue.reason ?? null,
+          },
+          "VALUE_FALLBACK_FINAL_RESULT",
         );
       }
 
@@ -4376,6 +5124,7 @@ export class VehicleService {
               payload: normalizedFallbackValue,
               zip: input.zip,
               mileage: input.mileage,
+              condition: input.condition,
             }),
           );
         }
@@ -4448,6 +5197,54 @@ export class VehicleService {
           valuation: normalizedFallbackValue,
           thinReason: "fallback-value-resolved",
         });
+        logger.info(
+          {
+            label: "VALUE_REFRESH_FINAL_STATE",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            status: normalizedFallbackValue.status ?? null,
+            valuationSource: normalizedFallbackValue.valuationSource ?? normalizedFallbackValue.modelType ?? "fallback",
+            listingCount: normalizedFallbackValue.listingCount ?? null,
+            confidence: normalizedFallbackValue.confidence ?? null,
+            source: normalizedFallbackValue.valuationSource === "listing_comps" || normalizedFallbackValue.modelType === "listing_derived"
+              ? "listing_comps"
+              : "fallback_value",
+          },
+          "VALUE_REFRESH_FINAL_STATE",
+        );
+        logger.info(
+          {
+            label: "VALUE_FALLBACK_FINAL_RESULT",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            status: normalizedFallbackValue.status ?? null,
+            valuationSource: normalizedFallbackValue.valuationSource ?? normalizedFallbackValue.modelType ?? "fallback",
+            confidence: normalizedFallbackValue.confidence ?? null,
+            sourceLabel: normalizedFallbackValue.sourceLabel ?? null,
+            unavailableReason: normalizedFallbackValue.unavailableReason ?? normalizedFallbackValue.reason ?? null,
+          },
+          "VALUE_FALLBACK_FINAL_RESULT",
+        );
+        logger.info(
+          {
+            label: "VALUE_FALLBACK_CONFIDENCE",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            confidence: normalizedFallbackValue.confidence ?? null,
+            confidenceLabel: normalizedFallbackValue.confidenceLabel ?? null,
+          },
+          "VALUE_FALLBACK_CONFIDENCE",
+        );
+        logger.info(
+          {
+            label: "VALUE_FINAL_SOURCE",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            source: normalizedFallbackValue.valuationSource ?? normalizedFallbackValue.modelType ?? "fallback",
+            sourceLabel: normalizedFallbackValue.sourceLabel ?? null,
+          },
+          "VALUE_FINAL_SOURCE",
+        );
         return {
           data: shapeValuationRecord({
             valuation: normalizedFallbackValue,
@@ -4545,11 +5342,41 @@ export class VehicleService {
       });
       throw new AppError(404, "VALUATION_NOT_FOUND", "Valuation not found for the requested vehicle.");
     } catch (error) {
-      const lookup = await resolveLookupContext(input);
-      const vehicle = lookup.vehicle;
-      const descriptor = lookup.cacheDescriptor;
-      const lookupVehicleId = lookup.lookupVehicleId;
+      let lookup: Awaited<ReturnType<typeof resolveLookupContext>> | null = null;
+      let lookupResolutionError: unknown = null;
+      try {
+        lookup = await resolveLookupContext(input);
+      } catch (lookupError) {
+        lookupResolutionError = lookupError;
+      }
+      const vehicle = lookup?.vehicle ?? null;
+      const descriptor = lookup?.cacheDescriptor ?? null;
+      const lookupVehicleId = lookup?.lookupVehicleId ?? input.vehicleId ?? "descriptor:unresolved";
       const cacheKey = descriptor ? getValuesCacheKey(descriptor, { zip: input.zip, mileage: input.mileage }) : null;
+      logger.error(
+        {
+          label: "VALUE_PIPELINE_ERROR",
+          requestId: input.requestId,
+          vehicleId: lookupVehicleId,
+          descriptor: input.descriptor ?? null,
+          zip: input.zip,
+          mileage: input.mileage,
+          condition: input.condition,
+          lookupResolutionError: lookupResolutionError ? getErrorDetails(lookupResolutionError) : null,
+          ...getErrorDetails(error),
+        },
+        "VALUE_PIPELINE_ERROR",
+      );
+      logger.error(
+        {
+          label: "VALUE_PIPELINE_EXCEPTION_STACK",
+          requestId: input.requestId,
+          vehicleId: lookupVehicleId,
+          stack: error instanceof Error ? error.stack ?? null : null,
+          lookupResolutionStack: lookupResolutionError instanceof Error ? lookupResolutionError.stack ?? null : null,
+        },
+        "VALUE_PIPELINE_EXCEPTION_STACK",
+      );
       logger.error(
         {
           label: "VALUE_LOOKUP_FAILURE",
@@ -4589,6 +5416,7 @@ export class VehicleService {
     fetchReason?: string;
     sourceScreen?: string | null;
     action?: string | null;
+    forceLive?: boolean | null;
   }): Promise<CachedServiceResult<ListingRecord[], ListingsDebugMeta>> {
     try {
       const currentIso = nowIso();
@@ -4601,13 +5429,19 @@ export class VehicleService {
           label: "LISTINGS_LOAD_REQUESTED",
           requestId: input.requestId,
           vehicleId: lookupVehicleId,
+          year: vehicle?.year ?? descriptor?.year ?? null,
+          make: vehicle?.make ?? descriptor?.make ?? null,
+          model: vehicle?.model ?? descriptor?.model ?? null,
+          trim: vehicle?.trim ?? descriptor?.trim ?? null,
           zip: input.zip,
           radiusMiles: input.radiusMiles,
           mileage: input.mileage ?? null,
+          condition: null,
           allowLive: input.allowLive ?? false,
           fetchReason: input.fetchReason ?? null,
           sourceScreen: input.sourceScreen ?? null,
           action: input.action ?? null,
+          forceLive: input.forceLive ?? null,
         },
         "LISTINGS_LOAD_REQUESTED",
       );
@@ -5000,29 +5834,118 @@ export class VehicleService {
 
       let liveListings: ListingRecord[] = [];
       let liveListingsStrategy: ListingsLookupAttempt["strategy"] | null = null;
+      let liveListingsFinalStrategy: ListingsLookupAttempt["strategy"] | null = null;
+      let acceptedLiveListings: ListingRecord[] = [];
+      const acceptedLiveListingsStrategies: ListingsLookupAttempt["strategy"][] = [];
       const liveListingsAttempts: Array<{
         strategy: ListingsLookupAttempt["strategy"];
         returnedCount: number;
         believableCount: number;
       }> = [];
       let listingsWereSimulated = false;
+      let liveListingsProviderAttempted = false;
       const isExplicitListingsRefresh = isExplicitUserRequestedListingsRefresh({
         allowLive,
         fetchReason,
         sourceScreen: input.sourceScreen,
         action: input.action,
-        forceLive: null,
+        forceLive: input.forceLive,
+      });
+      const normalListingsRefresh = isNormalListingsRefresh({
+        allowLive,
+        fetchReason,
+        sourceScreen: input.sourceScreen,
+        action: input.action,
+        forceLive: input.forceLive,
+      });
+      const effectiveForceLiveListings = isDeveloperForceLiveListingsRefresh({
+        fetchReason,
+        sourceScreen: input.sourceScreen,
+        action: input.action,
+        forceLive: input.forceLive,
       });
       const providerListingsAttempts =
         providers.listingsProviderName === "marketcheck"
           ? isExplicitListingsRefresh
-            ? fallbackAttempts
+            ? selectMarketCheckListingsProviderAttempts({
+                attempts: fallbackAttempts,
+                normalListingsRefresh,
+                requestedTrim: lookupBaseVehicle?.trim ?? descriptor?.trim ?? null,
+                forceLive: effectiveForceLiveListings,
+              })
             : [
                 fallbackAttempts.find((attempt) => attempt.strategy === "same-year-any-trim") ??
                   fallbackAttempts.find((attempt) => attempt.strategy === "same-year-family-model") ??
-                  fallbackAttempts[0],
+                fallbackAttempts[0],
               ].filter((attempt): attempt is ListingsLookupAttempt => Boolean(attempt))
           : fallbackAttempts;
+      const originalListingsQuery = {
+        year: lookupBaseVehicle?.year ?? descriptor?.year ?? null,
+        make: lookupBaseVehicle?.make ?? descriptor?.make ?? null,
+        model: lookupBaseVehicle?.model ?? descriptor?.model ?? null,
+        trim: lookupBaseVehicle?.trim ?? descriptor?.trim ?? null,
+        zip: input.zip,
+        radiusMiles: input.radiusMiles,
+      };
+      const blockedLiveListingsAttempts =
+        providers.listingsProviderName === "marketcheck"
+          ? fallbackAttempts.filter((attempt) => !providerListingsAttempts.some((entry) => listingsAttemptKey(entry) === listingsAttemptKey(attempt)))
+          : [];
+      if (providers.listingsProviderName === "marketcheck" && normalListingsRefresh && isGenericListingsTrimValue(lookupBaseVehicle?.trim ?? descriptor?.trim ?? null)) {
+        const selectedAttempt = providerListingsAttempts[0] ?? null;
+        if (selectedAttempt && selectedAttempt.strategy !== "exact-year-make-model") {
+          logger.info(
+            {
+              label: "LISTINGS_GENERIC_TRIM_DROPPED",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              requestedTrim: lookupBaseVehicle?.trim ?? descriptor?.trim ?? null,
+              selectedStrategy: selectedAttempt.strategy,
+              year: selectedAttempt.vehicle.year,
+              make: selectedAttempt.vehicle.make,
+              model: selectedAttempt.vehicle.model,
+              trim: selectedAttempt.vehicle.trim || null,
+            },
+            "LISTINGS_GENERIC_TRIM_DROPPED",
+          );
+        }
+      }
+      if (providers.listingsProviderName === "marketcheck" && normalListingsRefresh && blockedLiveListingsAttempts.length > 0) {
+        logger.info(
+          {
+            label: "LISTINGS_LIVE_ATTEMPT_CAPPED",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            liveAttemptCount: providerListingsAttempts.length,
+            requestedAttemptCount: fallbackAttempts.length,
+            configuredMaxLiveListingAttempts: MAX_LIVE_LISTING_ATTEMPTS,
+            blockedStrategies: blockedLiveListingsAttempts.map((attempt) => attempt.strategy),
+            sourceScreen: input.sourceScreen ?? null,
+            action: input.action ?? null,
+            fetchReason,
+            requestedForceLive: input.forceLive ?? null,
+            effectiveForceLive: effectiveForceLiveListings,
+          },
+          "LISTINGS_LIVE_ATTEMPT_CAPPED",
+        );
+        const adjacentOrExpandedBlocked = blockedLiveListingsAttempts.filter((attempt) =>
+          isAdjacentOrExpandedListingsStrategy(attempt.strategy),
+        );
+        if (adjacentOrExpandedBlocked.length > 0) {
+          logger.info(
+            {
+              label: "LISTINGS_ADJACENT_YEAR_LIVE_BLOCKED",
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              blockedStrategies: adjacentOrExpandedBlocked.map((attempt) => attempt.strategy),
+              sourceScreen: input.sourceScreen ?? null,
+              action: input.action ?? null,
+              fetchReason,
+            },
+            "LISTINGS_ADJACENT_YEAR_LIVE_BLOCKED",
+          );
+        }
+      }
       logMarketGateEvaluated({
         label: "LISTINGS_LIVE_FETCH_GATE_EVALUATED",
         requestId: input.requestId,
@@ -5031,7 +5954,7 @@ export class VehicleService {
         fetchReason,
         sourceScreen: input.sourceScreen ?? null,
         action: input.action ?? null,
-        forceLive: null,
+        forceLive: input.forceLive ?? null,
         cacheKey,
         familyCacheKey,
         explicitRefresh: isExplicitListingsRefresh,
@@ -5041,7 +5964,7 @@ export class VehicleService {
         fetchReason,
         sourceScreen: input.sourceScreen,
         action: input.action,
-        forceLive: null,
+        forceLive: input.forceLive,
       })
         ? providerBudgetService.evaluate({
             provider: providers.listingsProviderName,
@@ -5085,8 +6008,101 @@ export class VehicleService {
           vehicleId: lookupVehicleId,
           fetchReason,
         });
+        logger.info(
+          {
+            label: "LISTINGS_LIVE_ATTEMPT_COUNT",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            liveAttemptCount: providerListingsAttempts.length,
+            requestedAttemptCount: fallbackAttempts.length,
+            configuredMaxLiveListingAttempts: MAX_LIVE_LISTING_ATTEMPTS,
+            normalListingsRefresh,
+            sourceScreen: input.sourceScreen ?? null,
+            action: input.action ?? null,
+            fetchReason,
+            requestedForceLive: input.forceLive ?? null,
+            effectiveForceLive: effectiveForceLiveListings,
+            originalQuery: originalListingsQuery,
+            selectedFallbackQueries: providerListingsAttempts.map((attempt) => ({
+              strategy: attempt.strategy,
+              year: attempt.vehicle.year,
+              make: attempt.vehicle.make,
+              model: attempt.vehicle.model,
+              trim: attempt.vehicle.trim || null,
+              radiusMiles: attempt.radiusMiles,
+            })),
+          },
+          "LISTINGS_LIVE_ATTEMPT_COUNT",
+        );
         listingsWereSimulated = listingsDecision.shouldSimulateSuccess;
-        for (const attempt of providerListingsAttempts) {
+        for (const [attemptIndex, attempt] of providerListingsAttempts.entries()) {
+          const attemptNumber = attemptIndex + 1;
+          const maxAttempts = providerListingsAttempts.length;
+          const attemptDescriptor = buildCacheDescriptor({ vehicle: attempt.vehicle });
+          const attemptCacheKey = attemptDescriptor
+            ? getListingsCacheKey(attemptDescriptor, { zip: input.zip, radiusMiles: attempt.radiusMiles })
+            : cacheKey;
+          if (normalListingsRefresh && attemptCacheKey && providers.listingsProviderName === "marketcheck") {
+            const cachedAttempt = await repositories.listingsCache.findByCacheKey(attemptCacheKey).catch(() => null);
+            const shouldBypassEmptyListingsCache = input.forceLive === true;
+            if (cachedAttempt && isFresh(cachedAttempt.expiresAt, currentIso) && cachedAttempt.responseJson.isEmpty && !shouldBypassEmptyListingsCache) {
+              await repositories.listingsCache.markAccessed(attemptCacheKey, currentIso).catch(() => undefined);
+              await writeUsageLog({
+                provider: cachedAttempt.provider,
+                endpointType: "listings",
+                eventType: "empty_hit",
+                cacheKey: attemptCacheKey,
+                requestSummary: {
+                  ...input,
+                  selectedLiveStrategy: attempt.strategy,
+                  selectedTrim: attempt.vehicle.trim || null,
+                  attemptNumber,
+                  maxAttempts,
+                },
+                responseSummary: { count: 0, expiresAt: cachedAttempt.expiresAt },
+              });
+              logger.info(
+                {
+                  label: "LISTINGS_ZERO_CACHE_RESPECTED",
+                  requestId: input.requestId,
+                  vehicleId: lookupVehicleId,
+                  cacheKey: attemptCacheKey,
+                  strategy: attempt.strategy,
+                  year: attempt.vehicle.year,
+                  make: attempt.vehicle.make,
+                  model: attempt.vehicle.model,
+                  trim: attempt.vehicle.trim || null,
+                  zip: input.zip,
+                  radiusMiles: attempt.radiusMiles,
+                  attemptNumber,
+                  maxAttempts,
+                  reason: "normal-listings-refresh-zero-result-cache",
+                },
+                "LISTINGS_ZERO_CACHE_RESPECTED",
+              );
+              liveListingsAttempts.push({
+                strategy: attempt.strategy,
+                returnedCount: 0,
+                believableCount: 0,
+              });
+              continue;
+            }
+            if (cachedAttempt && isFresh(cachedAttempt.expiresAt, currentIso) && cachedAttempt.responseJson.isEmpty && shouldBypassEmptyListingsCache) {
+              logger.info(
+                {
+                  label: "LISTINGS_ZERO_CACHE_BYPASSED",
+                  requestId: input.requestId,
+                  vehicleId: lookupVehicleId,
+                  cacheKey: attemptCacheKey,
+                  strategy: attempt.strategy,
+                  attemptNumber,
+                  maxAttempts,
+                  reason: "explicit-user-refresh",
+                },
+                "LISTINGS_ZERO_CACHE_BYPASSED",
+              );
+            }
+          }
           logger.info(
             {
               label: "LISTINGS_FALLBACK_ATTEMPT",
@@ -5099,6 +6115,18 @@ export class VehicleService {
               trim: attempt.vehicle.trim ?? null,
               zip: input.zip,
               radiusMiles: attempt.radiusMiles,
+              attemptNumber,
+              maxAttempts,
+              fallbackReason: fetchReason,
+              originalQuery: originalListingsQuery,
+              fallbackQuery: {
+                year: attempt.vehicle.year,
+                make: attempt.vehicle.make,
+                model: attempt.vehicle.model,
+                trim: attempt.vehicle.trim || null,
+                zip: input.zip,
+                radiusMiles: attempt.radiusMiles,
+              },
             },
             "LISTINGS_FALLBACK_ATTEMPT",
           );
@@ -5106,7 +6134,7 @@ export class VehicleService {
             requestId: input.requestId,
             endpointType: "listings",
             vehicleId: lookupVehicleId,
-            cacheKey,
+            cacheKey: attemptCacheKey,
             strategy: attempt.strategy,
             reason: fetchReason,
             year: attempt.vehicle.year,
@@ -5123,6 +6151,8 @@ export class VehicleService {
               vehicleId: lookupVehicleId,
               provider: providers.listingsProviderName,
               strategy: attempt.strategy,
+              attemptNumber,
+              maxAttempts,
               simulated: listingsWereSimulated,
               year: attempt.vehicle.year,
               make: attempt.vehicle.make,
@@ -5130,6 +6160,7 @@ export class VehicleService {
               trim: attempt.vehicle.trim ?? null,
               zip: input.zip,
               radiusMiles: attempt.radiusMiles,
+              fallbackReason: fetchReason,
             },
             "LISTINGS_PROVIDER_ATTEMPT",
           );
@@ -5146,6 +6177,9 @@ export class VehicleService {
               trim: attempt.vehicle.trim,
               zip: input.zip,
               radiusMiles: attempt.radiusMiles,
+              attemptNumber,
+              maxAttempts,
+              fallbackReason: fetchReason,
             },
             "LISTINGS_LOOKUP_QUERY",
           );
@@ -5162,11 +6196,15 @@ export class VehicleService {
                   allowLive,
                   action: input.action ?? "listingsRefresh",
                   vehicleId: lookupVehicleId,
-                  cacheKey,
+                  cacheKey: attemptCacheKey,
                   year: attempt.vehicle.year,
                   make: attempt.vehicle.make,
                   model: attempt.vehicle.model,
                   trim: attempt.vehicle.trim ?? null,
+                  attemptNumber,
+                  maxAttempts,
+                  fallbackStrategy: attempt.strategy,
+                  fallbackReason: fetchReason,
                   sourceScreen: input.sourceScreen ?? "listingsScreen",
                   caller: "VehicleService.getListings",
                   stackTag: "vehicle-listings",
@@ -5191,15 +6229,20 @@ export class VehicleService {
                   requestId: input.requestId,
                   reason: fetchReason,
                   allowLive,
+                  forceLive: input.forceLive ?? null,
                   action: input.action ?? "listingsRefresh",
                   vehicleId: lookupVehicleId,
-                  cacheKey,
+                  cacheKey: attemptCacheKey,
                   year: attempt.vehicle.year,
                   make: attempt.vehicle.make,
                   model: attempt.vehicle.model,
                   trim: attempt.vehicle.trim ?? null,
                   zip: input.zip,
                   radiusMiles: attempt.radiusMiles,
+                  attemptNumber,
+                  maxAttempts,
+                  fallbackStrategy: attempt.strategy,
+                  fallbackReason: fetchReason,
                   sourceScreen: input.sourceScreen ?? "listingsScreen",
                   caller: "VehicleService.getListings",
                   stackTag: "vehicle-listings",
@@ -5220,6 +6263,7 @@ export class VehicleService {
                 }
                 throw error;
               });
+          liveListingsProviderAttempted = true;
           logger.info(
             {
               label: "LISTINGS_PROVIDER_RESULT_COUNT",
@@ -5279,6 +6323,15 @@ export class VehicleService {
               attemptType: attempt.strategy,
               rawCount: liveListings.length,
               believableCount: believableListings.length,
+              originalQuery: originalListingsQuery,
+              fallbackQuery: {
+                year: attempt.vehicle.year,
+                make: attempt.vehicle.make,
+                model: attempt.vehicle.model,
+                trim: attempt.vehicle.trim || null,
+                zip: input.zip,
+                radiusMiles: attempt.radiusMiles,
+              },
             },
             "LISTINGS_ATTEMPT_RESULT",
           );
@@ -5319,7 +6372,11 @@ export class VehicleService {
             believableCount: believableListings.length,
           });
           if (believableListings.length > 0) {
-            liveListingsStrategy = attempt.strategy;
+            acceptedLiveListings = appendUniqueListings(acceptedLiveListings, believableListings);
+            if (!acceptedLiveListingsStrategies.includes(attempt.strategy)) {
+              acceptedLiveListingsStrategies.push(attempt.strategy);
+            }
+            liveListingsStrategy = liveListingsStrategy ?? attempt.strategy;
             logger.error(
               {
                 label: attempt.label,
@@ -5328,10 +6385,14 @@ export class VehicleService {
                 vehicleId: lookupVehicleId,
                 resultCount: liveListings.length,
                 believableCount: believableListings.length,
+                acceptedBelievableCount: acceptedLiveListings.length,
+                targetBelievableCount: MIN_BELIEVABLE_LIVE_LISTINGS,
               },
               attempt.label,
             );
-            break;
+            if (acceptedLiveListings.length >= MIN_BELIEVABLE_LIVE_LISTINGS) {
+              break;
+            }
           }
         }
       } else {
@@ -5342,6 +6403,21 @@ export class VehicleService {
           fetchReason,
           reason: listingsDecision.reason,
         });
+        logger.info(
+          {
+            label: "LISTINGS_PROVIDER_SKIPPED_REASON",
+            requestId: input.requestId,
+            vehicleId: lookupVehicleId,
+            provider: providers.listingsProviderName,
+            reason: listingsDecision.reason,
+            allowLive,
+            fetchReason,
+            sourceScreen: input.sourceScreen ?? null,
+            action: input.action ?? null,
+            marketcheckEnabled: isMarketCheckEnabled(),
+          },
+          "LISTINGS_PROVIDER_SKIPPED_REASON",
+        );
         if (listingsDecision.shouldSimulateQuotaExhausted) {
           logger.warn(
             {
@@ -5367,7 +6443,15 @@ export class VehicleService {
           "FALLBACK_USED",
         );
       }
-      if (listingsDecision.allowLiveProvider && descriptor && cacheKey && providers.listingsProviderName === "marketcheck") {
+      if (acceptedLiveListings.length > 0) {
+        liveListings = acceptedLiveListings.slice(0, MAX_DISPLAY_LIVE_LISTINGS);
+        liveListingsFinalStrategy =
+          acceptedLiveListingsStrategies.find((strategy) => isAdjacentOrExpandedListingsStrategy(strategy)) ??
+          liveListingsStrategy ??
+          acceptedLiveListingsStrategies[0] ??
+          null;
+      }
+      if (liveListingsProviderAttempted && listingsDecision.allowLiveProvider && descriptor && cacheKey && providers.listingsProviderName === "marketcheck") {
         await repositories.listingsCache.upsert(
           createListingsCacheRow({
             descriptor,
@@ -5393,15 +6477,18 @@ export class VehicleService {
         await fireAndForgetCleanup("listings");
       }
 
-      const displayableLiveListings = filterDisplayableListings(liveListings, lookupBaseVehicle ?? null, input.descriptor?.yearRange ?? null, {
-        requestId: input.requestId,
-        vehicleId: lookupVehicleId,
-        zip: input.zip,
-        radiusMiles: input.radiusMiles,
-        make: descriptor?.make ?? vehicle?.make ?? null,
-        model: descriptor?.model ?? vehicle?.model ?? null,
-        condition: null,
-      });
+      const displayableLiveListings =
+        acceptedLiveListings.length > 0
+          ? acceptedLiveListings.slice(0, MAX_DISPLAY_LIVE_LISTINGS)
+          : filterDisplayableListings(liveListings, lookupBaseVehicle ?? null, input.descriptor?.yearRange ?? null, {
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              zip: input.zip,
+              radiusMiles: input.radiusMiles,
+              make: descriptor?.make ?? vehicle?.make ?? null,
+              model: descriptor?.model ?? vehicle?.model ?? null,
+              condition: null,
+            });
       if (
         listingsDecision.allowLiveProvider &&
         descriptor &&
@@ -5435,6 +6522,7 @@ export class VehicleService {
               payload: derivedConditionSet,
               zip: input.zip,
               mileage: input.mileage,
+              condition: "good",
             }),
           );
           if (familyCacheKey) {
@@ -5447,6 +6535,7 @@ export class VehicleService {
                 payload: derivedConditionSet,
                 zip: input.zip,
                 mileage: input.mileage,
+                condition: "good",
               }),
             );
           }
@@ -5472,11 +6561,15 @@ export class VehicleService {
             familyCacheUsed: false,
             similarVehicleFallbackUsed: false,
             adjacentYearRescueUsed:
-              liveListingsStrategy === "adjacent-year-previous" ||
-              liveListingsStrategy === "adjacent-year-next" ||
-              liveListingsStrategy === "adjacent-year-previous-2" ||
-              liveListingsStrategy === "adjacent-year-next-2",
-            fallbackReason: liveListingsStrategy ?? "provider-match",
+              liveListingsFinalStrategy === "adjacent-year-previous" ||
+              liveListingsFinalStrategy === "adjacent-year-next" ||
+              liveListingsFinalStrategy === "adjacent-year-previous-2" ||
+              liveListingsFinalStrategy === "adjacent-year-next-2",
+            fallbackReason: liveListingsFinalStrategy ?? "provider-match",
+            acceptedStrategies: acceptedLiveListingsStrategies,
+            finalListingsCount: displayableLiveListings.length,
+            attempts: liveListingsAttempts,
+            originalQuery: originalListingsQuery,
           },
           "LISTINGS_FINAL_RESOLUTION",
         );
@@ -5491,8 +6584,9 @@ export class VehicleService {
             trim: vehicle?.trim ?? descriptor?.trim ?? null,
             count: displayableLiveListings.length,
             believableCount: displayableLiveListings.length,
-            finalSourceLabel: getListingsSourceLabel(liveListingsStrategy),
-            fallbackReason: liveListingsStrategy ?? "provider-match",
+            finalSourceLabel: getListingsSourceLabel(liveListingsFinalStrategy),
+            fallbackReason: liveListingsFinalStrategy ?? "provider-match",
+            acceptedStrategies: acceptedLiveListingsStrategies,
           },
           "FORSALE_FINAL_PAYLOAD",
         );
@@ -5507,8 +6601,9 @@ export class VehicleService {
             trim: vehicle?.trim ?? descriptor?.trim ?? null,
             count: displayableLiveListings.length,
             believableCount: displayableLiveListings.length,
-            finalSourceLabel: getListingsSourceLabel(liveListingsStrategy),
-            fallbackReason: liveListingsStrategy ?? "provider-match",
+            finalSourceLabel: getListingsSourceLabel(liveListingsFinalStrategy),
+            fallbackReason: liveListingsFinalStrategy ?? "provider-match",
+            acceptedStrategies: acceptedLiveListingsStrategies,
           },
           "LISTINGS_FINAL_PAYLOAD",
         );
@@ -5538,15 +6633,16 @@ export class VehicleService {
                 rawCount: attempt.returnedCount,
                 believableCount: attempt.believableCount,
               })),
-              finalDisplayedListingsSource: getListingsSourceLabel(liveListingsStrategy),
-              fallbackReasonShown: liveListingsStrategy ?? "provider-match",
+              finalDisplayedListingsSource: getListingsSourceLabel(liveListingsFinalStrategy),
+              fallbackReasonShown: liveListingsFinalStrategy ?? "provider-match",
+              acceptedStrategies: acceptedLiveListingsStrategies,
             },
             "COMMON_LISTINGS_TRACE",
           );
         }
         logCrvListingsRuntimeTrace({
-          finalReason: liveListingsStrategy ?? "provider-match",
-          finalSourceLabel: getListingsSourceLabel(liveListingsStrategy),
+          finalReason: liveListingsFinalStrategy ?? "provider-match",
+          finalSourceLabel: getListingsSourceLabel(liveListingsFinalStrategy),
           providerReturnedZeroAtAllAttempts: liveListingsAttempts.length > 0 && liveListingsAttempts.every((attempt) => attempt.returnedCount === 0),
           rawListingsEverReturned: liveListingsAttempts.some((attempt) => attempt.returnedCount > 0),
           believableListingsEverReturned: liveListingsAttempts.some((attempt) => attempt.believableCount > 0),
@@ -5557,11 +6653,11 @@ export class VehicleService {
           fetchedAt: cacheRow?.fetchedAt ?? currentIso,
           expiresAt: cacheRow?.expiresAt ?? currentIso,
           meta: {
-            sourceLabel: getListingsSourceLabel(liveListingsStrategy),
+            sourceLabel: getListingsSourceLabel(liveListingsFinalStrategy),
             rawCount: displayableLiveListings.length,
             believableCount: displayableLiveListings.length,
-            mode: resolveListingsDebugMode(liveListingsStrategy),
-            fallbackReason: liveListingsStrategy ?? "provider-match",
+            mode: resolveListingsDebugMode(liveListingsFinalStrategy),
+            fallbackReason: liveListingsFinalStrategy ?? "provider-match",
           },
         };
       }
@@ -5575,6 +6671,9 @@ export class VehicleService {
           model: vehicle?.model ?? null,
           trim: vehicle?.trim ?? null,
           attemptedStrategies: fallbackAttempts.map((attempt) => attempt.strategy),
+          selectedAttemptStrategies: providerListingsAttempts.map((attempt) => attempt.strategy),
+          finalListingsCount: 0,
+          originalQuery: originalListingsQuery,
         },
         "LISTINGS_FAILED",
       );
@@ -5594,6 +6693,8 @@ export class VehicleService {
                   : "no-believable-listings-found",
           rawAttemptCount: liveListingsAttempts.length,
           attempts: liveListingsAttempts,
+          originalQuery: originalListingsQuery,
+          finalSelectedListingsCount: 0,
         },
         "LISTINGS_EMPTY_REASON",
       );

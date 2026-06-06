@@ -34,7 +34,7 @@ export function buildSpecialtyVehicleOverview(input: {
 }) {
   const bodyStyle = String(input.bodyStyle ?? "").trim().toLowerCase();
   if (bodyStyle.includes("coupe") || bodyStyle.includes("convertible") || bodyStyle.includes("spider")) {
-    return "Exotic sports car with collector-market pricing. Market value can vary widely by mileage, condition, options, service history, and provenance.";
+    return "Exotic sports car with specialty pricing. Market value can vary widely by mileage, condition, options, service history, and provenance.";
   }
   return "High-performance specialty vehicle. Market value can vary widely by mileage, condition, options, service history, and provenance.";
 }

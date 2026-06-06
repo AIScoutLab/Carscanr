@@ -16,9 +16,10 @@ test("vehicle description generates concise grounded copy from confirmed data", 
   });
 
   assert.equal(result.reason, "generated");
-  assert.match(result.description ?? "", /2021 Audi A4 Premium is a sedan/i);
+  assert.match(result.description ?? "", /The 2021 Audi A4 Premium is a sedan/i);
   assert.match(result.description ?? "", /2\.0L turbo I4/i);
   assert.match(result.description ?? "", /201 hp/i);
+  assert.doesNotMatch(result.description ?? "", /in this record/i);
 });
 
 test("vehicle description safely skips when data is too thin", () => {

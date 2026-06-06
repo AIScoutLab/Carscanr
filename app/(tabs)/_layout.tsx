@@ -1,7 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import { StyleSheet, View } from "react-native";
-import { Colors } from "@/constants/theme";
+
+const tabColors = {
+  background: "#070707",
+  active: "#D8A05F",
+  inactive: "#7B808A",
+  border: "rgba(255,255,255,0.08)",
+};
 
 function TabIcon({
   name,
@@ -27,15 +33,30 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarActiveTintColor: Colors.accent,
-        tabBarInactiveTintColor: Colors.textMuted,
+        tabBarActiveTintColor: tabColors.active,
+        tabBarInactiveTintColor: tabColors.inactive,
         tabBarStyle: {
-          backgroundColor: Colors.card,
-          height: 84,
-          paddingTop: 6,
-          borderTopColor: Colors.borderSoft,
+          backgroundColor: tabColors.background,
+          height: 88,
+          paddingTop: 8,
+          paddingBottom: 10,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: tabColors.border,
+          elevation: 0,
+          shadowOpacity: 0,
         },
-        tabBarLabelStyle: { fontSize: 12, fontWeight: "600" },
+        tabBarItemStyle: {
+          paddingTop: 4,
+        },
+        tabBarIconStyle: {
+          marginBottom: 5,
+        },
+        tabBarLabelStyle: {
+          fontSize: 12,
+          lineHeight: 16,
+          fontWeight: "700",
+          marginTop: 2,
+        },
         tabBarIcon: ({ color, size, focused }) => {
           const iconMap: Record<string, keyof typeof Ionicons.glyphMap> = {
             scan: "scan-outline",
@@ -56,11 +77,17 @@ export default function TabsLayout() {
 }
 
 const styles = StyleSheet.create({
-  iconWrap: { alignItems: "center", justifyContent: "center", gap: 6 },
+  iconWrap: {
+    minWidth: 42,
+    minHeight: 31,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+  },
   indicator: {
-    width: 18,
-    height: 3,
+    width: 14,
+    height: 2,
     borderRadius: 999,
-    backgroundColor: Colors.accent,
+    backgroundColor: tabColors.active,
   },
 });

@@ -1,71 +1,52 @@
 import { router } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, NativeScrollEvent, NativeSyntheticEvent, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { Animated, Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
-import { Ionicons } from "@expo/vector-icons";
 import { BrandMark } from "@/components/BrandMark";
+import { RuntimeDebugStamp } from "@/components/RuntimeDebugStamp";
 import { BRAND_MARK_LAYOUT } from "@/constants/branding";
 import { APP_BRAND, ONBOARDING_STEPS, OnboardingVisualKind } from "@/lib/onboardingFlow";
 import { getOnboardingLayoutMetrics } from "@/lib/onboardingLayout";
 import { Radius, Typography } from "@/constants/theme";
 import { startupPreferences } from "@/services/startupPreferences";
+import { sampleScanPhotos } from "@/features/scan/samplePhotos";
+import { mobileBuildInfo } from "@/lib/env";
 
 function CameraVisual() {
-  const pulse = useRef(new Animated.Value(0.85)).current;
-  const sweep = useRef(new Animated.Value(0)).current;
-  const haloOpacity = useRef(new Animated.Value(0.16)).current;
-
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1.08, duration: 1200, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0.85, duration: 1200, useNativeDriver: true }),
-      ]),
-    );
-    const sweepLoop = Animated.loop(
-      Animated.sequence([
-        Animated.parallel([
-          Animated.timing(sweep, { toValue: 1, duration: 2600, useNativeDriver: true }),
-          Animated.sequence([
-            Animated.timing(haloOpacity, { toValue: 0.22, duration: 1300, useNativeDriver: true }),
-            Animated.timing(haloOpacity, { toValue: 0.16, duration: 1300, useNativeDriver: true }),
-          ]),
-        ]),
-        Animated.timing(sweep, { toValue: 0, duration: 0, useNativeDriver: true }),
-      ]),
-    );
-    loop.start();
-    sweepLoop.start();
-    return () => {
-      loop.stop();
-      sweepLoop.stop();
-    };
-  }, [haloOpacity, pulse, sweep]);
-
-  const sweepTranslateY = sweep.interpolate({
-    inputRange: [0, 1],
-    outputRange: [-78, 78],
-  });
+  const sample = sampleScanPhotos[1] ?? sampleScanPhotos[0];
 
   return (
-    <View style={styles.visualShell}>
-      <Animated.View style={[styles.scanHalo, { opacity: haloOpacity }]} />
-      <View style={styles.scanFrame}>
+    <View style={styles.visualShellPhoto}>
+      <Image source={{ uri: sample.previewUrl }} style={styles.visualPhoto} resizeMode="cover" />
+      <LinearGradient colors={["rgba(0,0,0,0.05)", "rgba(0,0,0,0.18)", "rgba(0,0,0,0.92)"]} locations={[0, 0.5, 1]} style={StyleSheet.absoluteFill} />
+      <View style={styles.scanTargetBox}>
+        <View style={styles.scanTargetLine} />
+        <View style={styles.scanTargetDot} />
         <View style={styles.scanCornerTL} />
         <View style={styles.scanCornerTR} />
         <View style={styles.scanCornerBL} />
         <View style={styles.scanCornerBR} />
-        <Animated.View style={[styles.scanSweep, { transform: [{ translateY: sweepTranslateY }] }]} />
-        <Animated.View style={[styles.scanPulse, { transform: [{ scale: pulse }] }]} />
+      </View>
+      <View style={styles.visualBadgeRow}>
+        <View style={styles.aiBadge}>
+          <View style={styles.aiBadgeDot} />
+          <Text style={styles.aiBadgeText}>AI Identifying</Text>
+        </View>
+        <View style={styles.matchBadge}>
+          <Text style={styles.matchBadgeText}>98% match</Text>
+        </View>
       </View>
     </View>
   );
 }
 
 function InsightsVisual() {
+  const sample = sampleScanPhotos[1] ?? sampleScanPhotos[0];
   return (
-    <View style={styles.visualShell}>
+    <View style={styles.visualShellPhoto}>
+      <Image source={{ uri: sample.previewUrl }} style={styles.visualPhoto} resizeMode="cover" />
+      <LinearGradient colors={["rgba(0,0,0,0.62)", "rgba(0,0,0,0.74)"]} style={StyleSheet.absoluteFill} />
       <View style={styles.insightPanel}>
         <Text style={styles.panelEyebrow}>Instant report</Text>
         <Text style={styles.panelTitle}>Vehicle identified</Text>
@@ -86,44 +67,47 @@ function InsightsVisual() {
           </View>
         </View>
       </View>
+      <View style={styles.identityStrip}>
+        <View style={styles.identityCell}>
+          <Text style={styles.identityLabel}>Make</Text>
+          <Text style={styles.identityValue}>BMW</Text>
+        </View>
+        <View style={styles.identityCell}>
+          <Text style={styles.identityLabel}>Model</Text>
+          <Text style={styles.identityValue}>M3</Text>
+        </View>
+        <View style={styles.identityCell}>
+          <Text style={styles.identityLabel}>Year</Text>
+          <Text style={styles.identityValue}>2023</Text>
+        </View>
+        <View style={styles.identityCell}>
+          <Text style={styles.identityLabel}>Trim</Text>
+          <Text style={styles.identityValue}>Competition</Text>
+        </View>
+      </View>
     </View>
   );
 }
 
 function GarageVisual() {
+  const primary = sampleScanPhotos[0];
+  const secondary = sampleScanPhotos[1];
   return (
-    <View style={styles.visualShell}>
-      <View style={styles.garagePanel}>
-        <View style={styles.garageAtmosphereTop} />
-        <View style={styles.garageAtmosphereBottom} />
-        <View style={styles.garageGlow} />
-        <View style={styles.garageStack}>
-          <View style={[styles.garageSupportCard, styles.garageSupportBack]}>
-            <Text style={[styles.timelineYear, styles.timelineYearGhost]}>2021</Text>
-            <Text style={[styles.timelineModel, styles.timelineModelGhost]}>Ford Explorer</Text>
-            <Text style={styles.garageSupportMeta}>SUV • Saved</Text>
-          </View>
-          <View style={[styles.garageSupportCard, styles.garageSupportLeft]}>
-            <Text style={[styles.timelineYear, styles.timelineYearGhost]}>2023</Text>
-            <Text style={[styles.timelineModel, styles.timelineModelGhost]}>Toyota Highlander</Text>
-            <Text style={styles.garageSupportMeta}>SUV • Nearby</Text>
-          </View>
-          <View style={[styles.garageSupportCard, styles.garageSupportRight]}>
-            <Text style={[styles.timelineYear, styles.timelineYearGhost]}>2018</Text>
-            <Text style={[styles.timelineModel, styles.timelineModelGhost]}>Honda Accord</Text>
-            <Text style={styles.garageSupportMeta}>Sedan • Value</Text>
-          </View>
-          <View style={styles.garagePrimaryCard}>
-            <View style={styles.garagePrimaryTopRow}>
-              <Text style={styles.timelineYear}>2015</Text>
-              <View style={styles.garageSavedChip}>
-                <Ionicons name="bookmark" size={11} color="#7CE8FF" />
-                <Text style={styles.garageSavedChipText}>Saved scan</Text>
-              </View>
-            </View>
-            <Text style={styles.timelineModel}>Honda CR-V</Text>
-            <Text style={styles.garagePrimaryStat}>SUV • 185 hp</Text>
-          </View>
+    <View style={styles.garageShowcase}>
+      <View style={[styles.garageImageCard, styles.garageImageCardBack]}>
+        <Image source={{ uri: secondary.previewUrl }} style={styles.visualPhoto} resizeMode="cover" />
+        <LinearGradient colors={["rgba(0,0,0,0.18)", "rgba(0,0,0,0.84)"]} style={StyleSheet.absoluteFill} />
+        <Text style={styles.garageGhostTitle}>2021 BMW M5 Competition</Text>
+      </View>
+      <View style={styles.garageImageCard}>
+        <Image source={{ uri: primary.previewUrl }} style={styles.visualPhoto} resizeMode="cover" />
+        <LinearGradient colors={["rgba(0,0,0,0.05)", "rgba(0,0,0,0.2)", "rgba(0,0,0,0.9)"]} locations={[0, 0.52, 1]} style={StyleSheet.absoluteFill} />
+        <View style={styles.garageCardCopy}>
+          <Text style={styles.timelineYear}>2022</Text>
+          <Text style={styles.timelineModel}>Tesla Model 3</Text>
+        </View>
+        <View style={styles.garageSavedChip}>
+          <Text style={styles.garageSavedChipText}>Saved</Text>
         </View>
       </View>
     </View>
@@ -207,13 +191,16 @@ export default function OnboardingScreen() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const metrics = useMemo(() => getOnboardingLayoutMetrics(width), [width]);
-  const scrollRef = useRef<ScrollView | null>(null);
   const scrollX = useRef(new Animated.Value(0)).current;
   const [activeIndex, setActiveIndex] = useState(0);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    console.log("[onboarding] ONBOARDING_STARTED", { stepCount: ONBOARDING_STEPS.length });
+    console.log("[onboarding] ONBOARDING_RENDERED_BLACK_GOLD_V4_DETERMINISTIC", {
+      stepCount: ONBOARDING_STEPS.length,
+      gitCommit: mobileBuildInfo.gitCommit || "unknown",
+      runtimeVersion: mobileBuildInfo.version || "unknown",
+    });
   }, []);
 
   const finishOnboarding = async (event: "completed" | "skipped", target: string) => {
@@ -225,6 +212,7 @@ export default function OnboardingScreen() {
       console.log(`[onboarding] ${event === "completed" ? "ONBOARDING_COMPLETED" : "ONBOARDING_SKIPPED"}`, {
         activeIndex,
         target,
+        gitCommit: mobileBuildInfo.gitCommit || "unknown",
       });
       await startupPreferences.markOnboardingComplete();
       router.replace(target as never);
@@ -236,20 +224,22 @@ export default function OnboardingScreen() {
   };
 
   const goToSlide = (index: number) => {
-    scrollRef.current?.scrollTo({ x: index * metrics.slideWidth, animated: true });
-    setActiveIndex(index);
-  };
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ x: activeIndex * metrics.slideWidth, animated: false });
-  }, [activeIndex, metrics.slideWidth]);
-
-  const handleScrollEnd = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const nextIndex = Math.round(event.nativeEvent.contentOffset.x / metrics.slideWidth);
+    const nextIndex = Math.max(0, Math.min(index, ONBOARDING_STEPS.length - 1));
+    console.log("[onboarding] GO_TO_SLIDE", {
+      from: activeIndex,
+      to: nextIndex,
+      slideWidth: metrics.slideWidth,
+    });
     setActiveIndex(nextIndex);
+    scrollX.setValue(nextIndex * metrics.slideWidth);
   };
 
   const nextAction = () => {
+    console.log("[onboarding] CONTINUE_PRESSED", {
+      activeIndex,
+      stepCount: ONBOARDING_STEPS.length,
+      saving,
+    });
     if (activeIndex >= ONBOARDING_STEPS.length - 1) {
       void finishOnboarding("completed", "/(tabs)/scan");
       return;
@@ -259,7 +249,7 @@ export default function OnboardingScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={["top", "bottom"]}>
-      <LinearGradient colors={["#06111C", "#071625", "#030711"]} start={{ x: 0.1, y: 0 }} end={{ x: 0.9, y: 1 }} style={StyleSheet.absoluteFill} />
+      <LinearGradient colors={["#030303", "#0A0908", "#050505"]} start={{ x: 0.1, y: 0 }} end={{ x: 0.9, y: 1 }} style={StyleSheet.absoluteFill} />
       <View style={styles.ambientOrbTop} />
       <View style={styles.ambientOrbBottom} />
 
@@ -289,40 +279,29 @@ export default function OnboardingScreen() {
             <Text style={styles.skipLabel}>Skip</Text>
           </Pressable>
         </View>
+        <View style={[styles.debugWrap, { paddingHorizontal: metrics.horizontalPadding }]}>
+          <RuntimeDebugStamp
+            screen="onboarding-v4-deterministic"
+            lines={[
+              `index ${activeIndex + 1}/${ONBOARDING_STEPS.length}`,
+              `continue deterministic: state-rendered`,
+            ]}
+          />
+        </View>
 
         <View style={styles.carouselViewport}>
-          <Animated.ScrollView
-            ref={scrollRef}
-            horizontal
-            pagingEnabled
-            decelerationRate="fast"
-            snapToInterval={metrics.slideWidth}
-            snapToAlignment="start"
-            showsHorizontalScrollIndicator={false}
-            bounces={false}
-            style={styles.carousel}
-            contentContainerStyle={styles.carouselContent}
-            onScroll={Animated.event([{ nativeEvent: { contentOffset: { x: scrollX } } }], {
-              useNativeDriver: true,
-            })}
-            scrollEventThrottle={16}
-            onMomentumScrollEnd={handleScrollEnd}
-          >
-            {ONBOARDING_STEPS.map((step, index) => (
-              <OnboardingSlide
-                key={step.key}
-                step={step}
-                index={index}
-                width={metrics.slideWidth}
-                horizontalPadding={metrics.horizontalPadding}
-                visualHeight={metrics.visualHeight}
-                headlineFontSize={metrics.headlineFontSize}
-                headlineLineHeight={metrics.headlineLineHeight}
-                headlineMaxWidth={metrics.headlineMaxWidth}
-                scrollX={scrollX}
-              />
-            ))}
-          </Animated.ScrollView>
+          <OnboardingSlide
+            key={ONBOARDING_STEPS[activeIndex].key}
+            step={ONBOARDING_STEPS[activeIndex]}
+            index={activeIndex}
+            width={metrics.slideWidth}
+            horizontalPadding={metrics.horizontalPadding}
+            visualHeight={metrics.visualHeight}
+            headlineFontSize={metrics.headlineFontSize}
+            headlineLineHeight={metrics.headlineLineHeight}
+            headlineMaxWidth={metrics.headlineMaxWidth}
+            scrollX={scrollX}
+          />
         </View>
 
         <View style={[styles.footer, { paddingHorizontal: metrics.horizontalPadding }]}>
@@ -333,7 +312,7 @@ export default function OnboardingScreen() {
           </View>
 
           <Pressable style={styles.primaryButton} onPress={nextAction} disabled={saving}>
-            <LinearGradient colors={["#1C61E8", "#2C86FF", "#60DDFF"]} start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }} style={[styles.primaryButtonGradient, { minHeight: metrics.ctaMinHeight }]}>
+            <LinearGradient colors={["#D8A36B", "#C8945B", "#B9854F"]} start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }} style={[styles.primaryButtonGradient, { minHeight: metrics.ctaMinHeight }]}>
               <Text style={styles.primaryButtonLabel}>{activeIndex === ONBOARDING_STEPS.length - 1 ? "Start Scanning" : "Continue"}</Text>
             </LinearGradient>
           </Pressable>
@@ -356,7 +335,7 @@ export default function OnboardingScreen() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: "#04101A",
+    backgroundColor: "#030303",
   },
   page: {
     flex: 1,
@@ -368,7 +347,7 @@ const styles = StyleSheet.create({
     width: 210,
     height: 210,
     borderRadius: 210,
-    backgroundColor: "rgba(26, 128, 246, 0.16)",
+    backgroundColor: "rgba(216, 163, 107, 0.13)",
   },
   ambientOrbBottom: {
     position: "absolute",
@@ -377,7 +356,7 @@ const styles = StyleSheet.create({
     width: 180,
     height: 180,
     borderRadius: 180,
-    backgroundColor: "rgba(80, 224, 255, 0.08)",
+    backgroundColor: "rgba(126, 93, 59, 0.16)",
   },
   header: {
     flexDirection: "row",
@@ -385,41 +364,46 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: 18,
   },
+  debugWrap: {
+    marginTop: -8,
+    marginBottom: 10,
+  },
   brandWrap: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
   },
   brandIcon: {
-    backgroundColor: "rgba(12, 27, 44, 0.2)",
-    shadowColor: "#39CFFF",
-    shadowOpacity: 0.12,
+    backgroundColor: "rgba(26, 22, 18, 0.32)",
+    shadowColor: "#D8A36B",
+    shadowOpacity: 0.1,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 3 },
   },
   brandName: {
     ...Typography.heading,
-    color: "#F6FBFF",
+    color: "#F5F3EE",
     fontWeight: "800",
   },
   brandTagline: {
     ...Typography.caption,
-    color: "rgba(224, 236, 250, 0.62)",
+    color: "rgba(214, 205, 194, 0.68)",
   },
   skipLabel: {
     ...Typography.body,
-    color: "rgba(229, 238, 251, 0.78)",
+    color: "rgba(214, 205, 194, 0.86)",
     fontWeight: "600",
+    overflow: "hidden",
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: "rgba(255, 255, 255, 0.065)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
   },
   carouselViewport: {
     flex: 1,
     overflow: "hidden",
-  },
-  carousel: {
-    flex: 1,
-  },
-  carouselContent: {
-    alignItems: "stretch",
   },
   slide: {
     flex: 1,
@@ -430,12 +414,30 @@ const styles = StyleSheet.create({
   visualStage: {
     justifyContent: "center",
   },
+  visualShellPhoto: {
+    flex: 1,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.14)",
+    backgroundColor: "rgba(12, 12, 12, 0.86)",
+    overflow: "hidden",
+    justifyContent: "flex-end",
+    shadowColor: "#000000",
+    shadowOpacity: 0.32,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 16 },
+  },
+  visualPhoto: {
+    ...StyleSheet.absoluteFillObject,
+    width: "100%",
+    height: "100%",
+  },
   visualShell: {
     flex: 1,
     borderRadius: Radius.xl,
     borderWidth: 1,
-    borderColor: "rgba(113, 154, 220, 0.14)",
-    backgroundColor: "rgba(8, 17, 28, 0.78)",
+    borderColor: "rgba(216, 163, 107, 0.16)",
+    backgroundColor: "rgba(12, 12, 12, 0.78)",
     overflow: "hidden",
     justifyContent: "center",
     padding: 24,
@@ -446,7 +448,7 @@ const styles = StyleSheet.create({
     height: 220,
     borderRadius: 220,
     alignSelf: "center",
-    backgroundColor: "rgba(29, 93, 193, 0.16)",
+    backgroundColor: "rgba(216, 163, 107, 0.12)",
   },
   scanFrame: {
     alignSelf: "center",
@@ -455,18 +457,51 @@ const styles = StyleSheet.create({
     maxWidth: 240,
     borderRadius: 28,
     borderWidth: 1,
-    borderColor: "rgba(119, 232, 255, 0.2)",
-    backgroundColor: "rgba(5, 12, 22, 0.92)",
+    borderColor: "rgba(216, 163, 107, 0.22)",
+    backgroundColor: "rgba(5, 5, 5, 0.92)",
     justifyContent: "center",
     alignItems: "center",
+  },
+  scanTargetBox: {
+    position: "absolute",
+    left: "25%",
+    right: "25%",
+    top: "31%",
+    height: "43%",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(241, 200, 145, 0.34)",
+  },
+  scanTargetLine: {
+    position: "absolute",
+    left: -58,
+    right: -58,
+    top: "45%",
+    height: 1,
+    backgroundColor: "rgba(241, 200, 145, 0.36)",
+  },
+  scanTargetDot: {
+    position: "absolute",
+    left: "50%",
+    top: "45%",
+    width: 7,
+    height: 7,
+    marginLeft: -3.5,
+    marginTop: -3.5,
+    borderRadius: 7,
+    backgroundColor: "#D8A36B",
+    shadowColor: "#D8A36B",
+    shadowOpacity: 0.45,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
   },
   scanSweep: {
     position: "absolute",
     width: "74%",
     height: 10,
     borderRadius: 999,
-    backgroundColor: "rgba(115, 232, 255, 0.12)",
-    shadowColor: "#75E7FF",
+    backgroundColor: "rgba(241, 200, 145, 0.12)",
+    shadowColor: "#D8A36B",
     shadowOpacity: 0.18,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 0 },
@@ -475,9 +510,9 @@ const styles = StyleSheet.create({
     width: 92,
     height: 92,
     borderRadius: 92,
-    backgroundColor: "rgba(96, 220, 255, 0.14)",
+    backgroundColor: "rgba(216, 163, 107, 0.12)",
     borderWidth: 1,
-    borderColor: "rgba(124, 234, 255, 0.34)",
+    borderColor: "rgba(241, 200, 145, 0.32)",
   },
   scanCornerTL: {
     position: "absolute",
@@ -487,7 +522,7 @@ const styles = StyleSheet.create({
     height: 28,
     borderTopWidth: 3,
     borderLeftWidth: 3,
-    borderColor: "#79E6FF",
+    borderColor: "#E7B97F",
     borderTopLeftRadius: 10,
   },
   scanCornerTR: {
@@ -498,7 +533,7 @@ const styles = StyleSheet.create({
     height: 28,
     borderTopWidth: 3,
     borderRightWidth: 3,
-    borderColor: "#79E6FF",
+    borderColor: "#E7B97F",
     borderTopRightRadius: 10,
   },
   scanCornerBL: {
@@ -509,7 +544,7 @@ const styles = StyleSheet.create({
     height: 28,
     borderBottomWidth: 3,
     borderLeftWidth: 3,
-    borderColor: "#79E6FF",
+    borderColor: "#E7B97F",
     borderBottomLeftRadius: 10,
   },
   scanCornerBR: {
@@ -520,26 +555,32 @@ const styles = StyleSheet.create({
     height: 28,
     borderBottomWidth: 3,
     borderRightWidth: 3,
-    borderColor: "#79E6FF",
+    borderColor: "#E7B97F",
     borderBottomRightRadius: 10,
   },
   insightPanel: {
+    marginHorizontal: 18,
+    marginTop: 26,
     borderRadius: 24,
     borderWidth: 1,
-    borderColor: "rgba(98, 147, 248, 0.14)",
-    backgroundColor: "rgba(9, 20, 35, 0.94)",
+    borderColor: "rgba(216, 163, 107, 0.16)",
+    backgroundColor: "rgba(15, 15, 15, 0.94)",
     padding: 24,
     gap: 18,
+    shadowColor: "#000000",
+    shadowOpacity: 0.32,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 14 },
   },
   panelEyebrow: {
     ...Typography.caption,
-    color: "#80B8FF",
+    color: "#E7B97F",
     textTransform: "uppercase",
     letterSpacing: 1.1,
   },
   panelTitle: {
     ...Typography.heading,
-    color: "#F4FAFF",
+    color: "#F5F3EE",
     fontWeight: "800",
   },
   statRow: {
@@ -554,19 +595,131 @@ const styles = StyleSheet.create({
   },
   statValue: {
     ...Typography.heading,
-    color: "#66DEFF",
+    color: "#E7B97F",
     fontWeight: "800",
   },
   statLabel: {
     ...Typography.caption,
-    color: "rgba(225, 236, 250, 0.62)",
+    color: "rgba(214, 205, 194, 0.66)",
     textTransform: "uppercase",
     letterSpacing: 1,
   },
   statDivider: {
     width: 1,
     alignSelf: "stretch",
-    backgroundColor: "rgba(110, 144, 199, 0.16)",
+    backgroundColor: "rgba(216, 163, 107, 0.12)",
+  },
+  visualBadgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 18,
+    paddingBottom: 18,
+    gap: 12,
+  },
+  aiBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    borderRadius: Radius.pill,
+    backgroundColor: "rgba(18, 15, 12, 0.84)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.34)",
+  },
+  aiBadgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 6,
+    backgroundColor: "#D8A36B",
+  },
+  aiBadgeText: {
+    ...Typography.caption,
+    color: "#E7B97F",
+    textTransform: "uppercase",
+    letterSpacing: 1.8,
+    fontWeight: "800",
+  },
+  matchBadge: {
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    borderRadius: Radius.pill,
+    backgroundColor: "rgba(9, 9, 9, 0.78)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.12)",
+  },
+  matchBadgeText: {
+    ...Typography.caption,
+    color: "#F5F3EE",
+    fontWeight: "800",
+  },
+  identityStrip: {
+    flexDirection: "row",
+    marginHorizontal: 18,
+    marginTop: 18,
+    padding: 14,
+    borderRadius: 17,
+    backgroundColor: "rgba(13, 13, 14, 0.9)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.09)",
+  },
+  identityCell: {
+    flex: 1,
+    gap: 5,
+    alignItems: "center",
+  },
+  identityLabel: {
+    ...Typography.caption,
+    color: "#8F96A3",
+    textTransform: "uppercase",
+    letterSpacing: 1.1,
+    fontWeight: "800",
+  },
+  identityValue: {
+    ...Typography.caption,
+    color: "#F5F3EE",
+    fontWeight: "800",
+  },
+  garageShowcase: {
+    flex: 1,
+    justifyContent: "center",
+  },
+  garageImageCard: {
+    height: "68%",
+    minHeight: 178,
+    borderRadius: 24,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    backgroundColor: "rgba(12, 12, 12, 0.92)",
+    shadowColor: "#000000",
+    shadowOpacity: 0.34,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 16 },
+  },
+  garageImageCardBack: {
+    position: "absolute",
+    left: 18,
+    right: 18,
+    bottom: 26,
+    height: "55%",
+    opacity: 0.46,
+    transform: [{ translateY: 32 }, { scale: 0.96 }],
+  },
+  garageGhostTitle: {
+    position: "absolute",
+    left: 18,
+    bottom: 20,
+    ...Typography.caption,
+    color: "rgba(245, 243, 238, 0.6)",
+    fontWeight: "800",
+  },
+  garageCardCopy: {
+    position: "absolute",
+    left: 18,
+    bottom: 18,
+    gap: 3,
   },
   garagePanel: {
     flex: 1,
@@ -581,7 +734,7 @@ const styles = StyleSheet.create({
     width: 150,
     height: 150,
     borderRadius: 150,
-    backgroundColor: "rgba(56, 163, 255, 0.08)",
+    backgroundColor: "rgba(216, 163, 107, 0.08)",
   },
   garageAtmosphereBottom: {
     position: "absolute",
@@ -590,15 +743,15 @@ const styles = StyleSheet.create({
     width: 170,
     height: 170,
     borderRadius: 170,
-    backgroundColor: "rgba(88, 224, 255, 0.07)",
+    backgroundColor: "rgba(126, 93, 59, 0.1)",
   },
   garageGlow: {
     position: "absolute",
     width: 248,
     height: 248,
     borderRadius: 248,
-    backgroundColor: "rgba(52, 127, 243, 0.08)",
-    shadowColor: "#2D77EE",
+    backgroundColor: "rgba(216, 163, 107, 0.08)",
+    shadowColor: "#D8A36B",
     shadowOpacity: 0.12,
     shadowRadius: 32,
     shadowOffset: { width: 0, height: 0 },
@@ -616,8 +769,8 @@ const styles = StyleSheet.create({
     width: 194,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: "rgba(120, 182, 255, 0.16)",
-    backgroundColor: "rgba(12, 24, 40, 0.9)",
+    borderColor: "rgba(216, 163, 107, 0.16)",
+    backgroundColor: "rgba(18, 17, 16, 0.9)",
     padding: 16,
     gap: 6,
     shadowColor: "#06111A",
@@ -648,8 +801,8 @@ const styles = StyleSheet.create({
     maxWidth: 208,
     borderRadius: 22,
     borderWidth: 1,
-    backgroundColor: "rgba(10, 20, 34, 0.96)",
-    borderColor: "rgba(131, 191, 255, 0.16)",
+    backgroundColor: "rgba(18, 17, 16, 0.96)",
+    borderColor: "rgba(216, 163, 107, 0.18)",
     padding: 18,
     gap: 8,
     alignSelf: "center",
@@ -661,18 +814,18 @@ const styles = StyleSheet.create({
   },
   timelineYear: {
     ...Typography.caption,
-    color: "#83BAFF",
+    color: "#E7B97F",
   },
   timelineYearGhost: {
-    color: "rgba(131, 186, 255, 0.78)",
+    color: "rgba(231, 185, 127, 0.78)",
   },
   timelineModel: {
     ...Typography.heading,
-    color: "#F5FAFF",
+    color: "#F5F3EE",
     fontWeight: "700",
   },
   timelineModelGhost: {
-    color: "rgba(245, 250, 255, 0.72)",
+    color: "rgba(245, 243, 238, 0.72)",
   },
   garageSupportMeta: {
     ...Typography.caption,
@@ -686,19 +839,22 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   garageSavedChip: {
+    position: "absolute",
+    right: 18,
+    bottom: 18,
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
     paddingHorizontal: 9,
     paddingVertical: 4,
     borderRadius: 999,
-    backgroundColor: "rgba(23, 53, 83, 0.9)",
+    backgroundColor: "rgba(34, 25, 18, 0.9)",
     borderWidth: 1,
-    borderColor: "rgba(124, 212, 255, 0.14)",
+    borderColor: "rgba(216, 163, 107, 0.18)",
   },
   garageSavedChipText: {
     ...Typography.caption,
-    color: "#D8F6FF",
+    color: "#F0D3AE",
     fontWeight: "700",
   },
   garagePrimaryStat: {
@@ -713,13 +869,13 @@ const styles = StyleSheet.create({
   },
   headline: {
     ...Typography.hero,
-    color: "#F7FBFF",
+    color: "#F5F3EE",
     fontWeight: "800",
     textAlign: "left",
   },
   body: {
     ...Typography.body,
-    color: "rgba(225, 236, 249, 0.78)",
+    color: "rgba(214, 205, 194, 0.78)",
     fontSize: 18,
     lineHeight: 27,
     maxWidth: 340,
@@ -744,7 +900,7 @@ const styles = StyleSheet.create({
   },
   paginationDotActive: {
     width: 28,
-    backgroundColor: "#69DEFF",
+    backgroundColor: "#D8A36B",
   },
   primaryButton: {
     borderRadius: 999,
@@ -754,11 +910,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "rgba(182, 244, 255, 0.18)",
+    borderColor: "rgba(255, 230, 198, 0.18)",
   },
   primaryButtonLabel: {
     ...Typography.heading,
-    color: "#FFFFFF",
+    color: "#080807",
     fontWeight: "800",
   },
   authRow: {
@@ -771,11 +927,11 @@ const styles = StyleSheet.create({
   },
   authLink: {
     ...Typography.body,
-    color: "rgba(227, 238, 252, 0.62)",
+    color: "rgba(231, 185, 127, 0.78)",
     fontWeight: "600",
   },
   authDivider: {
     ...Typography.body,
-    color: "rgba(227, 238, 252, 0.3)",
+    color: "rgba(231, 185, 127, 0.34)",
   },
 });

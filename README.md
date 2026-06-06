@@ -78,6 +78,8 @@ Start from [backend/.env.example](/Users/mattbrillman/Car_Identifier/backend/.en
 - `VEHICLE_VALUE_PROVIDER`
 - `VEHICLE_LISTINGS_PROVIDER`
 - `MARKETCHECK_API_KEY`
+- `REVENUECAT_WEBHOOK_AUTH_TOKEN`
+  Backend-only secret used to verify RevenueCat purchase webhooks. Configure the same value as the RevenueCat webhook Authorization header.
 - `CORS_ORIGIN`
 
 ## Local Development
@@ -138,6 +140,67 @@ The preview flow now assumes:
 - real bearer tokens on backend requests
 - no dev auth shortcuts
 
+## RevenueCat Webhook Setup
+
+Paid access is server-owned. The mobile app can initiate RevenueCat purchases, but Pro subscriptions and paid unlock packs are granted only after the Render backend receives a verified RevenueCat webhook.
+
+1. Generate the backend webhook token on macOS without printing it:
+
+```bash
+openssl rand -base64 48 | pbcopy
+```
+
+2. In Render, open the backend service for `carscanr.onrender.com`, go to `Environment`, and add:
+
+```text
+REVENUECAT_WEBHOOK_AUTH_TOKEN=<paste token from clipboard>
+```
+
+Save with `Save and deploy` or `Save, rebuild, and deploy`. This env var belongs on the backend Render service only. Do not add it to the Expo app, EAS public env, or any `EXPO_PUBLIC_` variable.
+
+3. In RevenueCat, go to `Integrations` -> `Webhooks` -> `Add new configuration`.
+
+Webhook URL:
+
+```text
+https://carscanr.onrender.com/api/revenuecat/webhook
+```
+
+Authorization header value:
+
+```text
+Bearer <same token saved in Render>
+```
+
+RevenueCat’s webhook docs confirm that the dashboard Authorization header is sent with webhook requests: [RevenueCat webhooks](https://www.revenuecat.com/docs/integrations/webhooks).
+
+4. Validate the deployed backend:
+
+```bash
+cd backend
+npm run validate:revenuecat-webhook -- --production-check
+```
+
+5. Safe auth check:
+
+```bash
+curl -i -X POST https://carscanr.onrender.com/api/revenuecat/webhook \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+Expected: `401` with `REVENUECAT_WEBHOOK_UNAUTHORIZED`.
+
+6. Sandbox/TestFlight checklist:
+
+- Monthly Pro purchase creates a processed `revenuecat_events` row and active `pro_monthly` subscription.
+- Yearly Pro purchase creates a processed `revenuecat_events` row and active `pro_yearly` subscription.
+- `5 Unlock Pack` purchase creates a processed `NON_RENEWING_PURCHASE` event and adds exactly `5` paid unlock credits.
+- Resending the same RevenueCat event does not double-credit.
+- Pro status and unlock credits do not appear before the webhook is processed.
+
+Full operational checklist: [backend/README.md](/Users/mattbrillman/Car_Identifier/backend/README.md#revenuecat-webhook-launch-setup).
+
 ## Backend Deployment Notes
 
 The backend now fails fast for preview/production-style deployments when critical env vars are missing or unsafe, including:
@@ -147,6 +210,7 @@ The backend now fails fast for preview/production-style deployments when critica
 - `ALLOW_MOCK_FALLBACKS=true`
 - mock providers selected for preview/production
 - MarketCheck selected without `MARKETCHECK_API_KEY`
+- placeholder MarketCheck credentials selected for preview/production
 - OpenAI vision selected without `OPENAI_API_KEY`
 
 Startup logs and `/health` now report non-secret diagnostics:
@@ -155,6 +219,7 @@ Startup logs and `/health` now report non-secret diagnostics:
 - `APP_ENV`
 - whether Supabase is configured
 - whether OpenAI is configured
+- whether MarketCheck is configured, reported as a non-secret credential state only
 - whether dev auth bypass is enabled
 - whether mock fallbacks are allowed
 - active provider selection

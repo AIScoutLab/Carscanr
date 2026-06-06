@@ -7,6 +7,7 @@ import {
   createListingsCacheRow,
   getFamilyValuesCacheKey,
   getFamilyListingsCacheKey,
+  getListingsCacheKey,
 } from "../src/lib/providerCache.js";
 import { setProviders } from "../src/lib/providerRegistry.js";
 import { setRepositories } from "../src/lib/repositoryRegistry.js";
@@ -15,6 +16,7 @@ import { trendingVehicleService } from "../src/services/trendingVehicleService.j
 import { UsageService } from "../src/services/usageService.js";
 import { ScanService } from "../src/services/scanService.js";
 import { VehicleService } from "../src/services/vehicleService.js";
+import { MarketCheckVehicleDataProvider } from "../src/providers/marketcheck/marketCheckVehicleDataProvider.js";
 import { createTestProviders, createTestRepositories, createVisionProviderResult } from "./helpers/testData.js";
 
 const TEST_IMAGE_BUFFER = Buffer.from(
@@ -330,7 +332,7 @@ describe("bootstrap cost control", () => {
       action: "valueRefresh",
     });
 
-    assert.equal(providerCalls >= 1, true);
+    assert.equal(providerCalls, 1);
     assert.equal(result.data.modelType, "provider_range");
     assert.ok((result.data.privateParty ?? 0) >= 150000);
   });
@@ -640,7 +642,7 @@ describe("bootstrap cost control", () => {
         request.reason === "user_requested_value_refresh" &&
         request.sourceScreen === "valueScreen" &&
         request.action === "valueRefresh" &&
-        request.forceLive === true,
+        request.forceLive === false,
       ),
       true,
     );
@@ -702,7 +704,7 @@ describe("bootstrap cost control", () => {
     assert.equal(result.data.privateParty, null);
   });
 
-  test("Ferrari 812 explicit refresh widens from exact model to family-model fallback before giving up", async () => {
+  test("normal value refresh does not fan out into live family-model fallback calls", async () => {
     const testRepositories = createTestRepositories({
       vehicles: [
         {
@@ -739,28 +741,6 @@ describe("bootstrap cost control", () => {
             trim: input.vehicle?.trim ?? null,
             year: input.vehicle?.year ?? 0,
           });
-          if (input.vehicle?.model === "812") {
-            return {
-              id: "ferrari-812-live",
-              vehicleId: input.vehicleId,
-              zip: input.zip,
-              mileage: input.mileage,
-              condition: "good",
-              status: "loaded_listing_range",
-              tradeIn: 312000,
-              privateParty: 339995,
-              dealerRetail: 356000,
-              low: 325000,
-              median: 339995,
-              high: 355000,
-              currency: "USD",
-              generatedAt: "2026-05-14T00:00:00.000Z",
-              sourceLabel: "Based on live MarketCheck listings",
-              confidenceLabel: "Limited comps",
-              modelType: "listing_derived",
-              listingCount: 2,
-            };
-          }
           return null;
         },
       },
@@ -779,9 +759,8 @@ describe("bootstrap cost control", () => {
       forceLive: true,
     });
 
-    assert.equal(result.data.status, "loaded_condition_set");
-    assert.equal(attemptedModels.some((attempt) => attempt.model === "812 Superfast" && attempt.trim === "Base"), true);
-    assert.equal(attemptedModels.some((attempt) => attempt.model === "812" && attempt.trim === ""), true);
+    assert.equal(result.data.status, "no_comps_found");
+    assert.deepEqual(attemptedModels, [{ model: "812 Superfast", trim: "Base", year: 2021 }]);
   });
 
   test("explicit value refresh bypasses cached no-comps state and retries provider", async () => {
@@ -1043,6 +1022,7 @@ describe("bootstrap cost control", () => {
       radiusMiles: 100,
       mileage: 18400,
       allowLive: true,
+      forceLive: true,
       fetchReason: "user_requested_listings_refresh",
       sourceScreen: "listingsScreen",
       action: "listingsRefresh",
@@ -1333,16 +1313,16 @@ describe("bootstrap cost control", () => {
             radiusMiles: input.radiusMiles ?? null,
           });
 
-          if (input.vehicle?.model === "458" && input.vehicle?.year === 2014) {
+          if (input.vehicle?.model === "458" && input.vehicle?.year === 2013) {
             return [
               {
-                id: "listing-458-family-2014",
+                id: "listing-458-family-2013",
                 vehicleId: input.vehicleId,
-                year: 2014,
+                year: 2013,
                 make: "Ferrari",
                 model: "458",
                 trim: "Spider",
-                title: "2014 Ferrari 458 Spider",
+                title: "2013 Ferrari 458 Spider",
                 price: 249995,
                 mileage: 17600,
                 dealer: "Exotic Motors",
@@ -1367,18 +1347,1185 @@ describe("bootstrap cost control", () => {
       radiusMiles: 50,
       mileage: 18400,
       allowLive: true,
+      forceLive: true,
+      fetchReason: "debug_force_listings_refresh",
+      sourceScreen: "debugListings",
+      action: "forceListingsRefresh",
+    });
+
+    assert.equal(result.data.length, 1);
+    assert.equal(attempts.length, 2);
+    assert.equal(attempts.some((attempt) => attempt.model === "458 Italia" && attempt.year === 2013), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "458" && attempt.year === 2013 && attempt.trim === ""), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "458" && attempt.year === 2014), false);
+  });
+
+  test("Cadillac CT4 listing fallback attempts exact, mixed trim, and wider radius before empty", async () => {
+    const attempts: Array<{ model: string; year: number; trim: string | null; radiusMiles: number | null }> = [];
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            trim: input.vehicle?.trim ?? null,
+            radiusMiles: input.radiusMiles ?? null,
+          });
+
+          if (input.vehicle?.model === "CT4" && input.vehicle?.year === 2021 && input.vehicle?.trim === "" && input.radiusMiles === 50) {
+            return [
+              {
+                id: "listing-ct4-same-year-any-trim",
+                vehicleId: input.vehicleId,
+                year: 2021,
+                make: "Cadillac",
+                model: "CT4",
+                trim: "Luxury",
+                title: "2021 Cadillac CT4 Luxury",
+                price: 32995,
+                mileage: 21400,
+                dealer: "Naperville Cadillac",
+                distanceMiles: 88,
+                location: "Naperville, IL",
+                imageUrl: "https://dealer.example.test/ct4-2022.jpg",
+                listingUrl: "https://dealer.example.test/ct4-2022",
+                listedAt: "2026-05-15T00:00:00.000Z",
+              },
+            ];
+          }
+
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getListings({
+      vehicleId: "2021-cadillac-ct4-premium-luxury",
+      zip: "60563",
+      radiusMiles: 50,
+      mileage: 18400,
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "debug_force_listings_refresh",
+      sourceScreen: "debugListings",
+      action: "forceListingsRefresh",
+    });
+
+    assert.equal(result.data.length, 1);
+    assert.equal(attempts.length, 3);
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === "Premium Luxury"), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === ""), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2020 && attempt.trim === ""), false);
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2022 && attempt.trim === ""), false);
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === "" && attempt.radiusMiles === 100), true);
+    assert.equal(attempts.every((attempt) => (attempt.radiusMiles ?? 0) <= 100), true);
+  });
+
+  test("Audi blank-trim listings refresh uses no-trim query and bounded fallback", async () => {
+    const attempts: Array<{ model: string; year: number; trim: string | null; radiusMiles: number | null }> = [];
+    setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            trim: input.vehicle?.trim ?? null,
+            radiusMiles: input.radiusMiles ?? null,
+          });
+
+          if (input.vehicle?.model === "A5" && input.vehicle?.year === 2023 && input.vehicle?.trim === "" && input.radiusMiles === 100) {
+            return [
+              {
+                id: "listing-a5-blank-trim",
+                vehicleId: input.vehicleId,
+                year: 2023,
+                make: "Audi",
+                model: "A5",
+                trim: "Premium",
+                title: "2023 Audi A5 Premium",
+                price: 41995,
+                mileage: 18400,
+                dealer: "Audi Aurora",
+                distanceMiles: 18,
+                location: "Aurora, IL",
+                imageUrl: "https://dealer.example.test/a5.jpg",
+                listingUrl: null,
+                listedAt: "2026-05-15T00:00:00.000Z",
+              },
+            ];
+          }
+
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getListings({
+      vehicleId: "manual-search-audi-a5",
+      descriptor: {
+        year: 2023,
+        make: "Audi",
+        model: "A5",
+        trim: "",
+        vehicleType: "car",
+        bodyStyle: "Coupe",
+        normalizedModel: "a5",
+      },
+      zip: "60502",
+      radiusMiles: 100,
+      mileage: 18400,
+      allowLive: true,
       fetchReason: "user_requested_listings_refresh",
       sourceScreen: "listingsScreen",
       action: "listingsRefresh",
     });
 
     assert.equal(result.data.length, 1);
-    assert.equal(attempts.some((attempt) => attempt.model === "458 Italia" && attempt.year === 2013), true);
-    assert.equal(attempts.some((attempt) => attempt.model === "458" && attempt.year === 2013 && attempt.trim === ""), true);
-    assert.equal(attempts.some((attempt) => attempt.model === "458" && attempt.year === 2014), true);
+    assert.equal(attempts.length <= 3, true);
+    assert.equal(attempts[0]?.model, "A5");
+    assert.equal(attempts[0]?.trim, "");
   });
 
-  test("explicit listings refresh for non-specialty models broadens from trim/body variant to family model and adjacent year", async () => {
+  test("Audi quattro trim-like value does not over-filter listings", async () => {
+    const attempts: Array<{ model: string; year: number; trim: string | null; radiusMiles: number | null }> = [];
+    setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            trim: input.vehicle?.trim ?? null,
+            radiusMiles: input.radiusMiles ?? null,
+          });
+
+          if (input.vehicle?.model === "A5" && input.vehicle?.year === 2023 && input.vehicle?.trim === "") {
+            return [
+              {
+                id: "listing-a5-quattro-dropped",
+                vehicleId: input.vehicleId,
+                year: 2023,
+                make: "Audi",
+                model: "A5",
+                trim: "Premium Plus",
+                title: "2023 Audi A5 Premium Plus quattro",
+                price: 43995,
+                mileage: 18400,
+                dealer: "Audi Naperville",
+                distanceMiles: 22,
+                location: "Naperville, IL",
+                imageUrl: "https://dealer.example.test/a5-quattro.jpg",
+                listingUrl: null,
+                listedAt: "2026-05-15T00:00:00.000Z",
+              },
+            ];
+          }
+
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getListings({
+      vehicleId: "manual-search-audi-a5-quattro",
+      descriptor: {
+        year: 2023,
+        make: "Audi",
+        model: "A5",
+        trim: "quattro",
+        vehicleType: "car",
+        bodyStyle: "Coupe",
+        normalizedModel: "a5",
+      },
+      zip: "60502",
+      radiusMiles: 100,
+      mileage: 18400,
+      allowLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+    });
+
+    assert.equal(result.data.length, 1);
+    assert.equal(attempts.length <= 3, true);
+    assert.equal(attempts.some((attempt) => attempt.trim === "quattro"), false);
+    assert.equal(attempts.some((attempt) => attempt.model === "A5" && attempt.trim === ""), true);
+  });
+
+  test("specialty listings refresh does not use broad radius or adjacent-year comps", async () => {
+    const attempts: Array<{ model: string; year: number; trim: string | null; radiusMiles: number | null }> = [];
+    setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            trim: input.vehicle?.trim ?? null,
+            radiusMiles: input.radiusMiles ?? null,
+          });
+
+          if (input.vehicle?.model === "F430" && (input.radiusMiles ?? 0) > 100) {
+            return [
+              {
+                id: "listing-f430-too-broad",
+                vehicleId: input.vehicleId,
+                year: 2008,
+                make: "Ferrari",
+                model: "F430",
+                trim: "Spider",
+                title: "2008 Ferrari F430 Spider",
+                price: 189995,
+                mileage: 11200,
+                dealer: "Specialty Dealer",
+                distanceMiles: 210,
+                location: "Detroit, MI",
+                imageUrl: "https://dealer.example.test/f430.jpg",
+                listingUrl: null,
+                listedAt: "2026-05-15T00:00:00.000Z",
+              },
+            ];
+          }
+
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getListings({
+      vehicleId: "manual-search-ferrari-f430",
+      descriptor: {
+        year: 2007,
+        make: "Ferrari",
+        model: "F430",
+        trim: "Base",
+        vehicleType: "car",
+        bodyStyle: "Coupe",
+        normalizedModel: "f430",
+      },
+      zip: "60502",
+      radiusMiles: 100,
+      mileage: 18400,
+      allowLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+    });
+
+    assert.equal(result.data.length, 0);
+    assert.equal(attempts.length, 1);
+    assert.equal(attempts.every((attempt) => (attempt.radiusMiles ?? 0) <= 100), true);
+    assert.equal(attempts.some((attempt) => attempt.year !== 2007), false);
+  });
+
+  test("Cadillac CT4 provider-normalized listing without URL remains usable", async () => {
+    setRepositories(createTestRepositories({ listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          if (input.vehicle?.model === "CT4" && input.vehicle?.year === 2021 && input.vehicle?.trim === "") {
+            return [
+              {
+                id: "listing-ct4-provider-no-url",
+                vehicleId: input.vehicleId,
+                year: 2021,
+                make: "Cadillac",
+                model: "CT4",
+                trim: "Luxury",
+                title: "2021 Cadillac CT4 Luxury",
+                price: 32995,
+                mileage: 21400,
+                dealer: "Provider Normalized Cadillac",
+                distanceMiles: 42,
+                location: "Naperville, IL",
+                imageUrl: "https://dealer.example.test/ct4.jpg",
+                listingUrl: null,
+                listedAt: "2026-05-15T00:00:00.000Z",
+              },
+            ];
+          }
+
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getListings({
+      vehicleId: "2021-cadillac-ct4-premium-luxury",
+      zip: "60563",
+      radiusMiles: 50,
+      mileage: 18400,
+      allowLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+    });
+
+    assert.equal(result.data.length, 1);
+    assert.equal(result.data[0]?.id, "listing-ct4-provider-no-url");
+  });
+
+  test("listings provider skip keeps provider calls at zero when live fetch is not allowed", async () => {
+    let providerCalls = 0;
+    setRepositories(createTestRepositories({ listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings() {
+          providerCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getListings({
+      vehicleId: "2021-cadillac-ct4-premium-luxury",
+      zip: "60563",
+      radiusMiles: 50,
+      mileage: 18400,
+      allowLive: false,
+      fetchReason: "initial_load",
+    });
+
+    assert.equal(providerCalls, 0);
+    assert.equal(result.meta?.fallbackReason, "live-fetch-deferred");
+    assert.equal(result.meta?.liveFetchDeferred, true);
+  });
+
+  test("Cadillac CT4 value refresh uses one exact live valuation attempt", async () => {
+    const attempts: Array<{ model: string; year: number; trim: string | null }> = [];
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            trim: input.vehicle?.trim ?? null,
+          });
+
+          if (input.vehicle?.model === "CT4" && input.vehicle?.year === 2021 && input.vehicle?.trim === "Premium Luxury") {
+            return {
+              id: "ct4-broadened-live-value",
+              vehicleId: input.vehicleId,
+              zip: input.zip,
+              mileage: input.mileage,
+              condition: "good",
+              status: "loaded_listing_range",
+              tradeIn: 28500,
+              tradeInLow: 27140,
+              tradeInHigh: 29900,
+              privateParty: 31000,
+              privatePartyLow: 29500,
+              privatePartyHigh: 32500,
+              dealerRetail: 33480,
+              dealerRetailLow: 31860,
+              dealerRetailHigh: 35100,
+              low: 29500,
+              median: 31000,
+              high: 32500,
+              currency: "USD",
+              generatedAt: "2026-05-15T00:00:00.000Z",
+              sourceLabel: "Estimated from nearby comparable listings",
+              confidenceLabel: "Based on 3 nearby comparable listings. Limited market confidence.",
+              valuationSource: "listing_comps",
+              compCount: 3,
+              confidence: "limited",
+              rangeLow: 29500,
+              rangeHigh: 32500,
+              midpoint: 31000,
+              modelType: "listing_derived",
+              listingCount: 3,
+              sourceBasis: "listing_median_adjusted",
+            };
+          }
+
+          return null;
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2021-cadillac-ct4-premium-luxury",
+      zip: "60563",
+      mileage: 18400,
+      condition: "good",
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
+
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === "Premium Luxury"), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === ""), false);
+    assert.equal(attempts.length, 1);
+    assert.equal(result.data.status, "loaded_condition_set");
+    assert.equal(result.data.valuationSource, "listing_comps");
+    assert.equal(result.data.sourceBasis, "listing_median_adjusted");
+    assert.equal(result.data.confidence, "limited");
+    assert.notEqual(result.data.sourceLabel, "No live market comps found");
+    assert.notEqual(result.data.valuationSource, "unavailable");
+  });
+
+  test("Load Value first fetches listings comps without visiting Listings first", async () => {
+    let valueProviderCalls = 0;
+    let listingsProviderCalls = 0;
+    setRepositories(createTestRepositories({ valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      listingsProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          valueProviderCalls += 1;
+          return null;
+        },
+      },
+      listingsProvider: {
+        async getListings(input) {
+          listingsProviderCalls += 1;
+          if (input.vehicle?.make === "Cadillac" && input.vehicle?.model === "CT4") {
+            return [
+              {
+                id: "ct4-value-first-comp-1",
+                vehicleId: input.vehicleId,
+                year: input.vehicle.year,
+                make: input.vehicle.make,
+                model: input.vehicle.model,
+                trim: input.vehicle.trim || "Luxury",
+                title: `${input.vehicle.year} Cadillac CT4 Luxury`,
+                price: 30995,
+                mileage: 22100,
+                dealer: "Naperville Cadillac",
+                distanceMiles: 24,
+                location: "Naperville, IL",
+                imageUrl: "https://images.example.test/ct4.jpg",
+                listedAt: "2026-05-15T00:00:00.000Z",
+              },
+            ];
+          }
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2021-cadillac-ct4-premium-luxury",
+      zip: "60563",
+      mileage: 18400,
+      condition: "good",
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
+
+    assert.equal(valueProviderCalls > 0, true);
+    assert.equal(listingsProviderCalls > 0, true);
+    assert.equal(result.data.status, "loaded_condition_set");
+    assert.equal(result.data.valuationSource, "listing_comps");
+    assert.equal(result.data.compCount, 1);
+    assert.equal(result.data.confidence, "limited");
+    assert.match(result.data.confidenceLabel ?? "", /Very limited market confidence/i);
+    assert.notEqual(result.data.reason, "no_comps_found");
+  });
+
+  test("Load Value first can still return low-confidence fallback when local listings are unavailable", async () => {
+    let valueProviderCalls = 0;
+    let listingsProviderCalls = 0;
+    setRepositories(createTestRepositories({ valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      listingsProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          valueProviderCalls += 1;
+          return null;
+        },
+      },
+      listingsProvider: {
+        async getListings() {
+          listingsProviderCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2020-honda-civic-ex",
+      zip: "60563",
+      mileage: 42000,
+      condition: "good",
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
+
+    assert.equal(valueProviderCalls > 0, true);
+    assert.equal(listingsProviderCalls > 0, true);
+    assert.equal(result.data.status, "loaded_condition_set");
+    assert.equal(result.data.valuationSource, "modeled_fallback");
+    assert.equal(result.data.confidence, "limited");
+    assert.equal(result.data.compCount, 0);
+    assert.match(result.data.sourceLabel ?? "", /estimate/i);
+    assert.match(result.data.confidenceLabel ?? "", /Low market confidence/i);
+    assert.doesNotMatch(result.data.sourceLabel ?? "", /nearby comparable listings|live market|dealer listings/i);
+    assert.doesNotMatch(result.data.confidenceLabel ?? "", /Based on \d+ nearby comparable listings|dealer listings were found/i);
+    assert.notEqual(result.data.reason, "no_comps_found");
+    assert.notEqual(result.data.sourceLabel, "No live market comps found");
+  });
+
+  test("Ford Ranger can use modeled_fallback when live comps are unavailable and body style is missing", async () => {
+    let valueProviderCalls = 0;
+    let listingsProviderCalls = 0;
+    const rangerVehicle = {
+      id: "2021-ford-ranger-xl",
+      year: 2021,
+      make: "Ford",
+      model: "Ranger",
+      trim: "XL",
+      bodyStyle: "",
+      vehicleType: "car" as const,
+      msrp: 0,
+      engine: "2.3L turbo I4",
+      horsepower: 270,
+      torque: "310 lb-ft",
+      transmission: "10-speed automatic",
+      drivetrain: "4WD",
+      mpgOrRange: "Unknown",
+      colors: [],
+    };
+    setRepositories(createTestRepositories({ vehicles: [rangerVehicle], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      listingsProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          valueProviderCalls += 1;
+          return null;
+        },
+      },
+      listingsProvider: {
+        async getListings() {
+          listingsProviderCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: rangerVehicle.id,
+      zip: "60563",
+      mileage: 42000,
+      condition: "good",
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
+
+    assert.equal(valueProviderCalls > 0, true);
+    assert.equal(listingsProviderCalls > 0, true);
+    assert.equal(result.data.status, "loaded_condition_set");
+    assert.equal(result.data.valuationSource, "modeled_fallback");
+    assert.equal(result.data.confidence, "limited");
+    assert.equal(result.data.compCount, 0);
+    assert.match(result.data.sourceLabel ?? "", /estimate/i);
+    assert.match(result.data.confidenceLabel ?? "", /Low market confidence/i);
+    assert.notEqual(result.data.sourceLabel, "No live market comps found");
+  });
+
+  test("Ford Ranger descriptor lookup can use modeled_fallback even when the client id is not stored", async () => {
+    let valueProviderCalls = 0;
+    let listingsProviderCalls = 0;
+    const testRepositories = createTestRepositories({ vehicles: [], valuations: [], listings: [] });
+    setRepositories(testRepositories.repositories);
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      listingsProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          valueProviderCalls += 1;
+          return null;
+        },
+      },
+      listingsProvider: {
+        async getListings() {
+          listingsProviderCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "1998-ford-ranger-xlt",
+      descriptor: {
+        year: 1998,
+        make: "Ford",
+        model: "Ranger",
+        trim: "XLT",
+        vehicleType: "truck",
+        bodyStyle: "car",
+        normalizedModel: "ranger",
+      },
+      zip: "60563",
+      mileage: 42000,
+      condition: "good",
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
+
+    assert.equal(valueProviderCalls > 0, true);
+    assert.equal(listingsProviderCalls > 0, true);
+    assert.equal(result.data.status, "loaded_condition_set");
+    assert.equal(result.data.valuationSource, "modeled_fallback");
+    assert.equal(result.data.confidence, "limited");
+    assert.equal(result.data.reason, "modeled_baseline_after_no_local_comps");
+    assert.notEqual(result.data.sourceLabel, "No live market comps found");
+    assert.equal(testRepositories.state.valuesCache.length > 0, true);
+    assert.equal(
+      testRepositories.state.valuesCache.every((entry) => entry.condition === "good"),
+      true,
+      "modeled fallback cache writes must include condition so Supabase does not reject them",
+    );
+  });
+
+  test("Load Value first stays unavailable when no provider comps and no safe modeled baseline exist", async () => {
+    let valueProviderCalls = 0;
+    let listingsProviderCalls = 0;
+    const unknownVehicle = {
+      id: "2017-example-nomad-base",
+      year: 2017,
+      make: "Example",
+      model: "Nomad",
+      trim: "Base",
+      bodyStyle: "Sedan",
+      vehicleType: "car" as const,
+      msrp: 0,
+      engine: "Unknown",
+      horsepower: null,
+      torque: "Unknown",
+      transmission: "Unknown",
+      drivetrain: "Unknown",
+      mpgOrRange: "Unknown",
+      colors: [],
+    };
+    setRepositories(createTestRepositories({ vehicles: [unknownVehicle], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      listingsProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          valueProviderCalls += 1;
+          return null;
+        },
+      },
+      listingsProvider: {
+        async getListings() {
+          listingsProviderCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: unknownVehicle.id,
+      zip: "60563",
+      mileage: 42000,
+      condition: "good",
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
+
+    assert.equal(valueProviderCalls > 0, true);
+    assert.equal(listingsProviderCalls > 0, true);
+    assert.equal(result.data.status, "no_comps_found");
+    assert.equal(result.data.valuationSource, "unavailable");
+    assert.equal(result.data.confidence, "unavailable");
+    assert.equal(result.data.sourceLabel, "No safe baseline data available");
+    assert.equal(result.data.reason, "no_safe_baseline_data");
+    assert.equal(result.data.unavailableReason, "no_safe_baseline_data");
+    assert.notEqual(result.data.valuationSource, "modeled_fallback");
+  });
+
+  test("Toyota 4Runner listing fallback attempts keep atomic model name", async () => {
+    const attempts: Array<{ model: string; year: number; radiusMiles: number | null; trim: string | null }> = [];
+    setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            radiusMiles: input.radiusMiles ?? input.requestMeta?.radiusMiles ?? null,
+            trim: input.vehicle?.trim ?? null,
+          });
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    await service.getListings({
+      vehicleId: "2011-toyota-4runner-sr5",
+      descriptor: {
+        year: 2011,
+        make: "Toyota",
+        model: "4Runner",
+        trim: "SR5",
+        vehicleType: "car",
+        bodyStyle: "SUV",
+        normalizedModel: "4runner",
+      },
+      zip: "60563",
+      radiusMiles: 100,
+      mileage: 98000,
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+    });
+
+    assert.equal(attempts.length, 3);
+    assert.equal(attempts.every((attempt) => attempt.model === "4Runner"), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "4"), false);
+    assert.equal(attempts.some((attempt) => attempt.year === 2011 && attempt.radiusMiles === 100), true);
+    assert.equal(attempts.every((attempt) => (attempt.radiusMiles ?? 0) <= 100), true);
+  });
+
+  test("force-live listings refresh drops generic Base trim and uses bounded fallback attempts", async () => {
+    const attempts: Array<{ model: string; year: number; radiusMiles: number | null; trim: string | null }> = [];
+    setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            radiusMiles: input.radiusMiles ?? input.requestMeta?.radiusMiles ?? null,
+            trim: input.vehicle?.trim ?? null,
+          });
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    await service.getListings({
+      vehicleId: "2011-toyota-4runner-base",
+      descriptor: {
+        year: 2011,
+        make: "Toyota",
+        model: "4Runner",
+        trim: "Base",
+        vehicleType: "car",
+        bodyStyle: "SUV",
+        normalizedModel: "4runner",
+      },
+      zip: "60563",
+      radiusMiles: 100,
+      mileage: 98000,
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+    });
+
+    assert.equal(attempts.length <= 3, true);
+    assert.equal(attempts.some((attempt) => attempt.model === "4Runner" && attempt.year === 2011 && attempt.radiusMiles === 100 && attempt.trim === ""), true);
+    assert.equal(attempts.every((attempt) => (attempt.radiusMiles ?? 0) <= 100), true);
+  });
+
+  test("developer force-live listings refresh can broaden but remains capped", async () => {
+    const attempts: Array<{
+      model: string;
+      year: number;
+      radiusMiles: number | null;
+      trim: string | null;
+      attemptNumber: number | null;
+      maxAttempts: number | null;
+      fallbackStrategy: string | null;
+      fallbackReason: string | null;
+    }> = [];
+    setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            radiusMiles: input.radiusMiles ?? input.requestMeta?.radiusMiles ?? null,
+            trim: input.vehicle?.trim ?? null,
+            attemptNumber: input.requestMeta?.attemptNumber ?? null,
+            maxAttempts: input.requestMeta?.maxAttempts ?? null,
+            fallbackStrategy: input.requestMeta?.fallbackStrategy ?? null,
+            fallbackReason: input.requestMeta?.fallbackReason ?? null,
+          });
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    await service.getListings({
+      vehicleId: "2011-toyota-4runner-base",
+      descriptor: {
+        year: 2011,
+        make: "Toyota",
+        model: "4Runner",
+        trim: "Base",
+        vehicleType: "car",
+        bodyStyle: "SUV",
+        normalizedModel: "4runner",
+      },
+      zip: "60563",
+      radiusMiles: 100,
+      mileage: 98000,
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "debug_force_listings_refresh",
+      sourceScreen: "debugListingsScreen",
+      action: "debugForceListingsRefresh",
+    });
+
+    assert.equal(attempts.length, 3);
+    assert.deepEqual(
+      attempts.map((attempt) => attempt.attemptNumber),
+      [1, 2, 3],
+    );
+    assert.equal(attempts.every((attempt) => attempt.maxAttempts === 3), true);
+    assert.equal(attempts.every((attempt) => attempt.fallbackReason === "unknown"), true);
+    assert.equal(attempts.every((attempt) => typeof attempt.fallbackStrategy === "string"), true);
+  });
+
+  test("force-live listings refresh bypasses cached zero-result listing response", async () => {
+    const descriptor = {
+      year: 2011,
+      make: "Toyota",
+      model: "4Runner",
+      trim: "",
+      vehicleType: "car" as const,
+      normalizedMake: "toyota",
+      normalizedModel: "4runner",
+      normalizedTrim: "",
+    };
+    const testRepositories = createTestRepositories({ vehicles: [], valuations: [], listings: [] });
+    testRepositories.state.listingsCache.push(
+      createListingsCacheRow({
+        descriptor,
+        cacheKey: getListingsCacheKey(descriptor, {
+          zip: "60563",
+          radiusMiles: 100,
+        }),
+        provider: "marketcheck",
+        zip: "60563",
+        radiusMiles: 100,
+        payload: [],
+      }),
+    );
+    setRepositories(testRepositories.repositories);
+
+    let providerCalls = 0;
+    setProviders({
+      ...createTestProviders(),
+      listingsProviderName: "marketcheck",
+      listingsProvider: {
+        async getListings() {
+          providerCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getListings({
+      vehicleId: "2011-toyota-4runner-base",
+      descriptor: {
+        year: 2011,
+        make: "Toyota",
+        model: "4Runner",
+        trim: "Base",
+        vehicleType: "car",
+        bodyStyle: "SUV",
+        normalizedModel: "4runner",
+      },
+      zip: "60563",
+      radiusMiles: 100,
+      mileage: 98000,
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_listings_refresh",
+      sourceScreen: "listingsScreen",
+      action: "listingsRefresh",
+    });
+
+    assert.equal(providerCalls, 3);
+    assert.equal(result.data.length, 0);
+  });
+
+  test("Toyota 4Runner value prefers real listing comps over modeled_fallback", async () => {
+    const attempts: Array<{ model: string; year: number; radiusMiles: number | null }> = [];
+    setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      listingsProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation() {
+          return null;
+        },
+      },
+      listingsProvider: {
+        async getListings(input) {
+          attempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            radiusMiles: input.radiusMiles ?? input.requestMeta?.radiusMiles ?? null,
+          });
+          if (input.vehicle?.make === "Toyota" && input.vehicle?.model === "4Runner" && input.vehicle?.year === 2011) {
+            return [
+              {
+                id: "4runner-comp-1",
+                vehicleId: input.vehicleId,
+                year: 2011,
+                make: "Toyota",
+                model: "4Runner",
+                trim: "SR5",
+                title: "2011 Toyota 4Runner SR5",
+                price: 21995,
+                mileage: 105000,
+                dealer: "Naperville Toyota",
+                distanceMiles: 18,
+                location: "Naperville, IL",
+                imageUrl: "https://dealer.example.test/4runner-1.jpg",
+                listingUrl: "https://dealer.example.test/4runner-1",
+                listedAt: "2026-05-14T00:00:00.000Z",
+              },
+              {
+                id: "4runner-comp-2",
+                vehicleId: input.vehicleId,
+                year: 2011,
+                make: "Toyota",
+                model: "4Runner",
+                trim: "Limited",
+                title: "2011 Toyota 4Runner Limited",
+                price: 23995,
+                mileage: 92000,
+                dealer: "Aurora Toyota",
+                distanceMiles: 29,
+                location: "Aurora, IL",
+                imageUrl: "https://dealer.example.test/4runner-2.jpg",
+                listingUrl: "https://dealer.example.test/4runner-2",
+                listedAt: "2026-05-13T00:00:00.000Z",
+              },
+            ];
+          }
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2011-toyota-4runner-sr5",
+      descriptor: {
+        year: 2011,
+        make: "Toyota",
+        model: "4Runner",
+        trim: "SR5",
+        vehicleType: "car",
+        bodyStyle: "SUV",
+        normalizedModel: "4runner",
+      },
+      zip: "60563",
+      mileage: 98000,
+      condition: "good",
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
+
+    assert.equal(attempts.length > 0, true);
+    assert.equal(attempts.every((attempt) => attempt.model === "4Runner"), true);
+    assert.equal(result.data.status, "loaded_condition_set");
+    assert.equal(result.data.valuationSource, "listing_comps");
+    assert.notEqual(result.data.valuationSource, "modeled_fallback");
+    assert.notEqual(result.data.sourceLabel, "No live market comps found");
+  });
+
+  test("Toyota 4Runner skips uncalibrated modeled_fallback when comps are unavailable", async () => {
+    let valueProviderCalls = 0;
+    let listingsProviderCalls = 0;
+    const valueAttempts: Array<{ model: string; year: number; trim: string | null; forceLive: boolean | null | undefined }> = [];
+    setRepositories(createTestRepositories({ vehicles: [], valuations: [], listings: [] }).repositories);
+    setProviders({
+      ...createTestProviders(),
+      valueProviderName: "marketcheck",
+      listingsProviderName: "marketcheck",
+      valueProvider: {
+        async getValuation(input) {
+          valueProviderCalls += 1;
+          valueAttempts.push({
+            model: input.vehicle?.model ?? "",
+            year: input.vehicle?.year ?? 0,
+            trim: input.vehicle?.trim ?? null,
+            forceLive: input.requestMeta?.forceLive,
+          });
+          return null;
+        },
+      },
+      listingsProvider: {
+        async getListings() {
+          listingsProviderCalls += 1;
+          return [];
+        },
+      },
+    });
+
+    const service = new VehicleService();
+    const result = await service.getValue({
+      vehicleId: "2011-toyota-4runner-sr5",
+      descriptor: {
+        year: 2011,
+        make: "Toyota",
+        model: "4Runner",
+        trim: "SR5",
+        vehicleType: "car",
+        bodyStyle: "SUV",
+        normalizedModel: "4runner",
+      },
+      zip: "60563",
+      mileage: 98000,
+      condition: "good",
+      allowLive: true,
+      forceLive: true,
+      fetchReason: "user_requested_value_refresh",
+      sourceScreen: "valueScreen",
+      action: "valueRefresh",
+    });
+
+    assert.equal(valueProviderCalls, 1);
+    assert.deepEqual(valueAttempts, [{ model: "4Runner", year: 2011, trim: "SR5", forceLive: false }]);
+    assert.equal(listingsProviderCalls > 0, true);
+    assert.equal(result.data.valuationSource, "unavailable");
+    assert.equal(result.data.reason, "no_safe_baseline_data");
+    assert.equal(result.data.unavailableReason, "no_safe_baseline_data");
+    assert.notEqual(result.data.valuationSource, "modeled_fallback");
+    assert.notEqual(result.data.privateParty, 7000);
+  });
+
+  test("MarketCheck normal listings refresh respects zero cache responses", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalApiKey = env.MARKETCHECK_API_KEY;
+    const originalBaseUrl = env.MARKETCHECK_BASE_URL;
+    env.MARKETCHECK_API_KEY = "test-marketcheck-key";
+    env.MARKETCHECK_BASE_URL = "https://marketcheck.example.test";
+    let fetchCalls = 0;
+    globalThis.fetch = (async () => {
+      fetchCalls += 1;
+      return new Response(JSON.stringify({ listings: [], stats: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    try {
+      const provider = new MarketCheckVehicleDataProvider();
+      const vehicle = {
+        id: "2011-toyota-4runner-sr5",
+        year: 2011,
+        make: "Toyota",
+        model: "4Runner",
+        trim: "SR5",
+        bodyStyle: "SUV",
+        vehicleType: "car" as const,
+        msrp: 0,
+        engine: "4.0L V6",
+        horsepower: 270,
+        torque: "278 lb-ft",
+        transmission: "5-speed automatic",
+        drivetrain: "4WD",
+        mpgOrRange: "Unknown",
+        colors: [],
+      };
+      const requestMeta = {
+        requestId: "zero-cache-bypass-test",
+        allowLive: true,
+        forceLive: true,
+        action: "listingsRefresh",
+        reason: "user_requested_listings_refresh",
+        sourceScreen: "listingsScreen",
+        vehicleId: vehicle.id,
+        year: vehicle.year,
+        make: vehicle.make,
+        model: vehicle.model,
+        trim: vehicle.trim,
+        zip: "60563",
+        radiusMiles: 100,
+      };
+
+      await provider.getListings({ vehicleId: vehicle.id, vehicle, zip: "60563", radiusMiles: 100, requestMeta });
+      await provider.getListings({ vehicleId: vehicle.id, vehicle, zip: "60563", radiusMiles: 100, requestMeta });
+
+      assert.equal(fetchCalls, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      env.MARKETCHECK_API_KEY = originalApiKey;
+      env.MARKETCHECK_BASE_URL = originalBaseUrl;
+    }
+  });
+
+  test("developer listings refresh can broaden from trim/body variant to family model and adjacent year", async () => {
     const testRepositories = createTestRepositories({
       vehicles: [
         {
@@ -1415,16 +2562,16 @@ describe("bootstrap cost control", () => {
             trim: input.vehicle?.trim ?? null,
           });
 
-          if (input.vehicle?.model === "A4" && input.vehicle?.year === 2019) {
+          if (input.vehicle?.model === "A4 allroad" && input.vehicle?.year === 2018 && input.vehicle?.trim === "") {
             return [
               {
-                id: "listing-a4-family-2019",
+                id: "listing-a4-allroad-any-trim",
                 vehicleId: input.vehicleId,
-                year: 2019,
+                year: 2018,
                 make: "Audi",
-                model: "A4",
+                model: "A4 allroad",
                 trim: "Premium",
-                title: "2019 Audi A4 Premium",
+                title: "2018 Audi A4 allroad Premium",
                 price: 24995,
                 mileage: 38200,
                 dealer: "North Shore Audi",
@@ -1449,16 +2596,18 @@ describe("bootstrap cost control", () => {
       radiusMiles: 50,
       mileage: 32000,
       allowLive: true,
-      fetchReason: "user_requested_listings_refresh",
-      sourceScreen: "listingsScreen",
-      action: "listingsRefresh",
+      forceLive: true,
+      fetchReason: "debug_force_listings_refresh",
+      sourceScreen: "debugListings",
+      action: "forceListingsRefresh",
     });
 
     assert.equal(result.data.length, 1);
+    assert.equal(attempts.length, 3);
     assert.equal(attempts.some((attempt) => attempt.model === "A4 allroad" && attempt.year === 2018 && attempt.trim === "Premium Plus"), true);
     assert.equal(attempts.some((attempt) => attempt.model === "A4 allroad" && attempt.year === 2018 && attempt.trim === ""), true);
     assert.equal(attempts.some((attempt) => attempt.model === "A4" && attempt.year === 2018), true);
-    assert.equal(attempts.some((attempt) => attempt.model === "A4" && attempt.year === 2019), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "A4" && attempt.year === 2019), false);
   });
 
   test("normal family cached estimated valuation still works for common vehicles", async () => {
@@ -1591,6 +2740,39 @@ describe("bootstrap cost control", () => {
     assert.equal(result.data?.id, "2021-cadillac-ct4-premium-luxury");
   });
 
+  test("Toyota 4Runner specs complete known 4.0L V6 horsepower", async () => {
+    const toyota4Runner = {
+      id: "2011-toyota-4runner-sr5",
+      year: 2011,
+      make: "Toyota",
+      model: "4Runner",
+      trim: "SR5",
+      bodyStyle: "SUV",
+      vehicleType: "car" as const,
+      msrp: 0,
+      engine: "4.0L V6",
+      horsepower: null,
+      torque: "",
+      transmission: "",
+      drivetrain: "4WD",
+      mpgOrRange: "",
+      colors: [],
+    };
+    setRepositories(createTestRepositories({ vehicles: [toyota4Runner], valuations: [], listings: [] }).repositories);
+
+    const service = new VehicleService();
+    const result = await service.getSpecs({
+      vehicleId: toyota4Runner.id,
+      allowLive: false,
+      fetchReason: "initial_load",
+      sourceScreen: "specsScreen",
+    });
+
+    assert.equal(result.data?.make, "Toyota");
+    assert.equal(result.data?.model, "4Runner");
+    assert.equal(result.data?.horsepower, 270);
+  });
+
   test("user requested value refresh calls MarketCheck valuation at most once", async () => {
     let valueProviderCalls = 0;
     let listingsProviderCalls = 0;
@@ -1659,7 +2841,7 @@ describe("bootstrap cost control", () => {
     assert.equal(second.data.conditionValues?.excellent.privateParty != null, true);
   });
 
-  test("user requested listings refresh keeps provider traffic in listings only while broadening through fallback attempts", async () => {
+  test("user requested listings refresh keeps provider traffic in listings only and caps live fallback attempts", async () => {
     env.ENABLE_LIVE_PROVIDER_CALLS = true;
     let listingsProviderCalls = 0;
     let valueProviderCalls = 0;
@@ -1720,11 +2902,10 @@ describe("bootstrap cost control", () => {
       action: "listingsRefresh",
     });
 
-    assert.ok(listingsProviderCalls >= 2);
+    assert.equal(listingsProviderCalls, 3);
     assert.equal(valueProviderCalls, 0);
     assert.equal(specsProviderCalls, 0);
-    assert.equal(providerTrims[0], "Base");
-    assert.ok(providerTrims.slice(1).every((trim) => trim === "" || trim == null));
+    assert.equal(providerTrims[0], "");
   });
 
   test("scanning 3 cars makes 0 MarketCheck calls by default", async () => {

@@ -22,6 +22,7 @@ import {
   ImageCacheRecord,
   ListingClickRecord,
   ListingRecord,
+  RevenueCatEventRecord,
   VehiclePhotoClusterMemberRecord,
   VehiclePhotoClusterRecord,
   ScanRecord,
@@ -41,11 +42,13 @@ import {
   UnlockBalanceRepository,
   ListingsCacheRepository,
   ListingClicksRepository,
+  RevenueCatEventsRepository,
   VehiclePhotoClustersRepository,
   GarageItemsRepository,
   ImageCacheRepository,
   ListingResultsRepository,
   ProviderApiUsageLogsRepository,
+  GrantUnlockResult,
   ScansRepository,
   VehicleGlobalTrendingRepository,
   VehicleScanPopularityRepository,
@@ -828,6 +831,40 @@ function subscriptionToRow(record: SubscriptionRecord) {
   };
 }
 
+function mapRevenueCatEventRow(row: any): RevenueCatEventRecord {
+  return {
+    id: row.id,
+    appUserId: row.app_user_id ?? null,
+    userId: row.user_id ?? null,
+    eventType: row.event_type,
+    productId: row.product_id ?? null,
+    transactionId: row.transaction_id ?? null,
+    originalTransactionId: row.original_transaction_id ?? null,
+    processed: Boolean(row.processed),
+    processedAction: row.processed_action ?? null,
+    payloadSummary: row.payload_summary ?? null,
+    createdAt: row.created_at,
+    processedAt: row.processed_at ?? null,
+  };
+}
+
+function revenueCatEventToRow(record: RevenueCatEventRecord) {
+  return {
+    id: record.id,
+    app_user_id: record.appUserId ?? null,
+    user_id: record.userId ?? null,
+    event_type: record.eventType,
+    product_id: record.productId ?? null,
+    transaction_id: record.transactionId ?? null,
+    original_transaction_id: record.originalTransactionId ?? null,
+    processed: record.processed,
+    processed_action: record.processedAction ?? null,
+    payload_summary: record.payloadSummary ?? {},
+    created_at: record.createdAt,
+    processed_at: record.processedAt ?? null,
+  };
+}
+
 function mapUsageRow(row: any): UsageCounterRecord {
   return {
     id: row.id,
@@ -1057,12 +1094,25 @@ function providerApiUsageLogToRow(entry: ProviderApiUsageLogRecord) {
     id: entry.id,
     provider: entry.provider,
     endpoint_type: entry.endpointType,
-    event_type: entry.eventType,
+    event_type: mapProviderApiUsageLogEventToSupabaseRow(entry.eventType),
     cache_key: entry.cacheKey,
     request_summary: entry.requestSummary,
     response_summary: entry.responseSummary,
     created_at: entry.createdAt,
   };
+}
+
+function mapProviderApiUsageLogEventToSupabaseRow(eventType: ProviderApiUsageLogRecord["eventType"]) {
+  switch (eventType) {
+    case "provider_request":
+      return "stale_refresh";
+    case "inflight_dedupe":
+      return "cache_hit";
+    case "skipped_rate_guard":
+      return "empty_hit";
+    default:
+      return eventType;
+  }
 }
 
 function mapProviderApiUsageLogRow(row: any): ProviderApiUsageLogRecord {
@@ -2194,6 +2244,111 @@ export class SupabaseSubscriptionsRepository implements SubscriptionsRepository 
   }
 }
 
+export class SupabaseRevenueCatEventsRepository implements RevenueCatEventsRepository {
+  constructor(private readonly client: DbClient) {}
+
+  async findById(id: string): Promise<RevenueCatEventRecord | null> {
+    const { data, error } = await this.client
+      .from("revenuecat_events")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load RevenueCat event.", error);
+    return data ? mapRevenueCatEventRow(data) : null;
+  }
+
+  async findProcessedByTransactionId(transactionId: string): Promise<RevenueCatEventRecord | null> {
+    const { data, error } = await this.client
+      .from("revenuecat_events")
+      .select("*")
+      .eq("transaction_id", transactionId)
+      .eq("processed", true)
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load RevenueCat transaction.", error);
+    return data ? mapRevenueCatEventRow(data) : null;
+  }
+
+  async findProcessedSubscriptionGrantByOriginalTransaction(input: {
+    userId: string;
+    originalTransactionId: string;
+  }): Promise<RevenueCatEventRecord | null> {
+    const { data, error } = await this.client
+      .from("revenuecat_events")
+      .select("*")
+      .eq("user_id", input.userId)
+      .eq("original_transaction_id", input.originalTransactionId)
+      .eq("processed", true)
+      .eq("processed_action", "pro_granted")
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load RevenueCat subscription transaction.", error);
+    return data ? mapRevenueCatEventRow(data) : null;
+  }
+
+  async create(record: RevenueCatEventRecord): Promise<RevenueCatEventRecord> {
+    const { data, error } = await this.client
+      .from("revenuecat_events")
+      .insert(revenueCatEventToRow(record))
+      .select("*")
+      .single();
+    if (error) {
+      logger.error(
+        {
+          eventId: record.id,
+          eventType: record.eventType,
+          supabaseCode: error.code,
+          supabaseMessage: error.message,
+          supabaseDetails: error.details,
+        },
+        "REVENUECAT_EVENT_INSERT_FAILED",
+      );
+      throw new AppError(500, "SUPABASE_INSERT_FAILED", "Failed to persist RevenueCat event.", error);
+    }
+    return mapRevenueCatEventRow(requireData(data, "RevenueCat event insert returned no row."));
+  }
+
+  async markProcessed(id: string, updates: {
+    processedAction: string;
+    userId?: string | null;
+    productId?: string | null;
+    transactionId?: string | null;
+    originalTransactionId?: string | null;
+    payloadSummary?: Record<string, unknown> | null;
+    processedAt: string;
+  }): Promise<RevenueCatEventRecord> {
+    const { data, error } = await this.client
+      .from("revenuecat_events")
+      .update({
+        user_id: updates.userId ?? null,
+        product_id: updates.productId ?? null,
+        transaction_id: updates.transactionId ?? null,
+        original_transaction_id: updates.originalTransactionId ?? null,
+        payload_summary: updates.payloadSummary ?? {},
+        processed: true,
+        processed_action: updates.processedAction,
+        processed_at: updates.processedAt,
+      })
+      .eq("id", id)
+      .select("*")
+      .single();
+    if (error) {
+      logger.error(
+        {
+          eventId: id,
+          processedAction: updates.processedAction,
+          supabaseCode: error.code,
+          supabaseMessage: error.message,
+          supabaseDetails: error.details,
+        },
+        "REVENUECAT_EVENT_UPDATE_FAILED",
+      );
+      throw new AppError(500, "SUPABASE_UPDATE_FAILED", "Failed to mark RevenueCat event processed.", error);
+    }
+    return mapRevenueCatEventRow(requireData(data, "RevenueCat event update returned no row."));
+  }
+}
+
 export class SupabaseSpecsCacheRepository implements SpecsCacheRepository {
   constructor(private readonly client: DbClient) {}
 
@@ -2390,13 +2545,13 @@ export class SupabaseProviderApiUsageLogsRepository implements ProviderApiUsageL
       const eventType = String(row.event_type ?? "unknown");
       byEvent[eventType] = (byEvent[eventType] ?? 0) + 1;
       const endpointType = row.endpoint_type as ProviderEndpointType | undefined;
-      if (eventType === "provider_request" && (endpointType === "specs" || endpointType === "values" || endpointType === "listings")) {
+      if ((eventType === "provider_request" || eventType === "stale_refresh") && (endpointType === "specs" || endpointType === "values" || endpointType === "listings")) {
         byEndpoint[endpointType] += 1;
       }
     }
 
     return {
-      total: byEvent.provider_request ?? 0,
+      total: (byEvent.provider_request ?? 0) + (byEvent.stale_refresh ?? 0),
       byEndpoint,
       byEvent,
     };
@@ -2530,6 +2685,198 @@ export class SupabaseUnlockBalanceRepository implements UnlockBalanceRepository 
 export class SupabaseVehicleUnlockRepository implements VehicleUnlockRepository {
   constructor(private readonly client: DbClient) {}
 
+  private buildGrantResult(input: {
+    allowed: boolean;
+    alreadyUnlocked: boolean;
+    usedUnlock: boolean;
+    usedUnlockCredit: boolean;
+    balance: UnlockBalanceRecord;
+  }): GrantUnlockResult {
+    return {
+      allowed: input.allowed,
+      alreadyUnlocked: input.alreadyUnlocked,
+      usedUnlock: input.usedUnlock,
+      usedUnlockCredit: input.usedUnlockCredit,
+      freeUnlocksTotal: input.balance.freeUnlocksTotal,
+      freeUnlocksUsed: input.balance.freeUnlocksUsed,
+      freeUnlocksRemaining: Math.max(0, input.balance.freeUnlocksTotal - input.balance.freeUnlocksUsed),
+      unlockCreditsRemaining: Math.max(0, input.balance.unlockCredits),
+    };
+  }
+
+  private async deleteUnlockAfterFailedBalanceUpdate(input: { userId: string; unlockKey: string }) {
+    const { error } = await this.client
+      .from("user_vehicle_unlocks")
+      .delete()
+      .eq("user_id", input.userId)
+      .eq("unlock_key", input.unlockKey);
+    if (error) {
+      logger.error(
+        {
+          label: "UNLOCK_GRANT_FALLBACK_ROLLBACK_FAILED",
+          userId: input.userId,
+          code: error.code ?? null,
+          message: error.message,
+          details: error.details ?? null,
+          hint: error.hint ?? null,
+        },
+        "UNLOCK_GRANT_FALLBACK_ROLLBACK_FAILED",
+      );
+    }
+  }
+
+  private async grantUnlockWithoutRpc(
+    input: {
+      userId: string;
+      unlockKey: string;
+      unlockType: string;
+      vin?: string | null;
+      vinKey?: string | null;
+      vehicleKey?: string | null;
+      listingKey?: string | null;
+      sourceVehicleId?: string | null;
+      scanId?: string | null;
+    },
+    rpcError: any,
+  ): Promise<GrantUnlockResult> {
+    logger.warn(
+      {
+        label: "UNLOCK_GRANT_RPC_FALLBACK_STARTED",
+        userId: input.userId,
+        unlockType: input.unlockType,
+        hasVehicleKey: Boolean(input.vehicleKey),
+        hasSourceVehicleId: Boolean(input.sourceVehicleId),
+        scanId: input.scanId ?? null,
+        rpcCode: rpcError?.code ?? null,
+        rpcMessage: rpcError?.message ?? null,
+      },
+      "UNLOCK_GRANT_RPC_FALLBACK_STARTED",
+    );
+
+    const balanceRepository = new SupabaseUnlockBalanceRepository(this.client);
+    const existing = await this.findByUserAndKey(input.userId, input.unlockKey);
+    const balance = await balanceRepository.getOrCreate(input.userId);
+    if (existing) {
+      logger.info(
+        {
+          label: "UNLOCK_GRANT_FALLBACK_RESULT",
+          userId: input.userId,
+          reason: "already_unlocked",
+          usedUnlock: false,
+          usedUnlockCredit: false,
+          freeUnlocksRemaining: Math.max(0, balance.freeUnlocksTotal - balance.freeUnlocksUsed),
+          unlockCreditsRemaining: Math.max(0, balance.unlockCredits),
+        },
+        "UNLOCK_GRANT_FALLBACK_RESULT",
+      );
+      return this.buildGrantResult({
+        allowed: true,
+        alreadyUnlocked: true,
+        usedUnlock: false,
+        usedUnlockCredit: false,
+        balance,
+      });
+    }
+
+    const freeUnlocksRemaining = Math.max(0, balance.freeUnlocksTotal - balance.freeUnlocksUsed);
+    const unlockCreditsRemaining = Math.max(0, balance.unlockCredits);
+    if (freeUnlocksRemaining <= 0 && unlockCreditsRemaining <= 0) {
+      logger.warn(
+        {
+          label: "UNLOCK_GRANT_FALLBACK_DENIED",
+          userId: input.userId,
+          reason: "insufficient_unlocks",
+          freeUnlocksRemaining,
+          unlockCreditsRemaining,
+        },
+        "UNLOCK_GRANT_FALLBACK_DENIED",
+      );
+      return this.buildGrantResult({
+        allowed: false,
+        alreadyUnlocked: false,
+        usedUnlock: false,
+        usedUnlockCredit: false,
+        balance,
+      });
+    }
+
+    try {
+      await this.create({
+        id: crypto.randomUUID(),
+        userId: input.userId,
+        unlockKey: input.unlockKey,
+        unlockType: input.unlockType,
+        vin: input.vin ?? null,
+        vinKey: input.vinKey ?? null,
+        vehicleKey: input.vehicleKey ?? null,
+        listingKey: input.listingKey ?? null,
+        sourceVehicleId: input.sourceVehicleId ?? null,
+        scanId: input.scanId ?? null,
+        createdAt: new Date().toISOString(),
+      });
+    } catch (error: any) {
+      if (error?.code === "23505") {
+        logger.info(
+          {
+            label: "UNLOCK_GRANT_FALLBACK_RESULT",
+            userId: input.userId,
+            reason: "already_unlocked_unique_violation",
+            usedUnlock: false,
+            usedUnlockCredit: false,
+            freeUnlocksRemaining,
+            unlockCreditsRemaining,
+          },
+          "UNLOCK_GRANT_FALLBACK_RESULT",
+        );
+        return this.buildGrantResult({
+          allowed: true,
+          alreadyUnlocked: true,
+          usedUnlock: false,
+          usedUnlockCredit: false,
+          balance,
+        });
+      }
+      throw new AppError(500, "SUPABASE_INSERT_FAILED", "Failed to create vehicle unlock.", error);
+    }
+
+    const consumePurchasedCredit = freeUnlocksRemaining <= 0 && unlockCreditsRemaining > 0;
+    const updatedBalance: UnlockBalanceRecord = {
+      ...balance,
+      freeUnlocksUsed: consumePurchasedCredit ? balance.freeUnlocksUsed : balance.freeUnlocksUsed + 1,
+      unlockCredits: consumePurchasedCredit ? Math.max(0, balance.unlockCredits - 1) : balance.unlockCredits,
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      const savedBalance = await balanceRepository.update(updatedBalance);
+      logger.info(
+        {
+          label: "UNLOCK_GRANT_FALLBACK_RESULT",
+          userId: input.userId,
+          reason: consumePurchasedCredit ? "purchased_credit_consumed" : "free_unlock_consumed",
+          usedUnlock: true,
+          usedUnlockCredit: consumePurchasedCredit,
+          freeUnlocksRemaining: Math.max(0, savedBalance.freeUnlocksTotal - savedBalance.freeUnlocksUsed),
+          unlockCreditsRemaining: Math.max(0, savedBalance.unlockCredits),
+        },
+        "UNLOCK_GRANT_FALLBACK_RESULT",
+      );
+      return this.buildGrantResult({
+        allowed: true,
+        alreadyUnlocked: false,
+        usedUnlock: true,
+        usedUnlockCredit: consumePurchasedCredit,
+        balance: savedBalance,
+      });
+    } catch (error) {
+      await this.deleteUnlockAfterFailedBalanceUpdate({
+        userId: input.userId,
+        unlockKey: input.unlockKey,
+      });
+      throw error;
+    }
+  }
+
   async findByUserAndKey(userId: string, unlockKey: string): Promise<UserVehicleUnlockRecord | null> {
     const { data, error } = await this.client
       .from("user_vehicle_unlocks")
@@ -2583,7 +2930,45 @@ export class SupabaseVehicleUnlockRepository implements VehicleUnlockRepository 
       p_source_vehicle_id: input.sourceVehicleId ?? null,
       p_scan_id: input.scanId ?? null,
     });
-    if (error) throw new AppError(500, "SUPABASE_RPC_FAILED", "Failed to grant vehicle unlock.", error);
+    if (error) {
+      logger.error(
+        {
+          label: "UNLOCK_GRANT_RPC_FAILED",
+          userId: input.userId,
+          unlockType: input.unlockType,
+          hasVehicleKey: Boolean(input.vehicleKey),
+          hasSourceVehicleId: Boolean(input.sourceVehicleId),
+          scanId: input.scanId ?? null,
+          code: error.code ?? null,
+          message: error.message,
+          details: error.details ?? null,
+          hint: error.hint ?? null,
+        },
+        "UNLOCK_GRANT_RPC_FAILED",
+      );
+      try {
+        return await this.grantUnlockWithoutRpc(input, error);
+      } catch (fallbackError) {
+        logger.error(
+          {
+            label: "UNLOCK_GRANT_RPC_FALLBACK_FAILED",
+            userId: input.userId,
+            unlockType: input.unlockType,
+            hasVehicleKey: Boolean(input.vehicleKey),
+            hasSourceVehicleId: Boolean(input.sourceVehicleId),
+            rpcCode: error.code ?? null,
+            rpcMessage: error.message,
+            fallbackMessage: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+            fallbackCode:
+              typeof fallbackError === "object" && fallbackError !== null && "code" in fallbackError
+                ? (fallbackError as { code?: unknown }).code
+                : null,
+          },
+          "UNLOCK_GRANT_RPC_FALLBACK_FAILED",
+        );
+        throw new AppError(500, "SUPABASE_RPC_FAILED", "Failed to grant vehicle unlock.", error);
+      }
+    }
     const row = Array.isArray(data) ? data[0] : data;
     if (!row) {
       throw new AppError(500, "SUPABASE_RPC_FAILED", "Unlock grant returned empty result.");

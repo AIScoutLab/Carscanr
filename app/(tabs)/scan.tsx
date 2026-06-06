@@ -1,27 +1,13 @@
 import { router } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Animated, Easing, Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Easing, Image, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-import { AppContainer } from "@/components/AppContainer";
-import { BrandMark } from "@/components/BrandMark";
-import { BRAND_MARK_LAYOUT } from "@/constants/branding";
-import { EmptyState } from "@/components/EmptyState";
 import { ErrorStateCard } from "@/components/ErrorStateCard";
-import { FeatureRow } from "@/components/FeatureRow";
-import { PaywallCard } from "@/components/PaywallCard";
-import { PillBadge } from "@/components/PillBadge";
-import { PrimaryButton } from "@/components/PrimaryButton";
-import { PremiumCard } from "@/components/PremiumCard";
-import { RecentScanCard } from "@/components/RecentScanCard";
 import { SamplePhotoPickerSheet } from "@/components/SamplePhotoPickerSheet";
-import { ScanUsageMeter } from "@/components/ScanUsageMeter";
-import { SectionHeader } from "@/components/SectionHeader";
 import { Colors, Motion, Radius, Typography } from "@/constants/theme";
-import { cardStyles } from "@/design/patterns";
-import { APP_BRAND } from "@/lib/onboardingFlow";
-import { mobileBuildInfo, mobileEnv } from "@/lib/env";
 import {
   getCameraPermissionState,
   getLibraryPermissionState,
@@ -32,8 +18,10 @@ import {
   SelectedScanPhoto,
 } from "@/features/scan/useScanActions";
 import { useSubscription } from "@/hooks/useSubscription";
+import { formatCompactUnlockBalanceSummary } from "@/lib/unlockCreditDisplay";
 import { getNextScanLoadingFactIndex, getRandomScanLoadingFactIndex, SCAN_LOADING_FACTS } from "@/lib/scanLoadingFacts";
 import { isProPlan } from "@/lib/subscription";
+import { buildVehicleDetailRouteFromScanResult } from "@/lib/scanResultNavigation";
 import { SCAN_LOADING_STAGES, getScanLoadingStageState } from "@/lib/scanLoadingStages";
 import { supabase } from "@/lib/supabase";
 import { ApiRequestError } from "@/services/apiClient";
@@ -59,10 +47,28 @@ type DebugStatus =
   | "Navigation to result"
   | `Scan failed: ${string}`;
 
+const SCAN_PROGRESS_STAGE_DWELL_MS = 520;
+
+function formatRecentScanDate(scannedAt?: string | null) {
+  if (!scannedAt) return "Recent";
+  const date = new Date(scannedAt);
+  if (Number.isNaN(date.getTime())) return "Recent";
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function formatRecentScanTitle(scan: ScanResult) {
+  return [scan.identifiedVehicle.year || null, scan.identifiedVehicle.make, scan.identifiedVehicle.model]
+    .filter(Boolean)
+    .join(" ") || "Vehicle identified";
+}
+
+function formatRecentScanReference(scan: ScanResult) {
+  return typeof scan.id === "string" && scan.id.length > 0 ? `SCAN · ${scan.id.slice(0, 8).toUpperCase()}` : "RECENT SCAN";
+}
+
 export default function ScanScreen() {
   const IDENTIFY_TIMEOUT_MS = 60000;
   const [recentScans, setRecentScans] = useState<ScanResult[]>([]);
-  const [recentScansDiagnostics, setRecentScansDiagnostics] = useState(() => scanService.getRecentScansDiagnostics());
   const [samplePickerOpen, setSamplePickerOpen] = useState(false);
   const [loadingSampleId, setLoadingSampleId] = useState<string | null>(null);
   const [cameraPermissionReady, setCameraPermissionReady] = useState<boolean | null>(null);
@@ -80,22 +86,18 @@ export default function ScanScreen() {
   const scanStartedAtRef = useRef<number | null>(null);
   const lastStageAtRef = useRef<number | null>(null);
   const pendingIdentifyStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadingStageAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const targetLoadingStageIndexRef = useRef(0);
   const activeFlowIdRef = useRef(0);
   const stagedProgress = useRef(new Animated.Value(0)).current;
   const factOpacity = useRef(new Animated.Value(1)).current;
-  const { status: usage, freeUnlocksUsed, freeUnlocksRemaining, freeUnlocksLimit, refreshStatus } = useSubscription();
+  const { status: usage, freeUnlocksUsed, freeUnlocksRemaining, freeUnlocksLimit, unlockCredits, refreshStatus } = useSubscription();
   const samplePhotos = getSampleScanPhotos();
   const [loadingStageIndex, setLoadingStageIndex] = useState(0);
   const [activeFactIndex, setActiveFactIndex] = useState(0);
-  const shouldShowRecentScansDiagnostics =
-    __DEV__ ||
-    (mobileEnv.appEnv !== "production" &&
-      ["1", "true", "yes", "on"].includes(mobileEnv.showQaDebug.trim().toLowerCase()));
-  const visibleBuildStamp = `Build ${mobileBuildInfo.version || "unknown"} • ${mobileBuildInfo.gitCommit ? mobileBuildInfo.gitCommit.slice(0, 7) : "unknown"}`;
 
   const syncRecentScansState = useCallback((scans: ScanResult[]) => {
     setRecentScans(scans);
-    setRecentScansDiagnostics(scanService.getRecentScansDiagnostics());
   }, []);
 
   const resetTransientScanState = useCallback(() => {
@@ -104,6 +106,11 @@ export default function ScanScreen() {
       clearTimeout(pendingIdentifyStatusTimerRef.current);
       pendingIdentifyStatusTimerRef.current = null;
     }
+    if (loadingStageAdvanceTimerRef.current) {
+      clearTimeout(loadingStageAdvanceTimerRef.current);
+      loadingStageAdvanceTimerRef.current = null;
+    }
+    targetLoadingStageIndexRef.current = 0;
     setIsBusy(false);
     setLoadingSampleId(null);
     setSamplePickerOpen(false);
@@ -124,18 +131,33 @@ export default function ScanScreen() {
     if (pendingIdentifyStatusTimerRef.current) {
       clearTimeout(pendingIdentifyStatusTimerRef.current);
     }
+    if (loadingStageAdvanceTimerRef.current) {
+      clearTimeout(loadingStageAdvanceTimerRef.current);
+      loadingStageAdvanceTimerRef.current = null;
+    }
   }, []);
 
   useEffect(() => {
     if (!isBusy || !retryImageUri) {
+      if (loadingStageAdvanceTimerRef.current) {
+        clearTimeout(loadingStageAdvanceTimerRef.current);
+        loadingStageAdvanceTimerRef.current = null;
+      }
+      targetLoadingStageIndexRef.current = 0;
       setLoadingStageIndex(0);
       stagedProgress.stopAnimation();
       stagedProgress.setValue(0);
       return;
     }
     const derived = getScanLoadingStageState(debugStatus);
-    setLoadingStageIndex((current) => Math.max(current, derived.stageIndex));
-  }, [debugStatus, isBusy, retryImageUri, stagedProgress]);
+    targetLoadingStageIndexRef.current = Math.max(targetLoadingStageIndexRef.current, derived.stageIndex);
+    if (loadingStageIndex < targetLoadingStageIndexRef.current && !loadingStageAdvanceTimerRef.current) {
+      loadingStageAdvanceTimerRef.current = setTimeout(() => {
+        loadingStageAdvanceTimerRef.current = null;
+        setLoadingStageIndex((current) => Math.min(current + 1, targetLoadingStageIndexRef.current));
+      }, SCAN_PROGRESS_STAGE_DWELL_MS);
+    }
+  }, [debugStatus, isBusy, loadingStageIndex, retryImageUri, stagedProgress]);
 
   useEffect(() => {
     if (!isBusy || !retryImageUri) {
@@ -258,21 +280,30 @@ export default function ScanScreen() {
       setDebugStatus("Opening result");
       recordStage("navigation start", { scanId: result.id, imageUri: result.imageUri });
       appendDebugDetail("result params", { scanId: result.id, imageUri: result.imageUri });
-      console.log("[scan] navigating to result", {
+      console.log("[scan] navigating to vehicle detail", {
         scanId: result.id,
         imageUri: result.imageUri,
         candidateCount: result.candidates.length,
       });
       setDebugStatus("Navigation to result");
-      router.push({ pathname: "/scan/result", params: { scanId: result.id, imageUri: result.imageUri, resultSource: "fresh_api" } });
+      router.push(buildVehicleDetailRouteFromScanResult(result, result.source === "sample_vehicle" ? "sample_vehicle" : "fresh_api"));
     } catch (error) {
       failScan(error instanceof Error ? error.message : "Result navigation failed.");
     }
   };
 
-  const scansUsed = usage?.scansUsed ?? usage?.scansUsedToday ?? 0;
-  const showUpgradeCard = !isProPlan(usage?.plan) && freeUnlocksRemaining <= 1;
-  const showSoftUpsell = usage?.plan === "free" && freeUnlocksRemaining <= 2;
+  const isPro = isProPlan(usage?.plan);
+  const remainingUnlocks = Math.max(0, freeUnlocksRemaining);
+  const purchasedUnlockCredits = Math.max(0, unlockCredits);
+  const totalUnlocksAvailable = remainingUnlocks + purchasedUnlockCredits;
+  const unlockSummaryLabel = isPro
+    ? "PRO ACCESS ACTIVE"
+    : formatCompactUnlockBalanceSummary({
+        freeUnlocksRemaining: remainingUnlocks,
+        freeUnlocksTotal: freeUnlocksLimit,
+        unlockCreditsRemaining: purchasedUnlockCredits,
+      });
+  const unlockDotCount = Math.max(1, Math.min(freeUnlocksLimit, 5));
 
   const appendDebugDetail = useCallback((label: string, value: unknown) => {
     const formatted = typeof value === "string" ? value : JSON.stringify(value);
@@ -311,14 +342,24 @@ export default function ScanScreen() {
     const flowId = activeFlowIdRef.current;
     const now = Date.now();
     clearPendingIdentifyTimer();
+    if (loadingStageAdvanceTimerRef.current) {
+      clearTimeout(loadingStageAdvanceTimerRef.current);
+      loadingStageAdvanceTimerRef.current = null;
+    }
     scanStartedAtRef.current = now;
     lastStageAtRef.current = now;
+    targetLoadingStageIndexRef.current = 0;
+    stagedProgress.stopAnimation();
+    stagedProgress.setValue(0);
+    setLoadingStageIndex(0);
     setIsBusy(true);
     setScanError(null);
     setLoadingSampleId(null);
+    setRetryImageUri(null);
+    setRetrySource(null);
     setDebugDetails([`flow source: ${source}`]);
     return flowId;
-  }, [clearPendingIdentifyTimer]);
+  }, [clearPendingIdentifyTimer, stagedProgress]);
 
   const beginIdentifyPendingStatus = useCallback((flowId: number) => {
     clearPendingIdentifyTimer();
@@ -598,162 +639,181 @@ export default function ScanScreen() {
     );
   };
 
+  const openRecentScan = (scan: ScanResult) => {
+    if (typeof scan.id === "string" && scan.id.length > 0) {
+      console.log("[tap] recent-scan-open", { scanId: scan.id });
+      console.log("[RESULT_NAVIGATION]", { resultSource: "persisted", scanId: scan.id });
+      router.push(buildVehicleDetailRouteFromScanResult(scan, "persisted"));
+    }
+  };
+
   if (isBusy && retryImageUri && !scanError) {
     const stageState = getScanLoadingStageState(debugStatus);
+    const displayedStageIndex = Math.min(loadingStageIndex, SCAN_LOADING_STAGES.length - 1);
+    const displayedStageLabel = SCAN_LOADING_STAGES[displayedStageIndex] ?? stageState.stageLabel;
     const loadingProgressWidth = stagedProgress.interpolate({
       inputRange: [0, 1],
       outputRange: ["16%", "100%"],
     });
+    const progressPercent = Math.round(((displayedStageIndex + 1) / SCAN_LOADING_STAGES.length) * 100);
     const shimmerTranslate = stagedProgress.interpolate({
       inputRange: [0, 1],
       outputRange: [-160, 290],
     });
 
     return (
-      <AppContainer scroll={false} contentContainerStyle={styles.loadingScreen}>
-        <PremiumCard variant="glass" contentStyle={styles.loadingHeroFrame}>
-          <Image source={{ uri: retryImageUri }} style={styles.loadingHeroImage} resizeMode="contain" />
-        </PremiumCard>
-        <PremiumCard variant="glass" contentStyle={styles.loadingCopyCard}>
-          <Text style={styles.loadingTitle}>Scanning your vehicle</Text>
-          <Text style={styles.loadingBody}>{stageState.stageLabel}</Text>
-          <View style={styles.loadingProgressTrack}>
-            <Animated.View style={[styles.loadingProgressGlow, { width: loadingProgressWidth }]} />
-            <Animated.View style={[styles.loadingProgressFillWrap, { width: loadingProgressWidth }]}>
-              <LinearGradient
-                colors={["#1B63F3", "#49D9FF", "#F7FDFF"]}
-                start={{ x: 0, y: 0.5 }}
-                end={{ x: 1, y: 0.5 }}
-                style={styles.loadingProgressFill}
-              >
-                <Animated.View style={[styles.loadingProgressShimmer, { transform: [{ translateX: shimmerTranslate }] }]} />
-              </LinearGradient>
-            </Animated.View>
+      <SafeAreaView style={styles.loadingScreen} edges={["top", "right", "bottom", "left"]}>
+        <LinearGradient colors={["#020202", "#070605", "#050505"]} style={styles.loadingShell}>
+          <Image source={{ uri: retryImageUri }} style={styles.loadingHeroImage} resizeMode="cover" />
+          <LinearGradient
+            pointerEvents="none"
+            colors={["rgba(2,2,2,0.08)", "rgba(2,2,2,0.42)", "rgba(2,2,2,0.94)"]}
+            locations={[0, 0.45, 1]}
+            style={styles.loadingImageFade}
+          />
+          <View style={styles.loadingCardAnchor}>
+            <View style={styles.loadingCopyCard}>
+              <Text style={styles.loadingTitle}>Scanning your vehicle</Text>
+              <Text style={styles.loadingBody}>{displayedStageLabel}</Text>
+              <View style={styles.loadingProgressTrack}>
+                <Animated.View style={[styles.loadingProgressGlow, { width: loadingProgressWidth }]} />
+                <Animated.View style={[styles.loadingProgressFillWrap, { width: loadingProgressWidth }]}>
+                  <LinearGradient
+                    colors={["#D8A36B", "#F1C891", "#C58B4F"]}
+                    start={{ x: 0, y: 0.5 }}
+                    end={{ x: 1, y: 0.5 }}
+                    style={styles.loadingProgressFill}
+                  >
+                    <Animated.View style={[styles.loadingProgressShimmer, { transform: [{ translateX: shimmerTranslate }] }]} />
+                  </LinearGradient>
+                </Animated.View>
+              </View>
+              <View style={styles.loadingStageMetaRow}>
+                <Text style={styles.loadingStageStep}>
+                  Step {displayedStageIndex + 1} of {SCAN_LOADING_STAGES.length}
+                </Text>
+                <Text style={styles.loadingStageLabel}>{progressPercent}%</Text>
+              </View>
+              <Text style={styles.loadingSupport}>Matching design cues, year range, and model generation</Text>
+              <Animated.Text style={[styles.loadingFact, { opacity: factOpacity }]}>
+                {SCAN_LOADING_FACTS[activeFactIndex]}
+              </Animated.Text>
+            </View>
           </View>
-          <View style={styles.loadingStageMetaRow}>
-            <Text style={styles.loadingStageStep}>
-              Step {Math.min(loadingStageIndex + 1, SCAN_LOADING_STAGES.length)} of {SCAN_LOADING_STAGES.length}
-            </Text>
-            <Text style={styles.loadingStageLabel}>{stageState.stageLabel}</Text>
-          </View>
-          <Animated.Text style={[styles.loadingFact, { opacity: factOpacity }]}>
-            {SCAN_LOADING_FACTS[activeFactIndex]}
-          </Animated.Text>
-        </PremiumCard>
-      </AppContainer>
+        </LinearGradient>
+      </SafeAreaView>
     );
   }
 
   return (
-    <AppContainer>
-      <PremiumCard variant="hero" glow contentStyle={styles.brandHero}>
-        <View style={styles.brandHeroRow}>
-          <BrandMark
-            size={BRAND_MARK_LAYOUT.scanHero.size}
-            contentScale={BRAND_MARK_LAYOUT.scanHero.contentScale}
-            style={styles.brandIconWrap}
-            resizeMode="contain"
-          />
-          <View style={styles.brandCopy}>
-            <Text style={styles.brandName}>{APP_BRAND.name}</Text>
-            <Text style={styles.brandTagline}>{APP_BRAND.tagline}</Text>
+    <SafeAreaView style={styles.safeArea} edges={["top", "right", "bottom", "left"]}>
+      <LinearGradient colors={["#040506", "#080708", "#030405"]} style={styles.screen}>
+        <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          <View style={styles.heroSection}>
+            <LinearGradient colors={["rgba(214,158,93,0.14)", "rgba(214,158,93,0.03)", "rgba(0,0,0,0)"]} style={styles.cameraOrb}>
+              <Ionicons name="camera-outline" size={32} color={scanColors.goldLight} />
+            </LinearGradient>
+            <View style={styles.heroCopy}>
+              <Text style={styles.heroTitle}>Identify any vehicle instantly</Text>
+              <Text style={styles.heroBody}>
+                Point your camera at any car to unlock AI-powered insights, specs, and real-time market value
+              </Text>
+            </View>
           </View>
-        </View>
-        <Text style={styles.brandSupport}>Use manual search or scan a vehicle when you want details instantly.</Text>
-        <FeatureRow
-          items={[
-            { icon: "scan-outline", label: "Instant AI identification" },
-            { icon: "car-sport-outline", label: "Recent scans saved" },
-            { icon: "analytics-outline", label: "Value and listings on demand" },
-          ]}
-        />
-      </PremiumCard>
-      {usage ? (
-        <ScanUsageMeter
-          status={usage}
-          mode="unlocks"
-          unlocksUsed={freeUnlocksUsed}
-          unlocksRemaining={freeUnlocksRemaining}
-          unlocksLimit={freeUnlocksLimit}
-          supportingText="Unlimited basic scans stay free. Unlock full details only when you want them."
-          ctaLabel="Go Pro"
-          onCtaPress={() => {
-            console.log("[tap] usage-meter-go-pro");
-            router.push("/paywall");
-          }}
-        />
-      ) : null}
-      {scanError ? (
-        <ErrorStateCard
-          title="Scan failed"
-          description={scanError}
-          actionLabel="Retry Last Photo"
-          onAction={() => retryScan().catch(() => undefined)}
-        />
-      ) : null}
-      <PremiumCard variant="default" glow contentStyle={styles.scanCard}>
-        <PillBadge tone="brand" label="Ready to identify" />
-        <Pressable style={({ pressed }) => [styles.cameraButton, pressed && styles.cameraPressed]} onPress={() => beginScan("camera")} disabled={isBusy}>
-          <LinearGradient colors={["#0A72E8", "#1D8CFF", "#5EE7FF"]} style={styles.cameraGradient}>
-            <Text style={styles.cameraButtonLabel}>{isBusy ? "Analyzing..." : "Scan Vehicle"}</Text>
-          </LinearGradient>
-        </Pressable>
-        <PrimaryButton label={isBusy ? "Analyzing..." : "Choose From Photos"} secondary onPress={() => beginScan("library")} disabled={isBusy} />
-      </PremiumCard>
-      {showSoftUpsell || showUpgradeCard ? (
-        <PaywallCard
-          status={usage}
-          unlocksUsed={freeUnlocksUsed}
-          unlocksRemaining={freeUnlocksRemaining}
-          unlocksLimit={freeUnlocksLimit}
-          title="Unlock deeper vehicle insights"
-          description="Scans stay free. Pro unlocks full specs, value, listings, and pricing guidance when you want more detail."
-          ctaLabel="Explore Pro"
-          onCtaPress={() => {
-            console.log("[tap] scan-upgrade-prompt");
-            router.push("/paywall");
-          }}
-          showEyebrow={false}
-          showCreditBadge={false}
-          usageLabelOverride={
-            freeUnlocksRemaining > 0
-              ? `${freeUnlocksRemaining} free unlock${freeUnlocksRemaining === 1 ? "" : "s"} remaining`
-              : "No free unlocks remaining"
-          }
-        />
-      ) : null}
-      <SectionHeader kicker="Recent Scans" title="Recent scans" subtitle="Jump back into the vehicles you’ve already scanned." />
-      {recentScans.length === 0 ? (
-        <EmptyState
-          title="No recent scans yet"
-          description="Scan a VIN or vehicle photo to see your vehicle history here."
-        />
-      ) : (
-        recentScans.map((scan) => (
-          <RecentScanCard
-            key={scan.id}
-            scan={scan}
-            onPress={() => {
-              if (typeof scan.id === "string" && scan.id.length > 0) {
-                console.log("[tap] recent-scan-open", { scanId: scan.id });
-                console.log("[RESULT_NAVIGATION]", { resultSource: "persisted", scanId: scan.id });
-                router.push({ pathname: "/scan/result", params: { scanId: scan.id, resultSource: "persisted" } });
-              }
-            }}
-          />
-        ))
-      )}
-      {shouldShowRecentScansDiagnostics ? (
-        <PremiumCard style={styles.recentDiagnosticsCard}>
-          <Text style={styles.recentDiagnosticsEyebrow}>Recent Scans Diagnostics</Text>
-          <Text style={styles.recentDiagnosticsLine}>Storage key: {recentScansDiagnostics.currentStorageKey ?? "unresolved"}</Text>
-          <Text style={styles.recentDiagnosticsLine}>Mirror key: {recentScansDiagnostics.mirrorStorageKey}</Text>
-          <Text style={styles.recentDiagnosticsLine}>Loaded count: {recentScansDiagnostics.lastLoadedCount}</Text>
-          <Text style={styles.recentDiagnosticsLine}>Saved count: {recentScansDiagnostics.lastSavedCount}</Text>
-          <Text style={styles.recentDiagnosticsLine}>Last vehicle: {recentScansDiagnostics.lastSavedLabel ?? "none"}</Text>
-          <Text style={styles.recentDiagnosticsLine}>Last save error: {recentScansDiagnostics.lastSaveError ?? "none"}</Text>
-        </PremiumCard>
-      ) : null}
+
+          <View style={styles.actionStack}>
+            <Pressable
+              style={({ pressed }) => [styles.primaryActionShell, pressed && styles.actionPressed, isBusy && styles.actionDisabled]}
+              onPress={() => beginScan("camera")}
+              disabled={isBusy}
+              accessibilityRole="button"
+            >
+              <LinearGradient colors={["#E7B47D", "#D39A5D"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.primaryAction}>
+                <Text style={styles.primaryActionText}>{isBusy ? "Analyzing..." : "Scan Vehicle"}</Text>
+              </LinearGradient>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.secondaryAction, pressed && styles.actionPressed, isBusy && styles.actionDisabled]}
+              onPress={() => beginScan("library")}
+              disabled={isBusy}
+              accessibilityRole="button"
+            >
+              <Ionicons name="image-outline" size={18} color={scanColors.goldLight} />
+              <Text style={styles.secondaryActionText}>{isBusy ? "Analyzing..." : "Choose from Photos"}</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.unlockRow}>
+            <View style={styles.unlockMeta}>
+              <View style={styles.unlockDots} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+                {Array.from({ length: unlockDotCount }).map((_, index) => (
+                  <View key={index} style={[styles.unlockDot, index < totalUnlocksAvailable && styles.unlockDotAvailable]} />
+                ))}
+              </View>
+              <Text style={styles.unlockLabel}>{unlockSummaryLabel}</Text>
+            </View>
+            {!isPro ? (
+              <TouchableOpacity
+                activeOpacity={0.82}
+                accessibilityRole="button"
+                style={styles.goProButton}
+                onPress={() => {
+                  console.log("[tap] usage-meter-go-pro");
+                  router.push("/paywall");
+                }}
+              >
+                <Text style={styles.goProText}>Go Pro</Text>
+                <Ionicons name="chevron-forward" size={15} color={scanColors.goldLight} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          {scanError ? (
+            <ErrorStateCard
+              title="Scan failed"
+              description={scanError}
+              actionLabel="Retry Last Photo"
+              onAction={() => retryScan().catch(() => undefined)}
+            />
+          ) : null}
+
+          {recentScans.length > 0 ? (
+            <View style={styles.recentSection}>
+              <Text style={styles.sectionLabel}>RECENT</Text>
+              {recentScans.slice(0, 3).map((scan) => (
+                <Pressable
+                  key={scan.id}
+                  accessibilityRole="button"
+                  style={({ pressed }) => [styles.recentCard, pressed && styles.recentPressed]}
+                  onPress={() => openRecentScan(scan)}
+                >
+                  {scan.imageUri ? <Image source={{ uri: scan.imageUri }} style={styles.recentImage} resizeMode="cover" /> : null}
+                  <LinearGradient colors={["rgba(3,4,5,0.06)", "rgba(3,4,5,0.36)", "rgba(3,4,5,0.96)"]} style={styles.recentOverlay} />
+                  {!scan.imageUri ? (
+                    <View style={styles.recentFallback}>
+                      <Ionicons name="car-sport-outline" size={52} color="rgba(214,158,93,0.55)" />
+                    </View>
+                  ) : null}
+                  <View style={styles.recentDatePill}>
+                    <Text style={styles.recentDateText}>{formatRecentScanDate(scan.scannedAt)}</Text>
+                  </View>
+                  <View style={styles.recentCopy}>
+                    <Text style={styles.recentReference}>{formatRecentScanReference(scan)}</Text>
+                    <Text style={styles.recentTitle}>{formatRecentScanTitle(scan)}</Text>
+                    <View style={styles.recentFooter}>
+                      <Text style={styles.recentSubtitle} numberOfLines={1}>
+                        {scan.limitedPreview ? "Preview saved" : "Saved scan result"}
+                      </Text>
+                      <View style={styles.recentArrow}>
+                        <Ionicons name="chevron-forward" size={21} color={scanColors.goldLight} />
+                      </View>
+                    </View>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+        </ScrollView>
       <SamplePhotoPickerSheet
         visible={samplePickerOpen}
         samples={samplePhotos}
@@ -773,125 +833,354 @@ export default function ScanScreen() {
           beginSampleScan(sampleId).catch(() => undefined);
         }}
       />
-      <View style={styles.buildStampRow}>
-        <Text style={styles.buildStampText}>{visibleBuildStamp}</Text>
-      </View>
-    </AppContainer>
+      </LinearGradient>
+    </SafeAreaView>
   );
 }
 
+const scanColors = {
+  background: "#030405",
+  panel: "#0A0A0B",
+  panelSoft: "#11100F",
+  line: "rgba(255,255,255,0.08)",
+  lineGold: "rgba(214,158,93,0.22)",
+  text: "#F5F3EF",
+  textSoft: "#A5A6AF",
+  textMuted: "#777C8A",
+  gold: "#D69E5D",
+  goldLight: "#E9B878",
+  goldDark: "#8F5F2E",
+};
+
 const styles = StyleSheet.create({
-  brandHero: {
-    padding: 18,
-    gap: 14,
-  },
-  brandHeroRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  brandIconWrap: {
-    backgroundColor: "rgba(17, 42, 70, 0.24)",
-  },
-  brandCopy: {
+  safeArea: {
     flex: 1,
-    gap: 2,
+    backgroundColor: scanColors.background,
   },
-  brandName: {
-    ...Typography.heading,
-    color: Colors.textStrong,
-    fontWeight: "800",
+  screen: {
+    flex: 1,
   },
-  brandTagline: {
+  scroll: {
+    flex: 1,
+  },
+  content: {
+    paddingHorizontal: 21,
+    paddingTop: 34,
+    paddingBottom: 44,
+    gap: 0,
+  },
+  heroSection: {
+    minHeight: 314,
+    justifyContent: "space-between",
+    marginBottom: 26,
+  },
+  cameraOrb: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(214,158,93,0.08)",
+    shadowColor: scanColors.gold,
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 12 },
+  },
+  heroCopy: {
+    gap: 16,
+    maxWidth: 345,
+  },
+  heroTitle: {
+    fontFamily: Typography.hero.fontFamily,
+    fontSize: 30,
+    lineHeight: 34,
+    fontWeight: "900",
+    letterSpacing: 0,
+    color: scanColors.text,
+    maxWidth: 330,
+  },
+  heroBody: {
     ...Typography.body,
-    color: Colors.textStrong,
-    fontWeight: "700",
+    color: scanColors.textSoft,
+    fontWeight: "500",
+    letterSpacing: 0,
+    lineHeight: 22,
+    maxWidth: 345,
   },
-  brandSupport: {
-    ...Typography.body,
-    color: Colors.textSoft,
+  actionStack: {
+    gap: 14,
+    marginBottom: 62,
   },
-  scanCard: { gap: 14, padding: 18 },
-  cameraButton: {
-    borderRadius: Radius.xl,
-    minHeight: 180,
+  primaryActionShell: {
+    borderRadius: 14,
+    minHeight: 86,
     overflow: "hidden",
-    shadowColor: Colors.shadow,
-    shadowOpacity: 0.16,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 10 },
+    shadowColor: "#000000",
+    shadowOpacity: 0.34,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 14 },
     elevation: 5,
   },
-  cameraPressed: {
+  primaryAction: {
+    flex: 1,
+    minHeight: 86,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+  },
+  primaryActionText: {
+    ...Typography.bodyStrong,
+    color: "#080605",
+    fontWeight: "900",
+    letterSpacing: 0,
+  },
+  secondaryAction: {
+    minHeight: 56,
+    borderRadius: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 9,
+    backgroundColor: "rgba(255,255,255,0.035)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    shadowColor: "#000000",
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 3,
+  },
+  secondaryActionText: {
+    ...Typography.bodyStrong,
+    color: scanColors.text,
+    fontWeight: "800",
+    letterSpacing: 0,
+  },
+  actionPressed: {
     transform: [{ scale: Motion.pressInScale }],
   },
-  cameraGradient: {
+  actionDisabled: {
+    opacity: 0.62,
+  },
+  unlockRow: {
+    minHeight: 26,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
+    marginBottom: 43,
+  },
+  unlockMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
     flex: 1,
-    borderRadius: Radius.xl,
-    justifyContent: "center",
+    minWidth: 0,
+  },
+  unlockDots: {
+    flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 24,
+    gap: 4,
   },
-  cameraButtonLabel: { ...Typography.title, color: "#FFFFFF" },
-  buildStampRow: {
+  unlockDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "rgba(255,255,255,0.28)",
+  },
+  unlockDotAvailable: {
+    backgroundColor: scanColors.goldLight,
+    shadowColor: scanColors.goldLight,
+    shadowOpacity: 0.48,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  unlockLabel: {
+    ...Typography.caption,
+    color: scanColors.textMuted,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  goProButton: {
+    flexDirection: "row",
     alignItems: "center",
-    paddingTop: 6,
-    paddingBottom: 2,
+    gap: 5,
+    minHeight: 28,
+    paddingLeft: 10,
   },
-  buildStampText: {
+  goProText: {
     ...Typography.caption,
-    color: Colors.textMuted,
+    color: scanColors.goldLight,
+    fontWeight: "900",
+    letterSpacing: 0,
   },
-  loadingScreen: { flex: 1, gap: 16 },
-  recentDiagnosticsCard: {
-    gap: 6,
-    padding: 16,
+  recentSection: {
+    gap: 18,
   },
-  recentDiagnosticsEyebrow: {
+  sectionLabel: {
     ...Typography.caption,
-    color: Colors.accent,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
+    color: scanColors.textMuted,
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: "900",
+    letterSpacing: 2,
   },
-  recentDiagnosticsLine: {
-    ...Typography.caption,
-    color: Colors.textMuted,
+  recentCard: {
+    height: 255,
+    borderRadius: 0,
+    overflow: "hidden",
+    backgroundColor: scanColors.panelSoft,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "rgba(214,158,93,0.12)",
+    shadowColor: "#000000",
+    shadowOpacity: 0.34,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 5,
   },
-  loadingHeroFrame: {
-    width: "100%",
-    height: 360,
-    padding: 0,
+  recentPressed: {
+    transform: [{ scale: 0.992 }],
   },
-  loadingHeroImage: {
+  recentImage: {
+    ...StyleSheet.absoluteFillObject,
     width: "100%",
     height: "100%",
   },
-  loadingCopyCard: {
-    padding: 18,
-    gap: 14,
-    alignItems: "flex-start",
+  recentOverlay: {
+    ...StyleSheet.absoluteFillObject,
   },
-  loadingTitle: { ...Typography.heading, color: Colors.textStrong },
-  loadingBody: { ...Typography.body, color: Colors.textSoft },
+  recentFallback: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#0A0A0B",
+  },
+  recentDatePill: {
+    position: "absolute",
+    top: 20,
+    right: 18,
+    minHeight: 34,
+    paddingHorizontal: 13,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(6,6,6,0.68)",
+    borderWidth: 1,
+    borderColor: "rgba(214,158,93,0.18)",
+  },
+  recentDateText: {
+    ...Typography.caption,
+    color: scanColors.goldLight,
+    fontWeight: "900",
+    letterSpacing: 0,
+  },
+  recentCopy: {
+    position: "absolute",
+    left: 16,
+    right: 14,
+    bottom: 17,
+    gap: 4,
+  },
+  recentReference: {
+    ...Typography.caption,
+    color: scanColors.goldLight,
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "900",
+    letterSpacing: 2,
+  },
+  recentTitle: {
+    fontFamily: Typography.title.fontFamily,
+    fontSize: 25,
+    lineHeight: 31,
+    fontWeight: "900",
+    letterSpacing: 0,
+    color: scanColors.text,
+  },
+  recentFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  recentSubtitle: {
+    ...Typography.body,
+    flex: 1,
+    minWidth: 0,
+    color: scanColors.text,
+    fontSize: 19,
+    lineHeight: 24,
+    fontWeight: "700",
+    letterSpacing: 0,
+  },
+  recentArrow: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+  },
+  loadingScreen: { flex: 1, backgroundColor: "#020202" },
+  loadingShell: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  loadingHeroImage: {
+    ...StyleSheet.absoluteFillObject,
+    width: "100%",
+    height: "100%",
+  },
+  loadingImageFade: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  loadingCardAnchor: {
+    width: "100%",
+    paddingHorizontal: 22,
+    paddingBottom: 82,
+  },
+  loadingCopyCard: {
+    width: "100%",
+    maxWidth: 370,
+    alignSelf: "center",
+    padding: 24,
+    gap: 12,
+    alignItems: "flex-start",
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.22)",
+    backgroundColor: "rgba(17, 17, 18, 0.92)",
+    shadowColor: "#000000",
+    shadowOpacity: 0.38,
+    shadowRadius: 28,
+    shadowOffset: { width: 0, height: 18 },
+  },
+  loadingTitle: { ...Typography.heading, color: Colors.textStrong, letterSpacing: 0 },
+  loadingBody: { ...Typography.bodyStrong, color: "#E2B178" },
   loadingStageMetaRow: {
     width: "100%",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
+    marginTop: 8,
   },
-  loadingStageStep: { ...Typography.caption, color: Colors.textMuted, textTransform: "uppercase", letterSpacing: 0.8 },
-  loadingStageLabel: { ...Typography.bodyStrong, color: Colors.textSoft, flexShrink: 1, textAlign: "right" },
+  loadingStageStep: { ...Typography.caption, color: "#8B93A0", textTransform: "uppercase", letterSpacing: 1.8, fontWeight: "700" },
+  loadingStageLabel: { ...Typography.caption, color: "#B8B1A8", flexShrink: 1, textAlign: "right", letterSpacing: 0.8 },
   loadingProgressTrack: {
     width: "100%",
-    height: 18,
+    height: 5,
     borderRadius: Radius.pill,
-    backgroundColor: "rgba(255,255,255,0.07)",
+    backgroundColor: "rgba(255,255,255,0.16)",
     overflow: "hidden",
     position: "relative",
-    borderWidth: 1,
-    borderColor: "rgba(83, 222, 255, 0.16)",
+    marginTop: 18,
   },
   loadingProgressGlow: {
     position: "absolute",
@@ -899,10 +1188,10 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     borderRadius: Radius.pill,
-    backgroundColor: "rgba(83, 222, 255, 0.22)",
-    shadowColor: "#61E8FF",
-    shadowOpacity: 0.34,
-    shadowRadius: 12,
+    backgroundColor: "rgba(216, 163, 107, 0.18)",
+    shadowColor: "#D8A36B",
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
     shadowOffset: { width: 0, height: 0 },
   },
   loadingProgressFillWrap: {
@@ -919,12 +1208,21 @@ const styles = StyleSheet.create({
   loadingProgressShimmer: {
     width: 72,
     height: "200%",
-    backgroundColor: "rgba(255,255,255,0.38)",
+    backgroundColor: "rgba(255,255,255,0.3)",
     borderRadius: Radius.pill,
+  },
+  loadingSupport: {
+    ...Typography.caption,
+    color: "#B6B8C0",
+    lineHeight: 18,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.06)",
+    paddingTop: 18,
+    marginTop: 6,
   },
   loadingFact: {
     ...Typography.caption,
-    color: Colors.textMuted,
+    color: "#B6B8C0",
     lineHeight: 18,
     minHeight: 36,
   },

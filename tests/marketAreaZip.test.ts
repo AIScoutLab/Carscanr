@@ -131,6 +131,6 @@ test("value screen no longer hardcodes 60610 or passive initial-load value refre
 test("condition chips remain local UI state and do not trigger live requests directly", () => {
   const screenSource = fs.readFileSync("/Users/mattbrillman/Car_Identifier/app/vehicle/[id].tsx", "utf8");
 
-  assert.match(screenSource, /onPress=\{\(\) => setCondition\(option\)\}/);
+  assert.match(screenSource, /onPress=\{\(\) => \{\s*Keyboard\.dismiss\(\);\s*setCondition\(option\);\s*\}\}/);
   assert.doesNotMatch(screenSource, /onPress=\{\(\) => requestExplicitLiveValue/);
 });

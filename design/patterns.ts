@@ -22,7 +22,7 @@ export const cardStyles = {
     borderRadius: radius.lg,
     padding: 18,
     borderWidth: 1,
-    borderColor: "rgba(59,130,246,0.35)",
+    borderColor: "rgba(216, 163, 104, 0.34)",
     ...shadow.card,
   },
   secondary: {
@@ -72,7 +72,7 @@ export const buttonStyles = {
     alignItems: "center" as const,
     justifyContent: "center" as const,
     borderWidth: 1,
-    borderColor: "rgba(94, 231, 255, 0.32)",
+    borderColor: "rgba(216, 163, 104, 0.34)",
     ...shadow.floating,
   },
   secondary: {

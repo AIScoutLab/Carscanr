@@ -2,17 +2,20 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { FREE_PRO_UNLOCKS_TOTAL, normalizeFreeUnlockCounter } from "@/constants/product";
 import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { applyPlanOverride } from "@/features/subscription/planOverride";
+import { getPurchaseOptionKind, isSubscriptionPurchaseOptionKind } from "@/lib/purchaseOptions";
+import { isProPlan } from "@/lib/subscription";
 import { apiRequest } from "@/services/apiClient";
 import { authService } from "@/services/authService";
 import { purchaseService } from "@/services/purchaseService";
 import { scanService } from "@/services/scanService";
 import { wait } from "@/lib/utils";
-import { FreeUnlockReason, SubscriptionActionResult, SubscriptionProduct, SubscriptionStatus, SubscriptionVerifyPayload } from "@/types";
+import type { VehicleLookupDescriptor } from "@/services/vehicleService";
+import { FreeUnlockReason, SubscriptionActionResult, SubscriptionProduct, SubscriptionStatus, SubscriptionVerifyPayload, UserPlan } from "@/types";
 
 type BackendSubscriptionRecord = {
   id: string;
   userId: string;
-  plan: "free" | "pro";
+  plan: UserPlan;
   status: "active" | "inactive" | "expired";
   productId: string;
   expiresAt?: string;
@@ -23,17 +26,30 @@ type BackendUnlockStatus = {
   freeUnlocksTotal: number;
   freeUnlocksUsed: number;
   freeUnlocksRemaining: number;
+  unlockCreditsRemaining?: number;
+  totalUnlocksAvailable?: number;
   unlockedVehicleIds: string[];
 };
+
+type UnlockResultType =
+  | "pro_access"
+  | "already_unlocked"
+  | "free_unlock_consumed"
+  | "purchased_unlock_consumed"
+  | "not_allowed";
 
 type BackendUnlockUseResponse = {
   entitlement: {
     isPro: boolean;
     alreadyUnlocked: boolean;
     usedUnlock: boolean;
+    usedUnlockCredit?: boolean;
     remainingUnlocks: number;
+    freeUnlocksRemaining?: number;
+    unlockCreditsRemaining?: number;
     allowed: boolean;
     reason: string;
+    resultType?: UnlockResultType;
   };
   status: BackendUnlockStatus;
 };
@@ -43,9 +59,18 @@ type FreeUnlockActionResult = {
   state: FreeUnlockState;
   remaining: number;
   limit: number;
+  unlockCredits?: number;
   alreadyUnlocked: boolean;
+  usedUnlock: boolean;
+  usedUnlockCredit: boolean;
+  resultType: UnlockResultType;
   reason: FreeUnlockReason;
   message: string;
+};
+
+type FreeUnlockVehicleLookup = {
+  vehicleId?: string | null;
+  descriptor?: VehicleLookupDescriptor | null;
 };
 
 const FREE_UNLOCKS_LIMIT = FREE_PRO_UNLOCKS_TOTAL;
@@ -78,6 +103,40 @@ function normalizeFamilyBucket(make: string | null | undefined, model: string | 
     .replace(/\b(series|class|edition|sport|touring|limited|premium|platinum|lariat|xl|xlt|se|sel|le|xle|lx|ex|gt)\b/g, "")
     .replace(/:+/g, ":")
     .trim();
+}
+
+function getUnlockResultType(entitlement: BackendUnlockUseResponse["entitlement"]): UnlockResultType {
+  if (entitlement.resultType) {
+    return entitlement.resultType;
+  }
+  if (entitlement.isPro) {
+    return "pro_access";
+  }
+  if (entitlement.alreadyUnlocked) {
+    return "already_unlocked";
+  }
+  if (entitlement.allowed && entitlement.usedUnlock && entitlement.usedUnlockCredit) {
+    return "purchased_unlock_consumed";
+  }
+  if (entitlement.allowed && entitlement.usedUnlock) {
+    return "free_unlock_consumed";
+  }
+  return "not_allowed";
+}
+
+function getUnlockSuccessMessage(resultType: UnlockResultType) {
+  switch (resultType) {
+    case "pro_access":
+      return "Pro access active. Value & Listings are unlocked.";
+    case "already_unlocked":
+      return "Already unlocked. This vehicle was already unlocked.";
+    case "purchased_unlock_consumed":
+      return "Purchased unlock applied. This vehicle is now unlocked.";
+    case "free_unlock_consumed":
+      return "Free unlock applied. This vehicle is now unlocked.";
+    default:
+      return "No free unlocks remaining. Upgrade to Pro for full access.";
+  }
 }
 
 function isGenerationSensitiveEstimateFamily(input: {
@@ -318,14 +377,6 @@ type FreeUnlockState = {
   unlockedVehicleIds: string[];
 };
 
-const PRO_MONTHLY_PRODUCT: SubscriptionProduct = {
-  productId: "com.caridentifier.pro.monthly",
-  platform: "ios",
-  plan: "pro",
-  priceLabel: "$6.99",
-  billingPeriodLabel: "month",
-};
-
 function normalizeUnlockState(input: unknown): FreeUnlockState {
   if (!input || typeof input !== "object") {
     return { used: 0, localUsed: 0, unlockedVehicleIds: [] };
@@ -369,6 +420,35 @@ async function loadFreeUnlockState(userId: string): Promise<FreeUnlockState> {
   }
 }
 
+async function loadFreeUnlockStateForUser(userId: string | null | undefined): Promise<FreeUnlockState> {
+  if (!userId || userId === "guest") {
+    return loadFreeUnlockState("guest");
+  }
+
+  const [userState, guestState] = await Promise.all([loadFreeUnlockState(userId), loadFreeUnlockState("guest")]);
+  const mergedState = {
+    used: Math.max(userState.localUsed ?? userState.used, guestState.localUsed ?? guestState.used),
+    localUsed: Math.max(userState.localUsed ?? userState.used, guestState.localUsed ?? guestState.used),
+    unlockedVehicleIds: dedupeUnlockIds([...userState.unlockedVehicleIds, ...guestState.unlockedVehicleIds]),
+  };
+
+  if (
+    mergedState.localUsed !== (userState.localUsed ?? userState.used) ||
+    mergedState.unlockedVehicleIds.length !== userState.unlockedVehicleIds.length
+  ) {
+    await saveFreeUnlockState(userId, mergedState);
+    if (__DEV__) {
+      console.log("[subscription] GUEST_UNLOCK_STATE_MIGRATED", {
+        userId,
+        localUsed: mergedState.localUsed,
+        unlockedVehicleCount: mergedState.unlockedVehicleIds.length,
+      });
+    }
+  }
+
+  return mergedState;
+}
+
 async function saveFreeUnlockState(userId: string, state: FreeUnlockState) {
   const key = `${FREE_UNLOCK_STORAGE_KEY}:${userId}`;
   const normalizedState = normalizeUnlockState(state);
@@ -380,6 +460,24 @@ async function saveFreeUnlockState(userId: string, state: FreeUnlockState) {
       unlockedVehicleIds: normalizedState.unlockedVehicleIds,
     }),
   );
+}
+
+function buildBackendUnlockRequestBody(vehicleId: string, lookup?: FreeUnlockVehicleLookup | null) {
+  const descriptor = lookup?.descriptor ?? null;
+  return {
+    vehicleId: lookup?.vehicleId ?? vehicleId,
+    ...(descriptor
+      ? {
+          year: descriptor.year,
+          make: descriptor.make,
+          model: descriptor.model,
+          trim: descriptor.trim ?? undefined,
+          vehicleType: descriptor.vehicleType ?? undefined,
+          bodyStyle: descriptor.bodyStyle ?? undefined,
+          normalizedModel: descriptor.normalizedModel ?? undefined,
+        }
+      : {}),
+  };
 }
 
 function isEstimatedUnlockId(vehicleId: string) {
@@ -421,12 +519,18 @@ let status: SubscriptionStatus = applyPlanOverride({
   purchaseAvailable: false,
 });
 
-function formatRenewalLabel(plan: "free" | "pro", expiresAt?: string) {
-  if (plan === "free") {
+function formatRenewalLabel(plan: UserPlan, expiresAt?: string) {
+  if (!isProPlan(plan)) {
     return "Upgrade for unlimited Pro details";
   }
 
   if (!expiresAt) {
+    if (plan === "pro_yearly") {
+      return "Pro yearly active";
+    }
+    if (plan === "pro_monthly") {
+      return "Pro monthly active";
+    }
     return "Pro active";
   }
 
@@ -439,12 +543,12 @@ function formatRenewalLabel(plan: "free" | "pro", expiresAt?: string) {
 }
 
 function mergeUsageStatus(usage: SubscriptionStatus, overrides?: Partial<SubscriptionStatus>): SubscriptionStatus {
-  return applyPlanOverride({
+  const merged = applyPlanOverride({
     ...usage,
-    isActive: usage.plan === "pro",
-    provider: "placeholder",
-    productId: PRO_MONTHLY_PRODUCT.productId,
-    willAutoRenew: usage.plan === "pro",
+    isActive: isProPlan(usage.plan),
+    provider: usage.provider ?? "placeholder",
+    productId: usage.productId ?? null,
+    willAutoRenew: usage.willAutoRenew ?? isProPlan(usage.plan),
     lastVerifiedAt: overrides?.lastVerifiedAt ?? null,
     purchaseAvailable: false,
     purchaseAvailabilityState: "not_configured",
@@ -452,6 +556,91 @@ function mergeUsageStatus(usage: SubscriptionStatus, overrides?: Partial<Subscri
     renewalLabel: formatRenewalLabel(usage.plan),
     ...overrides,
   });
+  const proActive = isProPlan(merged.plan);
+  const normalizedRenewalLabel =
+    proActive && merged.renewalLabel.toLowerCase().includes("free plan")
+      ? formatRenewalLabel(merged.plan)
+      : !proActive && merged.renewalLabel.toLowerCase().includes("pro active")
+        ? formatRenewalLabel("free")
+        : merged.renewalLabel;
+
+  return {
+    ...merged,
+    isActive: proActive,
+    willAutoRenew: proActive ? merged.willAutoRenew : false,
+    renewalLabel: normalizedRenewalLabel,
+  };
+}
+
+function getRevenueCatSubscriptionSyncOverrides(
+  usage: SubscriptionStatus,
+  snapshot: {
+    activeEntitlement: Awaited<ReturnType<typeof purchaseService.getPurchaseSnapshot>>["activeEntitlement"];
+    activeProductId: string | null;
+    purchaseAvailable: boolean;
+    purchaseAvailabilityState: SubscriptionStatus["purchaseAvailabilityState"];
+    availableProducts: SubscriptionProduct[];
+  },
+  options: { allowPendingSync?: boolean } = {},
+): Partial<SubscriptionStatus> {
+  const backendHasPro = isProPlan(usage.plan);
+  const revenueCatSubscriptionActive = snapshot.activeEntitlement?.isActive === true;
+  const showPendingSync = !backendHasPro && revenueCatSubscriptionActive && options.allowPendingSync === true;
+
+  return {
+    plan: usage.plan,
+    provider: backendHasPro ? "backend" : showPendingSync ? "revenuecat" : usage.provider,
+    productId: backendHasPro || showPendingSync ? snapshot.activeProductId : usage.productId ?? null,
+    isActive: backendHasPro,
+    willAutoRenew: backendHasPro ? (snapshot.activeEntitlement?.willRenew ?? usage.willAutoRenew ?? true) : false,
+    lastVerifiedAt:
+      backendHasPro || showPendingSync
+        ? snapshot.activeEntitlement?.latestPurchaseDate ?? usage.lastVerifiedAt ?? null
+        : usage.lastVerifiedAt ?? null,
+    renewalLabel: backendHasPro
+      ? formatRenewalLabel(usage.plan, snapshot.activeEntitlement?.expirationDate ?? undefined)
+      : showPendingSync
+        ? "Purchase or restore detected. Backend access has not confirmed Pro yet."
+        : usage.renewalLabel,
+    entitlementSyncState: showPendingSync ? "revenuecat_active_backend_pending" : "none",
+    purchaseAvailable: snapshot.purchaseAvailable,
+    purchaseAvailabilityState: snapshot.purchaseAvailabilityState,
+    availableProducts: snapshot.availableProducts,
+  };
+}
+
+function buildRevenueCatReceiptData(customerInfo: unknown, productId: string) {
+  const info = customerInfo as {
+    originalAppUserId?: string;
+    requestDate?: string;
+    nonSubscriptionTransactions?: Array<{
+      productIdentifier?: string;
+      transactionIdentifier?: string;
+      purchaseDate?: string;
+    }>;
+  };
+  const transaction = info.nonSubscriptionTransactions?.find((entry) => entry.productIdentifier === productId);
+  if (transaction?.transactionIdentifier) {
+    return `${transaction.transactionIdentifier}:${transaction.purchaseDate ?? ""}`;
+  }
+  return `revenuecat:${info.originalAppUserId ?? "unknown"}:${productId}:${info.requestDate ?? new Date().toISOString()}`;
+}
+
+function getSubscriptionErrorDiagnostics(error: unknown) {
+  const candidate = error as
+    | {
+        name?: unknown;
+        message?: unknown;
+        code?: unknown;
+        underlyingErrorMessage?: unknown;
+      }
+    | undefined;
+  return {
+    name: typeof candidate?.name === "string" ? candidate.name : error instanceof Error ? error.name : "UnknownError",
+    message: typeof candidate?.message === "string" ? candidate.message : error instanceof Error ? error.message : String(error),
+    code: typeof candidate?.code === "string" || typeof candidate?.code === "number" ? candidate.code : null,
+    underlyingErrorMessage: typeof candidate?.underlyingErrorMessage === "string" ? candidate.underlyingErrorMessage : null,
+  };
 }
 
 export const subscriptionService = {
@@ -462,37 +651,37 @@ export const subscriptionService = {
       });
       const [usage, purchaseSnapshot] = await Promise.all([
         scanService.getUsage(),
-        purchaseService.getPurchaseSnapshot().catch(() => ({
-          purchaseAvailable: false,
-          purchaseAvailabilityState: "not_configured" as const,
-          availableProducts: [] as SubscriptionProduct[],
-          activeEntitlement: null,
-          activeProductId: null,
-          managementUrl: null,
-        })),
+        purchaseService.getPurchaseSnapshot().catch((error) => {
+          console.log("REVENUECAT_PURCHASE_SNAPSHOT_FAILURE_CLASSIFIED", {
+            classifiedState: "offerings_unavailable",
+            failurePoint: "purchase_snapshot_error",
+            error: getSubscriptionErrorDiagnostics(error),
+          });
+          return {
+            purchaseAvailable: false,
+            purchaseAvailabilityState: "offerings_unavailable" as const,
+            availableProducts: [] as SubscriptionProduct[],
+            activeEntitlement: null,
+            activeProductId: null,
+            managementUrl: null,
+          };
+        }),
       ]);
-      status = mergeUsageStatus(usage, {
-        plan: purchaseSnapshot.activeEntitlement?.isActive ? "pro" : usage.plan,
-        provider: purchaseSnapshot.activeEntitlement?.isActive ? "revenuecat" : usage.plan === "pro" ? "backend" : "placeholder",
-        productId: purchaseSnapshot.activeProductId ?? status.productId ?? null,
-        willAutoRenew: purchaseSnapshot.activeEntitlement?.willRenew ?? usage.plan === "pro",
-        renewalLabel: purchaseSnapshot.activeEntitlement?.isActive
-          ? formatRenewalLabel("pro", purchaseSnapshot.activeEntitlement.expirationDate ?? undefined)
-          : usage.renewalLabel,
-        lastVerifiedAt: status.lastVerifiedAt ?? null,
-        purchaseAvailable: purchaseSnapshot.purchaseAvailable,
-        purchaseAvailabilityState: purchaseSnapshot.purchaseAvailabilityState,
-        availableProducts: purchaseSnapshot.availableProducts,
-      });
+      status = mergeUsageStatus(usage, getRevenueCatSubscriptionSyncOverrides(usage, purchaseSnapshot));
       console.log("ENTITLEMENT_CACHE_STATE", {
         plan: status.plan,
         provider: status.provider,
+        isActive: status.isActive,
         purchaseAvailabilityState: status.purchaseAvailabilityState,
         purchaseAvailable: status.purchaseAvailable,
         activeProductId: purchaseSnapshot.activeProductId,
       });
       return status;
-    } catch {
+    } catch (error) {
+      console.log("SUBSCRIPTION_STATUS_REFRESH_FAILED", {
+        fallbackState: status.purchaseAvailabilityState,
+        error: getSubscriptionErrorDiagnostics(error),
+      });
       await wait(180);
     }
     return status;
@@ -505,7 +694,7 @@ export const subscriptionService = {
     });
     const user = await authService.getCurrentUser();
     const token = await authService.getAccessToken();
-    const localState = await loadFreeUnlockState(user?.id ?? "guest");
+    const localState = await loadFreeUnlockStateForUser(user?.id ?? "guest");
     if (!token) {
       if (__DEV__) {
         console.log("[subscription] unlock status skipped (no auth token)");
@@ -524,17 +713,6 @@ export const subscriptionService = {
         limit: FREE_UNLOCKS_LIMIT,
       };
     }
-    const cached = scanService.getCachedUnlockStatus?.();
-    if (cached && typeof cached.freeUnlocksTotal === "number") {
-      const merged = mergeUnlockStates(cached.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT, cached.unlockedVehicleIds ?? [], localState);
-      logFreeUnlockCounterState("scan_cache", merged);
-      return {
-        used: merged.used,
-        remaining: merged.remaining,
-        unlockedVehicleIds: merged.unlockedVehicleIds,
-        limit: merged.limit,
-      };
-    }
     try {
       if (!user?.id) {
         throw new Error("No user session available.");
@@ -542,6 +720,7 @@ export const subscriptionService = {
       const status = await apiRequest<BackendUnlockStatus>({
         path: "/api/unlocks/status",
       });
+      scanService.updateCachedUnlockStatus?.(status);
       const merged = mergeUnlockStates(status.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT, status.unlockedVehicleIds ?? [], localState);
       logFreeUnlockCounterState("backend_status", merged);
       return {
@@ -549,8 +728,21 @@ export const subscriptionService = {
         remaining: merged.remaining,
         unlockedVehicleIds: merged.unlockedVehicleIds,
         limit: merged.limit,
+        unlockCredits: Math.max(0, status.unlockCreditsRemaining ?? 0),
       };
     } catch {
+      const cached = scanService.getCachedUnlockStatus?.();
+      if (cached && typeof cached.freeUnlocksTotal === "number" && typeof cached.unlockCreditsRemaining === "number") {
+        const merged = mergeUnlockStates(cached.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT, cached.unlockedVehicleIds ?? [], localState);
+        logFreeUnlockCounterState("scan_cache_fallback", merged);
+        return {
+          used: merged.used,
+          remaining: merged.remaining,
+          unlockedVehicleIds: merged.unlockedVehicleIds,
+          limit: merged.limit,
+          unlockCredits: Math.max(0, cached.unlockCreditsRemaining),
+        };
+      }
       const remaining = Math.max(0, FREE_UNLOCKS_LIMIT - localState.used);
       logFreeUnlockCounterState("local_fallback", {
         used: localState.localUsed ?? localState.used,
@@ -563,16 +755,21 @@ export const subscriptionService = {
         remaining,
         unlockedVehicleIds: localState.unlockedVehicleIds,
         limit: FREE_UNLOCKS_LIMIT,
+        unlockCredits: 0,
       };
     }
   },
 
-  async useFreeUnlockForVehicle(vehicleId: string, linkedVehicleIds: string[] = []): Promise<FreeUnlockActionResult> {
+  async useFreeUnlockForVehicle(
+    vehicleId: string,
+    linkedVehicleIds: string[] = [],
+    lookup?: FreeUnlockVehicleLookup | null,
+  ): Promise<FreeUnlockActionResult> {
     const user = await authService.getCurrentUser();
     const token = await authService.getAccessToken();
     const localUserId = user?.id ?? "guest";
-    if (!token || isEstimatedUnlockId(vehicleId)) {
-      const unlockState = await loadFreeUnlockState(localUserId);
+    if (!token) {
+      const unlockState = await loadFreeUnlockStateForUser(localUserId);
       const candidateIds = dedupeUnlockIds([vehicleId, ...linkedVehicleIds]);
       const alreadyUnlocked = candidateIds.some((id) => unlockState.unlockedVehicleIds.includes(id));
       if (alreadyUnlocked) {
@@ -581,9 +778,13 @@ export const subscriptionService = {
           state: unlockState,
           remaining: Math.max(0, FREE_UNLOCKS_LIMIT - unlockState.used),
           limit: FREE_UNLOCKS_LIMIT,
+          unlockCredits: 0,
           alreadyUnlocked: true,
+          usedUnlock: false,
+          usedUnlockCredit: false,
+          resultType: "already_unlocked",
           reason: "already_unlocked",
-          message: "This vehicle is already unlocked.",
+          message: getUnlockSuccessMessage("already_unlocked"),
         };
       }
 
@@ -594,7 +795,11 @@ export const subscriptionService = {
           state: unlockState,
           remaining: 0,
           limit: FREE_UNLOCKS_LIMIT,
+          unlockCredits: 0,
           alreadyUnlocked: false,
+          usedUnlock: false,
+          usedUnlockCredit: false,
+          resultType: "not_allowed",
           reason: "no_free_unlocks",
           message: "No free unlocks remaining. Upgrade to Pro for full access.",
         };
@@ -617,49 +822,99 @@ export const subscriptionService = {
         state: nextState,
         remaining: Math.max(0, FREE_UNLOCKS_LIMIT - nextState.used),
         limit: FREE_UNLOCKS_LIMIT,
+        unlockCredits: 0,
         alreadyUnlocked: false,
+        usedUnlock: true,
+        usedUnlockCredit: false,
+        resultType: "free_unlock_consumed",
         reason: "consumed",
-        message: "Free unlock applied. This vehicle is now fully unlocked.",
+        message: getUnlockSuccessMessage("free_unlock_consumed"),
       };
     }
     if (!user?.id) {
-      const unlockState = await loadFreeUnlockState("guest");
+      const unlockState = await loadFreeUnlockStateForUser("guest");
       return {
         ok: false,
         state: unlockState,
         remaining: Math.max(0, FREE_UNLOCKS_LIMIT - unlockState.used),
         limit: FREE_UNLOCKS_LIMIT,
+        unlockCredits: 0,
         alreadyUnlocked: unlockState.unlockedVehicleIds.includes(vehicleId),
+        usedUnlock: false,
+        usedUnlockCredit: false,
+        resultType: "not_allowed",
         reason: "auth_required",
         message: "Sign in to keep unlocks synced across devices.",
       };
     }
     try {
+      console.log("[subscription] BACKEND_UNLOCK_REQUEST_START", {
+        vehicleId,
+        linkedVehicleCount: linkedVehicleIds.length,
+        hasDescriptor: Boolean(lookup?.descriptor),
+        estimatedUnlockId: isEstimatedUnlockId(vehicleId) || isEstimatedSoftUnlockId(vehicleId),
+      });
       const response = await apiRequest<BackendUnlockUseResponse>({
         path: "/api/unlocks/use",
         method: "POST",
-        body: { vehicleId },
+        body: buildBackendUnlockRequestBody(vehicleId, lookup),
       });
-      const status = response.status;
-      const existingLocalState = await loadFreeUnlockState(user.id);
+      const resultType = getUnlockResultType(response.entitlement);
+      let status = response.status;
+      if (response.entitlement.allowed) {
+        try {
+          status = await apiRequest<BackendUnlockStatus>({
+            path: "/api/unlocks/status",
+          });
+        } catch (refreshError) {
+          console.log("[subscription] BACKEND_UNLOCK_STATUS_REFRESH_FAILED", {
+            vehicleId,
+            resultType,
+            message: refreshError instanceof Error ? refreshError.message : String(refreshError),
+          });
+        }
+      }
+      const existingLocalState = await loadFreeUnlockStateForUser(user.id);
       const unlockState = {
         used: status.freeUnlocksUsed,
         localUsed: existingLocalState.localUsed ?? existingLocalState.used,
-        unlockedVehicleIds: status.unlockedVehicleIds ?? [],
+        unlockedVehicleIds: dedupeUnlockIds([...(status.unlockedVehicleIds ?? []), vehicleId, ...linkedVehicleIds]),
       };
       await saveFreeUnlockState(user.id, unlockState);
+      scanService.updateCachedUnlockStatus?.({
+        ...status,
+        unlockedVehicleIds: unlockState.unlockedVehicleIds,
+      });
       logFreeUnlockCounterState("backend_unlock_status", {
         used: unlockState.used,
         remaining: status.freeUnlocksRemaining ?? Math.max(0, status.freeUnlocksTotal - status.freeUnlocksUsed),
         limit: status.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT,
         unlockedVehicleIds: unlockState.unlockedVehicleIds,
       });
+      console.log("[subscription] BACKEND_UNLOCK_RESULT", {
+        vehicleId,
+        resultType,
+        allowed: response.entitlement.allowed,
+        alreadyUnlocked: response.entitlement.alreadyUnlocked,
+        usedUnlock: response.entitlement.usedUnlock,
+        usedUnlockCredit: Boolean(response.entitlement.usedUnlockCredit),
+        freeUnlocksRemaining: status.freeUnlocksRemaining ?? Math.max(0, status.freeUnlocksTotal - status.freeUnlocksUsed),
+        unlockCreditsRemaining: Math.max(0, status.unlockCreditsRemaining ?? 0),
+        totalUnlocksAvailable:
+          status.totalUnlocksAvailable ??
+          (status.freeUnlocksRemaining ?? Math.max(0, status.freeUnlocksTotal - status.freeUnlocksUsed)) +
+            Math.max(0, status.unlockCreditsRemaining ?? 0),
+      });
       return {
         ok: response.entitlement.allowed,
         state: unlockState,
         remaining: status.freeUnlocksRemaining ?? Math.max(0, status.freeUnlocksTotal - status.freeUnlocksUsed),
         limit: status.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT,
+        unlockCredits: Math.max(0, status.unlockCreditsRemaining ?? 0),
         alreadyUnlocked: response.entitlement.alreadyUnlocked,
+        usedUnlock: response.entitlement.usedUnlock,
+        usedUnlockCredit: Boolean(response.entitlement.usedUnlockCredit),
+        resultType,
         reason: response.entitlement.alreadyUnlocked
           ? "already_unlocked"
           : response.entitlement.allowed
@@ -667,16 +922,24 @@ export const subscriptionService = {
             : response.entitlement.reason === "payload_too_thin"
               ? "payload_too_thin"
             : "no_free_unlocks",
-        message: response.entitlement.alreadyUnlocked
-          ? "This vehicle is already unlocked."
-          : response.entitlement.allowed
-            ? "Free unlock applied. This vehicle is now fully unlocked."
-            : response.entitlement.reason === "payload_too_thin"
-              ? "We found the vehicle, but there is not enough useful detail yet to make an unlock worth it."
+        message: response.entitlement.allowed
+          ? getUnlockSuccessMessage(resultType)
+          : response.entitlement.reason === "payload_too_thin"
+            ? "We found the vehicle, but there is not enough useful detail yet to make an unlock worth it."
             : "No free unlocks remaining. Upgrade to Pro for full access.",
       };
     } catch (error) {
-      const unlockState = await loadFreeUnlockState(user.id);
+      console.log("[subscription] BACKEND_UNLOCK_REQUEST_FAILED", {
+        vehicleId,
+        linkedVehicleCount: linkedVehicleIds.length,
+        hasDescriptor: Boolean(lookup?.descriptor),
+        message: error instanceof Error ? error.message : String(error),
+        code:
+          typeof error === "object" && error && "code" in error && typeof (error as { code?: unknown }).code === "string"
+            ? (error as { code: string }).code
+            : null,
+      });
+      const unlockState = await loadFreeUnlockStateForUser(user.id);
       const code =
         typeof error === "object" && error && "code" in error && typeof (error as { code?: unknown }).code === "string"
           ? (error as { code: string }).code
@@ -684,16 +947,24 @@ export const subscriptionService = {
       const reason =
         code === "VEHICLE_NOT_FOUND"
           ? "vehicle_not_found"
+          : code === "UNLOCK_DESCRIPTOR_MISSING" || code === "UNLOCK_KEY_MISSING" || code === "VALIDATION_ERROR"
+            ? "vehicle_not_found"
           : code === "AUTH_REQUIRED"
             ? "auth_required"
             : code === "BACKEND_UNREACHABLE" || code === "REQUEST_TIMEOUT"
               ? "network_error"
+              : code === "SUPABASE_RPC_FAILED" || code === "SUPABASE_QUERY_FAILED" || code === "SUPABASE_UPSERT_FAILED"
+                ? "backend_error"
               : "unknown";
       const message =
         code === "VEHICLE_NOT_FOUND"
-          ? "This vehicle can be viewed, but it is not unlockable yet. Try another catalog-linked result."
+          ? "Vehicle identity is missing. Try reopening this result and unlocking again."
+          : code === "UNLOCK_DESCRIPTOR_MISSING" || code === "UNLOCK_KEY_MISSING" || code === "VALIDATION_ERROR"
+            ? "Vehicle identity is missing. Try reopening this result and unlocking again."
           : code === "AUTH_REQUIRED"
             ? "Sign in to use your free unlocks on this device."
+            : code === "SUPABASE_RPC_FAILED" || code === "SUPABASE_QUERY_FAILED" || code === "SUPABASE_UPSERT_FAILED"
+              ? "The unlock service is temporarily unavailable. Please try again in a moment."
             : error instanceof Error
               ? error.message
               : "We couldn’t apply your free unlock right now.";
@@ -702,7 +973,11 @@ export const subscriptionService = {
         state: unlockState,
         remaining: Math.max(0, FREE_UNLOCKS_LIMIT - unlockState.used),
         limit: FREE_UNLOCKS_LIMIT,
+        unlockCredits: 0,
         alreadyUnlocked: unlockState.unlockedVehicleIds.includes(vehicleId),
+        usedUnlock: false,
+        usedUnlockCredit: false,
+        resultType: "not_allowed",
         reason,
         message,
       };
@@ -725,33 +1000,70 @@ export const subscriptionService = {
     return this.getStatus();
   },
 
-  async purchaseSubscription(): Promise<SubscriptionActionResult> {
+  async purchaseSubscription(selectedProductKey?: string | null): Promise<SubscriptionActionResult> {
     console.log("[subscription] PURCHASE_FLOW_START");
     console.log("[subscription] PURCHASE_PRODUCTS_LOAD_START");
-    const purchase = await purchaseService.purchasePro();
+    const purchase = await purchaseService.purchasePro(selectedProductKey);
     console.log("[subscription] PURCHASE_PRODUCTS_LOAD_SUCCESS", {
       configured: purchase.snapshot.purchaseAvailable,
       products: purchase.snapshot.availableProducts.map((product) => product.productId),
     });
     console.log("[subscription] PURCHASE_ATTEMPT_START", { configured: purchase.snapshot.purchaseAvailable });
-    if (purchase.outcome === "verified" && purchase.snapshot.activeEntitlement?.isActive) {
+    const purchasedProductId = "productIdentifier" in purchase ? purchase.productIdentifier : null;
+    const purchasedProduct = purchase.snapshot.availableProducts.find(
+      (product) =>
+        product.productId === purchasedProductId ||
+        product.packageIdentifier === selectedProductKey ||
+        product.productId === selectedProductKey,
+    );
+    const purchasedOptionKind = purchasedProduct ? getPurchaseOptionKind(purchasedProduct) : null;
+    if (purchase.outcome === "verified" && purchasedProductId && purchasedOptionKind === "unlock_pack") {
+      await apiRequest<BackendSubscriptionRecord>({
+        path: "/api/subscription/verify",
+        method: "POST",
+        body: {
+          platform: "ios",
+          productId: purchasedProductId,
+          receiptData: buildRevenueCatReceiptData("customerInfo" in purchase ? purchase.customerInfo : null, purchasedProductId),
+        },
+      }).catch((error) => {
+        console.log("[subscription] UNLOCK_PACK_SYNC_FAILURE", {
+          productId: purchasedProductId,
+          message: error instanceof Error ? error.message : "Unknown unlock pack sync failure",
+        });
+        throw error;
+      });
       status = mergeUsageStatus(await scanService.getUsage().catch(() => status), {
-        plan: "pro",
-        provider: "revenuecat",
-        productId: purchase.snapshot.activeProductId,
-        willAutoRenew: purchase.snapshot.activeEntitlement.willRenew,
-        lastVerifiedAt: purchase.snapshot.activeEntitlement.latestPurchaseDate,
         purchaseAvailable: purchase.snapshot.purchaseAvailable,
         purchaseAvailabilityState: purchase.snapshot.purchaseAvailabilityState,
         availableProducts: purchase.snapshot.availableProducts,
-        renewalLabel: formatRenewalLabel("pro", purchase.snapshot.activeEntitlement.expirationDate ?? undefined),
       });
+      console.log("[subscription] PURCHASE_ATTEMPT_SUCCESS", {
+        outcome: "verified",
+        productId: purchasedProductId,
+        optionKind: "unlock_pack",
+      });
+      return {
+        outcome: "verified",
+        purchaseKind: "unlock_pack",
+        status,
+        message: "5 unlocks added. Your account now has 5 premium unlocks.",
+      };
+    }
+    if (
+      purchase.outcome === "verified" &&
+      purchase.snapshot.activeEntitlement?.isActive &&
+      isSubscriptionPurchaseOptionKind(purchasedOptionKind)
+    ) {
+      const usage = await scanService.getUsage().catch(() => status);
+      status = mergeUsageStatus(usage, getRevenueCatSubscriptionSyncOverrides(usage, purchase.snapshot, { allowPendingSync: true }));
       console.log("[subscription] PURCHASE_ATTEMPT_SUCCESS", {
         outcome: "verified",
         productId: purchase.snapshot.activeProductId,
       });
       return {
         outcome: "verified",
+        purchaseKind: purchasedOptionKind ?? "other",
         status,
         message: purchase.message,
       };
@@ -774,17 +1086,37 @@ export const subscriptionService = {
     console.log("[subscription] RESTORE_PURCHASES_START");
     const restore = await purchaseService.restorePurchases();
     if (restore.outcome === "restored" && restore.snapshot.activeEntitlement?.isActive) {
-      status = mergeUsageStatus(await scanService.getUsage().catch(() => status), {
-        plan: "pro",
-        provider: "revenuecat",
-        productId: restore.snapshot.activeProductId,
-        willAutoRenew: restore.snapshot.activeEntitlement.willRenew,
-        lastVerifiedAt: restore.snapshot.activeEntitlement.latestPurchaseDate,
-        purchaseAvailable: restore.snapshot.purchaseAvailable,
-        purchaseAvailabilityState: restore.snapshot.purchaseAvailabilityState,
-        availableProducts: restore.snapshot.availableProducts,
-        renewalLabel: formatRenewalLabel("pro", restore.snapshot.activeEntitlement.expirationDate ?? undefined),
-      });
+      const restoredProductId = restore.snapshot.activeProductId;
+      let backendRecord: BackendSubscriptionRecord | null = null;
+      if (restoredProductId) {
+        backendRecord = await apiRequest<BackendSubscriptionRecord>({
+          path: "/api/subscription/verify",
+          method: "POST",
+          body: {
+            platform: "ios",
+            productId: restoredProductId,
+            receiptData: buildRevenueCatReceiptData("customerInfo" in restore ? restore.customerInfo : null, restoredProductId),
+          },
+        }).catch((error) => {
+          console.log("[subscription] RESTORE_BACKEND_SYNC_FAILURE", {
+            productId: restoredProductId,
+            message: error instanceof Error ? error.message : "Unknown restore sync failure",
+          });
+          return null;
+        });
+      }
+      const usage = backendRecord
+        ? mergeUsageStatus(status, {
+            plan: backendRecord.plan,
+            provider: "backend",
+            productId: backendRecord.productId,
+            isActive: isProPlan(backendRecord.plan) && backendRecord.status === "active",
+            willAutoRenew: isProPlan(backendRecord.plan) && backendRecord.status === "active",
+            lastVerifiedAt: backendRecord.verifiedAt,
+            renewalLabel: formatRenewalLabel(backendRecord.plan, backendRecord.expiresAt),
+          })
+        : status;
+      status = mergeUsageStatus(usage, getRevenueCatSubscriptionSyncOverrides(usage, restore.snapshot));
       console.log("[subscription] RESTORE_PURCHASES_SUCCESS", { outcome: "restored", active: true });
       console.log("ENTITLEMENT_RESTORE_RESULT", {
         outcome: "restored",
@@ -803,7 +1135,7 @@ export const subscriptionService = {
       active: false,
       message: restore.message,
     });
-    status = mergeUsageStatus(await scanService.getUsage().catch(() => status), {
+    status = mergeUsageStatus(status, {
       purchaseAvailable: restore.snapshot.purchaseAvailable,
       purchaseAvailabilityState: restore.snapshot.purchaseAvailabilityState,
       availableProducts: restore.snapshot.availableProducts,
@@ -815,33 +1147,33 @@ export const subscriptionService = {
     };
   },
 
-  async cancelSubscription(): Promise<SubscriptionActionResult> {
-    if (!(await authService.getAccessToken())) {
-      throw new Error("Sign in to manage your subscription.");
-    }
-    const record = await apiRequest<BackendSubscriptionRecord>({
-      path: "/api/subscription/cancel",
-      method: "POST",
-    });
+  async manageSubscription(): Promise<SubscriptionActionResult> {
+    console.log("[subscription] MANAGEMENT_OPEN_START");
+    const management = await purchaseService.openSubscriptionManagement();
 
     const usage = await scanService.getUsage().catch(() => status);
+    status = mergeUsageStatus(usage, getRevenueCatSubscriptionSyncOverrides(usage, management.snapshot));
 
-    status = mergeUsageStatus(usage, {
-      plan: record.plan,
-      isActive: false,
-      provider: "backend",
-      productId: null,
-      willAutoRenew: false,
-      lastVerifiedAt: record.verifiedAt,
-      purchaseAvailable: false,
-      renewalLabel: "Free plan",
-    });
+    if (management.outcome !== "opened") {
+      console.log("[subscription] MANAGEMENT_OPEN_SKIPPED", { outcome: management.outcome, message: management.message });
+      return {
+        outcome: "not_configured",
+        status,
+        message: management.message,
+      };
+    }
+
+    console.log("[subscription] MANAGEMENT_OPEN_SUCCESS");
 
     return {
-      outcome: "cancelled",
+      outcome: "management_opened",
       status,
-      message: "Pro access cancelled. You’re back on the free plan.",
+      message: management.message,
     };
+  },
+
+  async cancelSubscription(): Promise<SubscriptionActionResult> {
+    return this.manageSubscription();
   },
 
   async syncSubscriptionToBackend(payload: SubscriptionVerifyPayload): Promise<SubscriptionActionResult> {
@@ -860,10 +1192,10 @@ export const subscriptionService = {
 
     status = mergeUsageStatus(usage, {
       plan: record.plan,
-      isActive: record.plan === "pro" && record.status === "active",
+      isActive: isProPlan(record.plan) && record.status === "active",
       provider: "backend",
       productId: record.productId,
-      willAutoRenew: record.plan === "pro" && record.status === "active",
+      willAutoRenew: isProPlan(record.plan) && record.status === "active",
       lastVerifiedAt: record.verifiedAt,
       purchaseAvailable: false,
       renewalLabel: formatRenewalLabel(record.plan, record.expiresAt),
@@ -872,7 +1204,7 @@ export const subscriptionService = {
     return {
       outcome: "verified",
       status,
-      message: record.plan === "pro" ? "Your Pro access is now synced." : "Subscription sync completed.",
+      message: isProPlan(record.plan) ? "Your Pro access is now synced." : "Subscription sync completed.",
     };
   },
 };

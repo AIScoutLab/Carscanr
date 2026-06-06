@@ -35,7 +35,7 @@ const styles = StyleSheet.create({
   container: {
     width: "100%",
     flexDirection: "row",
-    backgroundColor: "#081521",
+    backgroundColor: "rgba(14, 14, 15, 0.92)",
     borderRadius: Radius.pill,
     padding: 5,
     borderWidth: 1,
@@ -51,9 +51,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   activeTab: {
-    backgroundColor: "rgba(29, 140, 255, 0.16)",
+    backgroundColor: "rgba(216, 163, 104, 0.18)",
     borderWidth: 1,
-    borderColor: "rgba(94, 231, 255, 0.22)",
+    borderColor: "rgba(216, 163, 104, 0.28)",
   },
   label: {
     ...Typography.caption,

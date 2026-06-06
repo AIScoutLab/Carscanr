@@ -44,7 +44,7 @@ export function PrimaryButton({ label, onPress, secondary = false, disabled = fa
         {secondary ? (
           <Text style={[styles.label, styles.secondaryLabel]}>{label}</Text>
         ) : (
-          <LinearGradient colors={["#1D7DFF", "#43D8FF"]} start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }} style={styles.gradient}>
+          <LinearGradient colors={["#E0AD72", "#C8945B"]} start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }} style={styles.gradient}>
             <Text style={styles.label}>{label}</Text>
           </LinearGradient>
         )}

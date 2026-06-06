@@ -22,28 +22,27 @@ function warnDeprecatedLegacyTone(tone: Tone) {
   );
 }
 
-// Centralized premium badge palette. Older aqua/green pills kept leaking back in
-// when screens imported or recreated legacy variants, so all badge surfaces map
-// through this restrained navy-first system now.
+// Centralized premium badge palette so transient/loading states stay in the
+// graphite and brass system instead of recreating older accent variants.
 const TONE_STYLES: Record<Tone, { backgroundColor: string; borderColor: string; color: string }> = {
   brand: {
-    backgroundColor: "rgba(10, 20, 34, 0.92)",
-    borderColor: "rgba(71, 123, 255, 0.26)",
+    backgroundColor: "rgba(22, 19, 17, 0.92)",
+    borderColor: "rgba(216, 163, 104, 0.26)",
     color: Colors.premium,
   },
   accent: {
-    backgroundColor: "rgba(10, 20, 34, 0.92)",
-    borderColor: "rgba(71, 123, 255, 0.26)",
+    backgroundColor: "rgba(22, 19, 17, 0.92)",
+    borderColor: "rgba(216, 163, 104, 0.26)",
     color: Colors.premium,
   },
   neutral: {
-    backgroundColor: "rgba(18, 30, 46, 0.88)",
+    backgroundColor: "rgba(24, 22, 20, 0.88)",
     borderColor: Colors.borderSoft,
     color: Colors.textSoft,
   },
   success: {
-    backgroundColor: "rgba(14, 24, 40, 0.92)",
-    borderColor: "rgba(52, 96, 207, 0.26)",
+    backgroundColor: "rgba(22, 19, 17, 0.92)",
+    borderColor: "rgba(216, 163, 104, 0.24)",
     color: Colors.textStrong,
   },
   subtle: {

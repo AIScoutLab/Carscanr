@@ -10,6 +10,7 @@ import { assertMobileStartupConfig, getMobileEnvDiagnostics, getMobileStartupCon
 import { supabase } from "@/lib/supabase";
 import { marketAreaZipService } from "@/services/marketAreaZipService";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
+import { startupPreferences } from "@/services/startupPreferences";
 
 function extractDeepLinkTokens(url: string) {
   try {
@@ -28,6 +29,10 @@ function extractDeepLinkTokens(url: string) {
     console.error("[auth-link] failed to parse incoming url", { url, error });
     return null;
   }
+}
+
+function isManagedAuthLink(url: string) {
+  return url.startsWith("carscanr://auth") || url.startsWith("carscanr://reset-password");
 }
 
 export default function RootLayout() {
@@ -124,7 +129,8 @@ export default function RootLayout() {
           if (isResetPasswordLink || parsed.type === "recovery") {
             router.replace("/reset-password" as never);
           } else {
-            router.replace("/(tabs)/scan" as never);
+            const target = await startupPreferences.consumePendingAuthReturnTarget("/(tabs)/scan");
+            router.replace(target as never);
           }
         }
       } catch (error) {
@@ -137,7 +143,7 @@ export default function RootLayout() {
 
     Linking.getInitialURL()
       .then((url) => {
-        if (url) {
+        if (url && isManagedAuthLink(url)) {
           return handleAuthLink(url, "initial");
         }
       })
@@ -146,7 +152,9 @@ export default function RootLayout() {
       });
 
     const subscription = Linking.addEventListener("url", ({ url }) => {
-      void handleAuthLink(url, "event");
+      if (isManagedAuthLink(url)) {
+        void handleAuthLink(url, "event");
+      }
     });
 
     return () => {
@@ -176,8 +184,8 @@ export default function RootLayout() {
       fallbackMessage="The app hit an unexpected rendering issue. Review the console logs and the detail message below."
     >
       <SubscriptionProvider>
-        <StatusBar style="dark" />
-        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#F5F6F8" } }}>
+        <StatusBar style="light" />
+        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.background } }}>
           <Stack.Screen name="index" />
           <Stack.Screen name="onboarding" />
           <Stack.Screen name="auth" />
@@ -186,6 +194,8 @@ export default function RootLayout() {
           <Stack.Screen name="scan/camera" />
           <Stack.Screen name="scan/result" />
           <Stack.Screen name="vehicle/[id]" />
+          <Stack.Screen name="legal/privacy-policy" />
+          <Stack.Screen name="legal/terms-of-service" />
           <Stack.Screen name="paywall" options={{ presentation: "modal" }} />
         </Stack>
       </SubscriptionProvider>
@@ -196,7 +206,7 @@ export default function RootLayout() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#F5F6F8",
+    backgroundColor: Colors.background,
     justifyContent: "center",
     padding: 24,
   },

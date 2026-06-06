@@ -45,6 +45,10 @@ export type MarketCheckRequestMeta = {
   forceLive?: boolean | null;
   cacheKey?: string | null;
   retryAttempt?: number | null;
+  attemptNumber?: number | null;
+  maxAttempts?: number | null;
+  fallbackStrategy?: string | null;
+  fallbackReason?: string | null;
   caller?: string | null;
   stackTag?: string | null;
 };

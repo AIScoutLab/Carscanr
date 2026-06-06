@@ -1,6 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import bundledDataset from "@/assets/data/offline_canonical.json";
-import { getVehicleImage } from "@/constants/vehicleImages";
+import bundledManualSearchOptions from "@/assets/data/manual_search_options.json";
+import { getVehicleImage, isFordRangerIdentity, normalizeVehicleIdentityForRendering } from "@/constants/vehicleImages";
+import { completeCanonicalSpecs, formatCanonicalModelName, sanitizeSpecValue } from "@/lib/canonicalSpecCompletion";
 import { formatCurrency } from "@/lib/utils";
 import { parseHorsepower } from "@/lib/vehicleData";
 import { OfflineCanonicalVehicle, VehicleRecord } from "@/types";
@@ -13,15 +15,41 @@ type OfflineCanonicalDataset = {
   vehicles: OfflineCanonicalVehicle[];
 };
 
+type ManualSearchIndex = {
+  source?: string;
+  generatedAt?: string;
+  modelRowCount?: number;
+  trimRowCount?: number;
+  years: string[];
+  makesByYear: Record<string, string[]>;
+  modelsByYearMake: Record<string, string[]>;
+  trimsByYearMakeModel: Record<string, string[]>;
+};
+
 type OfflineCanonicalIndex = {
   dataset: OfflineCanonicalDataset;
   byId: Map<string, OfflineCanonicalVehicle>;
   byCanonicalKey: Map<string, OfflineCanonicalVehicle>;
   byModelFamily: Map<string, OfflineCanonicalVehicle[]>;
   byMakeModelFamily: Map<string, OfflineCanonicalVehicle[]>;
+  manualSearchIndex: ManualSearchIndex;
+};
+
+type ManualSearchOptionsInput = {
+  year?: number | string | null;
+  make?: string | null;
+  model?: string | null;
 };
 
 let loadPromise: Promise<OfflineCanonicalIndex> | null = null;
+let localReferenceValueMap: Map<string, LocalReferenceValueRow> | null = null;
+
+type LocalReferenceValueRow = {
+  low: number;
+  high: number;
+  reference: number;
+  trimCount: number;
+};
 
 function normalizeText(value: string | undefined | null) {
   return String(value ?? "")
@@ -37,6 +65,14 @@ function normalizeText(value: string | undefined | null) {
 function normalizeModelFamily(value: string | undefined | null) {
   return normalizeText(value)
     .replace(/\b(competition|comp|lariat|eddie bauer|platinum|limited|premium|luxury|sport|touring|special|standard|base|xlt|gt|ex|lx|se|sel|xle|le)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+function normalizeReferenceModelFamily(value: string | undefined | null) {
+  return normalizeText(value)
+    .replace(/\b(\d+dr|\d+ door|sedan|coupe|convertible|hatchback|wagon|suv|truck|van|awd|rwd|fwd)\b/g, " ")
+    .replace(/\b(base|premium|limited|sport|touring|special|standard|edition|package|trim)\b/g, " ")
     .replace(/[^a-z0-9]+/g, "")
     .trim();
 }
@@ -64,6 +100,49 @@ function buildFamilyKey(input: { year: number; make: string; model: string }) {
 
 function buildMakeModelFamilyKey(input: { make: string; model: string }) {
   return `${normalizeText(input.make)}:${normalizeModelFamily(input.model)}`;
+}
+
+function buildLocalReferenceValueKey(input: { year: number; make: string; model: string }) {
+  return `${input.year}:${normalizeText(input.make)}:${normalizeReferenceModelFamily(input.model)}`;
+}
+
+function getLocalReferenceValueMap() {
+  if (localReferenceValueMap) {
+    return localReferenceValueMap;
+  }
+
+  const rows = new Map<string, number[]>();
+  (bundledDataset as OfflineCanonicalDataset).vehicles.forEach((vehicle) => {
+    const msrp = Number(vehicle.basicSpecs?.msrp);
+    if (!Number.isFinite(msrp) || msrp <= 0) {
+      return;
+    }
+    const key = buildLocalReferenceValueKey({
+      year: vehicle.year,
+      make: vehicle.make,
+      model: vehicle.model,
+    });
+    rows.set(key, [...(rows.get(key) ?? []), msrp]);
+  });
+
+  localReferenceValueMap = new Map(
+    [...rows.entries()].map(([key, values]) => {
+      const sortedValues = values.filter((value) => Number.isFinite(value) && value > 0).sort((left, right) => left - right);
+      const uniqueValues = [...new Set(sortedValues)];
+      const reference = Math.round(sortedValues.reduce((sum, value) => sum + value, 0) / sortedValues.length);
+      return [
+        key,
+        {
+          low: uniqueValues[0],
+          high: uniqueValues[uniqueValues.length - 1],
+          reference,
+          trimCount: sortedValues.length,
+        },
+      ] as const;
+    }),
+  );
+
+  return localReferenceValueMap;
 }
 
 function isWranglerVehicle(vehicle: Pick<OfflineCanonicalVehicle, "make" | "model">) {
@@ -117,6 +196,10 @@ function formatHorsepowerValue(value: number) {
   return `${value} hp`;
 }
 
+function vehicleDisplayModel(vehicle: Pick<OfflineCanonicalVehicle, "make" | "model">) {
+  return formatCanonicalModelName(vehicle.make, vehicle.model);
+}
+
 function getTrustedFamilySpecValue(values: Array<string | null | undefined>, allowDominant = false) {
   const normalized = values.map((value) => String(value ?? "").trim()).filter(Boolean);
   const unique = [...new Set(normalized)];
@@ -154,11 +237,82 @@ function createEmptyListings() {
   return [];
 }
 
+function parseOptionYear(value: number | string | null | undefined) {
+  const parsed = typeof value === "number" ? value : Number(String(value ?? "").trim());
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function uniqueDisplayValues(values: Array<string | null | undefined>) {
+  const displayByKey = new Map<string, string>();
+  values.forEach((value) => {
+    const displayValue = String(value ?? "").trim();
+    const key = normalizeText(displayValue);
+    if (!key || displayByKey.has(key)) {
+      return;
+    }
+    displayByKey.set(key, displayValue);
+  });
+  return [...displayByKey.values()].sort((left, right) => left.localeCompare(right));
+}
+
+function buildManualOptionKey(parts: Array<string | number | null | undefined>) {
+  return parts
+    .map((part, index) => (index === 0 ? String(part ?? "").trim() : normalizeText(String(part ?? ""))))
+    .join("|");
+}
+
+function getVehicleBackedManualSearchIndex(vehicles: OfflineCanonicalVehicle[]): ManualSearchIndex {
+  const makesByYear = new Map<string, string[]>();
+  const modelsByYearMake = new Map<string, string[]>();
+  const trimsByYearMakeModel = new Map<string, string[]>();
+
+  vehicles.forEach((vehicle) => {
+    const yearKey = String(vehicle.year);
+    makesByYear.set(yearKey, [...(makesByYear.get(yearKey) ?? []), vehicle.make]);
+    modelsByYearMake.set(buildManualOptionKey([vehicle.year, vehicle.make]), [
+      ...(modelsByYearMake.get(buildManualOptionKey([vehicle.year, vehicle.make])) ?? []),
+      vehicle.model,
+    ]);
+    trimsByYearMakeModel.set(buildManualOptionKey([vehicle.year, vehicle.make, vehicle.model]), [
+      ...(trimsByYearMakeModel.get(buildManualOptionKey([vehicle.year, vehicle.make, vehicle.model])) ?? []),
+      vehicle.trim,
+    ]);
+  });
+
+  return {
+    source: "offline-canonical-vehicles-fallback",
+    generatedAt: undefined,
+    modelRowCount: vehicles.length,
+    trimRowCount: vehicles.length,
+    years: [...new Set(vehicles.map((vehicle) => vehicle.year))]
+      .filter((optionYear) => Number.isFinite(optionYear) && optionYear > 0)
+      .sort((left, right) => right - left)
+      .map((optionYear) => String(optionYear)),
+    makesByYear: Object.fromEntries([...makesByYear.entries()].map(([key, values]) => [key, uniqueDisplayValues(values)])),
+    modelsByYearMake: Object.fromEntries([...modelsByYearMake.entries()].map(([key, values]) => [key, uniqueDisplayValues(values)])),
+    trimsByYearMakeModel: Object.fromEntries([...trimsByYearMakeModel.entries()].map(([key, values]) => [key, uniqueDisplayValues(values)])),
+  };
+}
+
+function getManualSearchIndex(dataset: OfflineCanonicalDataset): ManualSearchIndex {
+  const manualSearchIndex = bundledManualSearchOptions as ManualSearchIndex;
+  if (
+    manualSearchIndex &&
+    manualSearchIndex.years?.length > 20 &&
+    Object.keys(manualSearchIndex.makesByYear ?? {}).length > 0 &&
+    Object.keys(manualSearchIndex.modelsByYearMake ?? {}).length > 0
+  ) {
+    return manualSearchIndex;
+  }
+  return getVehicleBackedManualSearchIndex(dataset.vehicles);
+}
+
 function buildDatasetIndex(dataset: OfflineCanonicalDataset): OfflineCanonicalIndex {
   const byId = new Map<string, OfflineCanonicalVehicle>();
   const byCanonicalKey = new Map<string, OfflineCanonicalVehicle>();
   const byModelFamily = new Map<string, OfflineCanonicalVehicle[]>();
   const byMakeModelFamily = new Map<string, OfflineCanonicalVehicle[]>();
+  const manualSearchIndex = getManualSearchIndex(dataset);
 
   dataset.vehicles.forEach((vehicle) => {
     byId.set(vehicle.id, vehicle);
@@ -185,8 +339,20 @@ function buildDatasetIndex(dataset: OfflineCanonicalDataset): OfflineCanonicalIn
     version: dataset.offline_canonical_version,
     vehicleCount: dataset.vehicles.length,
   });
+  console.log("[offline-canonical] MANUAL_SEARCH_CANONICAL_ROWS_LOADED", {
+    detailVehicleCount: dataset.vehicles.length,
+    optionSource: manualSearchIndex.source ?? "unknown",
+    modelRowCount: manualSearchIndex.modelRowCount ?? null,
+    trimRowCount: manualSearchIndex.trimRowCount ?? null,
+    yearCount: manualSearchIndex.years.length,
+  });
+  console.log("[offline-canonical] MANUAL_SEARCH_YEAR_INDEX_SIZE", {
+    yearCount: manualSearchIndex.years.length,
+    firstYears: manualSearchIndex.years.slice(0, 8),
+    lastYears: manualSearchIndex.years.slice(-8),
+  });
 
-  return { dataset, byId, byCanonicalKey, byModelFamily, byMakeModelFamily };
+  return { dataset, byId, byCanonicalKey, byModelFamily, byMakeModelFamily, manualSearchIndex };
 }
 
 function scoreTrimCompatibility(vehicle: OfflineCanonicalVehicle, requestedTrim: string | undefined | null) {
@@ -294,6 +460,64 @@ async function syncBundledDataset() {
 
 function mapOfflineVehicleToRecord(vehicle: OfflineCanonicalVehicle): VehicleRecord {
   const parsedHorsepower = parseHorsepower(vehicle.basicSpecs.horsepower);
+  const displayModel = vehicleDisplayModel(vehicle);
+  const completedSpecs = completeCanonicalSpecs({
+    year: vehicle.year,
+    make: vehicle.make,
+    model: vehicle.model,
+    specs: {
+      engine: vehicle.basicSpecs.engine,
+      horsepower: parsedHorsepower,
+      torque: vehicle.basicSpecs.torque,
+      transmission: vehicle.basicSpecs.transmission,
+      drivetrain: vehicle.basicSpecs.drivetrain,
+      mpgOrRange: vehicle.basicSpecs.mpgOrRange,
+      exteriorColors: vehicle.basicSpecs.exteriorColors,
+      msrp: vehicle.basicSpecs.msrp,
+    },
+  });
+  console.log("[offline-canonical] FRONTEND_VEHICLE_IDENTITY_RECEIVED", {
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: displayModel,
+    vehicleType: vehicle.vehicleType,
+    bodyStyle: vehicle.basicSpecs.bodyStyle,
+  });
+  const normalizedIdentity = normalizeVehicleIdentityForRendering({
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: vehicle.vehicleType,
+    bodyStyle: vehicle.basicSpecs.bodyStyle,
+  });
+  if (normalizedIdentity.normalizationApplied) {
+    console.log("[offline-canonical] RANGER_NORMALIZATION_APPLIED", {
+      vehicleId: vehicle.id,
+      make: vehicle.make,
+      model: vehicle.model,
+      originalVehicleType: vehicle.vehicleType,
+      originalBodyStyle: vehicle.basicSpecs.bodyStyle,
+      vehicleType: normalizedIdentity.vehicleType,
+      bodyStyle: normalizedIdentity.bodyStyle,
+      reason: normalizedIdentity.normalizationReason,
+    });
+  }
+  if (isFordRangerIdentity(vehicle) && normalizedIdentity.vehicleType !== "truck") {
+    console.warn("[offline-canonical] RANGER_NORMALIZATION_LOST", {
+      vehicleId: vehicle.id,
+      make: vehicle.make,
+      model: vehicle.model,
+      vehicleType: normalizedIdentity.vehicleType,
+      bodyStyle: normalizedIdentity.bodyStyle,
+    });
+  }
+  console.log("[offline-canonical] FRONTEND_VEHICLE_IDENTITY_MAPPED", {
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: normalizedIdentity.vehicleType,
+    bodyStyle: normalizedIdentity.bodyStyle ?? vehicle.basicSpecs.bodyStyle,
+  });
   console.log("[offline-canonical] HORSEPOWER_MAPPING", {
     vehicleId: vehicle.id,
     rawHorsepower: vehicle.basicSpecs.horsepower ?? null,
@@ -343,19 +567,11 @@ function mapOfflineVehicleToRecord(vehicle: OfflineCanonicalVehicle): VehicleRec
     make: vehicle.make,
     model: vehicle.model,
     trim: vehicle.trim,
-    bodyStyle: vehicle.basicSpecs.bodyStyle,
-    heroImage: getVehicleImage(vehicle.id, vehicle.vehicleType),
-    overview: `${vehicle.year} ${vehicle.make} ${vehicle.model} ${vehicle.trim} from bundled offline canonical data.`,
-    specs: {
-      engine: vehicle.basicSpecs.engine,
-      horsepower: parsedHorsepower,
-      torque: vehicle.basicSpecs.torque,
-      transmission: vehicle.basicSpecs.transmission,
-      drivetrain: vehicle.basicSpecs.drivetrain,
-      mpgOrRange: vehicle.basicSpecs.mpgOrRange,
-      exteriorColors: vehicle.basicSpecs.exteriorColors,
-      msrp: vehicle.basicSpecs.msrp,
-    },
+    bodyStyle: normalizedIdentity.bodyStyle ?? vehicle.basicSpecs.bodyStyle,
+    vehicleType: normalizedIdentity.vehicleType,
+    heroImage: getVehicleImage(vehicle.id, normalizedIdentity.vehicleType, normalizedIdentity.bodyStyle ?? vehicle.basicSpecs.bodyStyle),
+    overview: `${vehicle.year} ${vehicle.make} ${displayModel} ${vehicle.trim} from bundled offline canonical data.`,
+    specs: completedSpecs,
     valuation,
     listings: createEmptyListings(),
   };
@@ -372,6 +588,54 @@ export const offlineCanonicalService = {
   async getDatasetVersion() {
     const index = await this.preload();
     return index.dataset.offline_canonical_version;
+  },
+
+  async getManualSearchOptions(input: ManualSearchOptionsInput = {}) {
+    const index = await this.preload();
+    const selectedYear = parseOptionYear(input.year);
+    const selectedMake = normalizeText(input.make);
+    const selectedModel = normalizeText(input.model);
+    const vehicles = index.dataset.vehicles;
+    const manualSearchIndex = index.manualSearchIndex;
+    const selectedYearKey = selectedYear ? String(selectedYear) : "";
+    const makeKey = selectedYear && selectedMake ? buildManualOptionKey([selectedYear, selectedMake]) : "";
+    const modelKey = selectedYear && selectedMake && selectedModel ? buildManualOptionKey([selectedYear, selectedMake, selectedModel]) : "";
+    const yearScopedVehicles = selectedYear ? vehicles.filter((vehicle) => vehicle.year === selectedYear) : [];
+    const makeScopedVehicles = selectedMake
+      ? yearScopedVehicles.filter((vehicle) => normalizeText(vehicle.make) === selectedMake)
+      : yearScopedVehicles;
+    const modelScopedVehicles = selectedModel
+      ? makeScopedVehicles.filter((vehicle) => normalizeText(vehicle.model) === selectedModel)
+      : makeScopedVehicles;
+
+    const years = manualSearchIndex.years;
+    const makes = selectedYearKey
+      ? manualSearchIndex.makesByYear[selectedYearKey] ?? uniqueDisplayValues(yearScopedVehicles.map((vehicle) => vehicle.make))
+      : [];
+    const models =
+      selectedYear && selectedMake
+        ? manualSearchIndex.modelsByYearMake[makeKey] ?? uniqueDisplayValues(makeScopedVehicles.map((vehicle) => vehicle.model))
+        : [];
+    const trims =
+      selectedYear && selectedMake && selectedModel
+        ? manualSearchIndex.trimsByYearMakeModel[modelKey] ?? uniqueDisplayValues(modelScopedVehicles.map((vehicle) => vehicle.trim))
+        : [];
+
+    console.log("[offline-canonical] MANUAL_SEARCH_YEAR_OPTIONS_GENERATED", {
+      yearCount: years.length,
+      selectedYear: selectedYear ?? null,
+      makeCount: makes.length,
+      modelCount: models.length,
+      trimCount: trims.length,
+      optionSource: manualSearchIndex.source ?? "unknown",
+    });
+
+    return {
+      years,
+      makes,
+      models,
+      trims,
+    };
   },
 
   async findById(id: string) {
@@ -610,13 +874,45 @@ export const offlineCanonicalService = {
         typeof input.year === "number" && bestVehicle ? Math.abs(bestVehicle.year - input.year) : null,
       mainstreamFriendly,
       sharedSpecs: {
-        engine: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => vehicle.basicSpecs.engine), mainstreamFriendly),
-        transmission: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => vehicle.basicSpecs.transmission), mainstreamFriendly),
-        drivetrain: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => vehicle.basicSpecs.drivetrain), mainstreamFriendly),
-        mpgOrRange: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => vehicle.basicSpecs.mpgOrRange), mainstreamFriendly),
-        bodyStyle: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => vehicle.basicSpecs.bodyStyle), mainstreamFriendly),
+        engine: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => sanitizeSpecValue(vehicle.basicSpecs.engine, "")), mainstreamFriendly),
+        transmission: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => sanitizeSpecValue(vehicle.basicSpecs.transmission, "")), mainstreamFriendly),
+        drivetrain: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => sanitizeSpecValue(vehicle.basicSpecs.drivetrain, "")), mainstreamFriendly),
+        mpgOrRange: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => sanitizeSpecValue(vehicle.basicSpecs.mpgOrRange, "")), mainstreamFriendly),
+        bodyStyle: getTrustedFamilySpecValue(groundedVehicles.map((vehicle) => sanitizeSpecValue(vehicle.basicSpecs.bodyStyle, "")), mainstreamFriendly),
       },
       msrpRangeLabel: buildMsrpRangeLabel(groundedVehicles.map((vehicle) => vehicle.basicSpecs.msrp)),
+    };
+  },
+
+  resolveLocalReferenceValue(input: {
+    year?: number | null;
+    make: string;
+    model: string;
+  }) {
+    if (typeof input.year !== "number" || !Number.isFinite(input.year) || input.year <= 0) {
+      return null;
+    }
+
+    const referenceRow = getLocalReferenceValueMap().get(
+      buildLocalReferenceValueKey({
+        year: input.year,
+        make: input.make,
+        model: input.model,
+      }),
+    );
+
+    if (!referenceRow) {
+      return null;
+    }
+
+    return {
+      value: referenceRow.reference,
+      rangeLabel: referenceRow.low === referenceRow.high
+        ? formatCurrency(referenceRow.reference)
+        : `${formatCurrency(referenceRow.low)} - ${formatCurrency(referenceRow.high)}`,
+      sourceLabel: "Local canonical MSRP reference",
+      matchType: "exact-year-model" as const,
+      trimCount: referenceRow.trimCount,
     };
   },
 

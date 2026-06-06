@@ -6,6 +6,7 @@ import {
   ListingRecord,
   MarketListingsCacheRecord,
   MarketValueCacheRecord,
+  RevenueCatEventRecord,
   ScanRecord,
   SubscriptionRecord,
   UnlockBalanceRecord,
@@ -86,7 +87,9 @@ export function createTestRepositories(seed?: {
   valuations?: ValuationRecord[];
   listings?: ListingRecord[];
   subscriptions?: SubscriptionRecord[];
+  revenueCatEvents?: RevenueCatEventRecord[];
   usageCounters?: UsageCounterRecord[];
+  unlockBalances?: UnlockBalanceRecord[];
   garageItems?: GarageItemRecord[];
   scans?: ScanRecord[];
   visionDebug?: VisionDebugRecord[];
@@ -126,6 +129,7 @@ export function createTestRepositories(seed?: {
       ]),
     ],
     subscriptions: [...(seed?.subscriptions ?? [])],
+    revenueCatEvents: [...(seed?.revenueCatEvents ?? [])],
     usageCounters: [...(seed?.usageCounters ?? [])],
     garageItems: [...(seed?.garageItems ?? [])],
     scans: [...(seed?.scans ?? [])],
@@ -139,7 +143,7 @@ export function createTestRepositories(seed?: {
     canonicalVehicles: [...(seed?.canonicalVehicles ?? [])],
     cachedAnalysis: [] as CachedAnalysisRecord[],
     imageCache: [] as ImageCacheRecord[],
-    unlockBalances: [] as UnlockBalanceRecord[],
+    unlockBalances: [...(seed?.unlockBalances ?? [])],
     vehicleUnlocks: [] as UserVehicleUnlockRecord[],
     vehicleScanPopularity: [],
     vehicleGlobalTrending: [],
@@ -279,6 +283,7 @@ export function createTestRepositories(seed?: {
           userId,
           freeUnlocksTotal: FREE_PRO_UNLOCKS_TOTAL,
           freeUnlocksUsed: 0,
+          unlockCredits: 0,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
@@ -309,24 +314,30 @@ export function createTestRepositories(seed?: {
             allowed: true,
             alreadyUnlocked: true,
             usedUnlock: false,
+            usedUnlockCredit: false,
             freeUnlocksTotal: balance.freeUnlocksTotal,
             freeUnlocksUsed: balance.freeUnlocksUsed,
             freeUnlocksRemaining: Math.max(0, balance.freeUnlocksTotal - balance.freeUnlocksUsed),
+            unlockCreditsRemaining: balance.unlockCredits,
           };
         }
-        if (balance.freeUnlocksUsed >= balance.freeUnlocksTotal) {
+        if (balance.freeUnlocksUsed >= balance.freeUnlocksTotal && balance.unlockCredits <= 0) {
           return {
             allowed: false,
             alreadyUnlocked: false,
             usedUnlock: false,
+            usedUnlockCredit: false,
             freeUnlocksTotal: balance.freeUnlocksTotal,
             freeUnlocksUsed: balance.freeUnlocksUsed,
             freeUnlocksRemaining: 0,
+            unlockCreditsRemaining: balance.unlockCredits,
           };
         }
+        const consumedCredit = balance.freeUnlocksUsed >= balance.freeUnlocksTotal && balance.unlockCredits > 0;
         const updatedBalance = {
           ...balance,
-          freeUnlocksUsed: balance.freeUnlocksUsed + 1,
+          freeUnlocksUsed: consumedCredit ? balance.freeUnlocksUsed : balance.freeUnlocksUsed + 1,
+          unlockCredits: consumedCredit ? Math.max(0, balance.unlockCredits - 1) : balance.unlockCredits,
           updatedAt: new Date().toISOString(),
         };
         await repositories.unlockBalances.update(updatedBalance);
@@ -348,9 +359,11 @@ export function createTestRepositories(seed?: {
           allowed: true,
           alreadyUnlocked: false,
           usedUnlock: true,
+          usedUnlockCredit: consumedCredit,
           freeUnlocksTotal: updatedBalance.freeUnlocksTotal,
           freeUnlocksUsed: updatedBalance.freeUnlocksUsed,
           freeUnlocksRemaining: Math.max(0, updatedBalance.freeUnlocksTotal - updatedBalance.freeUnlocksUsed),
+          unlockCreditsRemaining: updatedBalance.unlockCredits,
         };
       },
     },
@@ -395,6 +408,52 @@ export function createTestRepositories(seed?: {
         const remaining = state.subscriptions.filter((subscription) => subscription.userId !== record.userId);
         state.subscriptions = [...remaining, record];
         return record;
+      },
+    },
+    revenueCatEvents: {
+      async findById(id) {
+        return state.revenueCatEvents.find((event) => event.id === id) ?? null;
+      },
+      async findProcessedByTransactionId(transactionId) {
+        return state.revenueCatEvents.find((event) => event.transactionId === transactionId && event.processed) ?? null;
+      },
+      async findProcessedSubscriptionGrantByOriginalTransaction(input) {
+        return (
+          state.revenueCatEvents.find(
+            (event) =>
+              event.userId === input.userId &&
+              event.originalTransactionId === input.originalTransactionId &&
+              event.processed &&
+              event.processedAction === "pro_granted",
+          ) ?? null
+        );
+      },
+      async create(record) {
+        const existing = state.revenueCatEvents.find((event) => event.id === record.id);
+        if (existing) {
+          throw Object.assign(new Error("revenuecat_events unique constraint"), { code: "23505" });
+        }
+        state.revenueCatEvents.unshift(record);
+        return record;
+      },
+      async markProcessed(id, updates) {
+        const index = state.revenueCatEvents.findIndex((event) => event.id === id);
+        if (index === -1) {
+          throw new Error(`RevenueCat event ${id} not found`);
+        }
+        const updated = {
+          ...state.revenueCatEvents[index],
+          userId: updates.userId ?? state.revenueCatEvents[index].userId ?? null,
+          productId: updates.productId ?? state.revenueCatEvents[index].productId ?? null,
+          transactionId: updates.transactionId ?? state.revenueCatEvents[index].transactionId ?? null,
+          originalTransactionId: updates.originalTransactionId ?? state.revenueCatEvents[index].originalTransactionId ?? null,
+          payloadSummary: updates.payloadSummary ?? state.revenueCatEvents[index].payloadSummary ?? null,
+          processed: true,
+          processedAction: updates.processedAction,
+          processedAt: updates.processedAt,
+        };
+        state.revenueCatEvents[index] = updated;
+        return updated;
       },
     },
     usageCounters: {

@@ -37,6 +37,8 @@ export class UsageService {
     freeUnlocksTotal: number;
     freeUnlocksUsed: number;
     freeUnlocksRemaining: number;
+    unlockCreditsRemaining: number;
+    totalUnlocksAvailable: number;
     unlockedVehicleCount: number;
     unlockedVehicleIds: string[];
   }> {
@@ -59,6 +61,8 @@ export class UsageService {
           freeUnlocksTotal: FREE_PRO_UNLOCKS_TOTAL,
           freeUnlocksUsed: 0,
           freeUnlocksRemaining: FREE_PRO_UNLOCKS_TOTAL,
+          unlockCreditsRemaining: 0,
+          totalUnlocksAvailable: FREE_PRO_UNLOCKS_TOTAL,
           unlockedVehicleCount: 0,
           unlockedVehicleIds: [],
         };
@@ -83,6 +87,8 @@ export class UsageService {
         freeUnlocksTotal: unlockStatus.freeUnlocksTotal,
         freeUnlocksUsed: unlockStatus.freeUnlocksUsed,
         freeUnlocksRemaining: unlockStatus.freeUnlocksRemaining,
+        unlockCreditsRemaining: unlockStatus.unlockCreditsRemaining,
+        totalUnlocksAvailable: unlockStatus.totalUnlocksAvailable,
         unlockedVehicleCount: unlockStatus.unlockedVehicleIds.length,
         unlockedVehicleIds: unlockStatus.unlockedVehicleIds,
       };

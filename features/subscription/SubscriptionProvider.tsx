@@ -1,7 +1,10 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { defaultSubscriptionStatus } from "@/constants/seedData";
+import { FREE_PRO_UNLOCKS_TOTAL } from "@/constants/product";
 import { subscriptionService } from "@/services/subscriptionService";
 import { FreeUnlockReason, SubscriptionActionResult, SubscriptionStatus } from "@/types";
+
+type FreeUnlockVehicleLookup = Parameters<typeof subscriptionService.useFreeUnlockForVehicle>[2];
 
 type SubscriptionContextValue = {
   status: SubscriptionStatus | null;
@@ -13,17 +16,31 @@ type SubscriptionContextValue = {
   freeUnlocksUsed: number;
   freeUnlocksRemaining: number;
   freeUnlocksLimit: number;
+  unlockCredits: number;
   unlockedVehicleIds: string[];
   feedbackMessage: string | null;
   errorMessage: string | null;
   refreshStatus: () => Promise<SubscriptionStatus | null>;
-  purchasePro: () => Promise<SubscriptionActionResult>;
+  purchasePro: (selectedProductKey?: string | null) => Promise<SubscriptionActionResult>;
   restorePurchases: () => Promise<SubscriptionActionResult>;
+  manageSubscription: () => Promise<SubscriptionActionResult>;
   cancelPro: () => Promise<SubscriptionActionResult>;
   useFreeUnlockForVehicle: (
     vehicleId: string,
     linkedVehicleIds?: string[],
-  ) => Promise<{ ok: boolean; message: string; reason: FreeUnlockReason; alreadyUnlocked: boolean }>;
+    lookup?: FreeUnlockVehicleLookup | null,
+  ) => Promise<{
+    ok: boolean;
+    message: string;
+    reason: FreeUnlockReason;
+    alreadyUnlocked: boolean;
+    remaining: number;
+    limit: number;
+    usedUnlock?: boolean;
+    usedUnlockCredit?: boolean;
+    resultType?: "pro_access" | "already_unlocked" | "free_unlock_consumed" | "purchased_unlock_consumed" | "not_allowed";
+    unlockCredits?: number;
+  }>;
   isVehicleUnlocked: (vehicleId: string) => boolean;
   clearFeedback: () => void;
 };
@@ -38,8 +55,9 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const [isCancelling, setIsCancelling] = useState(false);
   const [isUnlocking, setIsUnlocking] = useState(false);
   const [freeUnlocksUsed, setFreeUnlocksUsed] = useState(0);
-  const [freeUnlocksRemaining, setFreeUnlocksRemaining] = useState(5);
-  const [freeUnlocksLimit, setFreeUnlocksLimit] = useState(5);
+  const [freeUnlocksRemaining, setFreeUnlocksRemaining] = useState(FREE_PRO_UNLOCKS_TOTAL);
+  const [freeUnlocksLimit, setFreeUnlocksLimit] = useState(FREE_PRO_UNLOCKS_TOTAL);
+  const [unlockCredits, setUnlockCredits] = useState(0);
   const [unlockedVehicleIds, setUnlockedVehicleIds] = useState<string[]>([]);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -53,13 +71,15 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       setFreeUnlocksUsed(unlockState.used);
       setFreeUnlocksRemaining(unlockState.remaining);
       setFreeUnlocksLimit(unlockState.limit);
+      setUnlockCredits(unlockState.unlockCredits ?? 0);
       setUnlockedVehicleIds(unlockState.unlockedVehicleIds);
       return nextStatus;
     } catch (error) {
       setStatus(defaultSubscriptionStatus);
       setFreeUnlocksUsed(0);
-      setFreeUnlocksRemaining(5);
-      setFreeUnlocksLimit(5);
+      setFreeUnlocksRemaining(FREE_PRO_UNLOCKS_TOTAL);
+      setFreeUnlocksLimit(FREE_PRO_UNLOCKS_TOTAL);
+      setUnlockCredits(0);
       setUnlockedVehicleIds([]);
       setErrorMessage(error instanceof Error ? error.message : "Unable to refresh your plan right now.");
       return null;
@@ -68,12 +88,18 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const purchasePro = useCallback(async () => {
+  const purchasePro = useCallback(async (selectedProductKey?: string | null) => {
     try {
       setIsPurchasing(true);
       setErrorMessage(null);
-      const result = await subscriptionService.purchaseSubscription();
+      const result = await subscriptionService.purchaseSubscription(selectedProductKey);
+      const unlockState = await subscriptionService.getFreeUnlockState();
       setStatus(result.status);
+      setFreeUnlocksUsed(unlockState.used);
+      setFreeUnlocksRemaining(unlockState.remaining);
+      setFreeUnlocksLimit(unlockState.limit);
+      setUnlockCredits(unlockState.unlockCredits ?? 0);
+      setUnlockedVehicleIds(unlockState.unlockedVehicleIds);
       setFeedbackMessage(result.message);
       return result;
     } catch (error) {
@@ -89,9 +115,19 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     try {
       setIsRestoring(true);
       setErrorMessage(null);
+      console.log("FREE_UNLOCK_COUNTER_STATE_BEFORE_RESTORE", {
+        used: freeUnlocksUsed,
+        remaining: freeUnlocksRemaining,
+        limit: freeUnlocksLimit,
+      });
       const result = await subscriptionService.restorePurchases();
       setStatus(result.status);
       setFeedbackMessage(result.message);
+      console.log("FREE_UNLOCK_COUNTER_STATE_AFTER_RESTORE", {
+        used: freeUnlocksUsed,
+        remaining: freeUnlocksRemaining,
+        limit: freeUnlocksLimit,
+      });
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to restore purchases right now.";
@@ -100,32 +136,38 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsRestoring(false);
     }
-  }, []);
+  }, [freeUnlocksLimit, freeUnlocksRemaining, freeUnlocksUsed]);
 
-  const cancelPro = useCallback(async () => {
+  const manageSubscription = useCallback(async () => {
     try {
       setIsCancelling(true);
       setErrorMessage(null);
-      const result = await subscriptionService.cancelSubscription();
+      const result = await subscriptionService.manageSubscription();
       setStatus(result.status);
       setFeedbackMessage(result.message);
       return result;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to cancel Pro right now.";
+      const message = error instanceof Error ? error.message : "Unable to open subscription management right now.";
       setErrorMessage(message);
       throw error;
     } finally {
       setIsCancelling(false);
     }
   }, []);
+  const cancelPro = manageSubscription;
 
-  const useFreeUnlockForVehicle = useCallback<SubscriptionContextValue["useFreeUnlockForVehicle"]>(async (vehicleId, linkedVehicleIds = []) => {
+  const useFreeUnlockForVehicle = useCallback<SubscriptionContextValue["useFreeUnlockForVehicle"]>(async (vehicleId, linkedVehicleIds = [], lookup = null) => {
     if (isUnlocking) {
       return {
         ok: false,
         message: "Unlock already in progress.",
         reason: "unknown",
         alreadyUnlocked: false,
+        remaining: freeUnlocksRemaining,
+        limit: freeUnlocksLimit,
+        usedUnlock: false,
+        usedUnlockCredit: false,
+        resultType: "not_allowed",
       };
     }
     if (!vehicleId) {
@@ -134,15 +176,21 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         message: "This vehicle cannot be unlocked yet.",
         reason: "vehicle_not_found",
         alreadyUnlocked: false,
+        remaining: freeUnlocksRemaining,
+        limit: freeUnlocksLimit,
+        usedUnlock: false,
+        usedUnlockCredit: false,
+        resultType: "not_allowed",
       };
     }
     try {
       setIsUnlocking(true);
       setErrorMessage(null);
-      const result = await subscriptionService.useFreeUnlockForVehicle(vehicleId, linkedVehicleIds);
+      const result = await subscriptionService.useFreeUnlockForVehicle(vehicleId, linkedVehicleIds, lookup);
       setFreeUnlocksUsed(result.state.used);
       setFreeUnlocksRemaining(result.remaining);
       setFreeUnlocksLimit(result.limit);
+      setUnlockCredits(result.unlockCredits ?? 0);
       setUnlockedVehicleIds(result.state.unlockedVehicleIds);
       if (!result.ok) {
         if (result.reason === "no_free_unlocks") {
@@ -155,6 +203,11 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
           message: result.message,
           reason: result.reason,
           alreadyUnlocked: result.alreadyUnlocked,
+          remaining: result.remaining,
+          limit: result.limit,
+          usedUnlock: result.usedUnlock,
+          usedUnlockCredit: result.usedUnlockCredit,
+          resultType: result.resultType,
         };
       }
       if (result.alreadyUnlocked) {
@@ -167,6 +220,12 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         message: result.message,
         reason: result.reason,
         alreadyUnlocked: result.alreadyUnlocked,
+        remaining: result.remaining,
+        limit: result.limit,
+        usedUnlock: result.usedUnlock,
+        usedUnlockCredit: result.usedUnlockCredit,
+        resultType: result.resultType,
+        unlockCredits: result.unlockCredits,
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to use a free unlock right now.";
@@ -176,11 +235,16 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         message,
         reason: "unknown",
         alreadyUnlocked: false,
+        remaining: freeUnlocksRemaining,
+        limit: freeUnlocksLimit,
+        usedUnlock: false,
+        usedUnlockCredit: false,
+        resultType: "not_allowed",
       };
     } finally {
       setIsUnlocking(false);
     }
-  }, [isUnlocking]);
+  }, [freeUnlocksLimit, freeUnlocksRemaining, isUnlocking]);
 
   const isVehicleUnlocked = useCallback((vehicleId: string) => unlockedVehicleIds.includes(vehicleId), [unlockedVehicleIds]);
 
@@ -201,13 +265,15 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         setFreeUnlocksUsed(unlockState.used);
         setFreeUnlocksRemaining(unlockState.remaining);
         setFreeUnlocksLimit(unlockState.limit);
+        setUnlockCredits(unlockState.unlockCredits ?? 0);
         setUnlockedVehicleIds(unlockState.unlockedVehicleIds);
       } catch (error) {
         if (!active) return;
         setStatus(defaultSubscriptionStatus);
         setFreeUnlocksUsed(0);
-        setFreeUnlocksRemaining(5);
-        setFreeUnlocksLimit(5);
+        setFreeUnlocksRemaining(FREE_PRO_UNLOCKS_TOTAL);
+        setFreeUnlocksLimit(FREE_PRO_UNLOCKS_TOTAL);
+        setUnlockCredits(0);
         setUnlockedVehicleIds([]);
         setErrorMessage(error instanceof Error ? error.message : "Unable to refresh your plan right now.");
       } finally {
@@ -234,11 +300,13 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       freeUnlocksRemaining,
       freeUnlocksLimit,
       unlockedVehicleIds,
+      unlockCredits,
       feedbackMessage,
       errorMessage,
       refreshStatus,
       purchasePro,
       restorePurchases,
+      manageSubscription,
       cancelPro,
       useFreeUnlockForVehicle,
       isVehicleUnlocked,
@@ -250,6 +318,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       freeUnlocksLimit,
       freeUnlocksRemaining,
       freeUnlocksUsed,
+      unlockCredits,
       isCancelling,
       isLoading,
       isPurchasing,
@@ -260,6 +329,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       refreshStatus,
       purchasePro,
       restorePurchases,
+      manageSubscription,
       cancelPro,
       useFreeUnlockForVehicle,
       isVehicleUnlocked,

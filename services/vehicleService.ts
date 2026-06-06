@@ -1,8 +1,17 @@
 import { formatCurrency } from "@/lib/utils";
 import { buildSpecialtyVehicleOverview, isSpecialtyExoticMake } from "@/lib/specialtyVehicles";
 import { resolveConditionValues } from "@/lib/valueConditionSet";
+import { completeCanonicalSpecs, formatCanonicalModelName } from "@/lib/canonicalSpecCompletion";
 import { resolveHorsepower } from "@/lib/vehicleData";
-import { getVehicleImage } from "@/constants/vehicleImages";
+import {
+  getVehicleImage,
+  isFordRangerIdentity,
+  isGeneratedVehicleFallbackImageUri,
+  isSafeVehicleImageForIdentity,
+  normalizeVehicleIdentityForRendering,
+  resolveVehicleImageSource,
+} from "@/constants/vehicleImages";
+import { findSampleScanPhoto, getSampleVehicleRouteId, isSampleVehicleRouteId } from "@/features/scan/samplePhotos";
 import { apiRequest, apiRequestEnvelope } from "@/services/apiClient";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { MarketAreaZipSource } from "@/lib/marketAreaZip";
@@ -13,7 +22,7 @@ export type VehicleLookupDescriptor = {
   make: string;
   model: string;
   trim?: string | null;
-  vehicleType?: "car" | "motorcycle" | null;
+  vehicleType?: "car" | "truck" | "motorcycle" | null;
   bodyStyle?: string | null;
   normalizedModel?: string | null;
 };
@@ -32,7 +41,7 @@ type BackendVehicle = {
   model: string;
   trim: string;
   bodyStyle: string;
-  vehicleType: "car" | "motorcycle";
+  vehicleType: "car" | "truck" | "motorcycle";
   msrp: number;
   engine: string;
   horsepower?: number | string | null;
@@ -56,7 +65,7 @@ type BackendResolvedVehicle = {
   model: string;
   trim: string;
   bodyStyle: string;
-  vehicleType: "car" | "motorcycle";
+  vehicleType: "car" | "truck" | "motorcycle";
   msrp: number;
   engine: string;
   horsepower?: number | string | null;
@@ -124,7 +133,7 @@ type BackendValuation = {
   generatedAt: string;
   sourceLabel?: string;
   confidenceLabel?: string;
-  valuationSource?: "provider" | "cache" | "listing_comps" | "unavailable" | null;
+  valuationSource?: "provider" | "cache" | "listing_comps" | "modeled_fallback" | "sample_demo" | "unavailable" | null;
   compCount?: number | null;
   confidence?: "high" | "moderate" | "limited" | "unavailable" | null;
   rangeLow?: number | null;
@@ -148,6 +157,11 @@ type BackendListing = {
   distanceMiles: number;
   location: string;
   imageUrl: string;
+  listingUrl?: string | null;
+  url?: string | null;
+  vdpUrl?: string | null;
+  redirectUrl?: string | null;
+  detailUrl?: string | null;
   listedAt: string;
 };
 
@@ -178,10 +192,31 @@ type ListingsRequestOptions = {
   fetchReason?: string;
   sourceScreen?: string;
   action?: string;
+  forceLive?: boolean;
   radiusMiles?: number;
   mileage?: string | number;
   zipSource?: MarketAreaZipSource;
 };
+
+function isLiveMarketRequest(options?: { allowLive?: boolean }) {
+  return options?.allowLive === true;
+}
+
+function getApiErrorCode(error: unknown) {
+  return typeof error === "object" && error !== null && "code" in error && typeof (error as { code?: unknown }).code === "string"
+    ? (error as { code: string }).code
+    : null;
+}
+
+function getApiErrorStatus(error: unknown) {
+  if (typeof error !== "object" || error === null || !("details" in error)) {
+    return null;
+  }
+  const details = (error as { details?: unknown }).details;
+  return typeof details === "object" && details !== null && "status" in details && typeof (details as { status?: unknown }).status === "number"
+    ? (details as { status: number }).status
+    : null;
+}
 
 function defaultOverview(vehicle: BackendVehicle) {
   if (isSpecialtyExoticMake(vehicle.make)) {
@@ -249,23 +284,32 @@ function mapValuation(valuation: BackendValuation): ValuationResult {
     isPositiveMarketNumber(valuation.low) ||
     isPositiveMarketNumber(valuation.median) ||
     isPositiveMarketNumber(valuation.high) ||
+    isPositiveMarketNumber(valuation.rangeLow) ||
+    isPositiveMarketNumber(valuation.rangeHigh) ||
+    isPositiveMarketNumber(valuation.midpoint) ||
     isPositiveMarketNumber(valuation.privatePartyLow) ||
     isPositiveMarketNumber(valuation.privatePartyHigh) ||
     isPositiveMarketNumber(valuation.tradeInLow) ||
     isPositiveMarketNumber(valuation.tradeInHigh) ||
     isPositiveMarketNumber(valuation.dealerRetailLow) ||
     isPositiveMarketNumber(valuation.dealerRetailHigh);
+  const hasComparableListingEvidence =
+    valuation.valuationSource === "listing_comps" ||
+    valuation.sourceBasis === "listing_median_adjusted" ||
+    valuation.modelType === "listing_derived" ||
+    (typeof valuation.compCount === "number" && valuation.compCount > 0) ||
+    (typeof valuation.listingCount === "number" && valuation.listingCount > 0);
   const status =
     (valuation.status === "no_comps_found" || valuation.status === "provider_error" || valuation.status === "ready_to_load") &&
     hasListingConditionSet
       ? "loaded_condition_set"
       : (valuation.status === "no_comps_found" || valuation.status === "provider_error" || valuation.status === "ready_to_load") &&
-          hasListingRange
+          (hasListingRange || hasComparableListingEvidence)
         ? "loaded_listing_range"
         : valuation.status ??
           (hasListingConditionSet
             ? "loaded_condition_set"
-            : valuation.modelType === "listing_derived" || hasListingRange
+            : valuation.modelType === "listing_derived" || hasListingRange || hasComparableListingEvidence
       ? "loaded_listing_range"
       : valuation.modelType === "specialty_unavailable"
         ? "specialty_unavailable"
@@ -362,7 +406,7 @@ function mapValuation(valuation: BackendValuation): ValuationResult {
           : status === "no_comps_found"
             ? "No live market comps found for this ZIP, mileage, and condition."
             : status === "specialty_unavailable"
-              ? "Load live market value. Collector-market pricing can vary widely by mileage, condition, options, service history, and provenance."
+              ? "Load live market value. Specialty pricing can vary widely by mileage, condition, options, service history, and provenance."
               : "Load live market value when you want current local pricing."),
       sourceLabel:
         valuation.sourceLabel ??
@@ -480,7 +524,7 @@ function mapValuation(valuation: BackendValuation): ValuationResult {
 }
 
 function mapListings(listings: BackendListing[]): ListingResult[] {
-  return listings.map((listing) => ({
+  const mapped = listings.map((listing) => ({
     id: listing.id,
     title: listing.title,
     price: formatCurrency(listing.price),
@@ -489,7 +533,23 @@ function mapListings(listings: BackendListing[]): ListingResult[] {
     distance: `${listing.distanceMiles} mi`,
     location: listing.location,
     imageUrl: listing.imageUrl,
+    listingUrl: listing.listingUrl ?? listing.url ?? listing.vdpUrl ?? listing.redirectUrl ?? listing.detailUrl ?? null,
   }));
+  console.log("[vehicle-service] LISTING_URL_MAPPING_TRACE", {
+    totalListingsReturned: listings.length,
+    listingsWithUrl: mapped.filter((listing) => typeof listing.listingUrl === "string" && /^https?:\/\//i.test(listing.listingUrl.trim())).length,
+    listingsWithoutUrl: mapped.filter((listing) => !(typeof listing.listingUrl === "string" && /^https?:\/\//i.test(listing.listingUrl.trim()))).length,
+    urlFieldPresence: listings.slice(0, 12).map((listing) => ({
+      id: listing.id,
+      listingUrl: Boolean(listing.listingUrl),
+      url: Boolean(listing.url),
+      vdpUrl: Boolean(listing.vdpUrl),
+      redirectUrl: Boolean(listing.redirectUrl),
+      detailUrl: Boolean(listing.detailUrl),
+    })),
+    firstThreeUrls: mapped.slice(0, 3).map((listing) => listing.listingUrl ?? null),
+  });
+  return mapped;
 }
 
 function createEmptyValuation(): ValuationResult {
@@ -524,24 +584,180 @@ function createEmptyValuation(): ValuationResult {
   };
 }
 
-function mapResolvedSpecsVehicle(vehicle: BackendResolvedVehicle): VehicleRecord {
+function buildSampleRange(value: number, spread = 0.06) {
+  const low = Math.round((value * (1 - spread)) / 50) * 50;
+  const high = Math.round((value * (1 + spread)) / 50) * 50;
+  return `${formatCurrency(low)} - ${formatCurrency(high)}`;
+}
+
+function buildSampleConditionValues(sample: NonNullable<ReturnType<typeof findSampleScanPhoto>>["demoValue"]): NonNullable<ValuationResult["conditionValues"]> {
+  const build = (multiplier: number) => {
+    const tradeIn = Math.round((sample.tradeIn * multiplier) / 50) * 50;
+    const privateParty = Math.round((sample.privateParty * multiplier) / 50) * 50;
+    const dealerRetail = Math.round((sample.dealerRetail * multiplier) / 50) * 50;
+    return {
+      tradeIn: formatCurrency(tradeIn),
+      privateParty: formatCurrency(privateParty),
+      dealerRetail: formatCurrency(dealerRetail),
+      low: formatCurrency(tradeIn),
+      median: formatCurrency(privateParty),
+      high: formatCurrency(dealerRetail),
+    };
+  };
   return {
-    id: vehicle.id,
+    fair: build(0.92),
+    good: build(1),
+    excellent: build(1.07),
+  };
+}
+
+function buildSampleDemoValuation(sample: NonNullable<ReturnType<typeof findSampleScanPhoto>>): ValuationResult {
+  const sampleListings = getSampleDemoListingSeeds(sample);
+  return {
+    status: "loaded_condition_set",
+    selectedCondition: "good",
+    baseCondition: "good",
+    conditionValues: buildSampleConditionValues(sample.demoValue),
+    tradeIn: formatCurrency(sample.demoValue.tradeIn),
+    tradeInRange: buildSampleRange(sample.demoValue.tradeIn),
+    privateParty: formatCurrency(sample.demoValue.privateParty),
+    privatePartyRange: buildSampleRange(sample.demoValue.privateParty),
+    dealerRetail: formatCurrency(sample.demoValue.dealerRetail),
+    dealerRetailRange: buildSampleRange(sample.demoValue.dealerRetail),
+    low: formatCurrency(sample.demoValue.tradeIn),
+    high: formatCurrency(sample.demoValue.dealerRetail),
+    median: formatCurrency(sample.demoValue.privateParty),
+    confidenceLabel: "Demo data — not live market data.",
+    sourceLabel: "Sample value estimate",
+    valuationSource: "sample_demo",
+    compCount: sampleListings.length,
+    confidence: "limited",
+    rangeLow: formatCurrency(sample.demoValue.tradeIn),
+    rangeHigh: formatCurrency(sample.demoValue.dealerRetail),
+    midpoint: formatCurrency(sample.demoValue.privateParty),
+    unavailableReason: null,
+    message: "Sample value estimate uses local demo data for this showcase vehicle.",
+    reason: null,
+    listingCount: sampleListings.length,
+    sourceBasis: "modeled_condition_adjusted",
+    modelType: "modeled",
+  };
+}
+
+function buildSampleDemoListings(sample: NonNullable<ReturnType<typeof findSampleScanPhoto>>): ListingResult[] {
+  const imageUrl = sample.previewUrl;
+
+  return getSampleDemoListingSeeds(sample).map((listing, index) => ({
+    id: safeSampleListingText(listing.id, `sample-listing-${sample.id}-${index + 1}`),
+    title: safeSampleListingText(listing.title, `${sample.year} ${sample.make} ${formatCanonicalModelName(sample.make, sample.model)} ${sample.trim}`.trim()),
+    price: formatSampleListingPrice(listing.price, sample.demoValue.dealerRetail),
+    mileage: formatSampleListingMileage(listing.mileage, sample.demoValue.mileage),
+    dealer: safeSampleListingText(listing.dealer, "Sample seller"),
+    distance: formatSampleListingDistance(listing.distanceMiles),
+    location: safeSampleListingText(listing.location, "Demo City, ST"),
+    imageUrl,
+    isSampleListing: true,
+    sourceLabel: "Sample listings",
+  }));
+}
+
+function getSampleDemoListingSeeds(sample: NonNullable<ReturnType<typeof findSampleScanPhoto>>) {
+  const listings = Array.isArray(sample.demoListings)
+    ? sample.demoListings.filter((listing) => listing && typeof listing === "object")
+    : [];
+  if (listings.length > 0) {
+    return listings;
+  }
+  console.warn("[vehicle-service] SAMPLE_LISTINGS_RENDER_FALLBACK_USED", {
+    sampleId: sample.id,
+    make: sample.make,
+    model: sample.model,
+    reason: "missing_explicit_demo_listings",
+    providerCall: false,
+  });
+  return [
+    {
+      id: `sample-listing-${sample.id}-fallback`,
+      title: `${sample.year} ${sample.make} ${formatCanonicalModelName(sample.make, sample.model)} ${sample.trim}`.trim(),
+      price: sample.demoValue.dealerRetail,
+      mileage: sample.demoValue.mileage,
+      dealer: "Sample seller",
+      distanceMiles: 0,
+      location: "Demo City, ST",
+    },
+  ];
+}
+
+function safeSampleListingText(value: unknown, fallback: string) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+function formatSampleListingPrice(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? formatCurrency(value) : formatCurrency(fallback);
+}
+
+function formatSampleListingMileage(value: unknown, fallback: number) {
+  const mileage = typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
+  return `${mileage.toLocaleString("en-US")} mi`;
+}
+
+function formatSampleListingDistance(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? `${value} mi` : "Distance unavailable";
+}
+
+function buildSampleVehicleRecord(id: string): VehicleRecord | undefined {
+  const sample = findSampleScanPhoto(id);
+  if (!sample) {
+    return undefined;
+  }
+  const routeId = getSampleVehicleRouteId(sample.id);
+  const completedSpecs = completeCanonicalSpecs({
+    year: sample.year,
+    make: sample.make,
+    model: sample.model,
+    specs: {
+      engine: sample.specs.engine,
+      horsepower: sample.specs.horsepower,
+      torque: sample.specs.torque,
+      transmission: sample.specs.transmission,
+      drivetrain: sample.specs.drivetrain,
+      mpgOrRange: sample.specs.mpgOrRange,
+      exteriorColors: [...sample.specs.exteriorColors],
+      msrp: sample.specs.msrp,
+    },
+  });
+  console.log("[vehicle-service] SAMPLE_VEHICLE_LOCAL_DETAIL_USED", {
+    routeId: id,
+    sampleId: sample.id,
+    vehicleId: routeId,
+    source: "sample_vehicle",
+    backendLookupRequired: false,
+  });
+  return {
+    id: routeId,
+    year: sample.year,
+    make: sample.make,
+    model: formatCanonicalModelName(sample.make, sample.model),
+    trim: sample.trim,
+    bodyStyle: sample.specs.bodyStyle,
+    vehicleType: sample.specs.vehicleType,
+    heroImage: sample.previewUrl,
+    overview: `${sample.year} ${sample.make} ${formatCanonicalModelName(sample.make, sample.model)} ${sample.trim}`.trim() +
+      " is local sample showcase content. Specs come from the bundled sample catalog; value and listings are demo data.",
+    specs: completedSpecs,
+    valuation: buildSampleDemoValuation(sample),
+    listings: buildSampleDemoListings(sample),
+    isSampleVehicle: true,
+    source: "sample_vehicle",
+  };
+}
+
+function mapResolvedSpecsVehicle(vehicle: BackendResolvedVehicle): VehicleRecord {
+  const displayModel = formatCanonicalModelName(vehicle.make, vehicle.model);
+  const completedSpecs = completeCanonicalSpecs({
     year: vehicle.year,
     make: vehicle.make,
     model: vehicle.model,
-    trim: vehicle.trim,
-    bodyStyle: vehicle.bodyStyle,
-    heroImage: getVehicleImage(vehicle.id, vehicle.vehicleType),
-    overview: defaultOverview({
-      ...vehicle,
-      imageUrl: null,
-      heroImage: null,
-      defaultImageUrl: null,
-      providerImageUrl: null,
-      hp: null,
-      engine_hp: null,
-    } as BackendVehicle),
     specs: {
       engine: vehicle.engine || "Unknown",
       horsepower: resolveHorsepower(vehicle.horsepower, null, null, vehicle.engine, null),
@@ -552,6 +768,69 @@ function mapResolvedSpecsVehicle(vehicle: BackendResolvedVehicle): VehicleRecord
       exteriorColors: vehicle.colors ?? [],
       msrp: vehicle.msrp || 0,
     },
+  });
+  console.log("[vehicle-service] FRONTEND_VEHICLE_IDENTITY_RECEIVED", {
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: vehicle.vehicleType,
+    bodyStyle: vehicle.bodyStyle,
+  });
+  const normalizedIdentity = normalizeVehicleIdentityForRendering({
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: vehicle.vehicleType,
+    bodyStyle: vehicle.bodyStyle,
+  });
+  if (normalizedIdentity.normalizationApplied) {
+    console.log("[vehicle-service] RANGER_NORMALIZATION_APPLIED", {
+      vehicleId: vehicle.id,
+      make: vehicle.make,
+      model: vehicle.model,
+      originalVehicleType: vehicle.vehicleType,
+      originalBodyStyle: vehicle.bodyStyle,
+      vehicleType: normalizedIdentity.vehicleType,
+      bodyStyle: normalizedIdentity.bodyStyle,
+      reason: normalizedIdentity.normalizationReason,
+    });
+  }
+  if (isFordRangerIdentity(vehicle) && normalizedIdentity.vehicleType !== "truck") {
+    console.warn("[vehicle-service] RANGER_NORMALIZATION_LOST", {
+      vehicleId: vehicle.id,
+      make: vehicle.make,
+      model: vehicle.model,
+      vehicleType: normalizedIdentity.vehicleType,
+      bodyStyle: normalizedIdentity.bodyStyle,
+    });
+  }
+  console.log("[vehicle-service] FRONTEND_VEHICLE_IDENTITY_MAPPED", {
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: normalizedIdentity.vehicleType,
+    bodyStyle: normalizedIdentity.bodyStyle ?? vehicle.bodyStyle,
+  });
+  return {
+    id: vehicle.id,
+    year: vehicle.year,
+    make: vehicle.make,
+    model: displayModel,
+    trim: vehicle.trim,
+    bodyStyle: normalizedIdentity.bodyStyle ?? vehicle.bodyStyle,
+    vehicleType: normalizedIdentity.vehicleType,
+    heroImage: getVehicleImage(vehicle.id, normalizedIdentity.vehicleType, normalizedIdentity.bodyStyle ?? vehicle.bodyStyle),
+    overview: defaultOverview({
+      ...vehicle,
+      model: displayModel,
+      imageUrl: null,
+      heroImage: null,
+      defaultImageUrl: null,
+      providerImageUrl: null,
+      hp: null,
+      engine_hp: null,
+    } as BackendVehicle),
+    specs: completedSpecs,
     valuation: createEmptyValuation(),
     listings: [],
   };
@@ -591,24 +870,50 @@ function resolveVehicleHeroImage(
   listings?: BackendListing[],
 ) {
   const liveExactImage = pickFirstNonEmptyString(vehicle.imageUrl, vehicle.heroImage);
-  const canonicalExactImage = pickFirstNonEmptyString(fallbackRecord?.heroImage);
+  const canonicalExactImage = pickFirstNonEmptyString(typeof fallbackRecord?.heroImage === "string" ? fallbackRecord.heroImage : null);
   const providerMatchedImage = pickFirstNonEmptyString(vehicle.providerImageUrl, vehicle.defaultImageUrl, listings?.[0]?.imageUrl);
-  const genericImage = getVehicleImage(vehicle.id, vehicle.vehicleType);
+  const rangerIdentity = isFordRangerIdentity(vehicle);
+  const genericResolution = resolveVehicleImageSource({
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: vehicle.vehicleType,
+    bodyStyle: vehicle.bodyStyle ?? fallbackRecord?.bodyStyle ?? null,
+  });
+  const canonicalImageAllowed =
+    canonicalExactImage &&
+    !isGeneratedVehicleFallbackImageUri(canonicalExactImage) &&
+    isSafeVehicleImageForIdentity(
+      {
+        vehicleId: vehicle.id,
+        make: vehicle.make,
+        model: vehicle.model,
+        vehicleType: vehicle.vehicleType,
+        bodyStyle: vehicle.bodyStyle ?? fallbackRecord?.bodyStyle ?? null,
+      },
+      canonicalExactImage,
+    )
+      ? canonicalExactImage
+      : null;
 
-  const heroImage = liveExactImage ?? canonicalExactImage ?? providerMatchedImage ?? genericImage;
+  const heroImage = rangerIdentity ? canonicalImageAllowed ?? genericResolution.uri : liveExactImage ?? canonicalImageAllowed ?? providerMatchedImage ?? genericResolution.uri;
   console.log("[vehicle-service] EXACT_HIT_IMAGE_SELECTION", {
     vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    rangerIdentity,
     liveExactImage: liveExactImage ?? null,
-    canonicalExactImage: canonicalExactImage ?? null,
-    providerMatchedImage: providerMatchedImage ?? null,
+    canonicalExactImage: canonicalImageAllowed ?? null,
+    providerMatchedImage: rangerIdentity ? null : providerMatchedImage ?? null,
+    fallbackType: genericResolution.fallbackType,
     selectedSource:
       heroImage === liveExactImage
         ? "exact-live"
-        : heroImage === canonicalExactImage
+        : heroImage === canonicalImageAllowed
           ? "exact-canonical"
           : heroImage === providerMatchedImage
             ? "exact-provider"
-            : "generic-fallback",
+            : genericResolution.source,
   });
   return heroImage;
 }
@@ -664,15 +969,11 @@ function mapVehicle(
 ): VehicleRecord {
   const mappedListings = listings ? mapListings(listings) : [];
   const parsedHorsepower = resolveVehicleHorsepower(vehicle, fallbackRecord);
-  return {
-    id: vehicle.id,
+  const displayModel = formatCanonicalModelName(vehicle.make, vehicle.model);
+  const completedSpecs = completeCanonicalSpecs({
     year: vehicle.year,
     make: vehicle.make,
     model: vehicle.model,
-    trim: vehicle.trim,
-    bodyStyle: vehicle.bodyStyle,
-    heroImage: resolveVehicleHeroImage(vehicle, fallbackRecord, listings),
-    overview: defaultOverview(vehicle),
     specs: {
       engine: vehicle.engine || fallbackRecord?.specs.engine || "Unknown",
       horsepower: parsedHorsepower,
@@ -683,18 +984,90 @@ function mapVehicle(
       exteriorColors: vehicle.colors?.length ? vehicle.colors : fallbackRecord?.specs.exteriorColors ?? [],
       msrp: vehicle.msrp || fallbackRecord?.specs.msrp || 0,
     },
+  });
+  console.log("[vehicle-service] FRONTEND_VEHICLE_IDENTITY_RECEIVED", {
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: vehicle.vehicleType,
+    bodyStyle: vehicle.bodyStyle,
+    fallbackBodyStyle: fallbackRecord?.bodyStyle ?? null,
+    fallbackVehicleType: fallbackRecord?.vehicleType ?? null,
+  });
+  const normalizedIdentity = normalizeVehicleIdentityForRendering({
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: vehicle.vehicleType ?? fallbackRecord?.vehicleType ?? null,
+    bodyStyle: vehicle.bodyStyle || fallbackRecord?.bodyStyle || null,
+  });
+  if (normalizedIdentity.normalizationApplied) {
+    console.log("[vehicle-service] RANGER_NORMALIZATION_APPLIED", {
+      vehicleId: vehicle.id,
+      make: vehicle.make,
+      model: vehicle.model,
+      originalVehicleType: vehicle.vehicleType,
+      originalBodyStyle: vehicle.bodyStyle,
+      vehicleType: normalizedIdentity.vehicleType,
+      bodyStyle: normalizedIdentity.bodyStyle,
+      reason: normalizedIdentity.normalizationReason,
+    });
+  }
+  if (isFordRangerIdentity(vehicle) && normalizedIdentity.vehicleType !== "truck") {
+    console.warn("[vehicle-service] RANGER_NORMALIZATION_LOST", {
+      vehicleId: vehicle.id,
+      make: vehicle.make,
+      model: vehicle.model,
+      vehicleType: normalizedIdentity.vehicleType,
+      bodyStyle: normalizedIdentity.bodyStyle,
+    });
+  }
+  console.log("[vehicle-service] FRONTEND_VEHICLE_IDENTITY_MAPPED", {
+    vehicleId: vehicle.id,
+    make: vehicle.make,
+    model: vehicle.model,
+    vehicleType: normalizedIdentity.vehicleType,
+    bodyStyle: normalizedIdentity.bodyStyle ?? vehicle.bodyStyle,
+  });
+  return {
+    id: vehicle.id,
+    year: vehicle.year,
+    make: vehicle.make,
+    model: displayModel,
+    trim: vehicle.trim,
+    bodyStyle: normalizedIdentity.bodyStyle ?? vehicle.bodyStyle,
+    vehicleType: normalizedIdentity.vehicleType,
+    heroImage: resolveVehicleHeroImage(vehicle, fallbackRecord, listings),
+    overview: defaultOverview({ ...vehicle, model: displayModel }),
+    specs: completedSpecs,
     valuation: valuation ? mapValuation(valuation) : createEmptyValuation(),
     listings: mappedListings,
   };
 }
 
 export const vehicleService = {
+  isSampleVehicleId(id: string | null | undefined): boolean {
+    return isSampleVehicleRouteId(id);
+  },
+
+  getSampleVehicleById(id: string): VehicleRecord | undefined {
+    return buildSampleVehicleRecord(id);
+  },
+
   async getOfflineVehicleById(id: string): Promise<VehicleRecord | undefined> {
+    const sample = buildSampleVehicleRecord(id);
+    if (sample) {
+      return sample;
+    }
     const offline = await offlineCanonicalService.findById(id);
     return offline ? offlineCanonicalService.mapToVehicleRecord(offline) : undefined;
   },
 
   async getVehicleById(id: string): Promise<VehicleRecord | undefined> {
+    const sample = buildSampleVehicleRecord(id);
+    if (sample) {
+      return sample;
+    }
     const offlineVehicleById = await this.getOfflineVehicleById(id);
     try {
       const vehicle = await apiRequest<BackendVehicle>({
@@ -751,6 +1124,27 @@ export const vehicleService = {
     options?: ValueRequestOptions,
   ): Promise<ValuationResult> {
     const path = buildVehicleValueRequestPath(vehicleLookup, zip, mileage, condition, options);
+    const authRequired = isLiveMarketRequest(options);
+    console.log("[vehicle-service] VALUE_REQUEST_STARTED", {
+      vehicleLookup,
+      zip,
+      mileage,
+      condition,
+      options: options ?? null,
+      path,
+    });
+    console.log("[vehicle-service] VALUE_REQUEST_PAYLOAD", {
+      vehicleLookup,
+      zip,
+      mileage,
+      condition,
+      allowLive: options?.allowLive ?? null,
+      fetchReason: options?.fetchReason ?? null,
+      sourceScreen: options?.sourceScreen ?? null,
+      action: options?.action ?? null,
+      forceLive: options?.forceLive ?? null,
+      zipSource: options?.zipSource ?? null,
+    });
     console.log("[vehicle-service] VALUE_REQUEST_PARAMS", {
       vehicleLookup,
       zip,
@@ -767,12 +1161,37 @@ export const vehicleService = {
       action: options?.action ?? null,
       forceLive: options?.forceLive ?? null,
       zipSource: options?.zipSource ?? null,
+      authRequired,
       path,
     });
     const response = await apiRequestEnvelope<BackendValuation>({
       path,
-      authRequired: false,
+      authRequired,
+    }).catch((error) => {
+      console.error("[vehicle-service] VALUE_REQUEST_FAILED", {
+        vehicleLookup,
+        zip,
+        mileage,
+        condition,
+        path,
+        allowLive: options?.allowLive ?? null,
+        authRequired,
+        errorCode: getApiErrorCode(error),
+        httpStatus: getApiErrorStatus(error),
+        message: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
     });
+    console.log("[vehicle-service] VALUE_REQUEST_RESPONSE", {
+      vehicleLookup,
+      condition,
+      source: response.meta?.source,
+      requestId: response.requestId,
+      status: response.data?.status ?? null,
+      valuationSource: response.data?.valuationSource ?? null,
+      unavailableReason: response.data?.unavailableReason ?? response.data?.reason ?? null,
+    });
+    const mapped = mapValuation(response.data);
     console.log("[vehicle-service] VALUE_RESPONSE_RECEIVED", {
       vehicleLookup,
       condition,
@@ -780,7 +1199,17 @@ export const vehicleService = {
       requestId: response.requestId,
       value: response.data,
     });
-    return mapValuation(response.data);
+    console.log("[vehicle-service] VALUE_RESPONSE_MAPPED", {
+      vehicleLookup,
+      condition,
+      requestId: response.requestId,
+      status: mapped.status,
+      valuationSource: mapped.valuationSource ?? null,
+      sourceLabel: mapped.sourceLabel ?? null,
+      unavailableReason: mapped.unavailableReason ?? mapped.reason ?? null,
+      confidence: mapped.confidence ?? null,
+    });
+    return mapped;
   },
 
   async getSpecsByLookup(vehicleLookup: VehicleLookupInput): Promise<VehicleRecord | null> {
@@ -809,15 +1238,30 @@ export const vehicleService = {
     options?: ListingsRequestOptions,
   ): Promise<ListingsResultEnvelope> {
     const path = buildVehicleListingsRequestPath(vehicleLookup, zip, options);
+    const authRequired = isLiveMarketRequest(options);
     console.log("[vehicle-service] LISTINGS_REQUEST_PARAMS", {
       vehicleLookup,
       zip,
       options: options ?? null,
+      allowLive: options?.allowLive ?? null,
+      authRequired,
       path,
     });
     const response = await apiRequestEnvelope<BackendListing[], ListingsDebugMeta>({
       path,
-      authRequired: false,
+      authRequired,
+    }).catch((error) => {
+      console.error("[vehicle-service] LISTINGS_REQUEST_FAILED", {
+        vehicleLookup,
+        zip,
+        path,
+        allowLive: options?.allowLive ?? null,
+        authRequired,
+        errorCode: getApiErrorCode(error),
+        httpStatus: getApiErrorStatus(error),
+        message: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
     });
     const listings = response.data;
     console.log("[vehicle-service] LISTINGS_RESPONSE_RECEIVED", {
@@ -885,6 +1329,9 @@ export function buildVehicleListingsRequestPath(
   }
   if (typeof options?.action === "string" && options.action.trim().length > 0) {
     params.set("action", options.action.trim());
+  }
+  if (typeof options?.forceLive === "boolean") {
+    params.set("forceLive", options.forceLive ? "true" : "false");
   }
   if (typeof options?.zipSource === "string" && options.zipSource.length > 0) {
     params.set("zipSource", options.zipSource);

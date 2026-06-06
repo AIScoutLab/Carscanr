@@ -1,8 +1,6 @@
-import { StyleSheet, Text, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { StyleSheet, Text } from "react-native";
 import { PremiumCard } from "@/components/PremiumCard";
-import { PillBadge } from "@/components/PillBadge";
-import { Colors, Radius, Shadows, Typography } from "@/constants/theme";
+import { Colors, Typography } from "@/constants/theme";
 
 type Props = {
   title: string;
@@ -12,9 +10,6 @@ type Props = {
 export function EmptyState({ title, description }: Props) {
   return (
     <PremiumCard variant="glass" contentStyle={styles.card}>
-      <PillBadge tone="brand" label="CarScanr">
-        <Ionicons name="sparkles-outline" size={18} color={Colors.premium} />
-      </PillBadge>
       <Text style={styles.title}>{title}</Text>
       <Text style={styles.description}>{description}</Text>
     </PremiumCard>

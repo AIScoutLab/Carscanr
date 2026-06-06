@@ -2,14 +2,18 @@ export type VehicleCandidate = {
   id: string;
   year: number;
   displayYearLabel?: string;
+  groundedYearRange?: {
+    start: number;
+    end: number;
+  } | null;
   displayTitleLabel?: string;
   make: string;
   model: string;
   trim?: string;
   displayTrimLabel?: string;
-  source?: "visual_candidate" | "ocr_override" | "visual_override";
+  source?: "visual_candidate" | "ocr_override" | "visual_override" | "sample_vehicle";
   confidence: number;
-  thumbnailUrl: string;
+  thumbnailUrl: string | number;
 };
 
 export type VehicleSpecs = {
@@ -72,7 +76,7 @@ export type ValuationResult = {
   median?: string | null;
   confidenceLabel: string;
   sourceLabel: string;
-  valuationSource?: "provider" | "cache" | "listing_comps" | "unavailable" | null;
+  valuationSource?: "provider" | "cache" | "listing_comps" | "modeled_fallback" | "sample_demo" | "unavailable" | null;
   compCount?: number | null;
   confidence?: "high" | "moderate" | "limited" | "unavailable" | null;
   rangeLow?: string | null;
@@ -95,6 +99,9 @@ export type ListingResult = {
   distance: string;
   location: string;
   imageUrl: string;
+  listingUrl?: string | null;
+  isSampleListing?: boolean;
+  sourceLabel?: string;
 };
 
 export type VehicleRecord = {
@@ -104,11 +111,14 @@ export type VehicleRecord = {
   model: string;
   trim: string;
   bodyStyle: string;
-  heroImage: string;
+  vehicleType?: "car" | "truck" | "motorcycle";
+  heroImage: string | number;
   overview: string;
   specs: VehicleSpecs;
   valuation: ValuationResult;
   listings: ListingResult[];
+  isSampleVehicle?: boolean;
+  source?: "sample_vehicle" | "offline_canonical" | "backend" | "manual_search";
 };
 
 export type OfflineCanonicalVehicle = {
@@ -118,7 +128,7 @@ export type OfflineCanonicalVehicle = {
   make: string;
   model: string;
   trim: string;
-  vehicleType: "car" | "motorcycle";
+  vehicleType: "car" | "truck" | "motorcycle";
   normalizedMake: string;
   normalizedModel: string;
   normalizedTrim: string;
@@ -153,9 +163,9 @@ export type ScanResult = {
   imageUri: string;
   identifiedVehicle: VehicleCandidate;
   candidates: VehicleCandidate[];
-  source?: "visual_candidate" | "ocr_override" | "visual_override";
+  source?: "visual_candidate" | "ocr_override" | "visual_override" | "sample_vehicle";
   confidenceScore: number;
-  detectedVehicleType?: "car" | "motorcycle";
+  detectedVehicleType?: "car" | "truck" | "motorcycle";
   limitedPreview?: boolean;
   scannedAt: string;
   quickResult?: boolean;
@@ -167,6 +177,7 @@ export type ScanResult = {
   enrichmentMode?: "exact" | "adjacent_year" | "generation_fallback" | "fallback_only" | null;
   unlockEligible?: boolean | null;
   unlockRecommendationReason?: string | null;
+  isSampleVehicle?: boolean;
 };
 
 export type GarageItem = {
@@ -192,19 +203,34 @@ export type GarageItem = {
   vehicle: VehicleRecord;
 };
 
-export type UserPlan = "free" | "pro";
+export type UserPlan = "free" | "pro" | "pro_monthly" | "pro_yearly";
 
 export type BillingProvider = "storekit" | "revenuecat" | "backend" | "placeholder";
+export type EntitlementSyncState = "none" | "revenuecat_active_backend_pending";
+
+export type PurchaseOptionKind = "annual" | "monthly" | "unlock_pack" | "other";
 
 export type SubscriptionProduct = {
   productId: string;
+  packageIdentifier?: string;
+  packageType?: string;
+  optionKind?: PurchaseOptionKind;
   platform: "ios";
   plan: UserPlan;
   priceLabel: string;
   billingPeriodLabel: string;
+  title?: string;
+  description?: string | null;
 };
 
-export type PurchaseAvailabilityState = "ready" | "preview_only" | "not_configured";
+export type PurchaseAvailabilityState =
+  | "ready"
+  | "preview_only"
+  | "not_configured"
+  | "configure_failed"
+  | "offerings_unavailable"
+  | "offerings_empty"
+  | "customer_info_unavailable";
 
 export type FreeUnlockReason =
   | "already_unlocked"
@@ -214,6 +240,7 @@ export type FreeUnlockReason =
   | "payload_too_thin"
   | "auth_required"
   | "network_error"
+  | "backend_error"
   | "unknown";
 
 export type SubscriptionStatus = {
@@ -233,6 +260,7 @@ export type SubscriptionStatus = {
   purchaseAvailable?: boolean;
   purchaseAvailabilityState?: PurchaseAvailabilityState;
   availableProducts?: SubscriptionProduct[];
+  entitlementSyncState?: EntitlementSyncState;
 };
 
 export type SubscriptionVerifyPayload = {
@@ -243,7 +271,8 @@ export type SubscriptionVerifyPayload = {
 };
 
 export type SubscriptionActionResult = {
-  outcome: "verified" | "restored" | "cancelled" | "not_configured";
+  outcome: "verified" | "restored" | "cancelled" | "management_opened" | "not_configured";
+  purchaseKind?: PurchaseOptionKind;
   status: SubscriptionStatus;
   message: string;
 };

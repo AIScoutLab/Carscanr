@@ -1,5 +1,6 @@
 import Constants from "expo-constants";
 import * as Updates from "expo-updates";
+import { normalizeBuildInfoString, resolveMobileBuildInfo, type RawBuildInfo } from "./buildInfo";
 
 export type MobileAppEnv = "local" | "preview" | "production";
 
@@ -15,37 +16,24 @@ type ExpoExtraPublicEnv = {
 
 type ExpoExtraShape = {
   appEnv?: string;
-  buildInfo?: {
-    gitCommit?: string;
-    buildTimestamp?: string;
-    version?: string;
-    iosBuildNumber?: string | null;
-  };
+  buildInfo?: RawBuildInfo;
   publicEnv?: ExpoExtraPublicEnv;
   expoClient?: {
     extra?: {
       appEnv?: string;
-      buildInfo?: {
-        gitCommit?: string;
-        buildTimestamp?: string;
-        version?: string;
-        iosBuildNumber?: string | null;
-      };
+      buildInfo?: RawBuildInfo;
       publicEnv?: ExpoExtraPublicEnv;
     };
   };
 };
 
-function getExpoBuildInfoCandidate() {
+function getActiveBuildInfoCandidate() {
   const updatesManifestExtra = (Updates.manifest && "extra" in Updates.manifest ? Updates.manifest.extra : undefined) as ExpoExtraShape | undefined;
   const manifest2Extra = Constants.manifest2?.extra as ExpoExtraShape | undefined;
   const manifestValue = Constants.manifest as (ExpoExtraShape & { extra?: ExpoExtraShape }) | null;
   const manifestExtra = (manifestValue?.extra ?? manifestValue) as ExpoExtraShape | undefined;
-  const expoConfigExtra = Constants.expoConfig?.extra as ExpoExtraShape | undefined;
 
   return (
-    expoConfigExtra?.buildInfo ??
-    expoConfigExtra?.expoClient?.extra?.buildInfo ??
     updatesManifestExtra?.buildInfo ??
     updatesManifestExtra?.expoClient?.extra?.buildInfo ??
     manifest2Extra?.buildInfo ??
@@ -54,6 +42,11 @@ function getExpoBuildInfoCandidate() {
     manifestExtra?.expoClient?.extra?.buildInfo ??
     null
   );
+}
+
+function getEmbeddedBuildInfoCandidate() {
+  const expoConfigExtra = Constants.expoConfig?.extra as ExpoExtraShape | undefined;
+  return expoConfigExtra?.buildInfo ?? expoConfigExtra?.expoClient?.extra?.buildInfo ?? null;
 }
 
 function mergePublicEnv(target: ExpoExtraPublicEnv, source?: ExpoExtraPublicEnv | null) {
@@ -117,10 +110,10 @@ function getExpoAppEnvCandidate() {
 
   return (
     process.env.EXPO_PUBLIC_APP_ENV ??
-    expoConfigExtra?.appEnv ??
-    expoConfigExtra?.expoClient?.extra?.appEnv ??
     updatesManifestExtra?.appEnv ??
     updatesManifestExtra?.expoClient?.extra?.appEnv ??
+    expoConfigExtra?.appEnv ??
+    expoConfigExtra?.expoClient?.extra?.appEnv ??
     manifest2Extra?.appEnv ??
     manifest2Extra?.expoClient?.extra?.appEnv ??
     manifestExtra?.appEnv ??
@@ -135,9 +128,13 @@ function normalizeEnvName(value: string | undefined): MobileAppEnv {
   return "local";
 }
 
-function normalizeString(value: string | undefined) {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : "";
+function normalizeString(value: unknown) {
+  return normalizeBuildInfoString(value);
+}
+
+function getExpoConfigRuntimeVersion() {
+  const runtimeVersion = Constants.expoConfig?.runtimeVersion;
+  return typeof runtimeVersion === "string" ? runtimeVersion : "";
 }
 
 function isPlaceholderValue(value: string) {
@@ -163,7 +160,8 @@ function isValidHttpUrl(value: string) {
 }
 
 const expoExtraPublicEnv = getExpoExtraPublicEnv();
-const expoBuildInfo = getExpoBuildInfoCandidate();
+const activeBuildInfo = getActiveBuildInfoCandidate();
+const embeddedBuildInfo = getEmbeddedBuildInfoCandidate();
 
 export const mobileAppEnv = normalizeEnvName(getExpoAppEnvCandidate());
 
@@ -178,15 +176,21 @@ export const mobileEnv = {
   showQaDebug: normalizeString(expoExtraPublicEnv.values.showQaDebug || process.env.EXPO_PUBLIC_SHOW_QA_DEBUG),
 };
 
-export const mobileBuildInfo = {
-  gitCommit: normalizeString(expoBuildInfo?.gitCommit),
-  buildTimestamp: normalizeString(expoBuildInfo?.buildTimestamp),
-  version: normalizeString(expoBuildInfo?.version || Constants.expoConfig?.version),
-  iosBuildNumber:
-    typeof expoBuildInfo?.iosBuildNumber === "string" && expoBuildInfo.iosBuildNumber.trim().length > 0
-      ? expoBuildInfo.iosBuildNumber.trim()
-      : "",
-};
+export const mobileBuildInfo = resolveMobileBuildInfo({
+  activeBuildInfo,
+  embeddedBuildInfo,
+  nativeAppVersion: Constants.nativeApplicationVersion,
+  nativeBuildNumber: Constants.nativeBuildVersion,
+  expoConfigVersion: Constants.expoConfig?.version,
+  runtimeVersion: Updates.runtimeVersion,
+  expoConfigRuntimeVersion: getExpoConfigRuntimeVersion(),
+  updateId: Updates.updateId,
+  channel: Updates.channel,
+  createdAt: Updates.createdAt,
+  isEmbeddedLaunch: Updates.isEmbeddedLaunch,
+  isEmergencyLaunch: Updates.isEmergencyLaunch,
+  emergencyLaunchReason: Updates.emergencyLaunchReason,
+});
 
 export const requiredExpoPublicEnvKeys = [
   "EXPO_PUBLIC_API_BASE_URL",
@@ -210,6 +214,8 @@ export function getMobileEnvDiagnostics() {
     apiBaseUrlPresent: Boolean(mobileEnv.apiBaseUrl),
     supabaseUrlPresent: Boolean(mobileEnv.supabaseUrl),
     supabaseAnonKeyPresent: Boolean(mobileEnv.supabaseAnonKey),
+    revenueCatIosApiKeyPresent: Boolean(mobileEnv.revenueCatIosApiKey),
+    revenueCatEntitlementIdPresent: Boolean(mobileEnv.revenueCatEntitlementId),
     missingKeys: requiredExpoPublicEnvKeys.filter((key) => {
       switch (key) {
         case "EXPO_PUBLIC_API_BASE_URL":

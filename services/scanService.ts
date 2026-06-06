@@ -3,8 +3,9 @@ import { FREE_PRO_UNLOCKS_TOTAL, normalizeFreeUnlockCounter } from "@/constants/
 import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { getVehicleImage } from "@/constants/vehicleImages";
 import { applyPlanOverride } from "@/features/subscription/planOverride";
-import { sampleScanPhotos } from "@/features/scan/samplePhotos";
+import { findSampleScanPhoto, getSampleVehicleRouteId } from "@/features/scan/samplePhotos";
 import { getApiBaseUrlOrThrow } from "@/lib/env";
+import { isProPlan } from "@/lib/subscription";
 import { authService } from "@/services/authService";
 import { guestSessionService } from "@/services/guestSessionService";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
@@ -15,7 +16,15 @@ import * as FileSystem from "expo-file-system";
 let mutableRecentScans: ScanResult[] = [];
 const recentScansListeners = new Set<(scans: ScanResult[]) => void>();
 let mutableUsage: SubscriptionStatus = { ...defaultSubscriptionStatus };
-let mutableUnlockStatus = {
+let mutableUnlockStatus: {
+  freeUnlocksTotal: number;
+  freeUnlocksUsed: number;
+  freeUnlocksRemaining: number;
+  unlockCreditsRemaining?: number;
+  totalUnlocksAvailable?: number;
+  unlockedVehicleCount: number;
+  unlockedVehicleIds: string[];
+} = {
   freeUnlocksTotal: FREE_PRO_UNLOCKS_TOTAL,
   freeUnlocksUsed: 0,
   freeUnlocksRemaining: FREE_PRO_UNLOCKS_TOTAL,
@@ -52,7 +61,7 @@ type BackendHealthResponse = {
 
 type BackendUsageResponse = {
   userId: string;
-  plan: "free" | "pro";
+  plan: "free" | "pro" | "pro_monthly" | "pro_yearly";
   isPro: boolean;
   scansUsed: number;
   scansRemaining: number | null;
@@ -65,6 +74,8 @@ type BackendUsageResponse = {
   freeUnlocksTotal?: number;
   freeUnlocksUsed?: number;
   freeUnlocksRemaining?: number;
+  unlockCreditsRemaining?: number;
+  totalUnlocksAvailable?: number;
   unlockedVehicleCount?: number;
   unlockedVehicleIds?: string[];
 };
@@ -72,6 +83,13 @@ type BackendUsageResponse = {
 type BackendScanCandidate = {
   vehicleId: string;
   year: number;
+  displayYearLabel?: string | null;
+  displayTitleLabel?: string | null;
+  displayTrimLabel?: string | null;
+  yearRange?: {
+    start: number;
+    end: number;
+  } | null;
   make: string;
   model: string;
   trim: string;
@@ -83,7 +101,7 @@ type BackendScanResponse = {
   id: string;
   userId: string;
   imageUrl: string;
-  detectedVehicleType: "car" | "motorcycle";
+  detectedVehicleType: "car" | "truck" | "motorcycle";
   confidence: number;
   createdAt: string;
   normalizedResult: {
@@ -186,45 +204,42 @@ function getRecentScanDisplayName(scan: ScanResult) {
 }
 
 function createInMemorySampleResult(sampleId: string): ScanResult {
-  const sample = sampleScanPhotos.find((entry) => entry.id === sampleId);
+  const sample = findSampleScanPhoto(sampleId);
   if (!sample) {
     throw new Error("Sample photo not found.");
   }
 
-  const titleMatch = sample.title.match(/^(\d{4})\s+(.+)$/);
-  const year = titleMatch ? Number(titleMatch[1]) : 0;
-  const label = titleMatch ? titleMatch[2] : sample.title;
-  const parts = label.split(" ");
-  const make = parts[0] ?? "Unknown";
-  const model = parts.slice(1).join(" ") || "Vehicle";
-  const vehicleId = `${sample.id}-sample`;
+  const vehicleId = getSampleVehicleRouteId(sample.id);
+  const thumbnailUrl = sample.previewUrl;
 
   return {
     id: `sample-${sample.id}`,
     imageUri: sample.previewUrl,
     identifiedVehicle: {
       id: vehicleId,
-      year,
-      make,
-      model,
-      trim: "",
+      year: sample.year,
+      make: sample.make,
+      model: sample.model,
+      trim: sample.trim,
+      source: "sample_vehicle",
       confidence: 0.92,
-      thumbnailUrl: getVehicleImage(vehicleId),
+      thumbnailUrl,
     },
     candidates: [
       {
         id: vehicleId,
-        year,
-        make,
-        model,
-        trim: "",
+        year: sample.year,
+        make: sample.make,
+        model: sample.model,
+        trim: sample.trim,
+        source: "sample_vehicle",
         confidence: 0.92,
-        thumbnailUrl: getVehicleImage(vehicleId),
+        thumbnailUrl,
       },
     ],
-    source: "visual_candidate",
+    source: "sample_vehicle",
     confidenceScore: 0.92,
-    detectedVehicleType: model.toLowerCase().includes("glide") ? "motorcycle" : "car",
+    detectedVehicleType: sample.specs.vehicleType,
     limitedPreview: true,
     scannedAt: new Date().toISOString(),
     quickResult: true,
@@ -234,8 +249,9 @@ function createInMemorySampleResult(sampleId: string): ScanResult {
     dataConfidence: 0.7,
     payloadStrength: "usable",
     enrichmentMode: "fallback_only",
-    unlockEligible: true,
-    unlockRecommendationReason: null,
+    unlockEligible: false,
+    unlockRecommendationReason: "sample_vehicle_demo",
+    isSampleVehicle: true,
   };
 }
 
@@ -251,6 +267,8 @@ function mapUsage(usage: BackendUsageResponse): SubscriptionStatus {
       freeUnlocksTotal: normalizedCounter.limit,
       freeUnlocksUsed: normalizedCounter.used,
       freeUnlocksRemaining: normalizedCounter.remaining,
+      unlockCreditsRemaining: typeof usage.unlockCreditsRemaining === "number" ? Math.max(0, usage.unlockCreditsRemaining) : undefined,
+      totalUnlocksAvailable: typeof usage.totalUnlocksAvailable === "number" ? Math.max(0, usage.totalUnlocksAvailable) : undefined,
       unlockedVehicleCount: usage.unlockedVehicleCount ?? 0,
       unlockedVehicleIds: Array.isArray(usage.unlockedVehicleIds) ? usage.unlockedVehicleIds : mutableUnlockStatus.unlockedVehicleIds,
     };
@@ -264,7 +282,7 @@ function mapUsage(usage: BackendUsageResponse): SubscriptionStatus {
   }
   return applyPlanOverride({
     plan: usage.plan,
-    renewalLabel: usage.plan === "pro" ? "Pro active" : "Upgrade for unlimited Pro details",
+    renewalLabel: isProPlan(usage.plan) ? "Pro active" : "Upgrade for unlimited Pro details",
     scansUsed: usage.scansUsed,
     scansRemaining: usage.scansRemaining,
     limitType: usage.limitType,
@@ -276,9 +294,22 @@ function mapUsage(usage: BackendUsageResponse): SubscriptionStatus {
 
 function mapCandidate(candidate: Partial<BackendScanCandidate>): VehicleCandidate {
   const candidateId = safeString(candidate.vehicleId, "");
+  const displayYearLabel = safeString(candidate.displayYearLabel, "");
+  const displayTitleLabel = safeString(candidate.displayTitleLabel, "");
+  const displayTrimLabel = safeString(candidate.displayTrimLabel, "");
   return {
     id: candidateId,
     year: safeNumber(candidate.year, 0) ?? 0,
+    displayYearLabel: displayYearLabel || undefined,
+    displayTitleLabel: displayTitleLabel || undefined,
+    displayTrimLabel: displayTrimLabel || undefined,
+    groundedYearRange:
+      typeof candidate.yearRange?.start === "number" && typeof candidate.yearRange?.end === "number"
+        ? {
+            start: candidate.yearRange.start,
+            end: candidate.yearRange.end,
+          }
+        : null,
     make: safeString(candidate.make, "Unknown"),
     model: safeString(candidate.model, "Vehicle"),
     trim: safeString(candidate.trim, ""),
@@ -308,9 +339,19 @@ function normalizeBackendScanResponse(raw: BackendScanResponse): BackendScanResp
         : [],
     },
     candidates: Array.isArray(raw?.candidates)
-      ? raw.candidates.map((candidate) => ({
+        ? raw.candidates.map((candidate) => ({
           vehicleId: safeString(candidate?.vehicleId, ""),
           year: safeNumber(candidate?.year, 0) ?? 0,
+          displayYearLabel: safeString(candidate?.displayYearLabel, "") || null,
+          displayTitleLabel: safeString(candidate?.displayTitleLabel, "") || null,
+          displayTrimLabel: safeString(candidate?.displayTrimLabel, "") || null,
+          yearRange:
+            typeof candidate?.yearRange?.start === "number" && typeof candidate?.yearRange?.end === "number"
+              ? {
+                  start: candidate.yearRange.start,
+                  end: candidate.yearRange.end,
+                }
+              : null,
           make: safeString(candidate?.make, "Unknown"),
           model: safeString(candidate?.model, "Vehicle"),
           trim: safeString(candidate?.trim, ""),
@@ -426,6 +467,48 @@ export const scanService = {
   },
 
   getCachedUnlockStatus() {
+    return mutableUnlockStatus;
+  },
+
+  updateCachedUnlockStatus(status: {
+    freeUnlocksTotal?: number;
+    freeUnlocksUsed?: number;
+    freeUnlocksRemaining?: number;
+    unlockCreditsRemaining?: number;
+    totalUnlocksAvailable?: number;
+    unlockedVehicleIds?: string[];
+  }) {
+    const normalizedCounter = normalizeFreeUnlockCounter({
+      total: status.freeUnlocksTotal ?? mutableUnlockStatus.freeUnlocksTotal,
+      used: status.freeUnlocksUsed ?? mutableUnlockStatus.freeUnlocksUsed,
+      remaining:
+        status.freeUnlocksRemaining ??
+        Math.max(0, (status.freeUnlocksTotal ?? mutableUnlockStatus.freeUnlocksTotal) - (status.freeUnlocksUsed ?? mutableUnlockStatus.freeUnlocksUsed)),
+    });
+    mutableUnlockStatus = {
+      freeUnlocksTotal: normalizedCounter.limit,
+      freeUnlocksUsed: normalizedCounter.used,
+      freeUnlocksRemaining: normalizedCounter.remaining,
+      unlockCreditsRemaining:
+        typeof status.unlockCreditsRemaining === "number"
+          ? Math.max(0, status.unlockCreditsRemaining)
+          : mutableUnlockStatus.unlockCreditsRemaining,
+      totalUnlocksAvailable:
+        typeof status.totalUnlocksAvailable === "number"
+          ? Math.max(0, status.totalUnlocksAvailable)
+          : normalizedCounter.remaining + Math.max(0, mutableUnlockStatus.unlockCreditsRemaining ?? 0),
+      unlockedVehicleCount: status.unlockedVehicleIds?.length ?? mutableUnlockStatus.unlockedVehicleCount,
+      unlockedVehicleIds: Array.isArray(status.unlockedVehicleIds) ? status.unlockedVehicleIds : mutableUnlockStatus.unlockedVehicleIds,
+    };
+    console.log("FREE_UNLOCK_COUNTER_STATE", {
+      source: "scan_cache_updated_after_unlock",
+      used: mutableUnlockStatus.freeUnlocksUsed,
+      remaining: mutableUnlockStatus.freeUnlocksRemaining,
+      limit: mutableUnlockStatus.freeUnlocksTotal,
+      unlockCreditsRemaining: mutableUnlockStatus.unlockCreditsRemaining ?? 0,
+      totalUnlocksAvailable: mutableUnlockStatus.totalUnlocksAvailable ?? mutableUnlockStatus.freeUnlocksRemaining,
+      unlockedVehicleCount: mutableUnlockStatus.unlockedVehicleIds.length,
+    });
     return mutableUnlockStatus;
   },
 

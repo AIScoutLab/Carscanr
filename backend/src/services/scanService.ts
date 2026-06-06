@@ -782,25 +782,42 @@ function preserveLockedDisplayIdentity(input: {
     );
   }
 
+  const lockedYear =
+    Number.isFinite(input.lockedDisplayIdentity.year) && input.lockedDisplayIdentity.year > 0
+      ? input.lockedDisplayIdentity.year
+      : null;
+  const preservedYear = lockedYear ?? primary.year;
+  const rangeLabel = buildYearRangeLabel(input.yearRange ?? null);
+  const displayYearLabel =
+    input.yearConfidence && input.yearConfidence !== "exact" && rangeLabel
+      ? rangeLabel
+      : lockedYear
+        ? String(lockedYear)
+        : primary.displayYearLabel ?? rangeLabel ?? (primary.year > 0 ? String(primary.year) : null);
+
   logger.info(
-      {
-        label: "DISPLAY_IDENTITY_PRESERVED",
-        scanId: input.scanId,
-        lockedDisplayIdentity: input.lockedDisplayIdentity,
-        canonicalCandidate: primary,
-        decision,
-        yearConfidence: input.yearConfidence ?? null,
-        yearEvidence: input.yearEvidence ?? null,
-        yearRange: input.yearRange ?? null,
-        bestYear: input.lockedDisplayIdentity.year,
-      },
-      "DISPLAY_IDENTITY_PRESERVED",
-    );
+    {
+      label: "DISPLAY_IDENTITY_PRESERVED",
+      scanId: input.scanId,
+      lockedDisplayIdentity: input.lockedDisplayIdentity,
+      canonicalCandidate: primary,
+      decision,
+      yearConfidence: input.yearConfidence ?? null,
+      yearEvidence: input.yearEvidence ?? null,
+      yearRange: input.yearRange ?? null,
+      bestYear: preservedYear,
+      displayYearLabel,
+    },
+    "DISPLAY_IDENTITY_PRESERVED",
+  );
 
   return [
     {
       ...primary,
-      year: input.lockedDisplayIdentity.year,
+      year: preservedYear,
+      displayYearLabel,
+      yearRange: input.yearRange ?? primary.yearRange ?? null,
+      yearConfidence: input.yearConfidence ?? primary.yearConfidence ?? null,
       make: input.lockedDisplayIdentity.make,
       model: input.lockedDisplayIdentity.model,
       trim: input.lockedDisplayIdentity.trim ?? primary.trim,
@@ -1797,6 +1814,22 @@ export class ScanService {
           yearReasoning: refinement.yearReasoning,
         },
         "YEAR_REFINEMENT_PROFILE_APPLIED",
+      );
+    }
+    if (result.likely_year <= 0 && refinement.yearRange) {
+      logger.info(
+        {
+          label: "YEAR_RANGE_FALLBACK_APPLIED",
+          scanId,
+          make: result.likely_make,
+          model: result.likely_model,
+          previousYear: result.likely_year,
+          bestYear: refinement.bestYear,
+          yearRange: refinement.yearRange,
+          yearConfidence: refinement.yearConfidence,
+          canonicalAvailableYears,
+        },
+        "YEAR_RANGE_FALLBACK_APPLIED",
       );
     }
     if (refinement.rangeWidenedByProfile) {
@@ -7132,9 +7165,22 @@ function resolveCadillacCt4Ct5Disambiguation(input: {
     featureVector.ct5.bumperHits +
     (primaryModel === "ct5" ? 1 : 0);
   const scoreDelta = Math.abs(ct4Score - ct5Score);
-  const closeCall = scoreDelta <= 2 && Boolean(alternateSibling);
   const chosenModel =
     ct4Score > ct5Score ? "CT4" : ct5Score > ct4Score ? "CT5" : input.normalizedPrimary.model;
+  const chosenModelNormalized = normalizeMatchText(chosenModel);
+  const clearCt4VisualEvidence =
+    !rawBadgeModel &&
+    chosenModelNormalized === "ct4" &&
+    ct4Score >= 5 &&
+    ct4Score >= ct5Score + 3 &&
+    (featureVector.ct4.sizeHits > 0 || featureVector.ct4.wheelbaseHits > 0 || featureVector.ct4.grilleHits > 0);
+  const clearCt5VisualEvidence =
+    !rawBadgeModel &&
+    chosenModelNormalized === "ct5" &&
+    ct5Score >= 5 &&
+    ct5Score >= ct4Score + 3 &&
+    (featureVector.ct5.sizeHits > 0 || featureVector.ct5.wheelbaseHits > 0 || featureVector.ct5.grilleHits > 0);
+  const closeCall = scoreDelta <= 2 && Boolean(alternateSibling) && !clearCt4VisualEvidence && !clearCt5VisualEvidence;
 
   logger.info(
     {
@@ -7170,15 +7216,20 @@ function resolveCadillacCt4Ct5Disambiguation(input: {
   };
   const badgeAligned = rawBadgeModel && normalizeMatchText(chosenModel) === rawBadgeModel;
   const noBadgeSiblingGuess = !rawBadgeModel && isSiblingComparison;
-  const finalConfidence = badgeAligned
-    ? Math.max(0.82, Math.min(input.result.confidence, 0.91))
-    : closeCall
-      ? Math.min(input.result.confidence, 0.64)
-      : noBadgeSiblingGuess && normalizeMatchText(chosenModel) === "ct5"
-        ? Math.min(input.result.confidence, 0.68)
-        : noBadgeSiblingGuess
-          ? Math.min(input.result.confidence, 0.76)
-          : Math.max(0.52, Math.min(input.result.confidence, 0.84));
+  let finalConfidence = Math.max(0.52, Math.min(input.result.confidence, 0.84));
+  if (badgeAligned) {
+    finalConfidence = Math.max(0.82, Math.min(input.result.confidence, 0.91));
+  } else if (closeCall) {
+    finalConfidence = Math.min(input.result.confidence, 0.64);
+  } else if (clearCt4VisualEvidence) {
+    finalConfidence = Math.max(0.82, Math.min(input.result.confidence, 0.9));
+  } else if (clearCt5VisualEvidence) {
+    finalConfidence = Math.max(0.78, Math.min(input.result.confidence, 0.88));
+  } else if (noBadgeSiblingGuess && normalizeMatchText(chosenModel) === "ct5") {
+    finalConfidence = Math.min(input.result.confidence, 0.68);
+  } else if (noBadgeSiblingGuess) {
+    finalConfidence = Math.min(input.result.confidence, 0.76);
+  }
 
   logger.info(
     {
@@ -7188,6 +7239,8 @@ function resolveCadillacCt4Ct5Disambiguation(input: {
       finalConfidence,
       badgeAligned,
       noBadgeSiblingGuess,
+      clearCt4VisualEvidence,
+      clearCt5VisualEvidence,
       closeCall,
       scoreDelta,
     },
@@ -7209,6 +7262,8 @@ function resolveCadillacCt4Ct5Disambiguation(input: {
           ? "visible_text"
           : closeCall
             ? "close_call_preserved_alternate"
+            : clearCt4VisualEvidence || clearCt5VisualEvidence
+              ? "clear_visual_family_evidence"
             : "visual_cue_weighting",
     },
     "CADILLAC_CT4_CT5_DECISION",

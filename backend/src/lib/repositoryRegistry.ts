@@ -12,6 +12,7 @@ import {
   ImageCacheRepository,
   ListingsCacheRepository,
   ListingClicksRepository,
+  RevenueCatEventsRepository,
   VehiclePhotoClustersRepository,
   ListingResultsRepository,
   ProviderApiUsageLogsRepository,
@@ -37,6 +38,7 @@ import {
   SupabaseImageCacheRepository,
   SupabaseListingsCacheRepository,
   SupabaseListingClicksRepository,
+  SupabaseRevenueCatEventsRepository,
   SupabaseVehiclePhotoClustersRepository,
   SupabaseListingResultsRepository,
   SupabaseProviderApiUsageLogsRepository,
@@ -62,6 +64,7 @@ import {
   MockImageCacheRepository,
   MockListingsCacheRepository,
   MockListingClicksRepository,
+  MockRevenueCatEventsRepository,
   MockVehiclePhotoClustersRepository,
   MockListingResultsRepository,
   MockProviderApiUsageLogsRepository,
@@ -94,6 +97,7 @@ export type RepositoryRegistry = {
   listingClicks: ListingClicksRepository;
   vehiclePhotoClusters: VehiclePhotoClustersRepository;
   subscriptions: SubscriptionsRepository;
+  revenueCatEvents: RevenueCatEventsRepository;
   usageCounters: UsageCountersRepository;
   visionDebug: VisionDebugRepository;
   specsCache: SpecsCacheRepository;
@@ -130,6 +134,7 @@ function createMissingRepositories(): RepositoryRegistry {
       listingClicks: new MockListingClicksRepository(),
       vehiclePhotoClusters: new MockVehiclePhotoClustersRepository(),
       subscriptions: new MockSubscriptionsRepository(),
+      revenueCatEvents: new MockRevenueCatEventsRepository(),
       usageCounters: new MockUsageCountersRepository(),
       visionDebug: new MockVisionDebugRepository(),
       specsCache: new MockSpecsCacheRepository(),
@@ -218,6 +223,13 @@ function createMissingRepositories(): RepositoryRegistry {
       findActiveByUser: async () => notConfigured(),
       replaceActiveForUser: async () => notConfigured(),
     },
+    revenueCatEvents: {
+      findById: async () => notConfigured(),
+      findProcessedByTransactionId: async () => notConfigured(),
+      findProcessedSubscriptionGrantByOriginalTransaction: async () => notConfigured(),
+      create: async () => notConfigured(),
+      markProcessed: async () => notConfigured(),
+    },
     usageCounters: {
       findByUserAndDate: async () => notConfigured(),
       findLifetimeByUser: async () => notConfigured(),
@@ -296,6 +308,7 @@ function createDefaultRepositories(): RepositoryRegistry {
     listingClicks: new SupabaseListingClicksRepository(supabaseAdmin),
     vehiclePhotoClusters: new SupabaseVehiclePhotoClustersRepository(supabaseAdmin),
     subscriptions: new SupabaseSubscriptionsRepository(supabaseAdmin),
+    revenueCatEvents: new SupabaseRevenueCatEventsRepository(supabaseAdmin),
     usageCounters: new SupabaseUsageCountersRepository(supabaseAdmin),
     visionDebug: new SupabaseVisionDebugRepository(supabaseAdmin),
     specsCache: new SupabaseSpecsCacheRepository(supabaseAdmin),

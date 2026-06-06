@@ -5,6 +5,7 @@ import {
   GarageItemRecord,
   ListingRecord,
   ListingClickRecord,
+  RevenueCatEventRecord,
   VehiclePhotoClusterMemberRecord,
   VehiclePhotoClusterRecord,
   ScanRecord,
@@ -216,6 +217,25 @@ export interface VehiclePhotoClustersRepository {
 export interface SubscriptionsRepository {
   findActiveByUser(userId: string): Promise<SubscriptionRecord | null>;
   replaceActiveForUser(record: SubscriptionRecord): Promise<SubscriptionRecord>;
+}
+
+export interface RevenueCatEventsRepository {
+  findById(id: string): Promise<RevenueCatEventRecord | null>;
+  findProcessedByTransactionId(transactionId: string): Promise<RevenueCatEventRecord | null>;
+  findProcessedSubscriptionGrantByOriginalTransaction(input: {
+    userId: string;
+    originalTransactionId: string;
+  }): Promise<RevenueCatEventRecord | null>;
+  create(record: RevenueCatEventRecord): Promise<RevenueCatEventRecord>;
+  markProcessed(id: string, updates: {
+    processedAction: string;
+    userId?: string | null;
+    productId?: string | null;
+    transactionId?: string | null;
+    originalTransactionId?: string | null;
+    payloadSummary?: Record<string, unknown> | null;
+    processedAt: string;
+  }): Promise<RevenueCatEventRecord>;
 }
 
 export interface UsageCountersRepository {

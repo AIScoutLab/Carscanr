@@ -12,6 +12,7 @@ import { authService } from "@/services/authService";
 import { scanService } from "@/services/scanService";
 import { buildSelectedScanPhotoFromUri, getCameraPermissionState, getFileInfoForScan, optimizeScanImage, requestCameraPermission, type SelectedScanPhoto } from "@/features/scan/useScanActions";
 import { Colors, Radius, Typography } from "@/constants/theme";
+import { buildVehicleDetailRouteFromScanResult } from "@/lib/scanResultNavigation";
 
 const PERMISSION_PROMPT_TIMEOUT_MS = 10000;
 const CAMERA_READY_TIMEOUT_MS = 10000;
@@ -20,6 +21,7 @@ const IDENTIFY_TIMEOUT_MS = 60000;
 const MAX_CAMERA_ZOOM = 0.16;
 const MIN_PINCH_DISTANCE_DELTA = 12;
 const ZOOM_WARNING_THRESHOLD = 0.2;
+const SCAN_PROGRESS_STAGE_DWELL_MS = 520;
 
 type CameraStatus =
   | "Requesting camera permission"
@@ -80,6 +82,8 @@ export default function ScanCameraScreen() {
   const cameraMountFlowIdRef = useRef<number | null>(null);
   const cameraReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const waitingIdentifyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadingStageAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const targetLoadingStageIndexRef = useRef(0);
   const pinchStartDistanceRef = useRef<number | null>(null);
   const pinchStartZoomRef = useRef(0);
   const zoomGestureActiveRef = useRef(false);
@@ -127,10 +131,18 @@ export default function ScanCameraScreen() {
     lastStageAtRef.current = now;
     clearCameraReadyTimeout();
     clearWaitingIdentifyTimeout();
+    if (loadingStageAdvanceTimerRef.current) {
+      clearTimeout(loadingStageAdvanceTimerRef.current);
+      loadingStageAdvanceTimerRef.current = null;
+    }
+    targetLoadingStageIndexRef.current = 0;
+    stagedProgress.stopAnimation();
+    stagedProgress.setValue(0);
+    setLoadingStageIndex(0);
     setError(null);
     setDetails([`flow: ${label}`]);
     return flowId;
-  }, [clearCameraReadyTimeout, clearWaitingIdentifyTimeout]);
+  }, [clearCameraReadyTimeout, clearWaitingIdentifyTimeout, stagedProgress]);
 
   const appendStage = useCallback((label: string, payload?: unknown, flowId?: number) => {
     if (typeof flowId === "number" && activeFlowIdRef.current !== flowId) {
@@ -259,7 +271,7 @@ export default function ScanCameraScreen() {
       setStatus("Opening result");
       appendStage("navigation to result start", { scanId: result.id }, flowId);
       console.log("[RESULT_NAVIGATION]", { resultSource: "fresh_api", scanId: result.id });
-      router.replace({ pathname: "/scan/result", params: { scanId: result.id, imageUri: result.imageUri, resultSource: "fresh_api" } });
+      router.replace(buildVehicleDetailRouteFromScanResult(result, "fresh_api"));
     } catch (error) {
       const message =
         error instanceof ApiRequestError && error.code === "AUTH_REQUIRED"
@@ -482,11 +494,20 @@ export default function ScanCameraScreen() {
     return () => {
       clearCameraReadyTimeout();
       clearWaitingIdentifyTimeout();
+      if (loadingStageAdvanceTimerRef.current) {
+        clearTimeout(loadingStageAdvanceTimerRef.current);
+        loadingStageAdvanceTimerRef.current = null;
+      }
     };
   }, [clearCameraReadyTimeout, clearWaitingIdentifyTimeout, requestPermissionFlow]);
 
   useEffect(() => {
     if (!(capturedPreviewUri && isBusy)) {
+      if (loadingStageAdvanceTimerRef.current) {
+        clearTimeout(loadingStageAdvanceTimerRef.current);
+        loadingStageAdvanceTimerRef.current = null;
+      }
+      targetLoadingStageIndexRef.current = 0;
       stagedProgress.stopAnimation();
       stagedProgress.setValue(0);
       setLoadingStageIndex(0);
@@ -508,8 +529,14 @@ export default function ScanCameraScreen() {
       return;
     }
     const derived = getScanLoadingStageState(status);
-    setLoadingStageIndex((current) => Math.max(current, derived.stageIndex));
-  }, [capturedPreviewUri, isBusy, status]);
+    targetLoadingStageIndexRef.current = Math.max(targetLoadingStageIndexRef.current, derived.stageIndex);
+    if (loadingStageIndex < targetLoadingStageIndexRef.current && !loadingStageAdvanceTimerRef.current) {
+      loadingStageAdvanceTimerRef.current = setTimeout(() => {
+        loadingStageAdvanceTimerRef.current = null;
+        setLoadingStageIndex((current) => Math.min(current + 1, targetLoadingStageIndexRef.current));
+      }, SCAN_PROGRESS_STAGE_DWELL_MS);
+    }
+  }, [capturedPreviewUri, isBusy, loadingStageIndex, status]);
 
   useEffect(() => {
     if (!(capturedPreviewUri && isBusy)) {
@@ -638,26 +665,32 @@ export default function ScanCameraScreen() {
         capturedPreviewUri ? (
           (() => {
             const stageState = getScanLoadingStageState(status);
+            const displayedStageIndex = Math.min(loadingStageIndex, SCAN_LOADING_STAGES.length - 1);
+            const displayedStageLabel = SCAN_LOADING_STAGES[displayedStageIndex] ?? stageState.stageLabel;
             const loadingProgressWidth = stagedProgress.interpolate({
               inputRange: [0, 1],
               outputRange: ["16%", "100%"],
             });
+            const progressPercent = Math.round(((displayedStageIndex + 1) / SCAN_LOADING_STAGES.length) * 100);
             return (
           <View style={styles.capturedPreviewFrame}>
-            <Image source={{ uri: capturedPreviewUri }} style={styles.capturedPreviewImage} resizeMode="contain" />
+            <Image source={{ uri: capturedPreviewUri }} style={styles.capturedPreviewImage} resizeMode="cover" />
+            <LinearGradient
+              pointerEvents="none"
+              colors={["rgba(2,2,2,0.08)", "rgba(2,2,2,0.44)", "rgba(2,2,2,0.92)"]}
+              locations={[0, 0.46, 1]}
+              style={styles.processingImageFade}
+            />
             {isBusy ? (
               <View style={styles.processingOverlay} pointerEvents="none">
                 <View style={styles.processingCard}>
-                  <View style={styles.processingPill}>
-                    <Text style={styles.processingPillLabel}>Scan in progress</Text>
-                  </View>
                   <Text style={styles.processingTitle}>Scanning your vehicle</Text>
-                  <Text style={styles.processingBody}>{stageState.stageLabel}</Text>
+                  <Text style={styles.processingBody}>{displayedStageLabel}</Text>
                   <View style={styles.processingProgressTrack}>
                     <Animated.View style={[styles.processingProgressGlow, { width: loadingProgressWidth }]} />
                     <Animated.View style={[styles.processingProgressFillWrap, { width: loadingProgressWidth }]}>
                       <LinearGradient
-                        colors={["#1B63F3", "#49D9FF", "#F7FDFF"]}
+                        colors={["#D8A36B", "#F1C891", "#C58B4F"]}
                         start={{ x: 0, y: 0.5 }}
                         end={{ x: 1, y: 0.5 }}
                         style={styles.processingProgressFill}
@@ -666,10 +699,11 @@ export default function ScanCameraScreen() {
                   </View>
                   <View style={styles.processingStageMetaRow}>
                     <Text style={styles.processingStageStep}>
-                      Step {Math.min(loadingStageIndex + 1, SCAN_LOADING_STAGES.length)} of {SCAN_LOADING_STAGES.length}
+                      Step {displayedStageIndex + 1} of {SCAN_LOADING_STAGES.length}
                     </Text>
-                    <Text style={styles.processingStageLabel}>{stageState.stageLabel}</Text>
+                    <Text style={styles.processingStageLabel}>{progressPercent}%</Text>
                   </View>
+                  <Text style={styles.processingSupport}>Matching design cues, year range, and model generation</Text>
                   <Animated.Text style={[styles.processingFact, { opacity: factOpacity }]}>
                     {SCAN_LOADING_FACTS[activeFactIndex]}
                   </Animated.Text>
@@ -789,7 +823,7 @@ const styles = StyleSheet.create({
   },
   capturedPreviewFrame: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: Colors.background,
+    backgroundColor: "#020202",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -797,59 +831,48 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%",
   },
+  processingImageFade: {
+    ...StyleSheet.absoluteFillObject,
+  },
   processingOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(3, 8, 22, 0.44)",
-    paddingHorizontal: 24,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0, 0, 0, 0.22)",
+    paddingHorizontal: 22,
+    paddingBottom: 82,
   },
   processingCard: {
     width: "100%",
-    maxWidth: 360,
-    backgroundColor: "rgba(9, 16, 32, 0.88)",
-    borderRadius: Radius.xl,
-    padding: 20,
-    gap: 10,
+    maxWidth: 370,
+    backgroundColor: "rgba(17, 17, 18, 0.92)",
+    borderRadius: 24,
+    padding: 24,
+    gap: 12,
     borderWidth: 1,
-    borderColor: Colors.accentGlow,
-    shadowColor: Colors.accent,
-    shadowOpacity: 0.24,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 14 },
-  },
-  processingPill: {
-    alignSelf: "flex-start",
-    backgroundColor: "rgba(10, 20, 34, 0.92)",
-    borderRadius: Radius.pill,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: "rgba(71, 123, 255, 0.26)",
-  },
-  processingPillLabel: {
-    ...Typography.caption,
-    color: Colors.premium,
-    textTransform: "uppercase",
-    letterSpacing: 1.2,
+    borderColor: "rgba(216, 163, 107, 0.22)",
+    shadowColor: "#000000",
+    shadowOpacity: 0.38,
+    shadowRadius: 28,
+    shadowOffset: { width: 0, height: 18 },
   },
   processingTitle: {
-    ...Typography.title,
+    ...Typography.heading,
     color: Colors.textStrong,
+    letterSpacing: 0,
   },
   processingBody: {
-    ...Typography.body,
-    color: Colors.textSoft,
+    ...Typography.bodyStrong,
+    color: "#E2B178",
   },
   processingProgressTrack: {
     width: "100%",
-    height: 16,
+    height: 5,
     borderRadius: Radius.pill,
-    backgroundColor: "rgba(255,255,255,0.07)",
+    backgroundColor: "rgba(255,255,255,0.16)",
     overflow: "hidden",
     position: "relative",
-    borderWidth: 1,
-    borderColor: "rgba(83, 222, 255, 0.16)",
+    marginTop: 18,
   },
   processingProgressGlow: {
     position: "absolute",
@@ -857,10 +880,10 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     borderRadius: Radius.pill,
-    backgroundColor: "rgba(83, 222, 255, 0.22)",
-    shadowColor: "#61E8FF",
-    shadowOpacity: 0.34,
-    shadowRadius: 12,
+    backgroundColor: "rgba(216, 163, 107, 0.18)",
+    shadowColor: "#D8A36B",
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
     shadowOffset: { width: 0, height: 0 },
   },
   processingProgressFillWrap: {
@@ -878,12 +901,22 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
+    marginTop: 8,
   },
-  processingStageStep: { ...Typography.caption, color: Colors.textMuted, textTransform: "uppercase", letterSpacing: 0.8 },
-  processingStageLabel: { ...Typography.bodyStrong, color: Colors.textSoft, flexShrink: 1, textAlign: "right" },
+  processingStageStep: { ...Typography.caption, color: "#8B93A0", textTransform: "uppercase", letterSpacing: 1.8, fontWeight: "700" },
+  processingStageLabel: { ...Typography.caption, color: "#B8B1A8", flexShrink: 1, textAlign: "right", letterSpacing: 0.8 },
+  processingSupport: {
+    ...Typography.caption,
+    color: "#B6B8C0",
+    lineHeight: 18,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.06)",
+    paddingTop: 18,
+    marginTop: 6,
+  },
   processingFact: {
     ...Typography.caption,
-    color: Colors.textMuted,
+    color: "#B6B8C0",
     lineHeight: 18,
     minHeight: 36,
   },
@@ -914,18 +947,18 @@ const styles = StyleSheet.create({
     left: 20,
     right: 20,
     borderRadius: Radius.xl,
-    padding: 16,
+    padding: 14,
     gap: 6,
     zIndex: 10,
     borderWidth: 1,
   },
   statusActive: {
-    backgroundColor: "rgba(9, 16, 32, 0.86)",
-    borderColor: Colors.border,
+    backgroundColor: "rgba(12, 12, 12, 0.72)",
+    borderColor: "rgba(216, 163, 107, 0.18)",
   },
   statusReady: {
-    backgroundColor: "rgba(8, 42, 95, 0.88)",
-    borderColor: Colors.accentGlow,
+    backgroundColor: "rgba(18, 16, 14, 0.74)",
+    borderColor: "rgba(216, 163, 107, 0.28)",
   },
   statusError: {
     backgroundColor: "rgba(88, 16, 26, 0.9)",
@@ -941,11 +974,11 @@ const styles = StyleSheet.create({
   },
   zoomMeta: {
     ...Typography.caption,
-    color: Colors.premium,
+    color: "#D8B98E",
   },
   zoomWarning: {
     ...Typography.caption,
-    color: Colors.textStrong,
+    color: "#E7B97F",
   },
   statusDetail: {
     ...Typography.caption,
@@ -1001,7 +1034,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.premium,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0, 194, 255, 0.12)",
+    backgroundColor: Colors.cardAlt,
     shadowColor: Colors.accent,
     shadowOpacity: 0.28,
     shadowRadius: 18,

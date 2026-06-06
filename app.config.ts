@@ -34,10 +34,12 @@ const config: ExpoConfig = {
   runtimeVersion: "1.0.2",
   updates: {
     url: `https://u.expo.dev/${easProjectId}`,
-    fallbackToCacheTimeout: 0,
+    fallbackToCacheTimeout: 3000,
   },
   plugins: [
     "expo-router",
+    "expo-font",
+    "expo-web-browser",
     [
       "expo-image-picker",
       {
@@ -64,6 +66,7 @@ const config: ExpoConfig = {
       planOverride: process.env.EXPO_PUBLIC_PLAN_OVERRIDE || "",
       revenueCatIosApiKey: process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY || "",
       revenueCatEntitlementId: process.env.EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID || "",
+      showQaDebug: process.env.EXPO_PUBLIC_SHOW_QA_DEBUG || "",
     },
     eas: {
       projectId: easProjectId,
