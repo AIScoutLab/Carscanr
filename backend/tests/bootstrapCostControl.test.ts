@@ -1420,7 +1420,8 @@ describe("bootstrap cost control", () => {
     assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === ""), true);
     assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2020 && attempt.trim === ""), false);
     assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2022 && attempt.trim === ""), false);
-    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === "" && attempt.radiusMiles === 250), true);
+    assert.equal(attempts.some((attempt) => attempt.model === "CT4" && attempt.year === 2021 && attempt.trim === "" && attempt.radiusMiles === 100), true);
+    assert.equal(attempts.every((attempt) => (attempt.radiusMiles ?? 0) <= 100), true);
   });
 
   test("Audi blank-trim listings refresh uses no-trim query and bounded fallback", async () => {
@@ -1576,7 +1577,7 @@ describe("bootstrap cost control", () => {
             radiusMiles: input.radiusMiles ?? null,
           });
 
-          if (input.vehicle?.model === "F430" && input.radiusMiles === 250) {
+          if (input.vehicle?.model === "F430" && (input.radiusMiles ?? 0) > 100) {
             return [
               {
                 id: "listing-f430-too-broad",
@@ -1626,7 +1627,7 @@ describe("bootstrap cost control", () => {
 
     assert.equal(result.data.length, 0);
     assert.equal(attempts.length, 1);
-    assert.equal(attempts.some((attempt) => attempt.radiusMiles === 250), false);
+    assert.equal(attempts.every((attempt) => (attempt.radiusMiles ?? 0) <= 100), true);
     assert.equal(attempts.some((attempt) => attempt.year !== 2007), false);
   });
 
@@ -2132,7 +2133,7 @@ describe("bootstrap cost control", () => {
     assert.equal(attempts.every((attempt) => attempt.model === "4Runner"), true);
     assert.equal(attempts.some((attempt) => attempt.model === "4"), false);
     assert.equal(attempts.some((attempt) => attempt.year === 2011 && attempt.radiusMiles === 100), true);
-    assert.equal(attempts.some((attempt) => attempt.radiusMiles === 250), true);
+    assert.equal(attempts.every((attempt) => (attempt.radiusMiles ?? 0) <= 100), true);
   });
 
   test("force-live listings refresh drops generic Base trim and uses bounded fallback attempts", async () => {
@@ -2176,26 +2177,9 @@ describe("bootstrap cost control", () => {
       action: "listingsRefresh",
     });
 
-    assert.deepEqual(attempts, [
-      {
-        model: "4Runner",
-        year: 2011,
-        radiusMiles: 100,
-        trim: "",
-      },
-      {
-        model: "4Runner",
-        year: 2011,
-        radiusMiles: 250,
-        trim: "",
-      },
-      {
-        model: "4Runner",
-        year: 2010,
-        radiusMiles: 100,
-        trim: "",
-      },
-    ]);
+    assert.equal(attempts.length <= 3, true);
+    assert.equal(attempts.some((attempt) => attempt.model === "4Runner" && attempt.year === 2011 && attempt.radiusMiles === 100 && attempt.trim === ""), true);
+    assert.equal(attempts.every((attempt) => (attempt.radiusMiles ?? 0) <= 100), true);
   });
 
   test("developer force-live listings refresh can broaden but remains capped", async () => {

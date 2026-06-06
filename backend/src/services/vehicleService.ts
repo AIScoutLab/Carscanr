@@ -47,7 +47,8 @@ const DEFAULT_UNLOCK_EVALUATION_ZIP = "";
 const DEFAULT_UNLOCK_EVALUATION_MILEAGE = 25000;
 const DEFAULT_UNLOCK_EVALUATION_CONDITION = "good";
 const DEFAULT_UNLOCK_EVALUATION_RADIUS_MILES = 50;
-const LISTING_DERIVATION_RADIUS_MILES = [50, 100, 250, 500];
+const MAX_MARKETCHECK_LISTINGS_RADIUS_MILES = 100;
+const LISTING_DERIVATION_RADIUS_MILES = [50, MAX_MARKETCHECK_LISTINGS_RADIUS_MILES];
 const MIN_BELIEVABLE_LIVE_LISTINGS = 5;
 const MAX_LIVE_LISTING_ATTEMPTS = 2;
 const MAX_NORMAL_LIVE_LISTING_ATTEMPTS = 3;
@@ -247,8 +248,7 @@ function isAdjacentOrExpandedListingsStrategy(strategy: ListingsLookupAttempt["s
     strategy === "adjacent-year-previous-2" ||
     strategy === "adjacent-year-next-2" ||
     strategy === "adjacent-year-family-model" ||
-    strategy === "wider-radius-250" ||
-    strategy === "wider-radius-500"
+    strategy === "wider-radius-100"
   );
 }
 
@@ -280,8 +280,8 @@ function selectMarketCheckListingsProviderAttempts(input: {
         ? ["same-year-any-trim", "same-year-family-model", "exact-year-make-model"]
         : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model"]
       : explicitNonStrictTrim
-        ? ["same-year-any-trim", "same-year-family-model", "wider-radius-250", "adjacent-year-previous", "adjacent-year-next", "exact-year-make-model"]
-        : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model", "wider-radius-250", "adjacent-year-previous", "adjacent-year-next"];
+        ? ["same-year-any-trim", "same-year-family-model", "wider-radius-100", "adjacent-year-previous", "adjacent-year-next", "exact-year-make-model"]
+        : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model", "wider-radius-100", "adjacent-year-previous", "adjacent-year-next"];
     const selected = selectListingsAttemptsByStrategy({
       attempts: input.attempts,
       liveSafeAttempts,
@@ -296,8 +296,8 @@ function selectMarketCheckListingsProviderAttempts(input: {
       ? ["same-year-any-trim", "same-year-family-model", "exact-year-make-model"]
       : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model"]
     : explicitNonStrictTrim
-      ? ["same-year-any-trim", "same-year-family-model", "wider-radius-250", "adjacent-year-previous", "adjacent-year-next", "exact-year-make-model"]
-      : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model", "wider-radius-250", "adjacent-year-previous", "adjacent-year-next"];
+      ? ["same-year-any-trim", "same-year-family-model", "wider-radius-100", "adjacent-year-previous", "adjacent-year-next", "exact-year-make-model"]
+      : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model", "wider-radius-100", "adjacent-year-previous", "adjacent-year-next"];
   const selected = selectListingsAttemptsByStrategy({
     attempts: input.attempts,
     liveSafeAttempts,
@@ -424,8 +424,7 @@ type ListingsLookupAttempt = {
     | "adjacent-year-previous-2"
     | "adjacent-year-next-2"
     | "adjacent-year-family-model"
-    | "wider-radius-250"
-    | "wider-radius-500";
+    | "wider-radius-100";
   vehicle: VehicleRecord;
   radiusMiles: number;
 };
@@ -783,8 +782,7 @@ function resolveListingsDebugMode(strategy: ListingsLookupAttempt["strategy"] | 
     strategy === "adjacent-year-next" ||
     strategy === "adjacent-year-previous-2" ||
     strategy === "adjacent-year-next-2" ||
-    strategy === "wider-radius-250" ||
-    strategy === "wider-radius-500"
+    strategy === "wider-radius-100"
   ) {
     return "adjacent_year_mixed_trims";
   }
@@ -1621,25 +1619,12 @@ async function buildListingsFallbackAttempts(input: {
         }
       : null,
   );
-  if (isSpecialtyExoticMake(input.vehicle.make)) {
+  if (!isSpecialtyExoticMake(input.vehicle.make)) {
     pushAttempt({
       label: "LISTINGS_WIDER_RADIUS",
-      strategy: "wider-radius-250",
+      strategy: "wider-radius-100",
       vehicle: { ...input.vehicle, trim: "" },
-      radiusMiles: Math.max(input.radiusMiles, 250),
-    });
-    pushAttempt({
-      label: "LISTINGS_WIDER_RADIUS",
-      strategy: "wider-radius-500",
-      vehicle: { ...input.vehicle, trim: "" },
-      radiusMiles: Math.max(input.radiusMiles, 500),
-    });
-  } else {
-    pushAttempt({
-      label: "LISTINGS_WIDER_RADIUS",
-      strategy: "wider-radius-250",
-      vehicle: { ...input.vehicle, trim: "" },
-      radiusMiles: Math.max(input.radiusMiles, 250),
+      radiusMiles: Math.min(MAX_MARKETCHECK_LISTINGS_RADIUS_MILES, Math.max(input.radiusMiles, 100)),
     });
   }
 
@@ -1726,25 +1711,12 @@ function ensureListingsAttempts(input: {
       radiusMiles: Math.max(input.radiusMiles, 100),
     });
   }
-  if (isSpecialtyExoticMake(input.vehicle.make)) {
+  if (!isSpecialtyExoticMake(input.vehicle.make)) {
     fallbackAttempts.push({
       label: "LISTINGS_WIDER_RADIUS",
-      strategy: "wider-radius-250",
+      strategy: "wider-radius-100",
       vehicle: { ...input.vehicle, trim: "" },
-      radiusMiles: Math.max(input.radiusMiles, 250),
-    });
-    fallbackAttempts.push({
-      label: "LISTINGS_WIDER_RADIUS",
-      strategy: "wider-radius-500",
-      vehicle: { ...input.vehicle, trim: "" },
-      radiusMiles: Math.max(input.radiusMiles, 500),
-    });
-  } else {
-    fallbackAttempts.push({
-      label: "LISTINGS_WIDER_RADIUS",
-      strategy: "wider-radius-250",
-      vehicle: { ...input.vehicle, trim: "" },
-      radiusMiles: Math.max(input.radiusMiles, 250),
+      radiusMiles: Math.min(MAX_MARKETCHECK_LISTINGS_RADIUS_MILES, Math.max(input.radiusMiles, 100)),
     });
   }
   return fallbackAttempts;
@@ -2161,8 +2133,7 @@ function getListingsSourceLabel(strategy: ListingsLookupAttempt["strategy"] | nu
     strategy === "adjacent-year-next" ||
     strategy === "adjacent-year-previous-2" ||
     strategy === "adjacent-year-next-2" ||
-    strategy === "wider-radius-250" ||
-    strategy === "wider-radius-500"
+    strategy === "wider-radius-100"
   ) {
     return "Limited comps from a wider live MarketCheck search";
   }
@@ -6506,15 +6477,18 @@ export class VehicleService {
         await fireAndForgetCleanup("listings");
       }
 
-      const displayableLiveListings = filterDisplayableListings(liveListings, lookupBaseVehicle ?? null, input.descriptor?.yearRange ?? null, {
-        requestId: input.requestId,
-        vehicleId: lookupVehicleId,
-        zip: input.zip,
-        radiusMiles: input.radiusMiles,
-        make: descriptor?.make ?? vehicle?.make ?? null,
-        model: descriptor?.model ?? vehicle?.model ?? null,
-        condition: null,
-      });
+      const displayableLiveListings =
+        acceptedLiveListings.length > 0
+          ? acceptedLiveListings.slice(0, MAX_DISPLAY_LIVE_LISTINGS)
+          : filterDisplayableListings(liveListings, lookupBaseVehicle ?? null, input.descriptor?.yearRange ?? null, {
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              zip: input.zip,
+              radiusMiles: input.radiusMiles,
+              make: descriptor?.make ?? vehicle?.make ?? null,
+              model: descriptor?.model ?? vehicle?.model ?? null,
+              condition: null,
+            });
       if (
         listingsDecision.allowLiveProvider &&
         descriptor &&

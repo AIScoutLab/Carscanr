@@ -17,7 +17,7 @@ import { buildVehicleDescription } from "@/lib/vehicleDescription";
 import { parseHorsepower } from "@/lib/vehicleData";
 import { generateVehicleInsight } from "@/lib/vehicleInsights";
 import { isProPlan } from "@/lib/subscription";
-import { formatPurchasedUnlockPackRemaining } from "@/lib/unlockCreditDisplay";
+import { formatUnlockBalanceSummary, formatUnlockResultBody } from "@/lib/unlockCreditDisplay";
 import { isValidMarketAreaZip } from "@/lib/marketAreaZip";
 import { garageService } from "@/services/garageService";
 import { marketAreaZipService } from "@/services/marketAreaZipService";
@@ -2035,12 +2035,11 @@ export default function ScanResultScreen() {
       return false;
     }
     unlockConfirmationOpenRef.current = true;
-    const remainingLine =
-      purchasedUnlockCredits > 0
-        ? `\n\n${formatPurchasedUnlockPackRemaining(purchasedUnlockCredits)}.`
-        : Number.isFinite(freeUnlocksRemaining)
-          ? `\n\nYou have ${freeUnlocksRemaining} ${freeUnlocksRemaining === 1 ? "unlock" : "unlocks"} remaining.`
-          : "";
+    const remainingLine = `\n\n${formatUnlockBalanceSummary({
+      freeUnlocksRemaining,
+      freeUnlocksTotal: freeUnlocksLimit,
+      unlockCreditsRemaining: purchasedUnlockCredits,
+    })}`;
     const confirmed = await new Promise<boolean>((resolve) => {
       Alert.alert(
         "Use 1 unlock?",
@@ -2061,17 +2060,18 @@ export default function ScanResultScreen() {
     unlockConfirmationOpenRef.current = false;
     return confirmed;
   };
-  const buildVehicleMarketUnlockSuccessBody = (alreadyUnlocked: boolean, nextPurchasedCredits?: number) => {
-    if (typeof nextPurchasedCredits === "number" && (purchasedUnlockCredits > 0 || nextPurchasedCredits > 0)) {
-      return `Live market value and nearby listings are unlocked for this vehicle.\n\n${formatPurchasedUnlockPackRemaining(nextPurchasedCredits)}.`;
-    }
-    const nextRemaining = Number.isFinite(freeUnlocksRemaining)
-      ? alreadyUnlocked
-        ? freeUnlocksRemaining
-        : Math.max(0, freeUnlocksRemaining - 1)
-      : null;
-    return `Live market value and nearby listings are unlocked for this vehicle.${nextRemaining != null ? `\n\n${nextRemaining} ${nextRemaining === 1 ? "unlock" : "unlocks"} remaining.` : ""}`;
-  };
+  const buildVehicleMarketUnlockSuccessBody = (
+    resultType?: string,
+    nextFreeUnlocks?: number,
+    nextFreeUnlocksLimit?: number,
+    nextPurchasedCredits?: number,
+  ) =>
+    formatUnlockResultBody({
+      resultType,
+      freeUnlocksRemaining: typeof nextFreeUnlocks === "number" ? nextFreeUnlocks : freeUnlocksRemaining,
+      freeUnlocksTotal: typeof nextFreeUnlocksLimit === "number" ? nextFreeUnlocksLimit : freeUnlocksLimit,
+      unlockCreditsRemaining: typeof nextPurchasedCredits === "number" ? nextPurchasedCredits : purchasedUnlockCredits,
+    });
   const unlockSuccessTitle = (resultType?: string) =>
     resultType === "pro_access"
       ? "Pro access active"
@@ -2143,7 +2143,7 @@ export default function ScanResultScreen() {
           await refreshStatus();
           Alert.alert(
             unlockSuccessTitle(result.resultType),
-            buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked, result.unlockCredits),
+            buildVehicleMarketUnlockSuccessBody(result.resultType, result.remaining, result.limit, result.unlockCredits),
           );
           openVehicleDetail(bestMatch, `${source}-unlocked`);
         } else {
@@ -2198,7 +2198,7 @@ export default function ScanResultScreen() {
         await refreshStatus();
         Alert.alert(
           unlockSuccessTitle(result.resultType),
-          buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked, result.unlockCredits),
+          buildVehicleMarketUnlockSuccessBody(result.resultType, result.remaining, result.limit, result.unlockCredits),
         );
         openVehicleDetail(bestMatch, "free-unlock-continue");
       } else {

@@ -18,7 +18,7 @@ import {
   SelectedScanPhoto,
 } from "@/features/scan/useScanActions";
 import { useSubscription } from "@/hooks/useSubscription";
-import { formatPurchasedUnlockPackRemaining } from "@/lib/unlockCreditDisplay";
+import { formatCompactUnlockBalanceSummary } from "@/lib/unlockCreditDisplay";
 import { getNextScanLoadingFactIndex, getRandomScanLoadingFactIndex, SCAN_LOADING_FACTS } from "@/lib/scanLoadingFacts";
 import { isProPlan } from "@/lib/subscription";
 import { buildVehicleDetailRouteFromScanResult } from "@/lib/scanResultNavigation";
@@ -298,9 +298,11 @@ export default function ScanScreen() {
   const totalUnlocksAvailable = remainingUnlocks + purchasedUnlockCredits;
   const unlockSummaryLabel = isPro
     ? "PRO ACCESS ACTIVE"
-    : purchasedUnlockCredits > 0
-      ? formatPurchasedUnlockPackRemaining(purchasedUnlockCredits)
-    : `${remainingUnlocks} FREE UNLOCK${remainingUnlocks === 1 ? "" : "S"}`;
+    : formatCompactUnlockBalanceSummary({
+        freeUnlocksRemaining: remainingUnlocks,
+        freeUnlocksTotal: freeUnlocksLimit,
+        unlockCreditsRemaining: purchasedUnlockCredits,
+      });
   const unlockDotCount = Math.max(1, Math.min(freeUnlocksLimit, 5));
 
   const appendDebugDetail = useCallback((label: string, value: unknown) => {

@@ -80,7 +80,7 @@ test("value and listings free unlocks require explicit spend confirmation", () =
     assert.match(source, /Use Unlock/, `${label} must expose an explicit confirmation action`);
     assert.match(source, /Cancel/, `${label} must allow cancellation`);
     assert.match(source, /unlockSuccessTitle\(result\.resultType\)|Value & Listings unlocked/, `${label} must clearly confirm a successful unlock`);
-    assert.match(source, /formatPurchasedUnlockPackRemaining/, `${label} should show purchased unlock count copy when credits are used`);
+    assert.match(source, /formatUnlockBalanceSummary|formatUnlockResultBody/, `${label} should show explicit free and purchased unlock balances`);
   }
 
   const detailConfirmIndex = detailSource.indexOf("confirmVehicleMarketUnlockSpend");

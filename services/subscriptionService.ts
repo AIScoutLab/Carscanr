@@ -129,11 +129,11 @@ function getUnlockSuccessMessage(resultType: UnlockResultType) {
     case "pro_access":
       return "Pro access active. Value & Listings are unlocked.";
     case "already_unlocked":
-      return "This vehicle is already unlocked.";
+      return "Already unlocked. This vehicle was already unlocked.";
     case "purchased_unlock_consumed":
-      return "Purchased unlock applied. This vehicle is now fully unlocked.";
+      return "Purchased unlock applied. This vehicle is now unlocked.";
     case "free_unlock_consumed":
-      return "Free unlock applied. This vehicle is now fully unlocked.";
+      return "Free unlock applied. This vehicle is now unlocked.";
     default:
       return "No free unlocks remaining. Upgrade to Pro for full access.";
   }
@@ -784,7 +784,7 @@ export const subscriptionService = {
           usedUnlockCredit: false,
           resultType: "already_unlocked",
           reason: "already_unlocked",
-          message: "This vehicle is already unlocked.",
+          message: getUnlockSuccessMessage("already_unlocked"),
         };
       }
 

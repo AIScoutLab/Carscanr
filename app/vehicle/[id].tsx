@@ -21,7 +21,7 @@ import { completeCanonicalSpecs, formatCanonicalModelName, sanitizeSpecValue } f
 import { formatHorsepowerLabel } from "@/lib/vehicleData";
 import { mobileBuildInfo } from "@/lib/env";
 import { isProPlan } from "@/lib/subscription";
-import { formatPurchasedUnlockPackRemaining } from "@/lib/unlockCreditDisplay";
+import { formatUnlockBalanceSummary, formatUnlockResultBody } from "@/lib/unlockCreditDisplay";
 import { buildSpecialtyVehicleOverview, isSpecialtyExoticMake } from "@/lib/specialtyVehicles";
 import { buildVehicleDescription } from "@/lib/vehicleDescription";
 import { MarketAreaZipSource, isValidMarketAreaZip, normalizeMarketAreaZip } from "@/lib/marketAreaZip";
@@ -2136,12 +2136,11 @@ export default function VehicleDetailScreen() {
       return false;
     }
     marketUnlockConfirmationOpenRef.current = true;
-    const remainingLine =
-      purchasedUnlockCredits > 0
-        ? `\n\n${formatPurchasedUnlockPackRemaining(purchasedUnlockCredits)}.`
-        : Number.isFinite(freeUnlocksRemaining)
-          ? `\n\nYou have ${freeUnlocksRemaining} ${freeUnlocksRemaining === 1 ? "unlock" : "unlocks"} remaining.`
-          : "";
+    const remainingLine = `\n\n${formatUnlockBalanceSummary({
+      freeUnlocksRemaining,
+      freeUnlocksTotal: freeUnlocksLimit,
+      unlockCreditsRemaining: purchasedUnlockCredits,
+    })}`;
     const confirmed = await new Promise<boolean>((resolve) => {
       Alert.alert(
         "Use 1 unlock?",
@@ -2161,18 +2160,17 @@ export default function VehicleDetailScreen() {
     });
     marketUnlockConfirmationOpenRef.current = false;
     return confirmed;
-  }, [freeUnlocksRemaining, purchasedUnlockCredits]);
-  const buildVehicleMarketUnlockSuccessBody = useCallback((alreadyUnlocked: boolean, nextPurchasedCredits?: number) => {
-    if (typeof nextPurchasedCredits === "number" && (purchasedUnlockCredits > 0 || nextPurchasedCredits > 0)) {
-      return `Live market value and nearby listings are unlocked for this vehicle.\n\n${formatPurchasedUnlockPackRemaining(nextPurchasedCredits)}.`;
-    }
-    const nextRemaining = Number.isFinite(freeUnlocksRemaining)
-      ? alreadyUnlocked
-        ? freeUnlocksRemaining
-        : Math.max(0, freeUnlocksRemaining - 1)
-      : null;
-    return `Live market value and nearby listings are unlocked for this vehicle.${nextRemaining != null ? `\n\n${nextRemaining} ${nextRemaining === 1 ? "unlock" : "unlocks"} remaining.` : ""}`;
-  }, [freeUnlocksRemaining, purchasedUnlockCredits]);
+  }, [freeUnlocksLimit, freeUnlocksRemaining, purchasedUnlockCredits]);
+  const buildVehicleMarketUnlockSuccessBody = useCallback(
+    (resultType?: string, nextFreeUnlocks?: number, nextFreeUnlocksLimit?: number, nextPurchasedCredits?: number) =>
+      formatUnlockResultBody({
+        resultType,
+        freeUnlocksRemaining: typeof nextFreeUnlocks === "number" ? nextFreeUnlocks : freeUnlocksRemaining,
+        freeUnlocksTotal: typeof nextFreeUnlocksLimit === "number" ? nextFreeUnlocksLimit : freeUnlocksLimit,
+        unlockCreditsRemaining: typeof nextPurchasedCredits === "number" ? nextPurchasedCredits : purchasedUnlockCredits,
+      }),
+    [freeUnlocksLimit, freeUnlocksRemaining, purchasedUnlockCredits],
+  );
   const trustedUnlockedYear = vehicle?.year || Number.parseInt(typeof yearLabel === "string" ? yearLabel : "", 10) || null;
   const trustedUnlockedMake = vehicle?.make || (typeof make === "string" ? make : "");
   const trustedUnlockedModel = vehicle?.model || (typeof model === "string" ? model : "");
@@ -3102,7 +3100,7 @@ export default function VehicleDetailScreen() {
         loadVehicleMarketSections();
         Alert.alert(
           unlockSuccessTitle(result.resultType),
-          buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked, result.unlockCredits),
+          buildVehicleMarketUnlockSuccessBody(result.resultType, result.remaining, result.limit, result.unlockCredits),
         );
         return;
       }
@@ -3181,7 +3179,7 @@ export default function VehicleDetailScreen() {
         loadVehicleMarketSections();
         Alert.alert(
           unlockSuccessTitle(result.resultType),
-          buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked, result.unlockCredits),
+          buildVehicleMarketUnlockSuccessBody(result.resultType, result.remaining, result.limit, result.unlockCredits),
         );
         return;
       }
@@ -3258,7 +3256,7 @@ export default function VehicleDetailScreen() {
         loadVehicleMarketSections();
         Alert.alert(
           unlockSuccessTitle(result.resultType),
-          buildVehicleMarketUnlockSuccessBody(result.alreadyUnlocked, result.unlockCredits),
+          buildVehicleMarketUnlockSuccessBody(result.resultType, result.remaining, result.limit, result.unlockCredits),
         );
         return;
       }
@@ -4585,7 +4583,7 @@ export default function VehicleDetailScreen() {
       acceptedListingsAvailable: true,
       acceptedListingsCount: believableListings.length,
       listingCacheKeysChecked: ["shared_vehicle_listings"],
-      radiiChecked: listingsMarketContext ? [listingsMarketContext.radiusMiles] : [50, 100, 250, 500],
+      radiiChecked: listingsMarketContext ? [listingsMarketContext.radiusMiles] : [50, 100],
       derivedValueCreated: true,
       finalValueStatus: derivedValue.status,
       zip: normalizedZip,
@@ -5395,6 +5393,7 @@ export default function VehicleDetailScreen() {
             <UnlockAccessCard
               remaining={freeUnlocksRemaining}
               limit={freeUnlocksLimit}
+              unlockCredits={purchasedUnlockCredits}
               disabled={!vehicle?.id || isUnlocking}
               isUnlocking={isUnlocking}
               onUnlock={async () => {
@@ -5404,7 +5403,10 @@ export default function VehicleDetailScreen() {
                 const result = await useFreeUnlockForVehicle(vehicle.id);
                 if (result.ok) {
                   await refreshStatus();
-                  Alert.alert(unlockSuccessTitle(result.resultType), result.message);
+                  Alert.alert(
+                    unlockSuccessTitle(result.resultType),
+                    buildVehicleMarketUnlockSuccessBody(result.resultType, result.remaining, result.limit, result.unlockCredits),
+                  );
                   setTab("Specs");
                 } else {
                   Alert.alert(
@@ -5686,6 +5688,7 @@ export default function VehicleDetailScreen() {
               variant="listings"
               remaining={freeUnlocksRemaining}
               limit={freeUnlocksLimit}
+              unlockCredits={purchasedUnlockCredits}
               disabled={marketListingsActionDisabled}
               isUnlocking={isUnlocking}
               onUnlock={handleMarketListingsAction}
@@ -5836,6 +5839,7 @@ function UnlockAccessCard({
   variant = "details",
   remaining,
   limit,
+  unlockCredits = 0,
   disabled,
   isUnlocking,
   onUnlock,
@@ -5844,23 +5848,25 @@ function UnlockAccessCard({
   variant?: "details" | "market" | "listings";
   remaining: number;
   limit: number;
+  unlockCredits?: number;
   disabled: boolean;
   isUnlocking: boolean;
   onUnlock: () => void;
   onUpgrade: () => void;
 }) {
-  const used = Math.max(0, limit - Math.max(0, remaining));
   const isVehicleMarketUnlock = variant === "market" || variant === "listings";
   const title =
     isVehicleMarketUnlock ? "Unlock Value & Listings" : "Unlock Full Details";
   const body =
     isVehicleMarketUnlock
-      ? "One free unlock loads live market value and nearby listings for this saved vehicle."
+      ? "One unlock loads live market value and nearby listings for this saved vehicle."
       : "This unlock gives full premium access for this vehicle.";
   const primaryLabel = isUnlocking
     ? "Applying unlock..."
     : remaining > 0
       ? "Use Free Unlock"
+      : unlockCredits > 0
+        ? "Use Purchased Unlock"
       : isVehicleMarketUnlock
         ? "Unlock Value & Listings"
         : "Unlock Full Details";
@@ -5869,9 +5875,14 @@ function UnlockAccessCard({
       <Text style={styles.unlockTitle}>{title}</Text>
       <Text style={styles.unlockBody}>{body}</Text>
       <Text style={styles.unlockNote}>
-        {used} of {limit} free unlocks used • {Math.max(0, remaining)} remaining
+        {formatUnlockBalanceSummary({
+          freeUnlocksRemaining: remaining,
+          freeUnlocksTotal: limit,
+          unlockCreditsRemaining: unlockCredits,
+          separator: " • ",
+        })}
       </Text>
-      {remaining > 0 ? (
+      {remaining > 0 || unlockCredits > 0 ? (
         <PremiumDetailButton label={primaryLabel} onPress={onUnlock} disabled={disabled} />
       ) : null}
       <PremiumDetailButton label="Go Pro" secondary onPress={onUpgrade} />

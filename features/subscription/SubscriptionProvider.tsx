@@ -34,6 +34,8 @@ type SubscriptionContextValue = {
     message: string;
     reason: FreeUnlockReason;
     alreadyUnlocked: boolean;
+    remaining: number;
+    limit: number;
     usedUnlock?: boolean;
     usedUnlockCredit?: boolean;
     resultType?: "pro_access" | "already_unlocked" | "free_unlock_consumed" | "purchased_unlock_consumed" | "not_allowed";
@@ -161,6 +163,8 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         message: "Unlock already in progress.",
         reason: "unknown",
         alreadyUnlocked: false,
+        remaining: freeUnlocksRemaining,
+        limit: freeUnlocksLimit,
         usedUnlock: false,
         usedUnlockCredit: false,
         resultType: "not_allowed",
@@ -172,6 +176,8 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         message: "This vehicle cannot be unlocked yet.",
         reason: "vehicle_not_found",
         alreadyUnlocked: false,
+        remaining: freeUnlocksRemaining,
+        limit: freeUnlocksLimit,
         usedUnlock: false,
         usedUnlockCredit: false,
         resultType: "not_allowed",
@@ -197,6 +203,8 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
           message: result.message,
           reason: result.reason,
           alreadyUnlocked: result.alreadyUnlocked,
+          remaining: result.remaining,
+          limit: result.limit,
           usedUnlock: result.usedUnlock,
           usedUnlockCredit: result.usedUnlockCredit,
           resultType: result.resultType,
@@ -212,6 +220,8 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         message: result.message,
         reason: result.reason,
         alreadyUnlocked: result.alreadyUnlocked,
+        remaining: result.remaining,
+        limit: result.limit,
         usedUnlock: result.usedUnlock,
         usedUnlockCredit: result.usedUnlockCredit,
         resultType: result.resultType,
@@ -225,6 +235,8 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         message,
         reason: "unknown",
         alreadyUnlocked: false,
+        remaining: freeUnlocksRemaining,
+        limit: freeUnlocksLimit,
         usedUnlock: false,
         usedUnlockCredit: false,
         resultType: "not_allowed",
@@ -232,7 +244,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsUnlocking(false);
     }
-  }, [isUnlocking]);
+  }, [freeUnlocksLimit, freeUnlocksRemaining, isUnlocking]);
 
   const isVehicleUnlocked = useCallback((vehicleId: string) => unlockedVehicleIds.includes(vehicleId), [unlockedVehicleIds]);
 

@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { formatPurchasedUnlockPackRemaining } from "@/lib/unlockCreditDisplay";
+import {
+  formatCompactUnlockBalanceSummary,
+  formatPurchasedUnlockPackRemaining,
+  formatUnlockBalanceSummary,
+  formatUnlockResultBody,
+} from "@/lib/unlockCreditDisplay";
 
 const repoRoot = path.resolve(__dirname, "..");
 
@@ -13,6 +18,41 @@ function read(relativePath: string) {
 test("purchased unlock copy shows first and second spend remaining counts", () => {
   assert.equal(formatPurchasedUnlockPackRemaining(4), "4 of 5 purchased unlocks remaining");
   assert.equal(formatPurchasedUnlockPackRemaining(3), "3 of 5 purchased unlocks remaining");
+  assert.equal(
+    formatUnlockBalanceSummary({ freeUnlocksRemaining: 0, freeUnlocksTotal: 3, unlockCreditsRemaining: 4 }),
+    "Free unlocks: 0 of 3 remaining\nPurchased unlocks: 4 of 5 remaining",
+  );
+  assert.equal(
+    formatCompactUnlockBalanceSummary({ freeUnlocksRemaining: 1, freeUnlocksTotal: 3, unlockCreditsRemaining: 5 }),
+    "Free: 1 of 3 remaining • Purchased: 5 of 5 remaining",
+  );
+  assert.equal(
+    formatUnlockResultBody({
+      resultType: "purchased_unlock_consumed",
+      freeUnlocksRemaining: 0,
+      freeUnlocksTotal: 3,
+      unlockCreditsRemaining: 4,
+    }),
+    "This vehicle is now unlocked.\n\nFree unlocks: 0 of 3 remaining\nPurchased unlocks: 4 of 5 remaining",
+  );
+  assert.equal(
+    formatUnlockResultBody({
+      resultType: "already_unlocked",
+      freeUnlocksRemaining: 1,
+      freeUnlocksTotal: 3,
+      unlockCreditsRemaining: 5,
+    }),
+    "This vehicle was already unlocked.\n\nFree unlocks: 1 of 3 remaining\nPurchased unlocks: 5 of 5 remaining",
+  );
+  assert.equal(
+    formatUnlockResultBody({
+      resultType: "pro_access",
+      freeUnlocksRemaining: 1,
+      freeUnlocksTotal: 3,
+      unlockCreditsRemaining: 5,
+    }),
+    "This vehicle is unlocked through your subscription.",
+  );
 });
 
 test("manual and scan unlock routes consider purchased credits before paywall", () => {
@@ -108,16 +148,19 @@ test("successful unlock refreshes cached and backend unlock balance", () => {
   assert.match(scanServiceSource, /source: "scan_cache_updated_after_unlock"/);
 });
 
-test("popup, profile, and scan badge use purchased unlock pack remaining copy", () => {
+test("popup, profile, and scan badge show explicit free and purchased balances", () => {
   const detailSource = read("app/vehicle/[id].tsx");
   const resultSource = read("app/scan/result.tsx");
   const profileSource = read("app/(tabs)/profile.tsx");
   const scanSource = read("app/(tabs)/scan.tsx");
 
-  assert.match(detailSource, /formatPurchasedUnlockPackRemaining\(nextPurchasedCredits\)/);
-  assert.match(resultSource, /formatPurchasedUnlockPackRemaining\(nextPurchasedCredits\)/);
-  assert.match(profileSource, /formatPurchasedUnlockPackRemaining\(unlockCredits\)/);
-  assert.match(scanSource, /formatPurchasedUnlockPackRemaining\(purchasedUnlockCredits\)/);
+  assert.match(detailSource, /formatUnlockResultBody/);
+  assert.match(resultSource, /formatUnlockResultBody/);
+  assert.match(profileSource, /formatFreeUnlockBalance\(remainingUnlocks, freeUnlocksLimit\)/);
+  assert.match(profileSource, /formatPurchasedUnlockBalance\(unlockCredits\)/);
+  assert.match(scanSource, /formatCompactUnlockBalanceSummary/);
+  assert.match(detailSource, /formatUnlockBalanceSummary\(\{/);
+  assert.match(resultSource, /formatUnlockBalanceSummary\(\{/);
 });
 
 test("unlock success copy uses backend result type instead of generic free unlock copy", () => {
@@ -129,7 +172,7 @@ test("unlock success copy uses backend result type instead of generic free unloc
   assert.match(serviceSource, /usedUnlockCredit\?: boolean/);
   assert.match(serviceSource, /resultType\?: UnlockResultType/);
   assert.match(serviceSource, /purchased_unlock_consumed/);
-  assert.match(serviceSource, /Purchased unlock applied\. This vehicle is now fully unlocked\./);
+  assert.match(serviceSource, /Purchased unlock applied\. This vehicle is now unlocked\./);
   assert.match(serviceSource, /BACKEND_UNLOCK_RESULT/);
   assert.match(serviceSource, /path: "\/api\/unlocks\/status"/);
   assert.match(providerSource, /resultType\?: "pro_access" \| "already_unlocked" \| "free_unlock_consumed" \| "purchased_unlock_consumed" \| "not_allowed"/);

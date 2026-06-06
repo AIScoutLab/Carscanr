@@ -240,8 +240,8 @@ test("profile keeps paid unlock credits visible separately from Pro status", () 
   const backendUnlockSource = fs.readFileSync(path.join(process.cwd(), "backend/src/services/unlockService.ts"), "utf8");
   const usageSource = fs.readFileSync(path.join(process.cwd(), "backend/src/services/usageService.ts"), "utf8");
 
-  assert.match(profileSource, /unlockCredits > 0/);
-  assert.match(profileSource, /formatPurchasedUnlockPackRemaining\(unlockCredits\)/);
+  assert.match(profileSource, /formatFreeUnlockBalance\(remainingUnlocks, freeUnlocksLimit\)/);
+  assert.match(profileSource, /formatPurchasedUnlockBalance\(unlockCredits\)/);
   assert.match(providerSource, /unlockCredits/);
   assert.match(subscriptionSource, /unlockCreditsRemaining/);
   assert.match(subscriptionSource, /scan_cache_fallback/);
@@ -256,7 +256,7 @@ test("scan unlock badge accounts for purchased credits separately from free unlo
   assert.match(scanSource, /unlockCredits/);
   assert.match(scanSource, /purchasedUnlockCredits/);
   assert.match(scanSource, /totalUnlocksAvailable/);
-  assert.match(scanSource, /formatPurchasedUnlockPackRemaining\(purchasedUnlockCredits\)/);
+  assert.match(scanSource, /formatCompactUnlockBalanceSummary/);
 });
 
 test("subscription service keeps backend authoritative over RevenueCat entitlements", () => {

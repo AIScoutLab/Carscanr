@@ -72,7 +72,8 @@ test("explicit live listings can collect broader comps without flooding the UI",
   assert.match(backendServiceSource, /effectiveForceLiveListings/);
   assert.match(backendServiceSource, /configuredMaxLiveListingAttempts/);
   assert.match(marketCheckSource, /attemptNumber: input\.requestMeta\?\.attemptNumber/);
-  assert.match(backendServiceSource, /"adjacent-year-previous"[\s\S]*"adjacent-year-next"[\s\S]*"wider-radius-250"/);
+  assert.match(backendServiceSource, /"adjacent-year-previous"[\s\S]*"adjacent-year-next"[\s\S]*"wider-radius-100"/);
+  assert.match(backendServiceSource, /const MAX_MARKETCHECK_LISTINGS_RADIUS_MILES = 100;/);
   assert.match(backendServiceSource, /acceptedLiveListings\.length >= MIN_BELIEVABLE_LIVE_LISTINGS/);
 });
 
