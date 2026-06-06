@@ -222,6 +222,10 @@ export interface SubscriptionsRepository {
 export interface RevenueCatEventsRepository {
   findById(id: string): Promise<RevenueCatEventRecord | null>;
   findProcessedByTransactionId(transactionId: string): Promise<RevenueCatEventRecord | null>;
+  findProcessedSubscriptionGrantByOriginalTransaction(input: {
+    userId: string;
+    originalTransactionId: string;
+  }): Promise<RevenueCatEventRecord | null>;
   create(record: RevenueCatEventRecord): Promise<RevenueCatEventRecord>;
   markProcessed(id: string, updates: {
     processedAction: string;

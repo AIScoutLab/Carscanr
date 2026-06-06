@@ -417,6 +417,17 @@ export function createTestRepositories(seed?: {
       async findProcessedByTransactionId(transactionId) {
         return state.revenueCatEvents.find((event) => event.transactionId === transactionId && event.processed) ?? null;
       },
+      async findProcessedSubscriptionGrantByOriginalTransaction(input) {
+        return (
+          state.revenueCatEvents.find(
+            (event) =>
+              event.userId === input.userId &&
+              event.originalTransactionId === input.originalTransactionId &&
+              event.processed &&
+              event.processedAction === "pro_granted",
+          ) ?? null
+        );
+      },
       async create(record) {
         const existing = state.revenueCatEvents.find((event) => event.id === record.id);
         if (existing) {

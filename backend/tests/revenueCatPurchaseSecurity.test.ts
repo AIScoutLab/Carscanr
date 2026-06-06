@@ -43,6 +43,8 @@ function revenueCatPayload(input: {
   aliases?: string[];
   productId: string;
   transactionId?: string;
+  originalTransactionId?: string;
+  environment?: string;
   expirationAtMs?: number | null;
   cancelReason?: string;
 }) {
@@ -56,12 +58,12 @@ function revenueCatPayload(input: {
       aliases: input.aliases,
       product_id: input.productId,
       transaction_id: input.transactionId ?? `tx-${input.id}`,
-      original_transaction_id: input.transactionId ?? `tx-${input.id}`,
+      original_transaction_id: input.originalTransactionId ?? input.transactionId ?? `tx-${input.id}`,
       event_timestamp_ms: Date.now(),
       purchased_at_ms: Date.now(),
       expiration_at_ms: input.expirationAtMs ?? Date.now() + 30 * 24 * 60 * 60 * 1000,
       cancel_reason: input.cancelReason,
-      environment: "SANDBOX",
+      environment: input.environment ?? "SANDBOX",
       store: "APP_STORE",
     },
   };
@@ -235,6 +237,141 @@ describe("RevenueCat purchase security", () => {
     assert.equal(unlockResponse.statusCode, 200);
     assert.equal(unlockBody.data.action, "unlock_pack_credited");
     assert.equal(state.unlockBalances.find((entry) => entry.userId === SIGNED_IN_USER_ID)?.unlockCredits ?? 0, 5);
+  });
+
+  test("sandbox renewal without prior same-user subscription grant is ignored", async () => {
+    const { state, repositories } = createTestRepositories();
+    setRepositories(repositories);
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/revenuecat/webhook",
+      headers: { authorization: WEBHOOK_AUTH },
+      payload: revenueCatPayload({
+        id: "event-stray-sandbox-renewal",
+        type: "RENEWAL",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        transactionId: "tx-stray-sandbox-renewal",
+        originalTransactionId: "original-shared-sandbox-subscription",
+      }),
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.action, "ignored");
+    assert.equal(state.subscriptions.some((subscription) => subscription.plan !== "free"), false);
+    assert.equal(state.revenueCatEvents.find((event) => event.id === "event-stray-sandbox-renewal")?.processedAction, "ignored");
+  });
+
+  test("sandbox initial purchase grants Pro and later same-user renewal extends it", async () => {
+    const { state, repositories } = createTestRepositories();
+    setRepositories(repositories);
+
+    const originalTransactionId = "original-owned-sandbox-subscription";
+    const initialResponse = await requestApp({
+      method: "POST",
+      url: "/api/revenuecat/webhook",
+      headers: { authorization: WEBHOOK_AUTH },
+      payload: revenueCatPayload({
+        id: "event-owned-sandbox-initial",
+        type: "INITIAL_PURCHASE",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        transactionId: "tx-owned-sandbox-initial",
+        originalTransactionId,
+        expirationAtMs: Date.now() + 5 * 60 * 1000,
+      }),
+    });
+    const initialBody = parseJson<any>(initialResponse);
+
+    assert.equal(initialResponse.statusCode, 200);
+    assert.equal(initialBody.data.action, "pro_granted");
+    assert.equal(state.subscriptions[0].plan, "pro_monthly");
+
+    const renewalExpirationMs = Date.now() + 60 * 60 * 1000;
+    const renewalResponse = await requestApp({
+      method: "POST",
+      url: "/api/revenuecat/webhook",
+      headers: { authorization: WEBHOOK_AUTH },
+      payload: revenueCatPayload({
+        id: "event-owned-sandbox-renewal",
+        type: "RENEWAL",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        transactionId: "tx-owned-sandbox-renewal",
+        originalTransactionId,
+        expirationAtMs: renewalExpirationMs,
+      }),
+    });
+    const renewalBody = parseJson<any>(renewalResponse);
+
+    assert.equal(renewalResponse.statusCode, 200);
+    assert.equal(renewalBody.data.action, "pro_granted");
+    assert.equal(state.subscriptions[0].plan, "pro_monthly");
+    assert.equal(state.subscriptions[0].expiresAt, new Date(renewalExpirationMs).toISOString());
+  });
+
+  test("sandbox renewal for unrelated original transaction does not grant a fresh user Pro", async () => {
+    const unrelatedUserId = "22222222-2222-4222-8222-222222222222";
+    const { state, repositories } = createTestRepositories({
+      revenueCatEvents: [
+        {
+          id: "event-original-owner-initial",
+          appUserId: unrelatedUserId,
+          userId: unrelatedUserId,
+          eventType: "INITIAL_PURCHASE",
+          productId: LIVE_PRODUCT_IDS.monthlyPro,
+          transactionId: "tx-original-owner-initial",
+          originalTransactionId: "original-transferred-sandbox-subscription",
+          processed: true,
+          processedAction: "pro_granted",
+          payloadSummary: { environment: "SANDBOX" },
+          createdAt: new Date().toISOString(),
+          processedAt: new Date().toISOString(),
+        },
+      ],
+    });
+    setRepositories(repositories);
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/revenuecat/webhook",
+      headers: { authorization: WEBHOOK_AUTH },
+      payload: revenueCatPayload({
+        id: "event-fresh-user-transferred-renewal",
+        type: "RENEWAL",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        transactionId: "tx-fresh-user-transferred-renewal",
+        originalTransactionId: "original-transferred-sandbox-subscription",
+      }),
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.action, "ignored");
+    assert.equal(state.subscriptions.some((subscription) => subscription.userId === SIGNED_IN_USER_ID), false);
+  });
+
+  test("production renewal remains allowed for store-originated renewal webhooks", async () => {
+    const { state, repositories } = createTestRepositories();
+    setRepositories(repositories);
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/revenuecat/webhook",
+      headers: { authorization: WEBHOOK_AUTH },
+      payload: revenueCatPayload({
+        id: "event-production-renewal",
+        type: "RENEWAL",
+        productId: revenueCatProductIds.yearlyPro,
+        transactionId: "tx-production-renewal",
+        originalTransactionId: "original-production-subscription",
+        environment: "PRODUCTION",
+      }),
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.action, "pro_granted");
+    assert.equal(state.subscriptions[0].plan, "pro_yearly");
   });
 
   test("live unlock pack product credits exactly 5 without creating a subscription", async () => {

@@ -251,6 +251,7 @@ export class SubscriptionService {
     const productId = asString(event.product_id) ?? asString(event.new_product_id);
     const transactionId = asString(event.transaction_id);
     const originalTransactionId = asString(event.original_transaction_id);
+    const environment = asString(event.environment);
     const appUserId = getAppUserId(event);
     const userId = getRevenueCatCreditUserId(appUserId);
 
@@ -310,6 +311,8 @@ export class SubscriptionService {
           eventType,
           productId: mappedProductId,
           plan: mappedPlan,
+          originalTransactionId,
+          environment,
           expiresAt: dateFromMs(event.expiration_at_ms),
           verifiedAt: dateFromMs(event.event_timestamp_ms) ?? new Date().toISOString(),
           cancelReason: asString(event.cancel_reason),
@@ -374,6 +377,8 @@ export class SubscriptionService {
     eventType: string;
     productId: string;
     plan: UserPlan;
+    originalTransactionId: string | null;
+    environment: string | null;
     expiresAt?: string;
     verifiedAt: string;
     cancelReason: string | null;
@@ -399,6 +404,32 @@ export class SubscriptionService {
     ]);
     if (!activeEvents.has(input.eventType)) {
       return "ignored";
+    }
+
+    if (input.environment === "SANDBOX" && input.eventType === "RENEWAL") {
+      if (!input.originalTransactionId) {
+        logger.warn(
+          { userId: input.userId, productId: input.productId, reason: "missing_original_transaction_id" },
+          "REVENUECAT_SANDBOX_RENEWAL_IGNORED",
+        );
+        return "ignored";
+      }
+      const priorGrant = await repositories.revenueCatEvents.findProcessedSubscriptionGrantByOriginalTransaction({
+        userId: input.userId,
+        originalTransactionId: input.originalTransactionId,
+      });
+      if (!priorGrant) {
+        logger.warn(
+          {
+            userId: input.userId,
+            productId: input.productId,
+            originalTransactionId: input.originalTransactionId,
+            reason: "no_prior_user_subscription_grant",
+          },
+          "REVENUECAT_SANDBOX_RENEWAL_IGNORED",
+        );
+        return "ignored";
+      }
     }
 
     const record: SubscriptionRecord = {

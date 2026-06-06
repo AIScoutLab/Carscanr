@@ -226,6 +226,7 @@ function createMissingRepositories(): RepositoryRegistry {
     revenueCatEvents: {
       findById: async () => notConfigured(),
       findProcessedByTransactionId: async () => notConfigured(),
+      findProcessedSubscriptionGrantByOriginalTransaction: async () => notConfigured(),
       create: async () => notConfigured(),
       markProcessed: async () => notConfigured(),
     },
