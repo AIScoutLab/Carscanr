@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { env, isMarketCheckAutoSpecsEnabled } from "../config/env.js";
 import { AppError } from "../errors/appError.js";
 import {
@@ -54,7 +56,20 @@ const MAX_LIVE_LISTING_ATTEMPTS = 2;
 const MAX_NORMAL_LIVE_LISTING_ATTEMPTS = 3;
 const MAX_SPECIALTY_LIVE_LISTING_ATTEMPTS = 2;
 const MAX_DISPLAY_LIVE_LISTINGS = 12;
+const VALID_YEAR_FALLBACK_YEAR_LIMIT = 3;
 const sharedMarketCheckListingsLoads = new Map<string, Promise<void>>();
+
+type ManualSearchOptionsCatalog = {
+  trimsByYearMakeModel?: Record<string, string[]>;
+};
+
+type ValidYearFallback = {
+  validYears: number[];
+  fallbackYears: number[];
+};
+
+let manualCatalogValidYearsByMakeModel: Map<string, number[]> | null = null;
+let manualCatalogLoadFailed = false;
 
 type CacheDescriptor = NonNullable<ReturnType<typeof buildCacheDescriptor>>;
 
@@ -88,6 +103,94 @@ function trackSharedMarketCheckListingsLoad(input: {
       }
     }
   });
+}
+
+function getManualSearchOptionsCatalogPath() {
+  const candidatePaths = [
+    path.resolve(process.cwd(), "..", "assets/data/manual_search_options.json"),
+    path.resolve(process.cwd(), "assets/data/manual_search_options.json"),
+  ];
+  return candidatePaths.find((candidatePath) => fs.existsSync(candidatePath)) ?? candidatePaths[0];
+}
+
+function getManualCatalogMakeModelKey(make: string | null | undefined, model: string | null | undefined) {
+  const normalizedMake = normalizeLookupText(make);
+  const normalizedModel = normalizeLookupText(model);
+  return normalizedMake && normalizedModel ? `${normalizedMake}|${normalizedModel}` : null;
+}
+
+function loadManualCatalogValidYearsByMakeModel() {
+  if (manualCatalogValidYearsByMakeModel) {
+    return manualCatalogValidYearsByMakeModel;
+  }
+
+  const validYearsByMakeModel = new Map<string, Set<number>>();
+  try {
+    const catalogPath = getManualSearchOptionsCatalogPath();
+    const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8")) as ManualSearchOptionsCatalog;
+    for (const key of Object.keys(catalog.trimsByYearMakeModel ?? {})) {
+      const [yearValue, makeValue, modelValue] = key.split("|");
+      const year = Number(yearValue);
+      const makeModelKey = getManualCatalogMakeModelKey(makeValue, modelValue);
+      if (!Number.isFinite(year) || !makeModelKey) {
+        continue;
+      }
+      const years = validYearsByMakeModel.get(makeModelKey) ?? new Set<number>();
+      years.add(year);
+      validYearsByMakeModel.set(makeModelKey, years);
+    }
+  } catch (error) {
+    if (!manualCatalogLoadFailed) {
+      manualCatalogLoadFailed = true;
+      logger.warn(
+        {
+          label: "LISTINGS_VALID_YEAR_CATALOG_LOAD_FAILED",
+          message: error instanceof Error ? error.message : String(error),
+        },
+        "LISTINGS_VALID_YEAR_CATALOG_LOAD_FAILED",
+      );
+    }
+  }
+
+  manualCatalogValidYearsByMakeModel = new Map(
+    Array.from(validYearsByMakeModel.entries()).map(([key, years]) => [key, Array.from(years).sort((a, b) => a - b)]),
+  );
+  return manualCatalogValidYearsByMakeModel;
+}
+
+function getManualCatalogValidYears(make: string | null | undefined, model: string | null | undefined) {
+  const makeModelKey = getManualCatalogMakeModelKey(make, model);
+  if (!makeModelKey) {
+    return [];
+  }
+  return loadManualCatalogValidYearsByMakeModel().get(makeModelKey) ?? [];
+}
+
+function getListingsValidYearFallback(vehicle: VehicleRecord): ValidYearFallback | null {
+  if (isSpecialtyExoticMake(vehicle.make)) {
+    return null;
+  }
+  const validYears = getManualCatalogValidYears(vehicle.make, vehicle.model);
+  if (validYears.length === 0 || validYears.includes(vehicle.year)) {
+    return null;
+  }
+
+  const fallbackYears = validYears
+    .map((year) => ({
+      year,
+      distance: Math.abs(year - vehicle.year),
+      directionPriority: year >= vehicle.year ? 0 : 1,
+    }))
+    .sort((left, right) => left.distance - right.distance || left.directionPriority - right.directionPriority || left.year - right.year)
+    .map((entry) => entry.year)
+    .slice(0, VALID_YEAR_FALLBACK_YEAR_LIMIT);
+
+  return fallbackYears.length > 0
+    ? {
+        validYears,
+        fallbackYears,
+      }
+    : null;
 }
 
 async function waitForSharedMarketCheckListingsLoad(input: {
@@ -345,7 +448,8 @@ function isAdjacentOrExpandedListingsStrategy(strategy: ListingsLookupAttempt["s
     strategy === "adjacent-year-previous-2" ||
     strategy === "adjacent-year-next-2" ||
     strategy === "adjacent-year-family-model" ||
-    strategy === "wider-radius-100"
+    strategy === "wider-radius-100" ||
+    strategy === "valid-year-same-model"
   );
 }
 
@@ -365,6 +469,7 @@ function selectMarketCheckListingsProviderAttempts(input: {
   const explicitNonStrictTrim = hasExplicitTrimValue(requestedTrim) && nonStrictTrim;
   const requestedVehicle = input.attempts[0]?.vehicle ?? null;
   const specialtyVehicle = requestedVehicle ? isSpecialtyExoticMake(requestedVehicle.make) : false;
+  const hasValidYearFallback = input.attempts.some((attempt) => attempt.strategy === "valid-year-same-model");
   const maxAttempts =
     specialtyVehicle && input.forceLive !== true
       ? 1
@@ -377,8 +482,12 @@ function selectMarketCheckListingsProviderAttempts(input: {
         ? ["same-year-any-trim", "same-year-family-model", "exact-year-make-model"]
         : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model"]
       : explicitNonStrictTrim
-        ? ["same-year-any-trim", "same-year-family-model", "wider-radius-100", "adjacent-year-previous", "adjacent-year-next", "exact-year-make-model"]
-        : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model", "wider-radius-100", "adjacent-year-previous", "adjacent-year-next"];
+        ? hasValidYearFallback
+          ? ["same-year-any-trim", "valid-year-same-model", "wider-radius-100", "same-year-family-model", "adjacent-year-previous", "adjacent-year-next", "exact-year-make-model"]
+          : ["same-year-any-trim", "same-year-family-model", "wider-radius-100", "adjacent-year-previous", "adjacent-year-next", "exact-year-make-model"]
+        : hasValidYearFallback
+          ? ["exact-year-make-model", "valid-year-same-model", "same-year-any-trim", "wider-radius-100", "same-year-family-model", "adjacent-year-previous", "adjacent-year-next"]
+          : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model", "wider-radius-100", "adjacent-year-previous", "adjacent-year-next"];
     const selected = selectListingsAttemptsByStrategy({
       attempts: input.attempts,
       liveSafeAttempts,
@@ -393,8 +502,12 @@ function selectMarketCheckListingsProviderAttempts(input: {
       ? ["same-year-any-trim", "same-year-family-model", "exact-year-make-model"]
       : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model"]
     : explicitNonStrictTrim
-      ? ["same-year-any-trim", "same-year-family-model", "wider-radius-100", "adjacent-year-previous", "adjacent-year-next", "exact-year-make-model"]
-      : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model", "wider-radius-100", "adjacent-year-previous", "adjacent-year-next"];
+      ? hasValidYearFallback
+        ? ["same-year-any-trim", "valid-year-same-model", "wider-radius-100", "same-year-family-model", "adjacent-year-previous", "adjacent-year-next", "exact-year-make-model"]
+        : ["same-year-any-trim", "same-year-family-model", "wider-radius-100", "adjacent-year-previous", "adjacent-year-next", "exact-year-make-model"]
+      : hasValidYearFallback
+        ? ["exact-year-make-model", "valid-year-same-model", "same-year-any-trim", "wider-radius-100", "same-year-family-model", "adjacent-year-previous", "adjacent-year-next"]
+        : ["exact-year-make-model", "same-year-any-trim", "same-year-family-model", "wider-radius-100", "adjacent-year-previous", "adjacent-year-next"];
   const selected = selectListingsAttemptsByStrategy({
     attempts: input.attempts,
     liveSafeAttempts,
@@ -413,10 +526,15 @@ function selectListingsAttemptsByStrategy(input: {
 }) {
   const selected: ListingsLookupAttempt[] = [];
   for (const strategy of input.preferredStrategies) {
-    const attempt =
-      (input.includeExpanded && isAdjacentOrExpandedListingsStrategy(strategy) ? input.attempts : input.liveSafeAttempts).find((entry) => entry.strategy === strategy) ?? null;
-    if (attempt && !selected.some((entry) => listingsAttemptKey(entry) === listingsAttemptKey(attempt))) {
-      selected.push(attempt);
+    const attemptPool = input.includeExpanded && isAdjacentOrExpandedListingsStrategy(strategy) ? input.attempts : input.liveSafeAttempts;
+    const matchingAttempts =
+      strategy === "valid-year-same-model"
+        ? attemptPool.filter((entry) => entry.strategy === strategy)
+        : attemptPool.filter((entry) => entry.strategy === strategy).slice(0, 1);
+    for (const attempt of matchingAttempts) {
+      if (attempt && !selected.some((entry) => listingsAttemptKey(entry) === listingsAttemptKey(attempt))) {
+        selected.push(attempt);
+      }
     }
   }
   return selected;
@@ -511,7 +629,8 @@ type ListingsLookupAttempt = {
     | "LISTINGS_SAME_MODEL_MIXED_TRIMS"
     | "LISTINGS_ADJACENT_YEAR_MIXED_TRIMS"
     | "LISTINGS_MODEL_NORMALIZED"
-    | "LISTINGS_WIDER_RADIUS";
+    | "LISTINGS_WIDER_RADIUS"
+    | "LISTINGS_VALID_YEAR_FALLBACK";
   strategy:
     | "exact-year-make-model"
     | "same-year-any-trim"
@@ -521,7 +640,8 @@ type ListingsLookupAttempt = {
     | "adjacent-year-previous-2"
     | "adjacent-year-next-2"
     | "adjacent-year-family-model"
-    | "wider-radius-100";
+    | "wider-radius-100"
+    | "valid-year-same-model";
   vehicle: VehicleRecord;
   radiusMiles: number;
 };
@@ -873,6 +993,9 @@ function resolveListingsDebugMode(strategy: ListingsLookupAttempt["strategy"] | 
   }
   if (strategy === "same-year-any-trim" || strategy === "same-year-family-model" || strategy === "adjacent-year-family-model") {
     return "same_model_mixed_trims";
+  }
+  if (strategy === "valid-year-same-model") {
+    return "adjacent_year_mixed_trims";
   }
   if (
     strategy === "adjacent-year-previous" ||
@@ -1628,6 +1751,8 @@ async function buildListingsFallbackAttempts(input: {
   radiusMiles: number;
 }): Promise<ListingsLookupAttempt[]> {
   const attempts: ListingsLookupAttempt[] = [];
+  const cappedRadiusMiles = Math.min(MAX_MARKETCHECK_LISTINGS_RADIUS_MILES, input.radiusMiles);
+  const expandedRadiusMiles = Math.min(MAX_MARKETCHECK_LISTINGS_RADIUS_MILES, Math.max(input.radiusMiles, 100));
   const pushAttempt = (attempt: ListingsLookupAttempt | null) => {
     if (!attempt) {
       return;
@@ -1642,7 +1767,7 @@ async function buildListingsFallbackAttempts(input: {
     label: "LISTINGS_EXACT_TRIM_MATCH",
     strategy: "exact-year-make-model",
     vehicle: { ...input.vehicle },
-    radiusMiles: input.radiusMiles,
+    radiusMiles: cappedRadiusMiles,
   });
 
   if (hasExplicitTrimValue(input.vehicle.trim)) {
@@ -1650,7 +1775,7 @@ async function buildListingsFallbackAttempts(input: {
       label: "LISTINGS_SAME_MODEL_MIXED_TRIMS",
       strategy: "same-year-any-trim",
       vehicle: { ...input.vehicle, trim: "" },
-      radiusMiles: input.radiusMiles,
+      radiusMiles: cappedRadiusMiles,
     });
   }
   const familyVariant = buildSpecialtyFamilyVehicleVariant(input.vehicle);
@@ -1660,7 +1785,7 @@ async function buildListingsFallbackAttempts(input: {
           label: "LISTINGS_MODEL_NORMALIZED",
           strategy: "same-year-family-model",
           vehicle: familyVariant,
-          radiusMiles: Math.max(input.radiusMiles, 100),
+          radiusMiles: expandedRadiusMiles,
         }
       : null,
   );
@@ -1670,7 +1795,7 @@ async function buildListingsFallbackAttempts(input: {
       label: "LISTINGS_ADJACENT_YEAR_MIXED_TRIMS",
       strategy: "adjacent-year-previous",
       vehicle: { ...input.vehicle, year: input.vehicle.year - 1, trim: "" },
-      radiusMiles: input.radiusMiles,
+      radiusMiles: cappedRadiusMiles,
     });
   }
 
@@ -1678,21 +1803,21 @@ async function buildListingsFallbackAttempts(input: {
     label: "LISTINGS_ADJACENT_YEAR_MIXED_TRIMS",
     strategy: "adjacent-year-next",
     vehicle: { ...input.vehicle, year: input.vehicle.year + 1, trim: "" },
-    radiusMiles: input.radiusMiles,
+    radiusMiles: cappedRadiusMiles,
   });
   if (input.vehicle.year > 1982) {
     pushAttempt({
       label: "LISTINGS_ADJACENT_YEAR_MIXED_TRIMS",
       strategy: "adjacent-year-previous-2",
       vehicle: { ...input.vehicle, year: input.vehicle.year - 2, trim: "" },
-      radiusMiles: input.radiusMiles,
+      radiusMiles: cappedRadiusMiles,
     });
   }
   pushAttempt({
     label: "LISTINGS_ADJACENT_YEAR_MIXED_TRIMS",
     strategy: "adjacent-year-next-2",
     vehicle: { ...input.vehicle, year: input.vehicle.year + 2, trim: "" },
-    radiusMiles: input.radiusMiles,
+    radiusMiles: cappedRadiusMiles,
   });
   const familyPrevious = buildSpecialtyFamilyVehicleVariant(input.vehicle, { year: Math.max(1981, input.vehicle.year - 1) });
   const familyNext = buildSpecialtyFamilyVehicleVariant(input.vehicle, { year: input.vehicle.year + 1 });
@@ -1702,7 +1827,7 @@ async function buildListingsFallbackAttempts(input: {
           label: "LISTINGS_MODEL_NORMALIZED",
           strategy: "adjacent-year-family-model",
           vehicle: familyPrevious,
-          radiusMiles: Math.max(input.radiusMiles, 100),
+          radiusMiles: expandedRadiusMiles,
         }
       : null,
   );
@@ -1712,7 +1837,7 @@ async function buildListingsFallbackAttempts(input: {
           label: "LISTINGS_MODEL_NORMALIZED",
           strategy: "adjacent-year-family-model",
           vehicle: familyNext,
-          radiusMiles: Math.max(input.radiusMiles, 100),
+          radiusMiles: expandedRadiusMiles,
         }
       : null,
   );
@@ -1721,8 +1846,31 @@ async function buildListingsFallbackAttempts(input: {
       label: "LISTINGS_WIDER_RADIUS",
       strategy: "wider-radius-100",
       vehicle: { ...input.vehicle, trim: "" },
-      radiusMiles: Math.min(MAX_MARKETCHECK_LISTINGS_RADIUS_MILES, Math.max(input.radiusMiles, 100)),
+      radiusMiles: expandedRadiusMiles,
     });
+    const validYearFallback = getListingsValidYearFallback(input.vehicle);
+    if (validYearFallback) {
+      logger.info(
+        {
+          label: "LISTINGS_INVALID_MODEL_YEAR_DETECTED",
+          year: input.vehicle.year,
+          make: input.vehicle.make,
+          model: input.vehicle.model,
+          trim: input.vehicle.trim || null,
+          validYears: validYearFallback.validYears,
+          fallbackYears: validYearFallback.fallbackYears,
+        },
+        "LISTINGS_INVALID_MODEL_YEAR_DETECTED",
+      );
+      for (const fallbackYear of validYearFallback.fallbackYears) {
+        pushAttempt({
+          label: "LISTINGS_VALID_YEAR_FALLBACK",
+          strategy: "valid-year-same-model",
+          vehicle: { ...input.vehicle, year: fallbackYear, trim: "" },
+          radiusMiles: expandedRadiusMiles,
+        });
+      }
+    }
   }
 
   return attempts;
@@ -1737,12 +1885,14 @@ function ensureListingsAttempts(input: {
     return input.attempts;
   }
 
+  const cappedRadiusMiles = Math.min(MAX_MARKETCHECK_LISTINGS_RADIUS_MILES, input.radiusMiles);
+  const expandedRadiusMiles = Math.min(MAX_MARKETCHECK_LISTINGS_RADIUS_MILES, Math.max(input.radiusMiles, 100));
   const fallbackAttempts: ListingsLookupAttempt[] = [
     {
       label: "LISTINGS_EXACT_TRIM_MATCH",
       strategy: "exact-year-make-model",
       vehicle: { ...input.vehicle },
-      radiusMiles: input.radiusMiles,
+      radiusMiles: cappedRadiusMiles,
     },
   ];
   if (hasExplicitTrimValue(input.vehicle.trim)) {
@@ -1750,7 +1900,7 @@ function ensureListingsAttempts(input: {
       label: "LISTINGS_SAME_MODEL_MIXED_TRIMS",
       strategy: "same-year-any-trim",
       vehicle: { ...input.vehicle, trim: "" },
-      radiusMiles: input.radiusMiles,
+      radiusMiles: cappedRadiusMiles,
     });
   }
   const ensuredFamilyVariant = buildSpecialtyFamilyVehicleVariant(input.vehicle);
@@ -1759,7 +1909,7 @@ function ensureListingsAttempts(input: {
       label: "LISTINGS_MODEL_NORMALIZED",
       strategy: "same-year-family-model",
       vehicle: ensuredFamilyVariant,
-      radiusMiles: Math.max(input.radiusMiles, 100),
+      radiusMiles: expandedRadiusMiles,
     });
   }
   if (input.vehicle.year > 1981) {
@@ -1767,28 +1917,28 @@ function ensureListingsAttempts(input: {
       label: "LISTINGS_ADJACENT_YEAR_MIXED_TRIMS",
       strategy: "adjacent-year-previous",
       vehicle: { ...input.vehicle, year: input.vehicle.year - 1, trim: "" },
-      radiusMiles: input.radiusMiles,
+      radiusMiles: cappedRadiusMiles,
     });
   }
   fallbackAttempts.push({
     label: "LISTINGS_ADJACENT_YEAR_MIXED_TRIMS",
     strategy: "adjacent-year-next",
     vehicle: { ...input.vehicle, year: input.vehicle.year + 1, trim: "" },
-    radiusMiles: input.radiusMiles,
+    radiusMiles: cappedRadiusMiles,
   });
   if (input.vehicle.year > 1982) {
     fallbackAttempts.push({
       label: "LISTINGS_ADJACENT_YEAR_MIXED_TRIMS",
       strategy: "adjacent-year-previous-2",
       vehicle: { ...input.vehicle, year: input.vehicle.year - 2, trim: "" },
-      radiusMiles: input.radiusMiles,
+      radiusMiles: cappedRadiusMiles,
     });
   }
   fallbackAttempts.push({
     label: "LISTINGS_ADJACENT_YEAR_MIXED_TRIMS",
     strategy: "adjacent-year-next-2",
     vehicle: { ...input.vehicle, year: input.vehicle.year + 2, trim: "" },
-    radiusMiles: input.radiusMiles,
+    radiusMiles: cappedRadiusMiles,
   });
   const ensuredPreviousFamily = buildSpecialtyFamilyVehicleVariant(input.vehicle, { year: Math.max(1981, input.vehicle.year - 1) });
   const ensuredNextFamily = buildSpecialtyFamilyVehicleVariant(input.vehicle, { year: input.vehicle.year + 1 });
@@ -1797,7 +1947,7 @@ function ensureListingsAttempts(input: {
       label: "LISTINGS_MODEL_NORMALIZED",
       strategy: "adjacent-year-family-model",
       vehicle: ensuredPreviousFamily,
-      radiusMiles: Math.max(input.radiusMiles, 100),
+      radiusMiles: expandedRadiusMiles,
     });
   }
   if (ensuredNextFamily) {
@@ -1805,7 +1955,7 @@ function ensureListingsAttempts(input: {
       label: "LISTINGS_MODEL_NORMALIZED",
       strategy: "adjacent-year-family-model",
       vehicle: ensuredNextFamily,
-      radiusMiles: Math.max(input.radiusMiles, 100),
+      radiusMiles: expandedRadiusMiles,
     });
   }
   if (!isSpecialtyExoticMake(input.vehicle.make)) {
@@ -1813,8 +1963,19 @@ function ensureListingsAttempts(input: {
       label: "LISTINGS_WIDER_RADIUS",
       strategy: "wider-radius-100",
       vehicle: { ...input.vehicle, trim: "" },
-      radiusMiles: Math.min(MAX_MARKETCHECK_LISTINGS_RADIUS_MILES, Math.max(input.radiusMiles, 100)),
+      radiusMiles: expandedRadiusMiles,
     });
+    const validYearFallback = getListingsValidYearFallback(input.vehicle);
+    if (validYearFallback) {
+      for (const fallbackYear of validYearFallback.fallbackYears) {
+        fallbackAttempts.push({
+          label: "LISTINGS_VALID_YEAR_FALLBACK",
+          strategy: "valid-year-same-model",
+          vehicle: { ...input.vehicle, year: fallbackYear, trim: "" },
+          radiusMiles: expandedRadiusMiles,
+        });
+      }
+    }
   }
   return fallbackAttempts;
 }
@@ -2233,6 +2394,9 @@ function getListingsSourceLabel(strategy: ListingsLookupAttempt["strategy"] | nu
     strategy === "wider-radius-100"
   ) {
     return "Limited comps from a wider live MarketCheck search";
+  }
+  if (strategy === "valid-year-same-model") {
+    return "Limited comps from the nearest valid model year";
   }
   return "Exact listings";
 }
@@ -6449,6 +6613,25 @@ export class VehicleService {
             },
             "LISTINGS_FALLBACK_ATTEMPT",
           );
+          if (attempt.strategy === "valid-year-same-model") {
+            logger.info(
+              {
+                label: "LISTINGS_VALID_YEAR_FALLBACK_ATTEMPT",
+                requestId: input.requestId,
+                vehicleId: lookupVehicleId,
+                requestedYear: originalListingsQuery.year,
+                fallbackYear: attempt.vehicle.year,
+                make: attempt.vehicle.make,
+                model: attempt.vehicle.model,
+                trim: attempt.vehicle.trim || null,
+                zip: input.zip,
+                radiusMiles: attempt.radiusMiles,
+                attemptNumber,
+                maxAttempts,
+              },
+              "LISTINGS_VALID_YEAR_FALLBACK_ATTEMPT",
+            );
+          }
           logMarketCheckApiFallbackAttempt({
             requestId: input.requestId,
             endpointType: "listings",
@@ -6638,6 +6821,27 @@ export class VehicleService {
             },
             "LISTINGS_FILTERED_RESULT_COUNT",
           );
+          if (attempt.strategy === "valid-year-same-model") {
+            logger.info(
+              {
+                label: "LISTINGS_VALID_YEAR_FALLBACK_RESULT",
+                requestId: input.requestId,
+                vehicleId: lookupVehicleId,
+                requestedYear: originalListingsQuery.year,
+                fallbackYear: attempt.vehicle.year,
+                make: attempt.vehicle.make,
+                model: attempt.vehicle.model,
+                trim: attempt.vehicle.trim || null,
+                zip: input.zip,
+                radiusMiles: attempt.radiusMiles,
+                rawCount: liveListings.length,
+                believableCount: believableListings.length,
+                attemptNumber,
+                maxAttempts,
+              },
+              "LISTINGS_VALID_YEAR_FALLBACK_RESULT",
+            );
+          }
           logger.info(
             {
               label: "FORSALE_ATTEMPT_RESULT",
@@ -6908,6 +7112,7 @@ export class VehicleService {
               liveListingsFinalStrategy === "adjacent-year-next" ||
               liveListingsFinalStrategy === "adjacent-year-previous-2" ||
               liveListingsFinalStrategy === "adjacent-year-next-2",
+            validYearFallbackUsed: liveListingsFinalStrategy === "valid-year-same-model",
             fallbackReason: liveListingsFinalStrategy ?? "provider-match",
             acceptedStrategies: acceptedLiveListingsStrategies,
             finalListingsCount: displayableLiveListings.length,
