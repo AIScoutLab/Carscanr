@@ -54,6 +54,103 @@ const MAX_LIVE_LISTING_ATTEMPTS = 2;
 const MAX_NORMAL_LIVE_LISTING_ATTEMPTS = 3;
 const MAX_SPECIALTY_LIVE_LISTING_ATTEMPTS = 2;
 const MAX_DISPLAY_LIVE_LISTINGS = 12;
+const sharedMarketCheckListingsLoads = new Map<string, Promise<void>>();
+
+type CacheDescriptor = NonNullable<ReturnType<typeof buildCacheDescriptor>>;
+
+function trackSharedMarketCheckListingsLoad(input: {
+  cacheKeys: Array<string | null | undefined>;
+  promise: Promise<void>;
+}) {
+  const cacheKeys = Array.from(new Set(input.cacheKeys.filter((cacheKey): cacheKey is string => Boolean(cacheKey))));
+  if (cacheKeys.length === 0) {
+    return;
+  }
+  const trackedPromise = input.promise.catch((error) => {
+    logger.warn(
+      {
+        label: "MARKETCHECK_SHARED_RESULT_CACHE_FAILED",
+        cacheKeys,
+        message: error instanceof Error ? error.message : String(error),
+      },
+      "MARKETCHECK_SHARED_RESULT_CACHE_FAILED",
+    );
+  });
+
+  for (const cacheKey of cacheKeys) {
+    sharedMarketCheckListingsLoads.set(cacheKey, trackedPromise);
+  }
+
+  trackedPromise.finally(() => {
+    for (const cacheKey of cacheKeys) {
+      if (sharedMarketCheckListingsLoads.get(cacheKey) === trackedPromise) {
+        sharedMarketCheckListingsLoads.delete(cacheKey);
+      }
+    }
+  });
+}
+
+async function waitForSharedMarketCheckListingsLoad(input: {
+  requestId?: string | null;
+  vehicleId: string;
+  cacheKeys: Array<string | null | undefined>;
+  consumer: "value" | "listings";
+}) {
+  const cacheKeys = Array.from(new Set(input.cacheKeys.filter((cacheKey): cacheKey is string => Boolean(cacheKey))));
+  const cacheKey = cacheKeys.find((candidate) => sharedMarketCheckListingsLoads.has(candidate));
+  if (!cacheKey) {
+    return false;
+  }
+
+  await sharedMarketCheckListingsLoads.get(cacheKey);
+  logger.info(
+    {
+      label: "MARKETCHECK_DEDUPED_SHARED_RESULT",
+      requestId: input.requestId ?? null,
+      vehicleId: input.vehicleId,
+      consumer: input.consumer,
+      cacheKey,
+      reason: "shared-marketcheck-listings-inflight",
+    },
+    "MARKETCHECK_DEDUPED_SHARED_RESULT",
+  );
+  return true;
+}
+
+async function cacheListingsForSharedReuse(input: {
+  descriptor: CacheDescriptor;
+  familyDescriptor?: CacheDescriptor | null;
+  cacheKey: string;
+  familyCacheKey?: string | null;
+  provider: string;
+  payload: ListingRecord[];
+  zip: string;
+  radiusMiles: number;
+}) {
+  await repositories.listingsCache.upsert(
+    createListingsCacheRow({
+      descriptor: input.descriptor,
+      cacheKey: input.cacheKey,
+      provider: input.provider,
+      payload: input.payload,
+      zip: input.zip,
+      radiusMiles: input.radiusMiles,
+    }),
+  );
+
+  if (input.familyDescriptor && input.familyCacheKey) {
+    await repositories.listingsCache.upsert(
+      createListingsCacheRow({
+        descriptor: input.familyDescriptor,
+        cacheKey: input.familyCacheKey,
+        provider: input.provider,
+        payload: input.payload,
+        zip: input.zip,
+        radiusMiles: input.radiusMiles,
+      }),
+    );
+  }
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -4184,7 +4281,56 @@ export class VehicleService {
           blockedReason === "external-calls-disabled" ? "VALUE_REFRESH_BLOCKED_DISABLE_EXTERNAL_CALLS" : "VALUE_REFRESH_BLOCKED_REASON",
         );
       }
-      if (valueDecision.shouldSimulateSuccess || valueDecision.allowLiveProvider) {
+      let fallbackValue: ValuationRecord | null = null;
+      if (
+        valueDecision.allowLiveProvider &&
+        providers.valueProviderName === "marketcheck" &&
+        isExplicitValueRefresh &&
+        lookupBaseVehicle &&
+        descriptor &&
+        !isSpecialtyLookupVehicle
+      ) {
+        const sharedListingsCacheKey = getListingsCacheKey(descriptor, {
+          zip: input.zip,
+          radiusMiles: env.MARKETCHECK_VALUE_RADIUS_MILES,
+        });
+        const sharedListingsFamilyCacheKey = getFamilyListingsCacheKey(descriptor, {
+          zip: input.zip,
+          radiusMiles: env.MARKETCHECK_VALUE_RADIUS_MILES,
+        });
+        const waitedForSharedListings = await waitForSharedMarketCheckListingsLoad({
+          requestId: input.requestId,
+          vehicleId: lookupVehicleId,
+          consumer: "value",
+          cacheKeys: [sharedListingsCacheKey, sharedListingsFamilyCacheKey],
+        });
+        if (waitedForSharedListings) {
+          const derivedFromSharedListings = await deriveValuationFromSimilarVehicles({
+            vehicle: lookupBaseVehicle,
+            vehicleId: lookupVehicleId,
+            zip: input.zip,
+            mileage: input.mileage,
+            condition: input.condition,
+          });
+          if (derivedFromSharedListings) {
+            fallbackValue = derivedFromSharedListings;
+            logger.info(
+              {
+                label: "VALUE_REUSED_LISTINGS_CACHE",
+                requestId: input.requestId,
+                vehicleId: lookupVehicleId,
+                cacheKey: sharedListingsCacheKey,
+                familyCacheKey: sharedListingsFamilyCacheKey,
+                listingCount: derivedFromSharedListings.listingCount ?? null,
+                source: derivedFromSharedListings.valuationSource ?? derivedFromSharedListings.modelType ?? null,
+                reason: "shared-listings-request-completed-first",
+              },
+              "VALUE_REUSED_LISTINGS_CACHE",
+            );
+          }
+        }
+      }
+      if (!fallbackValue && (valueDecision.shouldSimulateSuccess || valueDecision.allowLiveProvider)) {
         if (fetchReason === "user_requested_value_refresh") {
           logger.info(
             {
@@ -4287,13 +4433,14 @@ export class VehicleService {
               "MARKETCHECK_CALL_SITE",
             );
           }
-          liveValue = valueWasSimulated
-            ? await providerBudgetService.simulateValue({
-                ...input,
-                vehicleId: getSimulatedProviderVehicleId({ requestedVehicleId: lookupVehicleId, attemptVehicle: attempt.vehicle }),
-                vehicle: attempt.vehicle,
-              })
-            : await providers.valueProvider.getValuation({
+          if (valueWasSimulated) {
+            liveValue = await providerBudgetService.simulateValue({
+              ...input,
+              vehicleId: getSimulatedProviderVehicleId({ requestedVehicleId: lookupVehicleId, attemptVehicle: attempt.vehicle }),
+              vehicle: attempt.vehicle,
+            });
+          } else {
+            const valueProviderRequest = providers.valueProvider.getValuation({
                 ...input,
                 vehicleId: lookupVehicleId,
                 vehicle: attempt.vehicle,
@@ -4354,6 +4501,41 @@ export class VehicleService {
                 );
                 return null;
               });
+            if (providers.valueProviderName === "marketcheck") {
+              const sharedListingsDescriptor = buildCacheDescriptor({ vehicle: attempt.vehicle });
+              const sharedListingsCacheKey = sharedListingsDescriptor
+                ? getListingsCacheKey(sharedListingsDescriptor, {
+                    zip: input.zip,
+                    radiusMiles: env.MARKETCHECK_VALUE_RADIUS_MILES,
+                  })
+                : null;
+              const sharedListingsFamilyCacheKey = sharedListingsDescriptor
+                ? getFamilyListingsCacheKey(sharedListingsDescriptor, {
+                    zip: input.zip,
+                    radiusMiles: env.MARKETCHECK_VALUE_RADIUS_MILES,
+                  })
+                : null;
+              trackSharedMarketCheckListingsLoad({
+                cacheKeys: [sharedListingsCacheKey, sharedListingsFamilyCacheKey],
+                promise: valueProviderRequest.then(async (valuation) => {
+                  if (!valuation?.supportingListings?.length || !sharedListingsDescriptor || !sharedListingsCacheKey) {
+                    return;
+                  }
+                  await cacheListingsForSharedReuse({
+                    descriptor: sharedListingsDescriptor,
+                    familyDescriptor: { ...sharedListingsDescriptor, trim: "", normalizedTrim: "family" },
+                    cacheKey: sharedListingsCacheKey,
+                    familyCacheKey: sharedListingsFamilyCacheKey,
+                    provider: providers.valueProviderName,
+                    payload: valuation.supportingListings,
+                    zip: input.zip,
+                    radiusMiles: env.MARKETCHECK_VALUE_RADIUS_MILES,
+                  });
+                }),
+              });
+            }
+            liveValue = await valueProviderRequest;
+          }
           if (liveValue && hasMarketValue(liveValue)) {
             liveValueStrategy = attempt.strategy;
             logger.error(
@@ -4572,7 +4754,6 @@ export class VehicleService {
           expiresAt: cacheRow?.expiresAt ?? currentIso,
         };
       }
-      let fallbackValue: ValuationRecord | null = null;
       for (const attempt of valueAttempts) {
         const variantDescriptor = buildCacheDescriptor({ vehicle: attempt.vehicle });
         const variantCacheKey = variantDescriptor ? getValuesCacheKey(variantDescriptor, { zip: input.zip, mileage: input.mileage }) : null;
@@ -5671,6 +5852,144 @@ export class VehicleService {
         }
       }
 
+      if (
+        cacheKey &&
+        descriptor &&
+        providers.listingsProviderName === "marketcheck" &&
+        typeof input.mileage === "number" &&
+        Number.isFinite(input.mileage) &&
+        input.mileage > 0
+      ) {
+        const valueCacheKey = getValuesCacheKey(descriptor, { zip: input.zip, mileage: input.mileage });
+        const familyValueCacheKey = getFamilyValuesCacheKey(descriptor, { zip: input.zip, mileage: input.mileage });
+        const cachedValueRows = [
+          await repositories.valuesCache.findByCacheKey(valueCacheKey).catch(() => null),
+          await repositories.valuesCache.findByCacheKey(familyValueCacheKey).catch(() => null),
+        ].filter((row): row is NonNullable<typeof row> => Boolean(row));
+        const reusableValueRow = cachedValueRows.find(
+          (row) =>
+            isFresh(row.expiresAt, currentIso) &&
+            Array.isArray(row.responseJson.data?.supportingListings) &&
+            row.responseJson.data.supportingListings.length > 0,
+        );
+        if (reusableValueRow?.responseJson.data?.supportingListings?.length) {
+          const valueCacheListings = filterDisplayableListings(
+            reusableValueRow.responseJson.data.supportingListings,
+            lookup.lookupVehicle ?? vehicle ?? null,
+            input.descriptor?.yearRange ?? null,
+            {
+              requestId: input.requestId,
+              vehicleId: lookupVehicleId,
+              zip: input.zip,
+              radiusMiles: input.radiusMiles,
+              make: descriptor.make,
+              model: descriptor.model,
+              condition: null,
+            },
+          );
+          if (valueCacheListings.length > 0) {
+            await cacheListingsForSharedReuse({
+              descriptor,
+              familyDescriptor: { ...descriptor, trim: "", normalizedTrim: "family" },
+              cacheKey,
+              familyCacheKey,
+              provider: reusableValueRow.provider,
+              payload: reusableValueRow.responseJson.data.supportingListings,
+              zip: input.zip,
+              radiusMiles: input.radiusMiles,
+            });
+            logger.info(
+              {
+                label: "LISTINGS_REUSED_VALUE_CACHE",
+                requestId: input.requestId,
+                vehicleId: lookupVehicleId,
+                cacheKey,
+                valueCacheKey: reusableValueRow.cacheKey,
+                rawCount: reusableValueRow.responseJson.data.supportingListings.length,
+                believableCount: valueCacheListings.length,
+              },
+              "LISTINGS_REUSED_VALUE_CACHE",
+            );
+            logger.info(
+              {
+                label: "MARKETCHECK_DEDUPED_SHARED_RESULT",
+                requestId: input.requestId,
+                vehicleId: lookupVehicleId,
+                consumer: "listings",
+                cacheKey,
+                sourceCacheKey: reusableValueRow.cacheKey,
+                reason: "value-cache-supporting-listings",
+              },
+              "MARKETCHECK_DEDUPED_SHARED_RESULT",
+            );
+            return {
+              data: valueCacheListings,
+              source: "cache",
+              fetchedAt: reusableValueRow.fetchedAt,
+              expiresAt: reusableValueRow.expiresAt,
+              meta: {
+                sourceLabel: "Nearby listings from value lookup",
+                rawCount: reusableValueRow.responseJson.data.supportingListings.length,
+                believableCount: valueCacheListings.length,
+                mode: "exact_trim",
+                fallbackReason: "value-cache-supporting-listings",
+              },
+            };
+          }
+        }
+      }
+
+      if (cacheKey && providers.listingsProviderName === "marketcheck") {
+        const waitedForSharedListings = await waitForSharedMarketCheckListingsLoad({
+          requestId: input.requestId,
+          vehicleId: lookupVehicleId,
+          consumer: "listings",
+          cacheKeys: [cacheKey, familyCacheKey],
+        });
+        if (waitedForSharedListings) {
+          const sharedCached = await repositories.listingsCache.findByCacheKey(cacheKey).catch(() => null);
+          const sharedDisplayListings = sharedCached
+            ? filterDisplayableListings(sharedCached.responseJson.data, lookup.lookupVehicle ?? vehicle ?? null, input.descriptor?.yearRange ?? null, {
+                requestId: input.requestId,
+                vehicleId: lookupVehicleId,
+                zip: input.zip,
+                radiusMiles: input.radiusMiles,
+                make: descriptor?.make ?? vehicle?.make ?? null,
+                model: descriptor?.model ?? vehicle?.model ?? null,
+                condition: null,
+              })
+            : [];
+          if (sharedCached && isFresh(sharedCached.expiresAt, currentIso) && !sharedCached.responseJson.isEmpty && sharedDisplayListings.length > 0) {
+            await repositories.listingsCache.markAccessed(cacheKey, currentIso).catch(() => undefined);
+            logger.info(
+              {
+                label: "LISTINGS_REUSED_VALUE_CACHE",
+                requestId: input.requestId,
+                vehicleId: lookupVehicleId,
+                cacheKey,
+                rawCount: sharedCached.responseJson.data.length,
+                believableCount: sharedDisplayListings.length,
+                reason: "shared-inflight-cache-hit",
+              },
+              "LISTINGS_REUSED_VALUE_CACHE",
+            );
+            return {
+              data: sharedDisplayListings,
+              source: "cache",
+              fetchedAt: sharedCached.fetchedAt,
+              expiresAt: sharedCached.expiresAt,
+              meta: {
+                sourceLabel: "Nearby listings from shared MarketCheck result",
+                rawCount: sharedCached.responseJson.data.length,
+                believableCount: sharedDisplayListings.length,
+                mode: "exact_trim",
+                fallbackReason: "shared-inflight-cache-hit",
+              },
+            };
+          }
+        }
+      }
+
       const lookupBaseVehicle = lookup.lookupVehicle;
       const rawFallbackAttempts = lookupBaseVehicle
         ? await buildListingsFallbackAttempts({
@@ -6213,14 +6532,15 @@ export class VehicleService {
               "MARKETCHECK_CALL_SITE",
             );
           }
-          liveListings = listingsWereSimulated
-            ? await providerBudgetService.simulateListings({
-                ...input,
-                vehicleId: getSimulatedProviderVehicleId({ requestedVehicleId: lookupVehicleId, attemptVehicle: attempt.vehicle }),
-                vehicle: attempt.vehicle,
-                radiusMiles: attempt.radiusMiles,
-              })
-            : await providers.listingsProvider.getListings({
+          if (listingsWereSimulated) {
+            liveListings = await providerBudgetService.simulateListings({
+              ...input,
+              vehicleId: getSimulatedProviderVehicleId({ requestedVehicleId: lookupVehicleId, attemptVehicle: attempt.vehicle }),
+              vehicle: attempt.vehicle,
+              radiusMiles: attempt.radiusMiles,
+            });
+          } else {
+            const listingsProviderRequest = providers.listingsProvider.getListings({
                 ...input,
                 vehicleId: lookupVehicleId,
                 vehicle: attempt.vehicle,
@@ -6263,6 +6583,29 @@ export class VehicleService {
                 }
                 throw error;
               });
+            if (providers.listingsProviderName === "marketcheck" && attemptDescriptor && attemptCacheKey) {
+              const attemptFamilyCacheKey = getFamilyListingsCacheKey(attemptDescriptor, {
+                zip: input.zip,
+                radiusMiles: attempt.radiusMiles,
+              });
+              trackSharedMarketCheckListingsLoad({
+                cacheKeys: [attemptCacheKey, attemptFamilyCacheKey],
+                promise: listingsProviderRequest.then(async (listings) => {
+                  await cacheListingsForSharedReuse({
+                    descriptor: attemptDescriptor,
+                    familyDescriptor: { ...attemptDescriptor, trim: "", normalizedTrim: "family" },
+                    cacheKey: attemptCacheKey,
+                    familyCacheKey: attemptFamilyCacheKey,
+                    provider: providers.listingsProviderName,
+                    payload: listings,
+                    zip: input.zip,
+                    radiusMiles: attempt.radiusMiles,
+                  });
+                }),
+              });
+            }
+            liveListings = await listingsProviderRequest;
+          }
           liveListingsProviderAttempted = true;
           logger.info(
             {
