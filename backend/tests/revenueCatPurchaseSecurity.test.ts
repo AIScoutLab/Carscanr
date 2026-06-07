@@ -309,6 +309,69 @@ describe("RevenueCat purchase security", () => {
     assert.equal(state.subscriptions[0].expiresAt, new Date(renewalExpirationMs).toISOString());
   });
 
+  test("sandbox renewal after a manual reset to free does not reactivate Pro", async () => {
+    const originalTransactionId = "original-reset-sandbox-subscription";
+    const { state, repositories } = createTestRepositories({
+      subscriptions: [
+        {
+          id: "sub-reset-free",
+          userId: SIGNED_IN_USER_ID,
+          plan: "free",
+          status: "active",
+          productId: null,
+          verifiedAt: new Date().toISOString(),
+        },
+      ],
+      unlockBalances: [
+        {
+          userId: SIGNED_IN_USER_ID,
+          freeUnlocksTotal: 3,
+          freeUnlocksUsed: 3,
+          unlockCredits: 5,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      revenueCatEvents: [
+        {
+          id: "event-reset-prior-grant",
+          appUserId: SIGNED_IN_USER_ID,
+          userId: SIGNED_IN_USER_ID,
+          eventType: "RENEWAL",
+          productId: LIVE_PRODUCT_IDS.monthlyPro,
+          transactionId: "tx-reset-prior-grant",
+          originalTransactionId,
+          processed: true,
+          processedAction: "pro_granted",
+          payloadSummary: { environment: "SANDBOX" },
+          createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+          processedAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+        },
+      ],
+    });
+    setRepositories(repositories);
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/revenuecat/webhook",
+      headers: { authorization: WEBHOOK_AUTH },
+      payload: revenueCatPayload({
+        id: "event-reset-sandbox-renewal",
+        type: "RENEWAL",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        transactionId: "tx-reset-sandbox-renewal",
+        originalTransactionId,
+      }),
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.action, "ignored");
+    assert.equal(state.subscriptions.find((subscription) => subscription.status === "active")?.plan, "free");
+    assert.equal(state.unlockBalances.find((entry) => entry.userId === SIGNED_IN_USER_ID)?.unlockCredits, 5);
+    assert.equal(state.revenueCatEvents.find((event) => event.id === "event-reset-sandbox-renewal")?.processedAction, "ignored");
+  });
+
   test("sandbox renewal for unrelated original transaction does not grant a fresh user Pro", async () => {
     const unrelatedUserId = "22222222-2222-4222-8222-222222222222";
     const { state, repositories } = createTestRepositories({

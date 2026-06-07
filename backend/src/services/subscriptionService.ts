@@ -430,6 +430,27 @@ export class SubscriptionService {
         );
         return "ignored";
       }
+      const activeSubscription = await repositories.subscriptions.findActiveByUser(input.userId);
+      if (
+        !activeSubscription ||
+        !isProPlan(activeSubscription.plan) ||
+        (activeSubscription.expiresAt ? new Date(activeSubscription.expiresAt).getTime() <= Date.now() : false)
+      ) {
+        logger.warn(
+          {
+            userId: input.userId,
+            productId: input.productId,
+            originalTransactionId: input.originalTransactionId,
+            priorGrantEventId: priorGrant.id,
+            currentPlan: activeSubscription?.plan ?? null,
+            currentStatus: activeSubscription?.status ?? null,
+            currentExpiresAt: activeSubscription?.expiresAt ?? null,
+            reason: "no_current_active_pro_subscription",
+          },
+          "REVENUECAT_SANDBOX_RENEWAL_IGNORED",
+        );
+        return "ignored";
+      }
     }
 
     const record: SubscriptionRecord = {
