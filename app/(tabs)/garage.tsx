@@ -1,7 +1,7 @@
 import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useCallback, useRef, useState } from "react";
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -189,6 +189,8 @@ export default function GarageScreen() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [hasAccessToken, setHasAccessToken] = useState(false);
+  const [removingItemId, setRemovingItemId] = useState<string | null>(null);
+  const [garageMessage, setGarageMessage] = useState<string | null>(null);
   const hasLoadedGarageOnceRef = useRef(false);
   const { status: usage } = useSubscription();
 
@@ -204,6 +206,7 @@ export default function GarageScreen() {
         }
         setHasAccessToken(Boolean(token));
         setItems(result);
+        setGarageMessage(null);
         setError(null);
       })
       .catch((err) => {
@@ -279,6 +282,31 @@ export default function GarageScreen() {
           },
     );
   };
+  const removeGarageItem = (item: GarageItem) => {
+    Alert.alert("Remove from Garage?", `${getGarageTitle(item)} will be removed from your Garage.`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove from Garage",
+        style: "destructive",
+        onPress: () => {
+          setRemovingItemId(item.id);
+          garageService
+            .deleteItem(item.id)
+            .then(() => {
+              setItems((current) => current.filter((entry) => entry.id !== item.id));
+              setGarageMessage("Removed from Garage");
+              setError(null);
+            })
+            .catch((err) => {
+              setError(err instanceof Error ? err.message : "Could not remove from Garage.");
+            })
+            .finally(() => {
+              setRemovingItemId(null);
+            });
+        },
+      },
+    ]);
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "right", "bottom", "left"]}>
@@ -346,6 +374,8 @@ export default function GarageScreen() {
               </Pressable>
             </LinearGradient>
           ) : null}
+
+          {garageMessage ? <Text style={styles.garageMessage}>{garageMessage}</Text> : null}
 
           {loading ? (
             <View style={styles.loadingWrap}>
@@ -432,8 +462,23 @@ export default function GarageScreen() {
                           <Text style={styles.valueLabel}>{itemValue.label}</Text>
                           <Text style={[styles.itemValue, !itemValue.value && styles.itemValueMuted]}>{formatCurrency(itemValue.value)}</Text>
                         </View>
-                        <View style={styles.openButton}>
-                          <Ionicons name="chevron-forward" size={18} color={garageColors.goldLight} />
+                        <View style={styles.cardActionColumn}>
+                          <Pressable
+                            style={styles.removeButton}
+                            onPress={(event) => {
+                              event.stopPropagation();
+                              removeGarageItem(item);
+                            }}
+                            disabled={removingItemId === item.id}
+                            accessibilityRole="button"
+                            accessibilityLabel="Remove from Garage"
+                          >
+                            <Ionicons name="trash-outline" size={14} color={garageColors.goldLight} />
+                            <Text style={styles.removeButtonText}>{removingItemId === item.id ? "Removing" : "Remove"}</Text>
+                          </Pressable>
+                          <View style={styles.openButton}>
+                            <Ionicons name="chevron-forward" size={18} color={garageColors.goldLight} />
+                          </View>
                         </View>
                       </View>
                     </View>
@@ -767,6 +812,12 @@ const styles = StyleSheet.create({
     color: garageColors.text,
     fontWeight: "800",
   },
+  garageMessage: {
+    ...Typography.caption,
+    color: garageColors.success,
+    textAlign: "center",
+    fontWeight: "800",
+  },
   collectionList: {
     gap: 18,
   },
@@ -892,6 +943,26 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 16,
     paddingTop: 2,
+  },
+  cardActionColumn: {
+    alignItems: "flex-end",
+    gap: 9,
+  },
+  removeButton: {
+    minHeight: 32,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    backgroundColor: "rgba(214,158,93,0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(214,158,93,0.22)",
+  },
+  removeButtonText: {
+    ...Typography.caption,
+    color: garageColors.goldLight,
+    fontWeight: "800",
   },
   valueLabel: {
     ...Typography.caption,

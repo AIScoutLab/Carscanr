@@ -1706,6 +1706,7 @@ export default function ScanResultScreen() {
   const [garageSaveState, setGarageSaveState] = useState<"idle" | "saving" | "saved" | "removing">("idle");
   const [savedGarageItemId, setSavedGarageItemId] = useState<string | null>(null);
   const [garageSaveError, setGarageSaveError] = useState<string | null>(null);
+  const [garageSaveMessage, setGarageSaveMessage] = useState<string | null>(null);
   const garageOperationVersionRef = useRef(0);
   const unlockConfirmationOpenRef = useRef(false);
   const unlockSpendInFlightRef = useRef(false);
@@ -1732,6 +1733,7 @@ export default function ScanResultScreen() {
     setGarageSaveState("idle");
     setSavedGarageItemId(null);
     setGarageSaveError(null);
+    setGarageSaveMessage(null);
     Animated.parallel([
       Animated.timing(screenOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
       Animated.timing(screenTranslate, { toValue: 0, duration: 200, useNativeDriver: true }),
@@ -2367,7 +2369,7 @@ export default function ScanResultScreen() {
   const garageSaving = garageSaveState === "saving";
   const garageRemoving = garageSaveState === "removing";
   const garageBusy = garageSaving || garageRemoving;
-  const saveGarageLabel = garageSaved ? "Saved to Garage" : garageRemoving ? "Removing from Garage" : garageSaving ? "Saving to Garage" : "Save to Garage";
+  const saveGarageLabel = garageSaved ? "✓ In Garage" : garageRemoving ? "Removing from Garage" : garageSaving ? "Adding to Garage" : "+ Add to Garage";
   const handlePremiumTeaserAction = (intent: "value" | "listings") => {
     if (isSamplePreviewMode) {
       console.log("[scan-result] SAMPLE_PREVIEW_STATIC_TAPPED", {
@@ -2397,10 +2399,12 @@ export default function ScanResultScreen() {
 
       setGarageSaveState("removing");
       setGarageSaveError(null);
+      setGarageSaveMessage(null);
       try {
         await garageService.deleteItem(savedGarageItemId);
         setSavedGarageItemId(null);
         setGarageSaveState("idle");
+        setGarageSaveMessage("Removed from Garage");
         console.log("[scan-result] GARAGE_UNSAVE_LOCAL_SUCCESS", {
           scanId: normalized?.id ?? null,
           garageItemId: savedGarageItemId,
@@ -2423,6 +2427,8 @@ export default function ScanResultScreen() {
     const estimateVehicleType =
       normalized?.detectedVehicleType === "motorcycle"
         ? "motorcycle"
+        : normalized?.detectedVehicleType === "truck"
+          ? "truck"
         : normalized?.detectedVehicleType === "car"
           ? "car"
           : "";
@@ -2471,6 +2477,7 @@ export default function ScanResultScreen() {
 
     setGarageSaveState("saving");
     setGarageSaveError(null);
+    setGarageSaveMessage(null);
     try {
       const savedItem = await garageService.saveEstimate({
         unlockId: garageUnlockId,
@@ -2491,6 +2498,7 @@ export default function ScanResultScreen() {
       });
       setSavedGarageItemId(savedItem.id);
       setGarageSaveState("saved");
+      setGarageSaveMessage("Added to Garage");
       console.log("[scan-result] GARAGE_SAVE_LOCAL_SUCCESS", {
         scanId: normalized?.id ?? null,
         unlockId: garageUnlockId,
@@ -2526,6 +2534,7 @@ export default function ScanResultScreen() {
           setSavedGarageItemId(savedItem.id);
           setGarageSaveState((current) => (current === "saving" || current === "removing" ? current : "saved"));
           setGarageSaveError(null);
+          setGarageSaveMessage(null);
           return;
         }
         setGarageSaveState((current) => {
@@ -2675,6 +2684,7 @@ export default function ScanResultScreen() {
                   activeOpacity={0.88}
                   accessibilityRole="button"
                   accessibilityLabel={saveGarageLabel}
+                  accessibilityHint={garageSaved ? "Removes this vehicle from Garage" : "Adds this vehicle to Garage"}
                   disabled={garageBusy}
                   onPress={() => {
                     void handleSaveToGarage();
@@ -2698,6 +2708,7 @@ export default function ScanResultScreen() {
                     <Text style={[styles.saveGarageText, garageSaved && styles.saveGarageTextSaved]}>{saveGarageLabel}</Text>
                   </LinearGradient>
                 </TouchableOpacity>
+                {garageSaveMessage ? <Text style={styles.saveGarageMessage}>{garageSaveMessage}</Text> : null}
                 {garageSaveError ? <Text style={styles.saveGarageError}>{garageSaveError}</Text> : null}
               </View>
 
@@ -3107,6 +3118,12 @@ const styles = StyleSheet.create({
     ...Typography.caption,
     color: Colors.danger,
     textAlign: "center",
+  },
+  saveGarageMessage: {
+    ...Typography.caption,
+    color: "#78F2B1",
+    textAlign: "center",
+    fontWeight: "800",
   },
   lockedValueCard: {
     marginHorizontal: 18,

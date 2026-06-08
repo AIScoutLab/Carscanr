@@ -43,7 +43,7 @@ type LocalEstimateGarageItem = {
   id: string;
   vehicleId: string;
   unlockId: string;
-  sourceType: "estimate" | "visual_override";
+  sourceType: "catalog" | "estimate" | "visual_override";
   imageUrl: string;
   notes: string;
   favorite: boolean;
@@ -54,7 +54,7 @@ type LocalEstimateGarageItem = {
     make: string;
     model: string;
     trim?: string;
-    vehicleType?: "car" | "motorcycle" | "";
+    vehicleType?: "car" | "truck" | "motorcycle" | "";
     titleLabel?: string;
     trustedCase?: boolean;
     resultSource?: string;
@@ -341,13 +341,13 @@ export const garageService = {
       },
     });
     const mapped = mapGarageItem(item);
-    mutableGarage = [mapped, ...mutableGarage.filter((entry) => entry.id !== mapped.id)];
+    mutableGarage = [mapped, ...mutableGarage.filter((entry) => entry.id !== mapped.id && entry.vehicleId !== mapped.vehicleId)];
     return mapped;
   },
 
   async saveEstimate(input: {
     unlockId: string;
-    sourceType: "estimate" | "visual_override";
+    sourceType: "catalog" | "estimate" | "visual_override";
     imageUri: string;
     confidence: number | null;
     estimateMeta: {
@@ -355,7 +355,7 @@ export const garageService = {
       make: string;
       model: string;
       trim?: string;
-      vehicleType?: "car" | "motorcycle" | "";
+      vehicleType?: "car" | "truck" | "motorcycle" | "";
       titleLabel?: string;
       trustedCase?: boolean;
       resultSource?: string;

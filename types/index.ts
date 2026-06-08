@@ -191,7 +191,7 @@ export type GarageItem = {
     make: string;
     model: string;
     trim?: string;
-    vehicleType?: "car" | "motorcycle" | "";
+    vehicleType?: "car" | "truck" | "motorcycle" | "";
     titleLabel?: string;
     trustedCase?: boolean;
     resultSource?: string;

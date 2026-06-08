@@ -34,7 +34,7 @@ import { startupPreferences } from "@/services/startupPreferences";
 import { getApiAuthDebug, getLastApiRequestDebug } from "@/services/apiClient";
 import { buildVehicleSoftUnlockId, buildVehicleUnlockId } from "@/services/subscriptionService";
 import { ListingsDebugMeta, VehicleLookupDescriptor, vehicleService } from "@/services/vehicleService";
-import { ValuationResult, VehicleRecord } from "@/types";
+import { GarageItem, ValuationResult, VehicleRecord } from "@/types";
 import { formatCurrency } from "@/lib/utils";
 
 const allDetailTabs = ["Overview", "Specs", "Value", "For Sale", "Photos"] as const;
@@ -1795,8 +1795,13 @@ export default function VehicleDetailScreen() {
   const [estimateSupport, setEstimateSupport] = useState<EstimateSupport | null>(null);
   const [horsepowerSupport, setHorsepowerSupport] = useState<HorsepowerSupport | null>(null);
   const [heroPreviewOpen, setHeroPreviewOpen] = useState(false);
+  const [garageActionState, setGarageActionState] = useState<"idle" | "checking" | "saving" | "saved" | "removing">("checking");
+  const [savedGarageItemId, setSavedGarageItemId] = useState<string | null>(null);
+  const [garageActionMessage, setGarageActionMessage] = useState<string | null>(null);
+  const [garageActionError, setGarageActionError] = useState<string | null>(null);
   const previousConditionRef = useRef<string | null>(null);
   const previousValueRef = useRef<string | null>(null);
+  const garageOperationVersionRef = useRef(0);
   const strongestValuationRef = useRef<ValuationResult>(createEmptyValuation());
   const lastValueRequestKeyRef = useRef<string | null>(null);
   const pendingValueRequestKeyRef = useRef<string | null>(null);
@@ -1970,6 +1975,205 @@ export default function VehicleDetailScreen() {
       ? "High-confidence identification"
       : "Vehicle identification"
     : [resolvedDisplayTrim || null, resolvedDisplayBodyStyle || null].filter(Boolean).join(" • ");
+  const garageSaved = garageActionState === "saved";
+  const garageChecking = garageActionState === "checking";
+  const garageSaving = garageActionState === "saving";
+  const garageRemoving = garageActionState === "removing";
+  const garageBusy = garageChecking || garageSaving || garageRemoving;
+  const garageActionLabel = garageSaved
+    ? "✓ In Garage"
+    : garageRemoving
+      ? "Removing from Garage"
+      : garageSaving
+        ? "Adding to Garage"
+        : garageChecking
+          ? "Checking Garage"
+          : "+ Add to Garage";
+  const findMatchingGarageItem = useCallback(
+    (items: GarageItem[]) => {
+      if (!vehicle) {
+        return null;
+      }
+      const identityIds = new Set(
+        [savedGarageItemId, resolvedUnlockId, vehicle.id, id]
+          .filter((value): value is string => typeof value === "string" && value.trim().length > 0),
+      );
+      return (
+        items.find((item) =>
+          identityIds.has(item.id) ||
+          identityIds.has(item.vehicleId) ||
+          (typeof item.unlockId === "string" && identityIds.has(item.unlockId)) ||
+          (item.sourceType === "catalog" && item.vehicleId === vehicle.id),
+        ) ?? null
+      );
+    },
+    [id, resolvedUnlockId, savedGarageItemId, vehicle],
+  );
+  const buildGarageVehicleSnapshot = useCallback((): VehicleRecord | null => {
+    if (!vehicle) {
+      return null;
+    }
+    const heroImage = resolvedImageUri && resolvedImageUri.trim().length > 0
+      ? resolvedImageUri
+      : typeof vehicle.heroImage === "string"
+        ? vehicle.heroImage
+        : "";
+    return {
+      ...vehicle,
+      id: resolvedUnlockId ?? vehicle.id,
+      year: vehicle.year || Number.parseInt(finalDisplayIdentity.yearLabel, 10) || 0,
+      make: finalDisplayIdentity.make || vehicle.make,
+      model: finalDisplayIdentity.model || vehicle.model || "Vehicle",
+      trim: resolvedDisplayTrim || vehicle.trim || "",
+      bodyStyle: resolvedDisplayBodyStyle || vehicle.bodyStyle || "",
+      heroImage,
+      overview: `${resolvedDisplayTitle || "Vehicle"} saved from your Garage.`,
+      valuation: vehicle.valuation,
+      listings: vehicle.listings ?? [],
+    };
+  }, [
+    finalDisplayIdentity.make,
+    finalDisplayIdentity.model,
+    finalDisplayIdentity.yearLabel,
+    resolvedDisplayBodyStyle,
+    resolvedDisplayTitle,
+    resolvedDisplayTrim,
+    resolvedImageUri,
+    resolvedUnlockId,
+    vehicle,
+  ]);
+  const saveVehicleToGarage = useCallback(async () => {
+    if (!vehicle || garageBusy) {
+      return;
+    }
+    garageOperationVersionRef.current += 1;
+    setGarageActionState("saving");
+    setGarageActionError(null);
+    setGarageActionMessage(null);
+    try {
+      const existing = findMatchingGarageItem(await garageService.list());
+      if (existing) {
+        setSavedGarageItemId(existing.id);
+        setGarageActionState("saved");
+        setGarageActionMessage("Added to Garage");
+        return;
+      }
+
+      const snapshot = buildGarageVehicleSnapshot();
+      if (!snapshot) {
+        throw new Error("Vehicle snapshot unavailable.");
+      }
+      const heroImage = typeof snapshot.heroImage === "string" ? snapshot.heroImage : "";
+      const token = await authService.getAccessToken().catch(() => null);
+      const canUseSyncedCatalogGarage = Boolean(token && !isEstimateMode && isRealVehicleLookupId(vehicle.id));
+      const savedItem = canUseSyncedCatalogGarage
+        ? await garageService.save(vehicle.id, heroImage)
+        : await garageService.saveEstimate({
+            unlockId: resolvedUnlockId ?? vehicle.id,
+            sourceType: !isEstimateMode ? "catalog" : resultSource === "visual_override" ? "visual_override" : "estimate",
+            imageUri: heroImage,
+            confidence: Number.isFinite(Number.parseFloat(typeof confidence === "string" ? confidence : ""))
+              ? Number.parseFloat(typeof confidence === "string" ? confidence : "")
+              : null,
+            estimateMeta: {
+              year: snapshot.year,
+              make: snapshot.make,
+              model: snapshot.model,
+              trim: snapshot.trim,
+              vehicleType: snapshot.vehicleType ?? "",
+              titleLabel: resolvedDisplayTitle,
+              trustedCase: trustedResult,
+              resultSource: typeof resultSource === "string" ? resultSource : isEstimateMode ? "estimate" : "manual_search",
+            },
+            vehicle: snapshot,
+          });
+      setSavedGarageItemId(savedItem.id);
+      setGarageActionState("saved");
+      setGarageActionMessage("Added to Garage");
+      console.log("[vehicle-detail] GARAGE_SAVE_SUCCESS", {
+        routeId: id,
+        vehicleId: vehicle.id,
+        garageItemId: savedItem.id,
+        sourceType: savedItem.sourceType ?? (canUseSyncedCatalogGarage ? "catalog" : "estimate"),
+        providerCall: false,
+        unlockConsumed: false,
+      });
+    } catch (err) {
+      console.log("[vehicle-detail] GARAGE_SAVE_FAILED", err);
+      setGarageActionState("idle");
+      setGarageActionError("Could not add to Garage. Try again.");
+    }
+  }, [
+    buildGarageVehicleSnapshot,
+    confidence,
+    findMatchingGarageItem,
+    garageBusy,
+    id,
+    isEstimateMode,
+    resolvedDisplayTitle,
+    resolvedUnlockId,
+    resultSource,
+    trustedResult,
+    vehicle,
+  ]);
+  const removeVehicleFromGarage = useCallback(async () => {
+    if (garageBusy) {
+      return;
+    }
+    const currentSavedItemId = savedGarageItemId;
+    const removeSavedItem = async (garageItemId: string) => {
+      garageOperationVersionRef.current += 1;
+      setGarageActionState("removing");
+      setGarageActionError(null);
+      setGarageActionMessage(null);
+      try {
+        await garageService.deleteItem(garageItemId);
+        setSavedGarageItemId(null);
+        setGarageActionState("idle");
+        setGarageActionMessage("Removed from Garage");
+        console.log("[vehicle-detail] GARAGE_REMOVE_SUCCESS", {
+          routeId: id,
+          garageItemId,
+          providerCall: false,
+          unlockConsumed: false,
+        });
+      } catch (err) {
+        console.log("[vehicle-detail] GARAGE_REMOVE_FAILED", err);
+        setGarageActionState("saved");
+        setGarageActionError("Could not remove from Garage. Try again.");
+      }
+    };
+
+    if (currentSavedItemId) {
+      Alert.alert("Remove from Garage?", "This vehicle will be removed from your Garage.", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Remove from Garage", style: "destructive", onPress: () => void removeSavedItem(currentSavedItemId) },
+      ]);
+      return;
+    }
+
+    const existing = findMatchingGarageItem(await garageService.list());
+    if (existing) {
+      setSavedGarageItemId(existing.id);
+      Alert.alert("Remove from Garage?", "This vehicle will be removed from your Garage.", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Remove from Garage", style: "destructive", onPress: () => void removeSavedItem(existing.id) },
+      ]);
+      return;
+    }
+
+    setGarageActionState("idle");
+  }, [findMatchingGarageItem, garageBusy, id, savedGarageItemId]);
+  const handleGarageAction = useCallback(() => {
+    if (garageBusy) {
+      return;
+    }
+    if (garageSaved) {
+      void removeVehicleFromGarage();
+      return;
+    }
+    void saveVehicleToGarage();
+  }, [garageBusy, garageSaved, removeVehicleFromGarage, saveVehicleToGarage]);
 
   const summaryChips = useMemo(() => {
     const chips = [
@@ -3361,8 +3565,51 @@ export default function VehicleDetailScreen() {
     setZipCode("");
     setZipSource("blank");
     setMarketZipInitialized(false);
+    setGarageActionState("checking");
+    setSavedGarageItemId(null);
+    setGarageActionMessage(null);
+    setGarageActionError(null);
     setTab(initialRouteTab ?? "Overview");
   }, [id, initialRouteTab, scanId]);
+
+  useEffect(() => {
+    if (!vehicle) {
+      setGarageActionState("checking");
+      setSavedGarageItemId(null);
+      return;
+    }
+
+    let cancelled = false;
+    const lookupVersion = garageOperationVersionRef.current;
+    setGarageActionState((current) => (current === "saving" || current === "removing" ? current : "checking"));
+    garageService
+      .list()
+      .then((items) => {
+        if (cancelled || lookupVersion !== garageOperationVersionRef.current) {
+          return;
+        }
+        const savedItem = findMatchingGarageItem(items);
+        if (savedItem) {
+          setSavedGarageItemId(savedItem.id);
+          setGarageActionState("saved");
+          setGarageActionError(null);
+          return;
+        }
+        setSavedGarageItemId(null);
+        setGarageActionState((current) => (current === "saving" || current === "removing" ? current : "idle"));
+      })
+      .catch((err) => {
+        if (cancelled || lookupVersion !== garageOperationVersionRef.current) {
+          return;
+        }
+        console.log("[vehicle-detail] GARAGE_STATE_LOOKUP_FAILED", err);
+        setGarageActionState((current) => (current === "saving" || current === "removing" || current === "saved" ? current : "idle"));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [findMatchingGarageItem, resolvedUnlockId, vehicle]);
 
   useEffect(() => {
     let active = true;
@@ -5260,6 +5507,25 @@ export default function VehicleDetailScreen() {
           </View>
           {garageSource === "1" || reopenedSource === "1" ? <Text style={styles.unlockStatusMeta}>Saved</Text> : null}
         </View>
+        <View style={styles.garageActionBlock}>
+          <Pressable
+            style={[styles.garageActionButton, garageSaved && styles.garageActionButtonSaved, garageBusy && styles.garageActionButtonBusy]}
+            onPress={handleGarageAction}
+            disabled={garageBusy}
+            accessibilityRole="button"
+            accessibilityLabel={garageActionLabel}
+            accessibilityHint={garageSaved ? "Removes this vehicle from Garage" : "Adds this vehicle to Garage"}
+          >
+            <Ionicons
+              name={garageSaved ? "checkmark" : garageBusy ? "time-outline" : "add"}
+              size={18}
+              color={garageSaved ? "#78F2B1" : "#E7B97F"}
+            />
+            <Text style={[styles.garageActionText, garageSaved && styles.garageActionTextSaved]}>{garageActionLabel}</Text>
+          </Pressable>
+          {garageActionMessage ? <Text style={styles.garageActionMessage}>{garageActionMessage}</Text> : null}
+          {garageActionError ? <Text style={styles.garageActionError}>{garageActionError}</Text> : null}
+        </View>
         {feedbackMessage && !hasFullAccess ? <Text style={styles.feedbackNotice}>{feedbackMessage}</Text> : null}
         {errorMessage ? <Text style={styles.errorNotice}>{errorMessage}</Text> : null}
         <DetailSectionNav activeTab={tab} onChange={setTab} />
@@ -6109,6 +6375,47 @@ const styles = StyleSheet.create({
     color: "#8F96A3",
     textTransform: "uppercase",
     letterSpacing: 0.8,
+  },
+  garageActionBlock: {
+    gap: 7,
+  },
+  garageActionButton: {
+    minHeight: 52,
+    borderRadius: 16,
+    paddingHorizontal: 17,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 9,
+    backgroundColor: "rgba(31, 24, 19, 0.72)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 163, 107, 0.32)",
+  },
+  garageActionButtonSaved: {
+    backgroundColor: "rgba(15, 29, 20, 0.88)",
+    borderColor: "rgba(120,242,177,0.28)",
+  },
+  garageActionButtonBusy: {
+    opacity: 0.72,
+  },
+  garageActionText: {
+    ...Typography.bodyStrong,
+    color: "#F5F3EE",
+    fontWeight: "900",
+  },
+  garageActionTextSaved: {
+    color: "#D7FFE7",
+  },
+  garageActionMessage: {
+    ...Typography.caption,
+    color: "#78F2B1",
+    textAlign: "center",
+    fontWeight: "800",
+  },
+  garageActionError: {
+    ...Typography.caption,
+    color: Colors.danger,
+    textAlign: "center",
   },
   detailStatusCard: {
     borderRadius: 20,
