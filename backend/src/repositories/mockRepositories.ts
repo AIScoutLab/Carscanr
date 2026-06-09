@@ -778,6 +778,21 @@ export class MockRevenueCatEventsRepository implements RevenueCatEventsRepositor
     );
   }
 
+  async findProcessedSubscriptionGrantByAppUserId(input: {
+    userId: string;
+    appUserId: string;
+  }): Promise<RevenueCatEventRecord | null> {
+    return (
+      db.revenueCatEvents.find(
+        (event) =>
+          event.userId === input.userId &&
+          event.appUserId === input.appUserId &&
+          event.processed &&
+          event.processedAction === "pro_granted",
+      ) ?? null
+    );
+  }
+
   async create(record: RevenueCatEventRecord): Promise<RevenueCatEventRecord> {
     const existing = await this.findById(record.id);
     if (existing) {

@@ -206,7 +206,7 @@ export type GarageItem = {
 export type UserPlan = "free" | "pro" | "pro_monthly" | "pro_yearly";
 
 export type BillingProvider = "storekit" | "revenuecat" | "backend" | "placeholder";
-export type EntitlementSyncState = "none" | "revenuecat_active_backend_pending";
+export type EntitlementSyncState = "none" | "revenuecat_active_backend_pending" | "revenuecat_active_backend_mismatch";
 
 export type PurchaseOptionKind = "annual" | "monthly" | "unlock_pack" | "other";
 
@@ -268,6 +268,14 @@ export type SubscriptionVerifyPayload = {
   productId: string;
   receiptData: string;
   accessToken?: string;
+  revenueCatIdentity?: {
+    currentAppUserId?: string | null;
+    originalAppUserId?: string | null;
+    aliases?: string[];
+    activeEntitlementIds?: string[];
+    activeProductIds?: string[];
+    activeSubscriptionIds?: string[];
+  } | null;
 };
 
 export type SubscriptionActionResult = {

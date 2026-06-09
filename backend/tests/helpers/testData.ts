@@ -428,6 +428,17 @@ export function createTestRepositories(seed?: {
           ) ?? null
         );
       },
+      async findProcessedSubscriptionGrantByAppUserId(input) {
+        return (
+          state.revenueCatEvents.find(
+            (event) =>
+              event.userId === input.userId &&
+              event.appUserId === input.appUserId &&
+              event.processed &&
+              event.processedAction === "pro_granted",
+          ) ?? null
+        );
+      },
       async create(record) {
         const existing = state.revenueCatEvents.find((event) => event.id === record.id);
         if (existing) {

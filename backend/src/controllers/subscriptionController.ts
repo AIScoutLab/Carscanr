@@ -11,6 +11,7 @@ export class SubscriptionController {
       platform: req.body.platform,
       receiptData: req.body.receiptData,
       productId: req.body.productId,
+      revenueCatIdentity: req.body.revenueCatIdentity,
     });
     req.auth!.plan = result.plan;
     return sendSuccess(res, result);

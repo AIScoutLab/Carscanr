@@ -266,10 +266,12 @@ test("subscription service keeps backend authoritative over RevenueCat entitleme
   assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides/);
   assert.match(serviceSource, /syncRevenueCatActiveSubscriptionToBackend/);
   assert.match(serviceSource, /allowPendingSync/);
-  assert.match(serviceSource, /provider: backendHasPro \? "backend" : showPendingSync \? "revenuecat"/);
-  assert.match(serviceSource, /entitlementSyncState: showPendingSync \? "revenuecat_active_backend_pending" : "none"/);
-  assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(usage, purchase\.snapshot, \{ allowPendingSync: true \}\)/);
+  assert.match(serviceSource, /provider: backendHasPro \? "backend" : showPendingSync \|\| showMismatch \? "revenuecat" : usage\.provider/);
+  assert.match(serviceSource, /productId: backendHasPro \|\| showPendingSync \|\| showMismatch \? snapshot\.activeProductId : usage\.productId \?\? null/);
+  assert.match(serviceSource, /entitlementSyncState: showMismatch \? "revenuecat_active_backend_mismatch" : showPendingSync \? "revenuecat_active_backend_pending" : "none"/);
+  assert.match(serviceSource, /syncFailedReason: getRevenueCatSyncFailureReason\(backendRecord\)/);
   assert.match(subscriptionSource, /return status\?\.entitlementSyncState === "revenuecat_active_backend_pending"/);
+  assert.match(subscriptionSource, /return status\?\.entitlementSyncState === "revenuecat_active_backend_mismatch"/);
   assert.doesNotMatch(serviceSource, /plan:\s*"pro",\s*provider:\s*"revenuecat"/);
   assert.doesNotMatch(serviceSource, /plan:\s*restore\.snapshot\.activeEntitlement\?\.isActive \? "pro"/);
   assert.doesNotMatch(serviceSource, /plan:\s*management\.snapshot\.activeEntitlement\?\.isActive \? "pro"/);
@@ -277,15 +279,43 @@ test("subscription service keeps backend authoritative over RevenueCat entitleme
 
 test("subscription purchases and restore request backend RevenueCat sync before showing active Pro", () => {
   const serviceSource = fs.readFileSync(path.join(process.cwd(), "services/subscriptionService.ts"), "utf8");
+  const purchaseSource = fs.readFileSync(path.join(process.cwd(), "services/purchaseService.ts"), "utf8");
 
   assert.match(serviceSource, /source: "purchase"/);
   assert.match(serviceSource, /source: "restore"/);
   assert.match(serviceSource, /path: "\/api\/subscription\/verify"/);
+  assert.match(serviceSource, /revenueCatIdentity: snapshot\.revenueCatIdentity/);
+  assert.match(purchaseSource, /Purchases\.getAppUserID\(\)/);
+  assert.match(purchaseSource, /originalAppUserId/);
+  assert.match(purchaseSource, /activeEntitlementIds/);
+  assert.match(purchaseSource, /activeProductIds/);
   assert.match(serviceSource, /getBackendSubscriptionStatusOverrides\(backendRecord, purchase\.snapshot\)/);
   assert.match(serviceSource, /getBackendSubscriptionStatusOverrides\(backendRecord, restore\.snapshot\)/);
   assert.match(serviceSource, /backendRecord && isProPlan\(backendRecord\.plan\) && backendRecord\.status === "active"/);
-  assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(usage, purchase\.snapshot, \{ allowPendingSync: true \}\)/);
-  assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(usage, restore\.snapshot, \{ allowPendingSync: true \}\)/);
+  assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(\s*usage,\s*purchase\.snapshot,\s*\{\s*allowPendingSync: true,\s*syncFailedReason: getRevenueCatSyncFailureReason\(backendRecord\),\s*\}/);
+  assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(\s*usage,\s*restore\.snapshot,\s*\{\s*allowPendingSync: true,\s*syncFailedReason: getRevenueCatSyncFailureReason\(backendRecord\),\s*\}/);
+});
+
+test("backend RevenueCat identity mismatch remains non-Pro and avoids permanent local grant", () => {
+  const resolved = resolveProfileAccessState(
+    status({
+      plan: "free",
+      provider: "revenuecat",
+      productId: "carscanr.pro.monthly",
+      renewalLabel: "Restore detected a RevenueCat subscription, but backend identity verification could not link it to this account.",
+      isActive: false,
+      entitlementSyncState: "revenuecat_active_backend_mismatch",
+      purchaseAvailabilityState: "ready",
+      purchaseAvailable: true,
+    }),
+  );
+
+  assert.equal(resolved.mode, "free");
+  assert.equal(resolved.hasProEntitlement, false);
+  assert.equal(resolved.planLabel, "Restore needs support");
+  assert.equal(resolved.showUpgradeOptions, false);
+  assert.equal(resolved.showPaywallCard, false);
+  assert.equal(renderedText(resolved).includes("different purchase identity"), true);
 });
 
 test("RevenueCat active with backend free triggers one backend sync attempt on status refresh", () => {
@@ -296,7 +326,7 @@ test("RevenueCat active with backend free triggers one backend sync attempt on s
   assert.match(serviceSource, /source: "status_refresh"/);
   assert.match(serviceSource, /lastRevenueCatBackendSyncAttemptKey === attemptKey/);
   assert.match(serviceSource, /!isProPlan\(usage\.plan\) && purchaseSnapshot\.activeEntitlement\?\.isActive && purchaseSnapshot\.activeProductId/);
-  assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(usage, purchaseSnapshot, \{ allowPendingSync: true \}\)/);
+  assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(\s*usage,\s*purchaseSnapshot,\s*\{\s*allowPendingSync: true,\s*syncFailedReason: getRevenueCatSyncFailureReason\(backendRecord\),\s*\}/);
 });
 
 test("foregrounding the app refreshes subscription status for entitlement repair", () => {

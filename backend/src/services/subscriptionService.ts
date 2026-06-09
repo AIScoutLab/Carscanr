@@ -67,6 +67,9 @@ type RevenueCatSubscriberSubscription = {
 type RevenueCatSubscriberResponse = {
   subscriber?: {
     original_app_user_id?: unknown;
+    aliases?: unknown;
+    subscriber_aliases?: unknown;
+    all_app_user_ids?: unknown;
     entitlements?: Record<string, RevenueCatSubscriberEntitlement>;
     subscriptions?: Record<string, RevenueCatSubscriberSubscription>;
   };
@@ -77,7 +80,26 @@ type RevenueCatSubscriptionSyncDeniedReason =
   | "subscriber_missing"
   | "subscriber_mismatch"
   | "no_active_pro_entitlement"
-  | "active_product_not_allowed";
+  | "active_product_not_allowed"
+  | "revenuecat_id_mismatch"
+  | "revenuecat_orphaned_subscription";
+
+type RevenueCatSubscriptionSyncIdentityInput = {
+  currentAppUserId?: unknown;
+  originalAppUserId?: unknown;
+  aliases?: unknown;
+  activeEntitlementIds?: unknown;
+  activeProductIds?: unknown;
+  activeSubscriptionIds?: unknown;
+};
+
+type RevenueCatSubscriberLookupResult = {
+  lookupId: string;
+  payload: RevenueCatSubscriberResponse;
+  subscriber: RevenueCatSubscriberResponse["subscriber"] | null;
+  activePro: ReturnType<typeof resolveActiveProEntitlement> | null;
+  aliasIds: string[];
+};
 
 type RevenueCatSubscriptionSyncResult =
   | {
@@ -93,6 +115,13 @@ type RevenueCatSubscriptionSyncResult =
       record: SubscriptionRecord;
     };
 
+type SubscriptionVerifyRecord = SubscriptionRecord & {
+  revenueCatSync?: {
+    status: "granted" | "denied";
+    reason?: RevenueCatSubscriptionSyncDeniedReason;
+  };
+};
+
 type RevenueCatSubscriberFetcher = (input: {
   appUserId: string;
   signal: AbortSignal;
@@ -103,6 +132,27 @@ let revenueCatRestApiKeyOverride: string | null = null;
 
 function asString(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function asStringList(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map(asString).filter((candidate): candidate is string => Boolean(candidate));
+}
+
+function uniqueStrings(values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const normalized = asString(value);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
 }
 
 function asNumber(value: unknown) {
@@ -222,6 +272,44 @@ function getRevenueCatAliases(event: RevenueCatWebhookEvent) {
   return [];
 }
 
+function getRevenueCatIdentityCandidates(input?: RevenueCatSubscriptionSyncIdentityInput | null) {
+  if (!input || typeof input !== "object") {
+    return [];
+  }
+  return uniqueStrings([
+    asString(input.currentAppUserId),
+    asString(input.originalAppUserId),
+    ...asStringList(input.aliases),
+  ]);
+}
+
+function collectRevenueCatSubscriberAliases(subscriber: RevenueCatSubscriberResponse["subscriber"] | null) {
+  if (!subscriber) {
+    return [];
+  }
+  return uniqueStrings([
+    asString(subscriber.original_app_user_id),
+    ...asStringList(subscriber.aliases),
+    ...asStringList(subscriber.subscriber_aliases),
+    ...asStringList(subscriber.all_app_user_ids),
+  ]);
+}
+
+function subscriberHasAliasForUser(subscriber: RevenueCatSubscriberResponse["subscriber"] | null, userId: string) {
+  return collectRevenueCatSubscriberAliases(subscriber).includes(userId);
+}
+
+function lookupsResolveToSameRevenueCatCustomer(left: RevenueCatSubscriberLookupResult, right: RevenueCatSubscriberLookupResult) {
+  const leftIds = new Set([left.lookupId, ...left.aliasIds]);
+  const rightIds = new Set([right.lookupId, ...right.aliasIds]);
+  for (const id of leftIds) {
+    if (rightIds.has(id)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function summarizeEvent(event: RevenueCatWebhookEvent) {
   return {
     type: asString(event.type),
@@ -232,6 +320,7 @@ function summarizeEvent(event: RevenueCatWebhookEvent) {
     eventTimestampMs: asNumber(event.event_timestamp_ms),
     purchasedAtMs: asNumber(event.purchased_at_ms),
     expirationAtMs: asNumber(event.expiration_at_ms),
+    aliases: getRevenueCatAliases(event),
   };
 }
 
@@ -268,7 +357,25 @@ function getRevenueCatSubscriberFetcher() {
   return revenueCatSubscriberFetcherOverride ?? defaultRevenueCatSubscriberFetcher;
 }
 
-function resolveActiveProEntitlement(subscriber: RevenueCatSubscriberResponse["subscriber"]) {
+async function lookupRevenueCatSubscriber(input: {
+  appUserId: string;
+  signal: AbortSignal;
+}): Promise<RevenueCatSubscriberLookupResult> {
+  const payload = await getRevenueCatSubscriberFetcher()({
+    appUserId: input.appUserId,
+    signal: input.signal,
+  });
+  const subscriber = payload.subscriber ?? null;
+  return {
+    lookupId: input.appUserId,
+    payload,
+    subscriber,
+    activePro: resolveActiveProEntitlement(subscriber),
+    aliasIds: collectRevenueCatSubscriberAliases(subscriber),
+  };
+}
+
+function resolveActiveProEntitlement(subscriber: RevenueCatSubscriberResponse["subscriber"] | null) {
   const entitlementId = env.REVENUECAT_PRO_ENTITLEMENT_ID;
   const entitlement = subscriber?.entitlements?.[entitlementId] ?? null;
   if (!entitlement) {
@@ -291,7 +398,7 @@ function resolveActiveProEntitlement(subscriber: RevenueCatSubscriberResponse["s
 }
 
 function hasAllowedActiveSubscriptionForEntitlementProduct(
-  subscriber: RevenueCatSubscriberResponse["subscriber"],
+  subscriber: RevenueCatSubscriberResponse["subscriber"] | null,
   productId: string,
 ) {
   const subscription = subscriber?.subscriptions?.[productId];
@@ -356,12 +463,20 @@ export class SubscriptionService {
     platform: "ios";
     receiptData: string;
     productId: string;
-  }): Promise<SubscriptionRecord> {
+    revenueCatIdentity?: RevenueCatSubscriptionSyncIdentityInput | null;
+  }): Promise<SubscriptionVerifyRecord> {
     const result = await this.syncRevenueCatSubscription(input.userId, {
       requestedProductId: input.productId,
       platform: input.platform,
+      revenueCatIdentity: input.revenueCatIdentity ?? null,
     });
-    return result.record;
+    return {
+      ...result.record,
+      revenueCatSync:
+        result.action === "granted"
+          ? { status: "granted" }
+          : { status: "denied", reason: result.reason },
+    };
   }
 
   async cancelSubscription(userId: string): Promise<SubscriptionRecord> {
@@ -369,15 +484,8 @@ export class SubscriptionService {
   }
 
   private async getDeniedSubscriptionSyncRecord(userId: string, reason: RevenueCatSubscriptionSyncDeniedReason) {
-    if (reason === "configuration_missing") {
-      return this.getCurrentSubscription(userId);
-    }
-
-    const active = await repositories.subscriptions.findActiveByUser(userId);
-    if (active && isProPlan(active.plan)) {
-      return repositories.subscriptions.replaceActiveForUser(buildFreeSubscription(userId));
-    }
-    return active ?? buildFreeSubscription(userId);
+    void reason;
+    return this.getCurrentSubscription(userId);
   }
 
   private async syncRevenueCatSubscription(
@@ -385,8 +493,10 @@ export class SubscriptionService {
     context: {
       requestedProductId?: string | null;
       platform?: string | null;
+      revenueCatIdentity?: RevenueCatSubscriptionSyncIdentityInput | null;
     } = {},
   ): Promise<RevenueCatSubscriptionSyncResult> {
+    const candidateAppUserIds = getRevenueCatIdentityCandidates(context.revenueCatIdentity).filter((candidate) => candidate !== userId);
     logger.info(
       {
         userId,
@@ -394,6 +504,9 @@ export class SubscriptionService {
         platform: context.platform ?? null,
         entitlementId: env.REVENUECAT_PRO_ENTITLEMENT_ID,
         revenueCatRestApiConfigured: Boolean(getRevenueCatRestApiKey()),
+        candidateAppUserIds,
+        activeEntitlementIds: asStringList(context.revenueCatIdentity?.activeEntitlementIds),
+        activeProductIds: asStringList(context.revenueCatIdentity?.activeProductIds ?? context.revenueCatIdentity?.activeSubscriptionIds),
       },
       "REVENUECAT_SUBSCRIPTION_SYNC_STARTED",
     );
@@ -413,9 +526,9 @@ export class SubscriptionService {
 
     const abortController = new AbortController();
     const timeout = setTimeout(() => abortController.abort(), REVENUECAT_SUBSCRIBER_REQUEST_TIMEOUT_MS);
-    let payload: RevenueCatSubscriberResponse;
+    let authLookup: RevenueCatSubscriberLookupResult;
     try {
-      payload = await getRevenueCatSubscriberFetcher()({
+      authLookup = await lookupRevenueCatSubscriber({
         appUserId: userId,
         signal: abortController.signal,
       });
@@ -435,55 +548,96 @@ export class SubscriptionService {
       clearTimeout(timeout);
     }
 
-    const subscriber = payload.subscriber;
-    if (!subscriber) {
-      const record = await this.getDeniedSubscriptionSyncRecord(userId, "subscriber_missing");
-      logger.warn({ userId, reason: "subscriber_missing" }, "REVENUECAT_SUBSCRIPTION_SYNC_DENIED");
-      return { action: "denied", reason: "subscriber_missing", record };
+    if (authLookup.activePro && hasAllowedActiveSubscriptionForEntitlementProduct(authLookup.subscriber, authLookup.activePro.productId)) {
+      return this.grantRevenueCatSyncedPro(userId, authLookup.activePro, {
+        lookupId: authLookup.lookupId,
+        proof: "auth_user_id_lookup",
+      });
     }
 
-    const originalAppUserId = asString(subscriber.original_app_user_id);
-    if (!isAllowedRevenueCatOriginalAppUserId(originalAppUserId, userId)) {
-      const record = await this.getDeniedSubscriptionSyncRecord(userId, "subscriber_mismatch");
+    const activeCandidateLookups: RevenueCatSubscriberLookupResult[] = [];
+    for (const candidateAppUserId of candidateAppUserIds) {
+      let candidateLookup: RevenueCatSubscriberLookupResult;
+      try {
+        candidateLookup = await lookupRevenueCatSubscriber({
+          appUserId: candidateAppUserId,
+          signal: abortController.signal,
+        });
+      } catch (error) {
+        logger.warn(
+          {
+            userId,
+            candidateAppUserId,
+            message: error instanceof Error ? error.message : String(error),
+          },
+          "REVENUECAT_SUBSCRIPTION_SYNC_CANDIDATE_LOOKUP_FAILED",
+        );
+        continue;
+      }
+
+      if (!candidateLookup.activePro) {
+        continue;
+      }
+
+      activeCandidateLookups.push(candidateLookup);
+      if (!hasAllowedActiveSubscriptionForEntitlementProduct(candidateLookup.subscriber, candidateLookup.activePro.productId)) {
+        continue;
+      }
+
+      const trustedHistory = await repositories.revenueCatEvents.findProcessedSubscriptionGrantByAppUserId({
+        userId,
+        appUserId: candidateAppUserId,
+      });
+      const proof = subscriberHasAliasForUser(candidateLookup.subscriber, userId)
+        ? "candidate_alias_contains_auth_user"
+        : lookupsResolveToSameRevenueCatCustomer(authLookup, candidateLookup)
+          ? "auth_and_candidate_same_revenuecat_customer"
+          : trustedHistory
+            ? "trusted_webhook_history"
+            : null;
+
+      if (proof) {
+        return this.grantRevenueCatSyncedPro(userId, candidateLookup.activePro, {
+          lookupId: candidateLookup.lookupId,
+          proof,
+        });
+      }
+    }
+
+    if (activeCandidateLookups.length > 0) {
+      const record = await this.getDeniedSubscriptionSyncRecord(userId, "revenuecat_orphaned_subscription");
       logger.warn(
         {
           userId,
-          originalAppUserId,
-          reason: "subscriber_mismatch",
+          reason: "revenuecat_orphaned_subscription",
+          candidateAppUserIds: activeCandidateLookups.map((lookup) => lookup.lookupId),
+          activeProductIds: activeCandidateLookups.map((lookup) => lookup.activePro?.productId).filter(Boolean),
         },
         "REVENUECAT_SUBSCRIPTION_SYNC_DENIED",
       );
-      return { action: "denied", reason: "subscriber_mismatch", record };
+      return { action: "denied", reason: "revenuecat_orphaned_subscription", record };
     }
 
-    const activePro = resolveActiveProEntitlement(subscriber);
-    if (!activePro) {
-      const record = await this.getDeniedSubscriptionSyncRecord(userId, "no_active_pro_entitlement");
-      logger.warn(
-        {
-          userId,
-          entitlementId: env.REVENUECAT_PRO_ENTITLEMENT_ID,
-          activeEntitlementIds: Object.keys(subscriber.entitlements ?? {}),
-          reason: "no_active_pro_entitlement",
-        },
-        "REVENUECAT_SUBSCRIPTION_SYNC_DENIED",
-      );
-      return { action: "denied", reason: "no_active_pro_entitlement", record };
-    }
+    const reason = authLookup.subscriber ? "no_active_pro_entitlement" : "subscriber_missing";
+    const record = await this.getDeniedSubscriptionSyncRecord(userId, reason);
+    logger.warn(
+      {
+        userId,
+        entitlementId: env.REVENUECAT_PRO_ENTITLEMENT_ID,
+        activeEntitlementIds: Object.keys(authLookup.subscriber?.entitlements ?? {}),
+        reason,
+        candidateAppUserIds,
+      },
+      "REVENUECAT_SUBSCRIPTION_SYNC_DENIED",
+    );
+    return { action: "denied", reason, record };
+  }
 
-    if (!hasAllowedActiveSubscriptionForEntitlementProduct(subscriber, activePro.productId)) {
-      const record = await this.getDeniedSubscriptionSyncRecord(userId, "active_product_not_allowed");
-      logger.warn(
-        {
-          userId,
-          productId: activePro.productId,
-          reason: "active_product_not_allowed",
-        },
-        "REVENUECAT_SUBSCRIPTION_SYNC_DENIED",
-      );
-      return { action: "denied", reason: "active_product_not_allowed", record };
-    }
-
+  private async grantRevenueCatSyncedPro(
+    userId: string,
+    activePro: NonNullable<ReturnType<typeof resolveActiveProEntitlement>>,
+    source: { lookupId: string; proof: string },
+  ): Promise<RevenueCatSubscriptionSyncResult> {
     const record: SubscriptionRecord = {
       id: crypto.randomUUID(),
       userId,
@@ -501,6 +655,8 @@ export class SubscriptionService {
         productId: saved.productId ?? null,
         expiresAt: saved.expiresAt ?? null,
         source: "revenuecat/server_sync",
+        revenueCatLookupId: source.lookupId,
+        proof: source.proof,
       },
       "REVENUECAT_SUBSCRIPTION_SYNC_RESULT",
     );

@@ -2286,6 +2286,23 @@ export class SupabaseRevenueCatEventsRepository implements RevenueCatEventsRepos
     return data ? mapRevenueCatEventRow(data) : null;
   }
 
+  async findProcessedSubscriptionGrantByAppUserId(input: {
+    userId: string;
+    appUserId: string;
+  }): Promise<RevenueCatEventRecord | null> {
+    const { data, error } = await this.client
+      .from("revenuecat_events")
+      .select("*")
+      .eq("user_id", input.userId)
+      .eq("app_user_id", input.appUserId)
+      .eq("processed", true)
+      .eq("processed_action", "pro_granted")
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load RevenueCat subscription app user.", error);
+    return data ? mapRevenueCatEventRow(data) : null;
+  }
+
   async create(record: RevenueCatEventRecord): Promise<RevenueCatEventRecord> {
     const { data, error } = await this.client
       .from("revenuecat_events")

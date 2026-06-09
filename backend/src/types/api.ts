@@ -156,6 +156,17 @@ export const subscriptionVerifySchema = z.object({
   platform: z.enum(["ios"]),
   receiptData: z.string().min(10),
   productId: z.string().min(3),
+  revenueCatIdentity: z
+    .object({
+      currentAppUserId: z.string().min(1).max(200).optional().nullable(),
+      originalAppUserId: z.string().min(1).max(200).optional().nullable(),
+      aliases: z.array(z.string().min(1).max(200)).max(10).optional().default([]),
+      activeEntitlementIds: z.array(z.string().min(1).max(200)).max(10).optional().default([]),
+      activeProductIds: z.array(z.string().min(1).max(200)).max(10).optional().default([]),
+      activeSubscriptionIds: z.array(z.string().min(1).max(200)).max(10).optional().default([]),
+    })
+    .optional()
+    .nullable(),
 });
 
 export const unlockUseSchema = requireVehicleLookup(

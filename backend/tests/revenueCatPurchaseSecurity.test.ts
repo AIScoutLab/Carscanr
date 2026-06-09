@@ -79,11 +79,13 @@ function revenueCatSubscriberPayload(input: {
   productId?: string | null;
   expiresAt?: string | null;
   entitlementId?: string;
+  aliases?: string[];
 }) {
   const productId = Object.prototype.hasOwnProperty.call(input, "productId") ? input.productId : LIVE_PRODUCT_IDS.monthlyPro;
   return {
     subscriber: {
       original_app_user_id: input.userId ?? SIGNED_IN_USER_ID,
+      aliases: input.aliases ?? [],
       entitlements: productId
         ? {
             [input.entitlementId ?? "Carscanr Pro"]: {
@@ -246,16 +248,21 @@ describe("RevenueCat purchase security", () => {
     assert.equal(state.subscriptions.some((subscription) => subscription.plan !== "free"), false);
   });
 
-  test("server RevenueCat sync does not grant when subscriber belongs to another app user id", async () => {
+  test("server RevenueCat sync grants active Pro under candidate ID when RevenueCat aliases include auth user", async () => {
     const { state, repositories } = createTestRepositories();
     setRepositories(repositories);
     setRevenueCatRestApiKeyForTests("test-revenuecat-rest-key");
-    setRevenueCatSubscriberFetcherForTests(async () =>
-      revenueCatSubscriberPayload({
-        userId: "22222222-2222-4222-8222-222222222222",
+    setRevenueCatSubscriberFetcherForTests(async ({ appUserId }) => {
+      if (appUserId === SIGNED_IN_USER_ID) {
+        return revenueCatSubscriberPayload({ productId: null, aliases: ["guest_purchase_profile"] });
+      }
+      assert.equal(appUserId, "guest_purchase_profile");
+      return revenueCatSubscriberPayload({
+        userId: "guest_purchase_profile",
+        aliases: [SIGNED_IN_USER_ID],
         productId: LIVE_PRODUCT_IDS.monthlyPro,
-      }),
-    );
+      });
+    });
 
     const response = await requestApp({
       method: "POST",
@@ -265,12 +272,112 @@ describe("RevenueCat purchase security", () => {
         platform: "ios",
         productId: LIVE_PRODUCT_IDS.monthlyPro,
         receiptData: "client-data-is-not-proof",
+        revenueCatIdentity: {
+          currentAppUserId: SIGNED_IN_USER_ID,
+          originalAppUserId: "guest_purchase_profile",
+          aliases: ["guest_purchase_profile"],
+          activeProductIds: [LIVE_PRODUCT_IDS.monthlyPro],
+        },
+      },
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.plan, "pro_monthly");
+    assert.equal(body.data.revenueCatSync.status, "granted");
+    assert.equal(state.subscriptions[0].userId, SIGNED_IN_USER_ID);
+  });
+
+  test("server RevenueCat sync grants active Pro under anonymous candidate tied by trusted webhook history", async () => {
+    const anonymousAppUserId = "$RCAnonymousID:active-sandbox-profile";
+    const { state, repositories } = createTestRepositories({
+      revenueCatEvents: [
+        {
+          id: "event-anonymous-aliased-monthly",
+          appUserId: anonymousAppUserId,
+          userId: SIGNED_IN_USER_ID,
+          eventType: "INITIAL_PURCHASE",
+          productId: LIVE_PRODUCT_IDS.monthlyPro,
+          transactionId: "tx-anonymous-aliased-monthly",
+          originalTransactionId: "original-anonymous-aliased-monthly",
+          processed: true,
+          processedAction: "pro_granted",
+          payloadSummary: { aliases: [SIGNED_IN_USER_ID] },
+          createdAt: new Date().toISOString(),
+          processedAt: new Date().toISOString(),
+        },
+      ],
+    });
+    setRepositories(repositories);
+    setRevenueCatRestApiKeyForTests("test-revenuecat-rest-key");
+    setRevenueCatSubscriberFetcherForTests(async ({ appUserId }) => {
+      if (appUserId === SIGNED_IN_USER_ID) {
+        return revenueCatSubscriberPayload({ productId: null });
+      }
+      assert.equal(appUserId, anonymousAppUserId);
+      return revenueCatSubscriberPayload({
+        userId: anonymousAppUserId,
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+      });
+    });
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/subscription/verify",
+      headers: authHeaders(),
+      payload: {
+        platform: "ios",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        receiptData: "client-data-is-not-proof",
+        revenueCatIdentity: {
+          currentAppUserId: SIGNED_IN_USER_ID,
+          originalAppUserId: anonymousAppUserId,
+        },
+      },
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.plan, "pro_monthly");
+    assert.equal(body.data.revenueCatSync.status, "granted");
+    assert.equal(state.subscriptions[0].userId, SIGNED_IN_USER_ID);
+  });
+
+  test("server RevenueCat sync does not grant active Pro under unrelated candidate app user id", async () => {
+    const { state, repositories } = createTestRepositories();
+    setRepositories(repositories);
+    setRevenueCatRestApiKeyForTests("test-revenuecat-rest-key");
+    setRevenueCatSubscriberFetcherForTests(async ({ appUserId }) => {
+      if (appUserId === SIGNED_IN_USER_ID) {
+        return revenueCatSubscriberPayload({ productId: null });
+      }
+      assert.equal(appUserId, "22222222-2222-4222-8222-222222222222");
+      return revenueCatSubscriberPayload({
+        userId: "22222222-2222-4222-8222-222222222222",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+      });
+    });
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/subscription/verify",
+      headers: authHeaders(),
+      payload: {
+        platform: "ios",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        receiptData: "client-data-is-not-proof",
+        revenueCatIdentity: {
+          currentAppUserId: SIGNED_IN_USER_ID,
+          originalAppUserId: "22222222-2222-4222-8222-222222222222",
+        },
       },
     });
     const body = parseJson<any>(response);
 
     assert.equal(response.statusCode, 200);
     assert.equal(body.data.plan, "free");
+    assert.equal(body.data.revenueCatSync.status, "denied");
+    assert.equal(body.data.revenueCatSync.reason, "revenuecat_orphaned_subscription");
     assert.equal(state.subscriptions.some((subscription) => subscription.userId === SIGNED_IN_USER_ID), false);
   });
 
@@ -302,13 +409,63 @@ describe("RevenueCat purchase security", () => {
     assert.equal(state.subscriptions.some((subscription) => subscription.plan !== "free"), false);
   });
 
+  test("server RevenueCat sync does not revoke existing active backend Pro on identity mismatch", async () => {
+    const existingExpiration = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const { state, repositories } = createTestRepositories({
+      subscriptions: [
+        {
+          id: "sub-existing-pro",
+          userId: SIGNED_IN_USER_ID,
+          plan: "pro_monthly",
+          status: "active",
+          productId: LIVE_PRODUCT_IDS.monthlyPro,
+          expiresAt: existingExpiration,
+          verifiedAt: new Date().toISOString(),
+        },
+      ],
+    });
+    setRepositories(repositories);
+    setRevenueCatRestApiKeyForTests("test-revenuecat-rest-key");
+    setRevenueCatSubscriberFetcherForTests(async ({ appUserId }) => {
+      if (appUserId === SIGNED_IN_USER_ID) {
+        return revenueCatSubscriberPayload({ productId: null });
+      }
+      return revenueCatSubscriberPayload({
+        userId: "unrelated-revenuecat-user",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+      });
+    });
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/subscription/verify",
+      headers: authHeaders(),
+      payload: {
+        platform: "ios",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        receiptData: "client-data-is-not-proof",
+        revenueCatIdentity: {
+          originalAppUserId: "unrelated-revenuecat-user",
+        },
+      },
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.plan, "pro_monthly");
+    assert.equal(body.data.status, "active");
+    assert.equal(body.data.revenueCatSync.status, "denied");
+    assert.equal(state.subscriptions.find((subscription) => subscription.id === "sub-existing-pro")?.status, "active");
+  });
+
   test("server RevenueCat sync refreshes existing active subscription row", async () => {
+    const refreshUserId = "33333333-3333-4333-8333-333333333333";
     const refreshedExpiration = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
     const { state, repositories } = createTestRepositories({
       subscriptions: [
         {
           id: "sub-existing",
-          userId: SIGNED_IN_USER_ID,
+          userId: refreshUserId,
           plan: "pro_monthly",
           status: "active",
           productId: LIVE_PRODUCT_IDS.monthlyPro,
@@ -321,6 +478,7 @@ describe("RevenueCat purchase security", () => {
     setRevenueCatRestApiKeyForTests("test-revenuecat-rest-key");
     setRevenueCatSubscriberFetcherForTests(async () =>
       revenueCatSubscriberPayload({
+        userId: refreshUserId,
         productId: LIVE_PRODUCT_IDS.monthlyPro,
         expiresAt: refreshedExpiration,
       }),
@@ -329,7 +487,7 @@ describe("RevenueCat purchase security", () => {
     const response = await requestApp({
       method: "POST",
       url: "/api/subscription/verify",
-      headers: authHeaders(),
+      headers: authHeaders(refreshUserId, "refresh@example.com"),
       payload: {
         platform: "ios",
         productId: LIVE_PRODUCT_IDS.monthlyPro,

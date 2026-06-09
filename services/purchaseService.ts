@@ -17,6 +17,14 @@ type PurchaseSnapshot = {
   activeEntitlement: PurchasesEntitlementInfo | null;
   activeProductId: string | null;
   managementUrl: string | null;
+  revenueCatIdentity: {
+    currentAppUserId: string | null;
+    originalAppUserId: string | null;
+    aliases: string[];
+    activeEntitlementIds: string[];
+    activeProductIds: string[];
+    activeSubscriptionIds: string[];
+  } | null;
 };
 
 type RevenueCatConfigurationFailureReason = "missing_env" | "expo_go_preview" | "configure_failed";
@@ -118,6 +126,42 @@ function logCustomerInfoDiagnostics(context: string, customerInfo: CustomerInfo,
   });
 }
 
+async function getCurrentRevenueCatAppUserId() {
+  try {
+    return await Purchases.getAppUserID();
+  } catch (error) {
+    logRevenueCatDiagnostics("REVENUECAT_APP_USER_ID_FETCH_FAILURE", {
+      error: getErrorDiagnostics(error),
+    });
+    return null;
+  }
+}
+
+function getCustomerInfoStringList(value: unknown) {
+  return Array.isArray(value) ? value.filter((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0) : [];
+}
+
+function buildRevenueCatIdentityDiagnostics(customerInfo: CustomerInfo, currentAppUserId: string | null) {
+  const info = customerInfo as CustomerInfo & {
+    aliases?: unknown;
+    activeSubscriptions?: string[];
+    allPurchasedProductIdentifiers?: string[];
+    originalAppUserId?: string;
+  };
+  const activeEntitlementIds = Object.keys(customerInfo.entitlements.active ?? {});
+  const activeProductIds = activeEntitlementIds
+    .map((entitlementId) => customerInfo.entitlements.active[entitlementId]?.productIdentifier ?? null)
+    .filter((productId): productId is string => Boolean(productId));
+  return {
+    currentAppUserId,
+    originalAppUserId: info.originalAppUserId ?? null,
+    aliases: getCustomerInfoStringList(info.aliases),
+    activeEntitlementIds,
+    activeProductIds,
+    activeSubscriptionIds: getCustomerInfoStringList(info.activeSubscriptions),
+  };
+}
+
 function emptyPurchaseSnapshot(purchaseAvailabilityState: PurchaseAvailabilityState): PurchaseSnapshot {
   return {
     purchaseAvailable: false,
@@ -126,6 +170,7 @@ function emptyPurchaseSnapshot(purchaseAvailabilityState: PurchaseAvailabilitySt
     activeEntitlement: null,
     activeProductId: null,
     managementUrl: null,
+    revenueCatIdentity: null,
   };
 }
 
@@ -442,6 +487,8 @@ export const purchaseService = {
       return emptyPurchaseSnapshot("customer_info_unavailable");
     }
     const activeEntitlement = resolveActiveEntitlement(customerInfo);
+    const currentRevenueCatAppUserId = await getCurrentRevenueCatAppUserId();
+    const revenueCatIdentity = buildRevenueCatIdentityDiagnostics(customerInfo, currentRevenueCatAppUserId);
     logRevenueCatDiagnostics("REVENUECAT_RUNTIME_STATE", {
       state: availableProducts.length > 0 ? "configured" : "offerings_empty",
       offeringsFetchAttempted: true,
@@ -489,6 +536,7 @@ export const purchaseService = {
       activeEntitlement,
       activeProductId: activeEntitlement?.productIdentifier ?? null,
       managementUrl: customerInfo.managementURL,
+      revenueCatIdentity,
     };
   },
 

@@ -66,6 +66,10 @@ function hasPendingRevenueCatProSync(status?: SubscriptionStatus | null) {
   return status?.entitlementSyncState === "revenuecat_active_backend_pending";
 }
 
+function hasMismatchedRevenueCatProSync(status?: SubscriptionStatus | null) {
+  return status?.entitlementSyncState === "revenuecat_active_backend_mismatch";
+}
+
 function isUpgradeOrFreeCopy(label: string) {
   const normalized = label.toLowerCase();
   return (
@@ -127,16 +131,28 @@ export type ProfileAccessState = {
 export function resolveProfileAccessState(status?: SubscriptionStatus | null, isLoading = false): ProfileAccessState {
   const hasProEntitlement = hasAuthoritativeProEntitlement(status);
   const hasPendingProSync = !hasProEntitlement && hasPendingRevenueCatProSync(status);
+  const hasMismatchedProSync = !hasProEntitlement && hasMismatchedRevenueCatProSync(status);
   const purchaseAvailabilityState = status?.purchaseAvailabilityState ?? "not_configured";
   const mode: ProfileAccessState["mode"] = isLoading ? "loading" : hasProEntitlement ? "pro" : "free";
   const qaConfigurationMessage = getPurchaseAvailabilityMessage(purchaseAvailabilityState);
   const primaryProLabel = getProActiveLabel(status);
-  const planLabel = mode === "loading" ? "Checking plan..." : mode === "pro" ? primaryProLabel : hasPendingProSync ? "Pro access syncing" : "Free plan";
+  const planLabel =
+    mode === "loading"
+      ? "Checking plan..."
+      : mode === "pro"
+        ? primaryProLabel
+        : hasMismatchedProSync
+          ? "Restore needs support"
+          : hasPendingProSync
+            ? "Pro access syncing"
+            : "Free plan";
   const renewalLabel =
     mode === "loading"
       ? null
       : mode === "pro"
         ? getProDetailLabel(status, primaryProLabel)
+        : hasMismatchedProSync
+          ? "RevenueCat found Pro, but it is linked to a different purchase identity. Contact support or try Restore Purchases again."
         : hasPendingProSync
           ? "Purchase or restore detected. Backend access has not confirmed Pro yet."
         : qaConfigurationMessage ?? "Free unlocks are available on this account.";
@@ -148,9 +164,9 @@ export function resolveProfileAccessState(status?: SubscriptionStatus | null, is
     planLabel,
     renewalLabel,
     showFreeUnlockUsage: mode === "free",
-    showUpgradeOptions: mode === "free" && !hasPendingProSync,
-    showPaywallCard: mode === "free" && !hasPendingProSync,
-    showPrimaryUpgradeCta: mode === "free" && !hasPendingProSync,
+    showUpgradeOptions: mode === "free" && !hasPendingProSync && !hasMismatchedProSync,
+    showPaywallCard: mode === "free" && !hasPendingProSync && !hasMismatchedProSync,
+    showPrimaryUpgradeCta: mode === "free" && !hasPendingProSync && !hasMismatchedProSync,
     showRestorePurchases: true,
     purchaseAvailabilityState,
   } satisfies ProfileAccessState;
