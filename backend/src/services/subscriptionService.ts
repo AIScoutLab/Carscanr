@@ -19,6 +19,7 @@ const REVENUECAT_PRODUCT_ID_ALIASES = {
 } as const;
 
 const UNLOCK_PACK_CREDITS = 5;
+const REVENUECAT_SUBSCRIBER_REQUEST_TIMEOUT_MS = 10000;
 
 type RevenueCatWebhookEvent = {
   id?: unknown;
@@ -51,6 +52,55 @@ type RevenueCatProcessResult = {
   plan?: UserPlan;
 };
 
+type RevenueCatSubscriberEntitlement = {
+  expires_date?: unknown;
+  product_identifier?: unknown;
+  purchase_date?: unknown;
+};
+
+type RevenueCatSubscriberSubscription = {
+  expires_date?: unknown;
+  product_identifier?: unknown;
+  purchase_date?: unknown;
+};
+
+type RevenueCatSubscriberResponse = {
+  subscriber?: {
+    original_app_user_id?: unknown;
+    entitlements?: Record<string, RevenueCatSubscriberEntitlement>;
+    subscriptions?: Record<string, RevenueCatSubscriberSubscription>;
+  };
+};
+
+type RevenueCatSubscriptionSyncDeniedReason =
+  | "configuration_missing"
+  | "subscriber_missing"
+  | "subscriber_mismatch"
+  | "no_active_pro_entitlement"
+  | "active_product_not_allowed";
+
+type RevenueCatSubscriptionSyncResult =
+  | {
+      action: "granted";
+      record: SubscriptionRecord;
+      productId: string;
+      plan: UserPlan;
+      expiresAt?: string;
+    }
+  | {
+      action: "denied";
+      reason: RevenueCatSubscriptionSyncDeniedReason;
+      record: SubscriptionRecord;
+    };
+
+type RevenueCatSubscriberFetcher = (input: {
+  appUserId: string;
+  signal: AbortSignal;
+}) => Promise<RevenueCatSubscriberResponse>;
+
+let revenueCatSubscriberFetcherOverride: RevenueCatSubscriberFetcher | null = null;
+let revenueCatRestApiKeyOverride: string | null = null;
+
 function asString(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
@@ -67,6 +117,17 @@ function asNumber(value: unknown) {
 function dateFromMs(value: unknown) {
   const ms = asNumber(value);
   return ms ? new Date(ms).toISOString() : undefined;
+}
+
+function dateFromRevenueCatDate(value: unknown) {
+  const raw = asString(value);
+  if (!raw) return undefined;
+  const time = new Date(raw).getTime();
+  return Number.isFinite(time) ? new Date(time).toISOString() : undefined;
+}
+
+function isFutureOrOpenEndedDate(value?: string) {
+  return !value || new Date(value).getTime() > Date.now();
 }
 
 function timingSafeEqualText(left: string, right: string) {
@@ -118,6 +179,13 @@ function isRevenueCatAnonymousAppUserId(value: string | null) {
   return Boolean(value && value.startsWith("$RCAnonymousID"));
 }
 
+function isAllowedRevenueCatOriginalAppUserId(originalAppUserId: string | null, userId: string) {
+  if (!originalAppUserId || originalAppUserId === userId) {
+    return true;
+  }
+  return isRevenueCatAnonymousAppUserId(originalAppUserId);
+}
+
 function getAppUserId(event: RevenueCatWebhookEvent) {
   const appUserId = asString(event.app_user_id);
   const originalAppUserId = asString(event.original_app_user_id);
@@ -167,6 +235,82 @@ function summarizeEvent(event: RevenueCatWebhookEvent) {
   };
 }
 
+function getRevenueCatRestApiKey() {
+  return revenueCatRestApiKeyOverride ?? env.REVENUECAT_REST_API_KEY;
+}
+
+async function defaultRevenueCatSubscriberFetcher(input: {
+  appUserId: string;
+  signal: AbortSignal;
+}): Promise<RevenueCatSubscriberResponse> {
+  const url = new URL(`/v1/subscribers/${encodeURIComponent(input.appUserId)}`, env.REVENUECAT_BASE_URL);
+  const response = await fetch(url, {
+    method: "GET",
+    signal: input.signal,
+    headers: {
+      Authorization: `Bearer ${getRevenueCatRestApiKey()}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (response.status === 404) {
+    return {};
+  }
+
+  if (!response.ok) {
+    throw new AppError(502, "REVENUECAT_SUBSCRIBER_FETCH_FAILED", `RevenueCat subscriber lookup failed with status ${response.status}.`);
+  }
+
+  return (await response.json()) as RevenueCatSubscriberResponse;
+}
+
+function getRevenueCatSubscriberFetcher() {
+  return revenueCatSubscriberFetcherOverride ?? defaultRevenueCatSubscriberFetcher;
+}
+
+function resolveActiveProEntitlement(subscriber: RevenueCatSubscriberResponse["subscriber"]) {
+  const entitlementId = env.REVENUECAT_PRO_ENTITLEMENT_ID;
+  const entitlement = subscriber?.entitlements?.[entitlementId] ?? null;
+  if (!entitlement) {
+    return null;
+  }
+
+  const productId = asString(entitlement.product_identifier);
+  const plan = getProductPlan(productId);
+  const expiresAt = dateFromRevenueCatDate(entitlement.expires_date);
+  if (!productId || !plan || !isFutureOrOpenEndedDate(expiresAt)) {
+    return null;
+  }
+
+  return {
+    productId,
+    plan,
+    expiresAt,
+    entitlementId,
+  };
+}
+
+function hasAllowedActiveSubscriptionForEntitlementProduct(
+  subscriber: RevenueCatSubscriberResponse["subscriber"],
+  productId: string,
+) {
+  const subscription = subscriber?.subscriptions?.[productId];
+  if (!subscription) {
+    return true;
+  }
+
+  const expiresAt = dateFromRevenueCatDate(subscription.expires_date);
+  return isFutureOrOpenEndedDate(expiresAt);
+}
+
+export function setRevenueCatSubscriberFetcherForTests(fetcher: RevenueCatSubscriberFetcher | null) {
+  revenueCatSubscriberFetcherOverride = fetcher;
+}
+
+export function setRevenueCatRestApiKeyForTests(apiKey: string | null) {
+  revenueCatRestApiKeyOverride = apiKey;
+}
+
 export class SubscriptionService {
   private verifyRevenueCatAuthorization(authorizationHeader?: string | null) {
     const expected = env.REVENUECAT_WEBHOOK_AUTH_TOKEN;
@@ -213,14 +357,160 @@ export class SubscriptionService {
     receiptData: string;
     productId: string;
   }): Promise<SubscriptionRecord> {
-    void input.platform;
-    void input.receiptData;
-    void input.productId;
-    return this.getCurrentSubscription(input.userId);
+    const result = await this.syncRevenueCatSubscription(input.userId, {
+      requestedProductId: input.productId,
+      platform: input.platform,
+    });
+    return result.record;
   }
 
   async cancelSubscription(userId: string): Promise<SubscriptionRecord> {
     return this.getCurrentSubscription(userId);
+  }
+
+  private async getDeniedSubscriptionSyncRecord(userId: string, reason: RevenueCatSubscriptionSyncDeniedReason) {
+    if (reason === "configuration_missing") {
+      return this.getCurrentSubscription(userId);
+    }
+
+    const active = await repositories.subscriptions.findActiveByUser(userId);
+    if (active && isProPlan(active.plan)) {
+      return repositories.subscriptions.replaceActiveForUser(buildFreeSubscription(userId));
+    }
+    return active ?? buildFreeSubscription(userId);
+  }
+
+  private async syncRevenueCatSubscription(
+    userId: string,
+    context: {
+      requestedProductId?: string | null;
+      platform?: string | null;
+    } = {},
+  ): Promise<RevenueCatSubscriptionSyncResult> {
+    logger.info(
+      {
+        userId,
+        requestedProductId: context.requestedProductId ?? null,
+        platform: context.platform ?? null,
+        entitlementId: env.REVENUECAT_PRO_ENTITLEMENT_ID,
+        revenueCatRestApiConfigured: Boolean(getRevenueCatRestApiKey()),
+      },
+      "REVENUECAT_SUBSCRIPTION_SYNC_STARTED",
+    );
+
+    if (!getRevenueCatRestApiKey()) {
+      const record = await this.getDeniedSubscriptionSyncRecord(userId, "configuration_missing");
+      logger.warn(
+        {
+          userId,
+          reason: "configuration_missing",
+          requestedProductId: context.requestedProductId ?? null,
+        },
+        "REVENUECAT_SUBSCRIPTION_SYNC_DENIED",
+      );
+      return { action: "denied", reason: "configuration_missing", record };
+    }
+
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), REVENUECAT_SUBSCRIBER_REQUEST_TIMEOUT_MS);
+    let payload: RevenueCatSubscriberResponse;
+    try {
+      payload = await getRevenueCatSubscriberFetcher()({
+        appUserId: userId,
+        signal: abortController.signal,
+      });
+    } catch (error) {
+      logger.error(
+        {
+          userId,
+          requestedProductId: context.requestedProductId ?? null,
+          message: error instanceof Error ? error.message : String(error),
+        },
+        "REVENUECAT_SUBSCRIPTION_SYNC_ERROR",
+      );
+      throw error instanceof AppError
+        ? error
+        : new AppError(502, "REVENUECAT_SUBSCRIPTION_SYNC_FAILED", "Unable to verify RevenueCat subscription.");
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    const subscriber = payload.subscriber;
+    if (!subscriber) {
+      const record = await this.getDeniedSubscriptionSyncRecord(userId, "subscriber_missing");
+      logger.warn({ userId, reason: "subscriber_missing" }, "REVENUECAT_SUBSCRIPTION_SYNC_DENIED");
+      return { action: "denied", reason: "subscriber_missing", record };
+    }
+
+    const originalAppUserId = asString(subscriber.original_app_user_id);
+    if (!isAllowedRevenueCatOriginalAppUserId(originalAppUserId, userId)) {
+      const record = await this.getDeniedSubscriptionSyncRecord(userId, "subscriber_mismatch");
+      logger.warn(
+        {
+          userId,
+          originalAppUserId,
+          reason: "subscriber_mismatch",
+        },
+        "REVENUECAT_SUBSCRIPTION_SYNC_DENIED",
+      );
+      return { action: "denied", reason: "subscriber_mismatch", record };
+    }
+
+    const activePro = resolveActiveProEntitlement(subscriber);
+    if (!activePro) {
+      const record = await this.getDeniedSubscriptionSyncRecord(userId, "no_active_pro_entitlement");
+      logger.warn(
+        {
+          userId,
+          entitlementId: env.REVENUECAT_PRO_ENTITLEMENT_ID,
+          activeEntitlementIds: Object.keys(subscriber.entitlements ?? {}),
+          reason: "no_active_pro_entitlement",
+        },
+        "REVENUECAT_SUBSCRIPTION_SYNC_DENIED",
+      );
+      return { action: "denied", reason: "no_active_pro_entitlement", record };
+    }
+
+    if (!hasAllowedActiveSubscriptionForEntitlementProduct(subscriber, activePro.productId)) {
+      const record = await this.getDeniedSubscriptionSyncRecord(userId, "active_product_not_allowed");
+      logger.warn(
+        {
+          userId,
+          productId: activePro.productId,
+          reason: "active_product_not_allowed",
+        },
+        "REVENUECAT_SUBSCRIPTION_SYNC_DENIED",
+      );
+      return { action: "denied", reason: "active_product_not_allowed", record };
+    }
+
+    const record: SubscriptionRecord = {
+      id: crypto.randomUUID(),
+      userId,
+      plan: normalizePlan(activePro.plan),
+      status: "active",
+      productId: activePro.productId,
+      expiresAt: activePro.expiresAt,
+      verifiedAt: new Date().toISOString(),
+    };
+    const saved = await repositories.subscriptions.replaceActiveForUser(record);
+    logger.info(
+      {
+        userId,
+        plan: saved.plan,
+        productId: saved.productId ?? null,
+        expiresAt: saved.expiresAt ?? null,
+        source: "revenuecat/server_sync",
+      },
+      "REVENUECAT_SUBSCRIPTION_SYNC_RESULT",
+    );
+    return {
+      action: "granted",
+      record: saved,
+      productId: activePro.productId,
+      plan: activePro.plan,
+      expiresAt: activePro.expiresAt,
+    };
   }
 
   async processRevenueCatWebhook(input: {

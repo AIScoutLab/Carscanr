@@ -87,6 +87,37 @@ function logRevenueCatRuntimeConfig(context: string) {
   return config;
 }
 
+function logCustomerInfoDiagnostics(context: string, customerInfo: CustomerInfo, extra: Record<string, unknown> = {}) {
+  const activeEntitlements = customerInfo.entitlements.active ?? {};
+  const entitlementEntries = Object.entries(activeEntitlements).map(([identifier, entitlement]) => ({
+    identifier,
+    isActive: entitlement.isActive,
+    productIdentifier: entitlement.productIdentifier ?? null,
+    latestPurchaseDate: entitlement.latestPurchaseDate ?? null,
+    expirationDate: entitlement.expirationDate ?? null,
+    willRenew: entitlement.willRenew ?? null,
+  }));
+  const info = customerInfo as CustomerInfo & {
+    activeSubscriptions?: string[];
+    allPurchasedProductIdentifiers?: string[];
+    originalAppUserId?: string;
+    originalApplicationVersion?: string | null;
+    requestDate?: string;
+  };
+
+  logRevenueCatDiagnostics("REVENUECAT_CUSTOMER_INFO_DIAGNOSTIC", {
+    context,
+    configuredAppUserId,
+    originalAppUserId: info.originalAppUserId ?? null,
+    requestDate: info.requestDate ?? null,
+    activeSubscriptions: Array.isArray(info.activeSubscriptions) ? info.activeSubscriptions : [],
+    allPurchasedProductIdentifiers: Array.isArray(info.allPurchasedProductIdentifiers) ? info.allPurchasedProductIdentifiers : [],
+    activeEntitlementIdentifiers: Object.keys(activeEntitlements),
+    activeEntitlements: entitlementEntries,
+    ...extra,
+  });
+}
+
 function emptyPurchaseSnapshot(purchaseAvailabilityState: PurchaseAvailabilityState): PurchaseSnapshot {
   return {
     purchaseAvailable: false,
@@ -386,6 +417,9 @@ export const purchaseService = {
     let customerInfo: CustomerInfo;
     try {
       customerInfo = await Purchases.getCustomerInfo();
+      logCustomerInfoDiagnostics("purchase_snapshot", customerInfo, {
+        appUserId: configuration.appUserId,
+      });
       logRevenueCatDiagnostics("REVENUECAT_CUSTOMER_INFO_FETCH_RESULT", {
         success: true,
         activeEntitlementCount: Object.keys(customerInfo.entitlements.active ?? {}).length,
@@ -507,6 +541,12 @@ export const purchaseService = {
     });
 
     const result = await Purchases.purchasePackage(targetPackage);
+    logCustomerInfoDiagnostics("purchase_result", result.customerInfo, {
+      appUserId: configuration.appUserId,
+      productIdentifier: result.productIdentifier,
+      targetPackageIdentifier: targetPackage.identifier,
+      targetProductIdentifier: targetPackage.product.identifier,
+    });
     return {
       snapshot: await this.getPurchaseSnapshot(),
       outcome: "verified" as const,
@@ -537,6 +577,9 @@ export const purchaseService = {
     }
 
     const customerInfo = await Purchases.restorePurchases();
+    logCustomerInfoDiagnostics("restore_result", customerInfo, {
+      appUserId: configuration.appUserId,
+    });
     console.log("ENTITLEMENT_RESTORE_RESULT", {
       configured: true,
       restoredEntitlements: Object.keys(customerInfo.entitlements.active ?? {}),

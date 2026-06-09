@@ -46,10 +46,10 @@ test("restore purchases does not reset or rewrite free unlock counters", () => {
   const providerSource = read("features/subscription/SubscriptionProvider.tsx");
   const serviceSource = read("services/subscriptionService.ts");
   const restoreProviderStart = providerSource.indexOf("const restorePurchases = useCallback");
-  const restoreProviderEnd = providerSource.indexOf("const cancelPro = useCallback", restoreProviderStart);
+  const restoreProviderEnd = providerSource.indexOf("const manageSubscription = useCallback", restoreProviderStart);
   const restoreProviderBlock = providerSource.slice(restoreProviderStart, restoreProviderEnd);
   const restoreServiceStart = serviceSource.indexOf("async restorePurchases()");
-  const restoreServiceEnd = serviceSource.indexOf("async cancelSubscription()", restoreServiceStart);
+  const restoreServiceEnd = serviceSource.indexOf("async manageSubscription()", restoreServiceStart);
   const restoreServiceBlock = serviceSource.slice(restoreServiceStart, restoreServiceEnd);
 
   assert.notEqual(restoreProviderStart, -1, "restorePurchases provider callback was not found");

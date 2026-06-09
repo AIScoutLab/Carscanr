@@ -6,7 +6,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { InjectOptions, Response } from "light-my-request";
 import { createApp } from "../src/app.js";
-import { revenueCatProductIdAliases, revenueCatProductIds } from "../src/services/subscriptionService.js";
+import {
+  revenueCatProductIdAliases,
+  revenueCatProductIds,
+  setRevenueCatRestApiKeyForTests,
+  setRevenueCatSubscriberFetcherForTests,
+} from "../src/services/subscriptionService.js";
 import { setProviders } from "../src/lib/providerRegistry.js";
 import { setRepositories } from "../src/lib/repositoryRegistry.js";
 import { createTestProviders, createTestRepositories } from "./helpers/testData.js";
@@ -69,9 +74,43 @@ function revenueCatPayload(input: {
   };
 }
 
+function revenueCatSubscriberPayload(input: {
+  userId?: string;
+  productId?: string | null;
+  expiresAt?: string | null;
+  entitlementId?: string;
+}) {
+  const productId = Object.prototype.hasOwnProperty.call(input, "productId") ? input.productId : LIVE_PRODUCT_IDS.monthlyPro;
+  return {
+    subscriber: {
+      original_app_user_id: input.userId ?? SIGNED_IN_USER_ID,
+      entitlements: productId
+        ? {
+            [input.entitlementId ?? "Carscanr Pro"]: {
+              product_identifier: productId,
+              expires_date: input.expiresAt ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+              purchase_date: new Date().toISOString(),
+            },
+          }
+        : {},
+      subscriptions: productId
+        ? {
+            [productId]: {
+              product_identifier: productId,
+              expires_date: input.expiresAt ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+              purchase_date: new Date().toISOString(),
+            },
+          }
+        : {},
+    },
+  };
+}
+
 describe("RevenueCat purchase security", () => {
   beforeEach(() => {
     setProviders(createTestProviders());
+    setRevenueCatRestApiKeyForTests(null);
+    setRevenueCatSubscriberFetcherForTests(null);
   });
 
   test("subscription plan migration accepts monthly and yearly Pro variants", () => {
@@ -126,6 +165,186 @@ describe("RevenueCat purchase security", () => {
     assert.equal(response.statusCode, 200);
     assert.equal(body.success, true);
     assert.equal(state.unlockBalances.find((entry) => entry.userId === SIGNED_IN_USER_ID)?.unlockCredits ?? 0, 0);
+  });
+
+  test("server RevenueCat sync grants active monthly Pro entitlement", async () => {
+    const { state, repositories } = createTestRepositories();
+    setRepositories(repositories);
+    setRevenueCatRestApiKeyForTests("test-revenuecat-rest-key");
+    setRevenueCatSubscriberFetcherForTests(async ({ appUserId }) => {
+      assert.equal(appUserId, SIGNED_IN_USER_ID);
+      return revenueCatSubscriberPayload({ productId: LIVE_PRODUCT_IDS.monthlyPro });
+    });
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/subscription/verify",
+      headers: authHeaders(),
+      payload: {
+        platform: "ios",
+        productId: "client-cannot-pick-plan",
+        receiptData: "client-data-is-not-proof",
+      },
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.success, true);
+    assert.equal(body.data.plan, "pro_monthly");
+    assert.equal(body.data.status, "active");
+    assert.equal(body.data.productId, LIVE_PRODUCT_IDS.monthlyPro);
+    assert.equal(state.subscriptions[0].plan, "pro_monthly");
+    assert.equal(state.subscriptions[0].userId, SIGNED_IN_USER_ID);
+  });
+
+  test("server RevenueCat sync grants active yearly Pro entitlement", async () => {
+    const { state, repositories } = createTestRepositories();
+    setRepositories(repositories);
+    setRevenueCatRestApiKeyForTests("test-revenuecat-rest-key");
+    setRevenueCatSubscriberFetcherForTests(async () =>
+      revenueCatSubscriberPayload({ productId: "carscanr.pro.yearly" }),
+    );
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/subscription/verify",
+      headers: authHeaders(),
+      payload: {
+        platform: "ios",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        receiptData: "client-data-is-not-proof",
+      },
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.plan, "pro_yearly");
+    assert.equal(body.data.productId, "carscanr.pro.yearly");
+    assert.equal(state.subscriptions[0].plan, "pro_yearly");
+  });
+
+  test("server RevenueCat sync does not grant without active Pro entitlement", async () => {
+    const { state, repositories } = createTestRepositories();
+    setRepositories(repositories);
+    setRevenueCatRestApiKeyForTests("test-revenuecat-rest-key");
+    setRevenueCatSubscriberFetcherForTests(async () => revenueCatSubscriberPayload({ productId: null }));
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/subscription/verify",
+      headers: authHeaders(),
+      payload: {
+        platform: "ios",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        receiptData: "client-data-is-not-proof",
+      },
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.plan, "free");
+    assert.equal(state.subscriptions.some((subscription) => subscription.plan !== "free"), false);
+  });
+
+  test("server RevenueCat sync does not grant when subscriber belongs to another app user id", async () => {
+    const { state, repositories } = createTestRepositories();
+    setRepositories(repositories);
+    setRevenueCatRestApiKeyForTests("test-revenuecat-rest-key");
+    setRevenueCatSubscriberFetcherForTests(async () =>
+      revenueCatSubscriberPayload({
+        userId: "22222222-2222-4222-8222-222222222222",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+      }),
+    );
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/subscription/verify",
+      headers: authHeaders(),
+      payload: {
+        platform: "ios",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        receiptData: "client-data-is-not-proof",
+      },
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.plan, "free");
+    assert.equal(state.subscriptions.some((subscription) => subscription.userId === SIGNED_IN_USER_ID), false);
+  });
+
+  test("server RevenueCat sync does not grant expired entitlement", async () => {
+    const { state, repositories } = createTestRepositories();
+    setRepositories(repositories);
+    setRevenueCatRestApiKeyForTests("test-revenuecat-rest-key");
+    setRevenueCatSubscriberFetcherForTests(async () =>
+      revenueCatSubscriberPayload({
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        expiresAt: new Date(Date.now() - 60 * 1000).toISOString(),
+      }),
+    );
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/subscription/verify",
+      headers: authHeaders(),
+      payload: {
+        platform: "ios",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        receiptData: "client-data-is-not-proof",
+      },
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.plan, "free");
+    assert.equal(state.subscriptions.some((subscription) => subscription.plan !== "free"), false);
+  });
+
+  test("server RevenueCat sync refreshes existing active subscription row", async () => {
+    const refreshedExpiration = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
+    const { state, repositories } = createTestRepositories({
+      subscriptions: [
+        {
+          id: "sub-existing",
+          userId: SIGNED_IN_USER_ID,
+          plan: "pro_monthly",
+          status: "active",
+          productId: LIVE_PRODUCT_IDS.monthlyPro,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          verifiedAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+        },
+      ],
+    });
+    setRepositories(repositories);
+    setRevenueCatRestApiKeyForTests("test-revenuecat-rest-key");
+    setRevenueCatSubscriberFetcherForTests(async () =>
+      revenueCatSubscriberPayload({
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        expiresAt: refreshedExpiration,
+      }),
+    );
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/subscription/verify",
+      headers: authHeaders(),
+      payload: {
+        platform: "ios",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        receiptData: "client-data-is-not-proof",
+      },
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.plan, "pro_monthly");
+    assert.equal(body.data.expiresAt, refreshedExpiration);
+    assert.equal(state.subscriptions[0].status, "active");
+    assert.equal(state.subscriptions[0].expiresAt, refreshedExpiration);
+    assert.equal(state.subscriptions.length, 1);
+    assert.notEqual(state.subscriptions[0].id, "sub-existing");
   });
 
   test("RevenueCat webhook without the configured authorization secret cannot grant access", async () => {

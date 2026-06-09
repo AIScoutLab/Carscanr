@@ -114,6 +114,9 @@ const envSchema = z.object({
   MARKETCHECK_ENABLE_AUTO_LISTINGS: booleanEnv(false),
   MARKETCHECK_ENABLE_BACKGROUND_REFRESH: booleanEnv(false),
   REVENUECAT_WEBHOOK_AUTH_TOKEN: z.string().default(DEFAULT_LOCAL_REVENUECAT_WEBHOOK_TOKEN),
+  REVENUECAT_REST_API_KEY: z.string().default(""),
+  REVENUECAT_BASE_URL: z.string().url().default("https://api.revenuecat.com"),
+  REVENUECAT_PRO_ENTITLEMENT_ID: z.string().default("Carscanr Pro"),
   PROVIDER_SPECS_CACHE_TTL_HOURS: z.coerce.number().default(24 * 30),
   PROVIDER_VALUES_CACHE_TTL_HOURS: z.coerce.number().default(24),
   PROVIDER_LISTINGS_CACHE_TTL_HOURS: z.coerce.number().default(6),
@@ -158,6 +161,8 @@ function logStartupEnvDiagnostics(env: typeof parsedEnv) {
       marketCheckAuthMethod: "query_param_api_key",
       marketCheckApiKeyLength: env.MARKETCHECK_API_KEY.trim().length,
       revenueCatWebhookConfigured: Boolean(env.REVENUECAT_WEBHOOK_AUTH_TOKEN),
+      revenueCatRestApiConfigured: Boolean(env.REVENUECAT_REST_API_KEY),
+      revenueCatProEntitlementIdPresent: Boolean(env.REVENUECAT_PRO_ENTITLEMENT_ID),
     }),
   );
 }
@@ -345,5 +350,7 @@ export function getStartupDiagnostics() {
     marketCheckAuthMethod: "query_param_api_key",
     marketCheckApiKeyLength: env.MARKETCHECK_API_KEY.trim().length,
     revenueCatWebhookConfigured: Boolean(env.REVENUECAT_WEBHOOK_AUTH_TOKEN),
+    revenueCatRestApiConfigured: Boolean(env.REVENUECAT_REST_API_KEY),
+    revenueCatProEntitlementIdPresent: Boolean(env.REVENUECAT_PRO_ENTITLEMENT_ID),
   };
 }

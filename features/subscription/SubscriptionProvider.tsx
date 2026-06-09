@@ -1,4 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { AppState } from "react-native";
 import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { FREE_PRO_UNLOCKS_TOTAL } from "@/constants/product";
 import { subscriptionService } from "@/services/subscriptionService";
@@ -287,6 +288,15 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        refreshStatus().catch(() => undefined);
+      }
+    });
+    return () => subscription.remove();
+  }, [refreshStatus]);
 
   const value = useMemo(
     () => ({

@@ -2,7 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { FREE_PRO_UNLOCKS_TOTAL, normalizeFreeUnlockCounter } from "@/constants/product";
 import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { applyPlanOverride } from "@/features/subscription/planOverride";
-import { getPurchaseOptionKind, isSubscriptionPurchaseOptionKind } from "@/lib/purchaseOptions";
+import { getPurchaseOptionKind, getPurchaseOptionKindFromProductMetadata, isSubscriptionPurchaseOptionKind } from "@/lib/purchaseOptions";
 import { isProPlan } from "@/lib/subscription";
 import { apiRequest } from "@/services/apiClient";
 import { authService } from "@/services/authService";
@@ -518,6 +518,8 @@ let status: SubscriptionStatus = applyPlanOverride({
   lastVerifiedAt: null,
   purchaseAvailable: false,
 });
+let revenueCatBackendSyncInFlight: Promise<BackendSubscriptionRecord | null> | null = null;
+let lastRevenueCatBackendSyncAttemptKey: string | null = null;
 
 function formatRenewalLabel(plan: UserPlan, expiresAt?: string) {
   if (!isProPlan(plan)) {
@@ -626,6 +628,119 @@ function buildRevenueCatReceiptData(customerInfo: unknown, productId: string) {
   return `revenuecat:${info.originalAppUserId ?? "unknown"}:${productId}:${info.requestDate ?? new Date().toISOString()}`;
 }
 
+function getBackendSubscriptionStatusOverrides(
+  record: BackendSubscriptionRecord,
+  snapshot?: {
+    purchaseAvailable: boolean;
+    purchaseAvailabilityState: SubscriptionStatus["purchaseAvailabilityState"];
+    availableProducts: SubscriptionProduct[];
+  },
+): Partial<SubscriptionStatus> {
+  return {
+    plan: record.plan,
+    provider: "backend",
+    productId: record.productId,
+    isActive: isProPlan(record.plan) && record.status === "active",
+    willAutoRenew: isProPlan(record.plan) && record.status === "active",
+    lastVerifiedAt: record.verifiedAt,
+    renewalLabel: formatRenewalLabel(record.plan, record.expiresAt),
+    entitlementSyncState: "none",
+    ...(snapshot
+      ? {
+          purchaseAvailable: snapshot.purchaseAvailable,
+          purchaseAvailabilityState: snapshot.purchaseAvailabilityState,
+          availableProducts: snapshot.availableProducts,
+        }
+      : {}),
+  };
+}
+
+async function syncRevenueCatActiveSubscriptionToBackend(
+  snapshot: {
+    activeEntitlement: Awaited<ReturnType<typeof purchaseService.getPurchaseSnapshot>>["activeEntitlement"];
+    activeProductId: string | null;
+    purchaseAvailable: boolean;
+    purchaseAvailabilityState: SubscriptionStatus["purchaseAvailabilityState"];
+    availableProducts: SubscriptionProduct[];
+  },
+  input: {
+    source: "purchase" | "restore" | "status_refresh";
+    force?: boolean;
+    receiptData?: string | null;
+  },
+) {
+  if (!snapshot.activeEntitlement?.isActive || !snapshot.activeProductId) {
+    return null;
+  }
+  if (!isSubscriptionPurchaseOptionKind(getPurchaseOptionKindFromProductMetadata({ productId: snapshot.activeProductId }))) {
+    return null;
+  }
+
+  const user = await authService.getCurrentUser();
+  const token = await authService.getAccessToken();
+  if (!user?.id || !token) {
+    console.log("[subscription] REVENUECAT_BACKEND_SYNC_SKIPPED", {
+      source: input.source,
+      reason: "auth_required",
+      productId: snapshot.activeProductId,
+    });
+    return null;
+  }
+
+  const attemptKey = `${user.id}:${snapshot.activeProductId}`;
+  if (!input.force && lastRevenueCatBackendSyncAttemptKey === attemptKey) {
+    console.log("[subscription] REVENUECAT_BACKEND_SYNC_SKIPPED", {
+      source: input.source,
+      reason: "already_attempted",
+      productId: snapshot.activeProductId,
+    });
+    return null;
+  }
+
+  if (revenueCatBackendSyncInFlight) {
+    return revenueCatBackendSyncInFlight;
+  }
+
+  lastRevenueCatBackendSyncAttemptKey = attemptKey;
+  console.log("[subscription] REVENUECAT_BACKEND_SYNC_START", {
+    source: input.source,
+    productId: snapshot.activeProductId,
+  });
+  revenueCatBackendSyncInFlight = apiRequest<BackendSubscriptionRecord>({
+    path: "/api/subscription/verify",
+    method: "POST",
+    body: {
+      platform: "ios",
+      productId: snapshot.activeProductId,
+      receiptData: input.receiptData ?? `revenuecat-server-sync:${snapshot.activeProductId}:${new Date().toISOString()}`,
+    },
+    headers: { Authorization: `Bearer ${token}` },
+  })
+    .then((record) => {
+      console.log("[subscription] REVENUECAT_BACKEND_SYNC_RESULT", {
+        source: input.source,
+        plan: record.plan,
+        status: record.status,
+        productId: record.productId,
+        backendGrantedPro: isProPlan(record.plan) && record.status === "active",
+      });
+      return record;
+    })
+    .catch((error) => {
+      console.log("[subscription] REVENUECAT_BACKEND_SYNC_FAILURE", {
+        source: input.source,
+        productId: snapshot.activeProductId,
+        message: error instanceof Error ? error.message : "Unknown subscription sync failure",
+      });
+      return null;
+    })
+    .finally(() => {
+      revenueCatBackendSyncInFlight = null;
+    });
+
+  return revenueCatBackendSyncInFlight;
+}
+
 function getSubscriptionErrorDiagnostics(error: unknown) {
   const candidate = error as
     | {
@@ -649,7 +764,7 @@ export const subscriptionService = {
       console.log("ENTITLEMENT_LOOKUP_STARTED", {
         source: "subscriptionService.getStatus",
       });
-      const [usage, purchaseSnapshot] = await Promise.all([
+      let [usage, purchaseSnapshot] = await Promise.all([
         scanService.getUsage(),
         purchaseService.getPurchaseSnapshot().catch((error) => {
           console.log("REVENUECAT_PURCHASE_SNAPSHOT_FAILURE_CLASSIFIED", {
@@ -668,6 +783,17 @@ export const subscriptionService = {
         }),
       ]);
       status = mergeUsageStatus(usage, getRevenueCatSubscriptionSyncOverrides(usage, purchaseSnapshot));
+      if (!isProPlan(usage.plan) && purchaseSnapshot.activeEntitlement?.isActive && purchaseSnapshot.activeProductId) {
+        const backendRecord = await syncRevenueCatActiveSubscriptionToBackend(purchaseSnapshot, {
+          source: "status_refresh",
+        });
+        if (backendRecord && isProPlan(backendRecord.plan) && backendRecord.status === "active") {
+          usage = await scanService.getUsage().catch(() => usage);
+          status = mergeUsageStatus(usage, getBackendSubscriptionStatusOverrides(backendRecord, purchaseSnapshot));
+        } else {
+          status = mergeUsageStatus(usage, getRevenueCatSubscriptionSyncOverrides(usage, purchaseSnapshot, { allowPendingSync: true }));
+        }
+      }
       console.log("ENTITLEMENT_CACHE_STATE", {
         plan: status.plan,
         provider: status.provider,
@@ -1056,10 +1182,22 @@ export const subscriptionService = {
       isSubscriptionPurchaseOptionKind(purchasedOptionKind)
     ) {
       const usage = await scanService.getUsage().catch(() => status);
-      status = mergeUsageStatus(usage, getRevenueCatSubscriptionSyncOverrides(usage, purchase.snapshot, { allowPendingSync: true }));
+      const backendRecord = await syncRevenueCatActiveSubscriptionToBackend(purchase.snapshot, {
+        source: "purchase",
+        force: true,
+        receiptData: buildRevenueCatReceiptData(
+          "customerInfo" in purchase ? purchase.customerInfo : null,
+          purchase.snapshot.activeProductId ?? purchasedProductId ?? "unknown",
+        ),
+      });
+      status =
+        backendRecord && isProPlan(backendRecord.plan) && backendRecord.status === "active"
+          ? mergeUsageStatus(usage, getBackendSubscriptionStatusOverrides(backendRecord, purchase.snapshot))
+          : mergeUsageStatus(usage, getRevenueCatSubscriptionSyncOverrides(usage, purchase.snapshot, { allowPendingSync: true }));
       console.log("[subscription] PURCHASE_ATTEMPT_SUCCESS", {
         outcome: "verified",
         productId: purchase.snapshot.activeProductId,
+        backendSynced: Boolean(backendRecord && isProPlan(backendRecord.plan) && backendRecord.status === "active"),
       });
       return {
         outcome: "verified",
@@ -1087,37 +1225,25 @@ export const subscriptionService = {
     const restore = await purchaseService.restorePurchases();
     if (restore.outcome === "restored" && restore.snapshot.activeEntitlement?.isActive) {
       const restoredProductId = restore.snapshot.activeProductId;
-      let backendRecord: BackendSubscriptionRecord | null = null;
-      if (restoredProductId) {
-        backendRecord = await apiRequest<BackendSubscriptionRecord>({
-          path: "/api/subscription/verify",
-          method: "POST",
-          body: {
-            platform: "ios",
-            productId: restoredProductId,
+      const backendRecord = restoredProductId
+        ? await syncRevenueCatActiveSubscriptionToBackend(restore.snapshot, {
+            source: "restore",
+            force: true,
             receiptData: buildRevenueCatReceiptData("customerInfo" in restore ? restore.customerInfo : null, restoredProductId),
-          },
-        }).catch((error) => {
-          console.log("[subscription] RESTORE_BACKEND_SYNC_FAILURE", {
-            productId: restoredProductId,
-            message: error instanceof Error ? error.message : "Unknown restore sync failure",
-          });
-          return null;
-        });
-      }
-      const usage = backendRecord
-        ? mergeUsageStatus(status, {
-            plan: backendRecord.plan,
-            provider: "backend",
-            productId: backendRecord.productId,
-            isActive: isProPlan(backendRecord.plan) && backendRecord.status === "active",
-            willAutoRenew: isProPlan(backendRecord.plan) && backendRecord.status === "active",
-            lastVerifiedAt: backendRecord.verifiedAt,
-            renewalLabel: formatRenewalLabel(backendRecord.plan, backendRecord.expiresAt),
           })
+        : null;
+      const usage = backendRecord
+        ? mergeUsageStatus(status, getBackendSubscriptionStatusOverrides(backendRecord, restore.snapshot))
         : status;
-      status = mergeUsageStatus(usage, getRevenueCatSubscriptionSyncOverrides(usage, restore.snapshot));
-      console.log("[subscription] RESTORE_PURCHASES_SUCCESS", { outcome: "restored", active: true });
+      status =
+        backendRecord && isProPlan(backendRecord.plan) && backendRecord.status === "active"
+          ? mergeUsageStatus(usage, getBackendSubscriptionStatusOverrides(backendRecord, restore.snapshot))
+          : mergeUsageStatus(usage, getRevenueCatSubscriptionSyncOverrides(usage, restore.snapshot, { allowPendingSync: true }));
+      console.log("[subscription] RESTORE_PURCHASES_SUCCESS", {
+        outcome: "restored",
+        active: true,
+        backendSynced: Boolean(backendRecord && isProPlan(backendRecord.plan) && backendRecord.status === "active"),
+      });
       console.log("ENTITLEMENT_RESTORE_RESULT", {
         outcome: "restored",
         active: true,

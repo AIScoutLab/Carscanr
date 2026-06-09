@@ -264,6 +264,7 @@ test("subscription service keeps backend authoritative over RevenueCat entitleme
   const subscriptionSource = fs.readFileSync(path.join(process.cwd(), "lib/subscription.ts"), "utf8");
 
   assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides/);
+  assert.match(serviceSource, /syncRevenueCatActiveSubscriptionToBackend/);
   assert.match(serviceSource, /allowPendingSync/);
   assert.match(serviceSource, /provider: backendHasPro \? "backend" : showPendingSync \? "revenuecat"/);
   assert.match(serviceSource, /entitlementSyncState: showPendingSync \? "revenuecat_active_backend_pending" : "none"/);
@@ -272,6 +273,38 @@ test("subscription service keeps backend authoritative over RevenueCat entitleme
   assert.doesNotMatch(serviceSource, /plan:\s*"pro",\s*provider:\s*"revenuecat"/);
   assert.doesNotMatch(serviceSource, /plan:\s*restore\.snapshot\.activeEntitlement\?\.isActive \? "pro"/);
   assert.doesNotMatch(serviceSource, /plan:\s*management\.snapshot\.activeEntitlement\?\.isActive \? "pro"/);
+});
+
+test("subscription purchases and restore request backend RevenueCat sync before showing active Pro", () => {
+  const serviceSource = fs.readFileSync(path.join(process.cwd(), "services/subscriptionService.ts"), "utf8");
+
+  assert.match(serviceSource, /source: "purchase"/);
+  assert.match(serviceSource, /source: "restore"/);
+  assert.match(serviceSource, /path: "\/api\/subscription\/verify"/);
+  assert.match(serviceSource, /getBackendSubscriptionStatusOverrides\(backendRecord, purchase\.snapshot\)/);
+  assert.match(serviceSource, /getBackendSubscriptionStatusOverrides\(backendRecord, restore\.snapshot\)/);
+  assert.match(serviceSource, /backendRecord && isProPlan\(backendRecord\.plan\) && backendRecord\.status === "active"/);
+  assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(usage, purchase\.snapshot, \{ allowPendingSync: true \}\)/);
+  assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(usage, restore\.snapshot, \{ allowPendingSync: true \}\)/);
+});
+
+test("RevenueCat active with backend free triggers one backend sync attempt on status refresh", () => {
+  const serviceSource = fs.readFileSync(path.join(process.cwd(), "services/subscriptionService.ts"), "utf8");
+
+  assert.match(serviceSource, /lastRevenueCatBackendSyncAttemptKey/);
+  assert.match(serviceSource, /revenueCatBackendSyncInFlight/);
+  assert.match(serviceSource, /source: "status_refresh"/);
+  assert.match(serviceSource, /lastRevenueCatBackendSyncAttemptKey === attemptKey/);
+  assert.match(serviceSource, /!isProPlan\(usage\.plan\) && purchaseSnapshot\.activeEntitlement\?\.isActive && purchaseSnapshot\.activeProductId/);
+  assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(usage, purchaseSnapshot, \{ allowPendingSync: true \}\)/);
+});
+
+test("foregrounding the app refreshes subscription status for entitlement repair", () => {
+  const providerSource = fs.readFileSync(path.join(process.cwd(), "features/subscription/SubscriptionProvider.tsx"), "utf8");
+
+  assert.match(providerSource, /AppState\.addEventListener\("change"/);
+  assert.match(providerSource, /nextState === "active"/);
+  assert.match(providerSource, /refreshStatus\(\)\.catch\(\(\) => undefined\)/);
 });
 
 test("profile legal rows use in-app routes and support rows keep mailto actions", () => {
