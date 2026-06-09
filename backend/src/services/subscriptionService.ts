@@ -20,6 +20,7 @@ const REVENUECAT_PRODUCT_ID_ALIASES = {
 
 const UNLOCK_PACK_CREDITS = 5;
 const REVENUECAT_SUBSCRIBER_REQUEST_TIMEOUT_MS = 10000;
+const REVENUECAT_RECENT_INITIAL_PURCHASE_SYNC_WINDOW_MS = 30 * 60 * 1000;
 
 type RevenueCatWebhookEvent = {
   id?: unknown;
@@ -56,12 +57,19 @@ type RevenueCatSubscriberEntitlement = {
   expires_date?: unknown;
   product_identifier?: unknown;
   purchase_date?: unknown;
+  store?: unknown;
+  environment?: unknown;
+  is_sandbox?: unknown;
 };
 
 type RevenueCatSubscriberSubscription = {
   expires_date?: unknown;
   product_identifier?: unknown;
   purchase_date?: unknown;
+  store?: unknown;
+  environment?: unknown;
+  is_sandbox?: unknown;
+  original_transaction_id?: unknown;
 };
 
 type RevenueCatSubscriberResponse = {
@@ -82,7 +90,8 @@ type RevenueCatSubscriptionSyncDeniedReason =
   | "no_active_pro_entitlement"
   | "active_product_not_allowed"
   | "revenuecat_id_mismatch"
-  | "revenuecat_orphaned_subscription";
+  | "revenuecat_orphaned_subscription"
+  | "sandbox_manual_reset_protection";
 
 type RevenueCatSubscriptionSyncIdentityInput = {
   currentAppUserId?: unknown;
@@ -164,6 +173,16 @@ function asNumber(value: unknown) {
   return null;
 }
 
+function asBoolean(value: unknown) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+  return null;
+}
+
 function dateFromMs(value: unknown) {
   const ms = asNumber(value);
   return ms ? new Date(ms).toISOString() : undefined;
@@ -212,6 +231,12 @@ function getProductPlan(productId: string | null): UserPlan | null {
   if (isRevenueCatProductId(productId, REVENUECAT_PRODUCT_ID_ALIASES.yearlyPro)) return "pro_yearly";
   if (isRevenueCatProductId(productId, REVENUECAT_PRODUCT_ID_ALIASES.monthlyPro)) return "pro_monthly";
   return null;
+}
+
+function getRevenueCatProductIdsForPlan(plan: UserPlan): string[] {
+  if (plan === "pro_yearly") return [...REVENUECAT_PRODUCT_ID_ALIASES.yearlyPro];
+  if (plan === "pro_monthly" || plan === "pro") return [...REVENUECAT_PRODUCT_ID_ALIASES.monthlyPro];
+  return [];
 }
 
 function isRevenueCatProductId(productId: string | null, aliases: readonly string[]) {
@@ -310,6 +335,38 @@ function lookupsResolveToSameRevenueCatCustomer(left: RevenueCatSubscriberLookup
   return false;
 }
 
+function normalizeRevenueCatEnvironment(value: unknown) {
+  const normalized = asString(value)?.trim().toUpperCase() ?? null;
+  if (!normalized) return null;
+  if (normalized === "SANDBOX") return "SANDBOX";
+  if (normalized === "PRODUCTION") return "PRODUCTION";
+  return normalized;
+}
+
+function getRevenueCatEventEnvironment(event: RevenueCatEventRecord | null) {
+  if (!event?.payloadSummary || typeof event.payloadSummary !== "object") {
+    return null;
+  }
+  return normalizeRevenueCatEnvironment((event.payloadSummary as Record<string, unknown>).environment);
+}
+
+function isSandboxSubscriptionEvidence(input: {
+  entitlement?: RevenueCatSubscriberEntitlement | null;
+  subscription?: RevenueCatSubscriberSubscription | null;
+  latestEvent?: RevenueCatEventRecord | null;
+}) {
+  if (asBoolean(input.entitlement?.is_sandbox) === true || asBoolean(input.subscription?.is_sandbox) === true) {
+    return true;
+  }
+  if (
+    normalizeRevenueCatEnvironment(input.entitlement?.environment) === "SANDBOX" ||
+    normalizeRevenueCatEnvironment(input.subscription?.environment) === "SANDBOX"
+  ) {
+    return true;
+  }
+  return getRevenueCatEventEnvironment(input.latestEvent ?? null) === "SANDBOX";
+}
+
 function summarizeEvent(event: RevenueCatWebhookEvent) {
   return {
     type: asString(event.type),
@@ -388,12 +445,19 @@ function resolveActiveProEntitlement(subscriber: RevenueCatSubscriberResponse["s
   if (!productId || !plan || !isFutureOrOpenEndedDate(expiresAt)) {
     return null;
   }
+  const subscription = subscriber?.subscriptions?.[productId] ?? null;
 
   return {
     productId,
     plan,
     expiresAt,
     entitlementId,
+    purchaseDate: dateFromRevenueCatDate(entitlement.purchase_date ?? subscription?.purchase_date),
+    originalTransactionId: asString(subscription?.original_transaction_id),
+    environment:
+      normalizeRevenueCatEnvironment(entitlement.environment) ??
+      normalizeRevenueCatEnvironment(subscription?.environment) ??
+      (asBoolean(entitlement.is_sandbox) === true || asBoolean(subscription?.is_sandbox) === true ? "SANDBOX" : null),
   };
 }
 
@@ -408,6 +472,22 @@ function hasAllowedActiveSubscriptionForEntitlementProduct(
 
   const expiresAt = dateFromRevenueCatDate(subscription.expires_date);
   return isFutureOrOpenEndedDate(expiresAt);
+}
+
+function getActiveProSubscriptionForProduct(
+  subscriber: RevenueCatSubscriberResponse["subscriber"] | null,
+  productId: string,
+) {
+  return subscriber?.subscriptions?.[productId] ?? null;
+}
+
+function hasCurrentActiveBackendPro(subscription: SubscriptionRecord | null) {
+  return Boolean(
+    subscription &&
+      subscription.status === "active" &&
+      isProPlan(subscription.plan) &&
+      (!subscription.expiresAt || new Date(subscription.expiresAt).getTime() > Date.now()),
+  );
 }
 
 export function setRevenueCatSubscriberFetcherForTests(fetcher: RevenueCatSubscriberFetcher | null) {
@@ -488,6 +568,69 @@ export class SubscriptionService {
     return this.getCurrentSubscription(userId);
   }
 
+  private async isBlockedBySandboxManualResetProtection(input: {
+    userId: string;
+    lookup: RevenueCatSubscriberLookupResult;
+    currentActiveSubscription: SubscriptionRecord | null;
+  }) {
+    const activePro = input.lookup.activePro;
+    if (!activePro || hasCurrentActiveBackendPro(input.currentActiveSubscription)) {
+      return false;
+    }
+
+    const productIds = getRevenueCatProductIdsForPlan(activePro.plan);
+    if (!productIds.includes(activePro.productId)) {
+      productIds.push(activePro.productId);
+    }
+    const latestEvent = await repositories.revenueCatEvents.findLatestSubscriptionEventByProduct({
+      userId: input.userId,
+      productIds,
+    });
+    const entitlement = input.lookup.subscriber?.entitlements?.[activePro.entitlementId] ?? null;
+    const subscription = getActiveProSubscriptionForProduct(input.lookup.subscriber, activePro.productId);
+    const sandboxEvidence =
+      activePro.environment === "SANDBOX" ||
+      isSandboxSubscriptionEvidence({
+        entitlement,
+        subscription,
+        latestEvent,
+      });
+
+    if (!sandboxEvidence) {
+      return false;
+    }
+
+    const recentInitialPurchase = await repositories.revenueCatEvents.findRecentProcessedInitialPurchaseGrant({
+      userId: input.userId,
+      productIds,
+      since: new Date(Date.now() - REVENUECAT_RECENT_INITIAL_PURCHASE_SYNC_WINDOW_MS).toISOString(),
+      appUserId: input.lookup.lookupId,
+      originalTransactionId: activePro.originalTransactionId,
+    });
+    if (recentInitialPurchase) {
+      return false;
+    }
+
+    logger.warn(
+      {
+        authUserId: input.userId,
+        userId: input.userId,
+        reason: "sandbox_manual_reset_protection",
+        productId: activePro.productId,
+        originalTransactionId: activePro.originalTransactionId ?? latestEvent?.originalTransactionId ?? null,
+        revenueCatLookupId: input.lookup.lookupId,
+        latestEventId: latestEvent?.id ?? null,
+        latestEventType: latestEvent?.eventType ?? null,
+        latestProcessedAction: latestEvent?.processedAction ?? null,
+        currentPlan: input.currentActiveSubscription?.plan ?? null,
+        currentStatus: input.currentActiveSubscription?.status ?? null,
+        currentExpiresAt: input.currentActiveSubscription?.expiresAt ?? null,
+      },
+      "REVENUECAT_SUBSCRIPTION_SYNC_DENIED",
+    );
+    return true;
+  }
+
   private async syncRevenueCatSubscription(
     userId: string,
     context: {
@@ -548,7 +691,18 @@ export class SubscriptionService {
       clearTimeout(timeout);
     }
 
+    const currentActiveSubscription = await repositories.subscriptions.findActiveByUser(userId);
     if (authLookup.activePro && hasAllowedActiveSubscriptionForEntitlementProduct(authLookup.subscriber, authLookup.activePro.productId)) {
+      if (
+        await this.isBlockedBySandboxManualResetProtection({
+          userId,
+          lookup: authLookup,
+          currentActiveSubscription,
+        })
+      ) {
+        const record = await this.getDeniedSubscriptionSyncRecord(userId, "sandbox_manual_reset_protection");
+        return { action: "denied", reason: "sandbox_manual_reset_protection", record };
+      }
       return this.grantRevenueCatSyncedPro(userId, authLookup.activePro, {
         lookupId: authLookup.lookupId,
         proof: "auth_user_id_lookup",
@@ -582,6 +736,17 @@ export class SubscriptionService {
       activeCandidateLookups.push(candidateLookup);
       if (!hasAllowedActiveSubscriptionForEntitlementProduct(candidateLookup.subscriber, candidateLookup.activePro.productId)) {
         continue;
+      }
+
+      if (
+        await this.isBlockedBySandboxManualResetProtection({
+          userId,
+          lookup: candidateLookup,
+          currentActiveSubscription,
+        })
+      ) {
+        const record = await this.getDeniedSubscriptionSyncRecord(userId, "sandbox_manual_reset_protection");
+        return { action: "denied", reason: "sandbox_manual_reset_protection", record };
       }
 
       const trustedHistory = await repositories.revenueCatEvents.findProcessedSubscriptionGrantByAppUserId({

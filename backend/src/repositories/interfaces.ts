@@ -230,6 +230,17 @@ export interface RevenueCatEventsRepository {
     userId: string;
     appUserId: string;
   }): Promise<RevenueCatEventRecord | null>;
+  findRecentProcessedInitialPurchaseGrant(input: {
+    userId: string;
+    productIds: string[];
+    since: string;
+    appUserId?: string | null;
+    originalTransactionId?: string | null;
+  }): Promise<RevenueCatEventRecord | null>;
+  findLatestSubscriptionEventByProduct(input: {
+    userId: string;
+    productIds: string[];
+  }): Promise<RevenueCatEventRecord | null>;
   create(record: RevenueCatEventRecord): Promise<RevenueCatEventRecord>;
   markProcessed(id: string, updates: {
     processedAction: string;

@@ -793,6 +793,49 @@ export class MockRevenueCatEventsRepository implements RevenueCatEventsRepositor
     );
   }
 
+  async findRecentProcessedInitialPurchaseGrant(input: {
+    userId: string;
+    productIds: string[];
+    since: string;
+    appUserId?: string | null;
+    originalTransactionId?: string | null;
+  }): Promise<RevenueCatEventRecord | null> {
+    const sinceMs = new Date(input.since).getTime();
+    return (
+      db.revenueCatEvents.find((event) => {
+        if (
+          event.userId !== input.userId ||
+          event.eventType !== "INITIAL_PURCHASE" ||
+          !event.productId ||
+          !input.productIds.includes(event.productId) ||
+          !event.processed ||
+          event.processedAction !== "pro_granted" ||
+          new Date(event.createdAt).getTime() < sinceMs
+        ) {
+          return false;
+        }
+        if (input.appUserId && event.appUserId !== input.appUserId) {
+          return false;
+        }
+        if (input.originalTransactionId && event.originalTransactionId !== input.originalTransactionId) {
+          return false;
+        }
+        return true;
+      }) ?? null
+    );
+  }
+
+  async findLatestSubscriptionEventByProduct(input: {
+    userId: string;
+    productIds: string[];
+  }): Promise<RevenueCatEventRecord | null> {
+    return (
+      db.revenueCatEvents
+        .filter((event) => event.userId === input.userId && Boolean(event.productId && input.productIds.includes(event.productId)))
+        .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0] ?? null
+    );
+  }
+
   async create(record: RevenueCatEventRecord): Promise<RevenueCatEventRecord> {
     const existing = await this.findById(record.id);
     if (existing) {

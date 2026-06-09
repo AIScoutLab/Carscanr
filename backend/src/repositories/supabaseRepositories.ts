@@ -2303,6 +2303,53 @@ export class SupabaseRevenueCatEventsRepository implements RevenueCatEventsRepos
     return data ? mapRevenueCatEventRow(data) : null;
   }
 
+  async findRecentProcessedInitialPurchaseGrant(input: {
+    userId: string;
+    productIds: string[];
+    since: string;
+    appUserId?: string | null;
+    originalTransactionId?: string | null;
+  }): Promise<RevenueCatEventRecord | null> {
+    let query = this.client
+      .from("revenuecat_events")
+      .select("*")
+      .eq("user_id", input.userId)
+      .in("product_id", input.productIds)
+      .eq("event_type", "INITIAL_PURCHASE")
+      .eq("processed", true)
+      .eq("processed_action", "pro_granted")
+      .gte("created_at", input.since)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (input.appUserId) {
+      query = query.eq("app_user_id", input.appUserId);
+    }
+    if (input.originalTransactionId) {
+      query = query.eq("original_transaction_id", input.originalTransactionId);
+    }
+
+    const { data, error } = await query.maybeSingle();
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load recent RevenueCat initial purchase.", error);
+    return data ? mapRevenueCatEventRow(data) : null;
+  }
+
+  async findLatestSubscriptionEventByProduct(input: {
+    userId: string;
+    productIds: string[];
+  }): Promise<RevenueCatEventRecord | null> {
+    const { data, error } = await this.client
+      .from("revenuecat_events")
+      .select("*")
+      .eq("user_id", input.userId)
+      .in("product_id", input.productIds)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new AppError(500, "SUPABASE_QUERY_FAILED", "Failed to load latest RevenueCat subscription event.", error);
+    return data ? mapRevenueCatEventRow(data) : null;
+  }
+
   async create(record: RevenueCatEventRecord): Promise<RevenueCatEventRecord> {
     const { data, error } = await this.client
       .from("revenuecat_events")

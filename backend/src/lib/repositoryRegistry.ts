@@ -228,6 +228,8 @@ function createMissingRepositories(): RepositoryRegistry {
       findProcessedByTransactionId: async () => notConfigured(),
       findProcessedSubscriptionGrantByOriginalTransaction: async () => notConfigured(),
       findProcessedSubscriptionGrantByAppUserId: async () => notConfigured(),
+      findRecentProcessedInitialPurchaseGrant: async () => notConfigured(),
+      findLatestSubscriptionEventByProduct: async () => notConfigured(),
       create: async () => notConfigured(),
       markProcessed: async () => notConfigured(),
     },

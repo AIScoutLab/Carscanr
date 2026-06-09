@@ -80,6 +80,9 @@ function revenueCatSubscriberPayload(input: {
   expiresAt?: string | null;
   entitlementId?: string;
   aliases?: string[];
+  environment?: "SANDBOX" | "PRODUCTION";
+  isSandbox?: boolean;
+  originalTransactionId?: string | null;
 }) {
   const productId = Object.prototype.hasOwnProperty.call(input, "productId") ? input.productId : LIVE_PRODUCT_IDS.monthlyPro;
   return {
@@ -92,6 +95,8 @@ function revenueCatSubscriberPayload(input: {
               product_identifier: productId,
               expires_date: input.expiresAt ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
               purchase_date: new Date().toISOString(),
+              environment: input.environment,
+              is_sandbox: input.isSandbox,
             },
           }
         : {},
@@ -101,6 +106,9 @@ function revenueCatSubscriberPayload(input: {
               product_identifier: productId,
               expires_date: input.expiresAt ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
               purchase_date: new Date().toISOString(),
+              environment: input.environment,
+              is_sandbox: input.isSandbox,
+              original_transaction_id: input.originalTransactionId,
             },
           }
         : {},
@@ -407,6 +415,213 @@ describe("RevenueCat purchase security", () => {
     assert.equal(response.statusCode, 200);
     assert.equal(body.data.plan, "free");
     assert.equal(state.subscriptions.some((subscription) => subscription.plan !== "free"), false);
+  });
+
+  test("server RevenueCat sync blocks old sandbox renewal entitlement after backend manual reset", async () => {
+    const resetUserId = "44444444-4444-4444-8444-444444444444";
+    const originalTransactionId = "2000001182050593";
+    const renewalExpiration = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const { state, repositories } = createTestRepositories({
+      subscriptions: [
+        {
+          id: "sub-reset-free",
+          userId: resetUserId,
+          plan: "free",
+          status: "active",
+          verifiedAt: new Date().toISOString(),
+        },
+        {
+          id: "sub-old-pro",
+          userId: resetUserId,
+          plan: "pro_monthly",
+          status: "inactive",
+          productId: LIVE_PRODUCT_IDS.monthlyPro,
+          expiresAt: renewalExpiration,
+          verifiedAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+        },
+      ],
+      revenueCatEvents: [
+        {
+          id: "event-old-sandbox-pro-grant",
+          appUserId: resetUserId,
+          userId: resetUserId,
+          eventType: "RENEWAL",
+          productId: LIVE_PRODUCT_IDS.monthlyPro,
+          transactionId: "2000001184032563",
+          originalTransactionId,
+          processed: true,
+          processedAction: "pro_granted",
+          payloadSummary: { environment: "SANDBOX" },
+          createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+          processedAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+        },
+        {
+          id: "event-latest-ignored-sandbox-renewal",
+          appUserId: resetUserId,
+          userId: resetUserId,
+          eventType: "RENEWAL",
+          productId: LIVE_PRODUCT_IDS.monthlyPro,
+          transactionId: "2000001185385250",
+          originalTransactionId,
+          processed: true,
+          processedAction: "ignored",
+          payloadSummary: { environment: "SANDBOX", aliases: [resetUserId] },
+          createdAt: new Date(Date.now() - 60 * 1000).toISOString(),
+          processedAt: new Date(Date.now() - 60 * 1000).toISOString(),
+        },
+      ],
+    });
+    setRepositories(repositories);
+    setRevenueCatRestApiKeyForTests("test-revenuecat-rest-key");
+    setRevenueCatSubscriberFetcherForTests(async () =>
+      revenueCatSubscriberPayload({
+        userId: resetUserId,
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        expiresAt: renewalExpiration,
+        environment: "SANDBOX",
+        isSandbox: true,
+        originalTransactionId,
+      }),
+    );
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/subscription/verify",
+      headers: authHeaders(resetUserId, "reset@example.com"),
+      payload: {
+        platform: "ios",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        receiptData: "client-data-is-not-proof",
+      },
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.plan, "free");
+    assert.equal(body.data.revenueCatSync.status, "denied");
+    assert.equal(body.data.revenueCatSync.reason, "sandbox_manual_reset_protection");
+    assert.equal(state.subscriptions.find((subscription) => subscription.id === "sub-reset-free")?.status, "active");
+    assert.equal(
+      state.subscriptions.some((subscription) => subscription.userId === resetUserId && subscription.status === "active" && subscription.plan !== "free"),
+      false,
+    );
+  });
+
+  test("server RevenueCat sync allows recent sandbox initial purchase evidence to grant Pro", async () => {
+    const purchaseUserId = "55555555-5555-4555-8555-555555555555";
+    const originalTransactionId = "original-current-sandbox-initial";
+    const { state, repositories } = createTestRepositories({
+      revenueCatEvents: [
+        {
+          id: "event-current-sandbox-initial",
+          appUserId: purchaseUserId,
+          userId: purchaseUserId,
+          eventType: "INITIAL_PURCHASE",
+          productId: LIVE_PRODUCT_IDS.monthlyPro,
+          transactionId: "tx-current-sandbox-initial",
+          originalTransactionId,
+          processed: true,
+          processedAction: "pro_granted",
+          payloadSummary: { environment: "SANDBOX" },
+          createdAt: new Date().toISOString(),
+          processedAt: new Date().toISOString(),
+        },
+      ],
+    });
+    setRepositories(repositories);
+    setRevenueCatRestApiKeyForTests("test-revenuecat-rest-key");
+    setRevenueCatSubscriberFetcherForTests(async () =>
+      revenueCatSubscriberPayload({
+        userId: purchaseUserId,
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        environment: "SANDBOX",
+        isSandbox: true,
+        originalTransactionId,
+      }),
+    );
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/subscription/verify",
+      headers: authHeaders(purchaseUserId, "purchase@example.com"),
+      payload: {
+        platform: "ios",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        receiptData: "client-data-is-not-proof",
+      },
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.plan, "pro_monthly");
+    assert.equal(body.data.revenueCatSync.status, "granted");
+    assert.equal(state.subscriptions[0].userId, purchaseUserId);
+    assert.equal(state.subscriptions[0].plan, "pro_monthly");
+  });
+
+  test("server RevenueCat sync refreshes existing active sandbox Pro subscription", async () => {
+    const sandboxUserId = "66666666-6666-4666-8666-666666666666";
+    const originalTransactionId = "original-active-sandbox-subscription";
+    const refreshedExpiration = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+    const { state, repositories } = createTestRepositories({
+      subscriptions: [
+        {
+          id: "sub-active-sandbox-pro",
+          userId: sandboxUserId,
+          plan: "pro_monthly",
+          status: "active",
+          productId: LIVE_PRODUCT_IDS.monthlyPro,
+          expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          verifiedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+        },
+      ],
+      revenueCatEvents: [
+        {
+          id: "event-active-sandbox-renewal",
+          appUserId: sandboxUserId,
+          userId: sandboxUserId,
+          eventType: "RENEWAL",
+          productId: LIVE_PRODUCT_IDS.monthlyPro,
+          transactionId: "tx-active-sandbox-renewal",
+          originalTransactionId,
+          processed: true,
+          processedAction: "ignored",
+          payloadSummary: { environment: "SANDBOX" },
+          createdAt: new Date().toISOString(),
+          processedAt: new Date().toISOString(),
+        },
+      ],
+    });
+    setRepositories(repositories);
+    setRevenueCatRestApiKeyForTests("test-revenuecat-rest-key");
+    setRevenueCatSubscriberFetcherForTests(async () =>
+      revenueCatSubscriberPayload({
+        userId: sandboxUserId,
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        expiresAt: refreshedExpiration,
+        environment: "SANDBOX",
+        isSandbox: true,
+        originalTransactionId,
+      }),
+    );
+
+    const response = await requestApp({
+      method: "POST",
+      url: "/api/subscription/verify",
+      headers: authHeaders(sandboxUserId, "sandbox-active@example.com"),
+      payload: {
+        platform: "ios",
+        productId: LIVE_PRODUCT_IDS.monthlyPro,
+        receiptData: "client-data-is-not-proof",
+      },
+    });
+    const body = parseJson<any>(response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.plan, "pro_monthly");
+    assert.equal(body.data.revenueCatSync.status, "granted");
+    assert.equal(state.subscriptions[0].expiresAt, refreshedExpiration);
+    assert.notEqual(state.subscriptions[0].id, "sub-active-sandbox-pro");
   });
 
   test("server RevenueCat sync does not revoke existing active backend Pro on identity mismatch", async () => {
