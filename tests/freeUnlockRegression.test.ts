@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { FREE_PRO_UNLOCKS_TOTAL, normalizeFreeUnlockCounter } from "@/constants/product";
+import { resolveFreeUnlockDisplayCounter } from "@/lib/freeUnlockBalance";
 import { FREE_PRO_UNLOCKS_TOTAL as BACKEND_FREE_PRO_UNLOCKS_TOTAL } from "../backend/src/config/product";
 
 const repoRoot = path.resolve(__dirname, "..");
@@ -42,14 +43,42 @@ test("free unlock counters clamp impossible persisted states back into the canon
   });
 });
 
+test("guest free unlock display transitions one spend at a time", () => {
+  const remainingBySpend = [0, 1, 2, 3].map((localUsed) =>
+    resolveFreeUnlockDisplayCounter({ localUsed }).remaining,
+  );
+
+  assert.deepEqual(remainingBySpend, [3, 2, 1, 0]);
+});
+
+test("scan display uses backend unlock balance instead of adding vehicle ids to local usage", () => {
+  assert.deepEqual(
+    resolveFreeUnlockDisplayCounter({
+      backendFreeUnlocksUsed: 1,
+      localUsed: 1,
+    }),
+    {
+      limit: 3,
+      used: 1,
+      remaining: 2,
+    },
+  );
+
+  const serviceSource = read("services/subscriptionService.ts");
+  assert.match(serviceSource, /resolveFreeUnlockDisplayCounter\(\{/);
+  assert.match(serviceSource, /status\.freeUnlocksUsed/);
+  assert.match(serviceSource, /cached\.freeUnlocksUsed/);
+  assert.doesNotMatch(serviceSource, /uniqueBackendIds\.length \+ localUsed/);
+});
+
 test("restore purchases does not reset or rewrite free unlock counters", () => {
   const providerSource = read("features/subscription/SubscriptionProvider.tsx");
   const serviceSource = read("services/subscriptionService.ts");
   const restoreProviderStart = providerSource.indexOf("const restorePurchases = useCallback");
-  const restoreProviderEnd = providerSource.indexOf("const cancelPro = useCallback", restoreProviderStart);
+  const restoreProviderEnd = providerSource.indexOf("const manageSubscription = useCallback", restoreProviderStart);
   const restoreProviderBlock = providerSource.slice(restoreProviderStart, restoreProviderEnd);
   const restoreServiceStart = serviceSource.indexOf("async restorePurchases()");
-  const restoreServiceEnd = serviceSource.indexOf("async cancelSubscription()", restoreServiceStart);
+  const restoreServiceEnd = serviceSource.indexOf("async manageSubscription()", restoreServiceStart);
   const restoreServiceBlock = serviceSource.slice(restoreServiceStart, restoreServiceEnd);
 
   assert.notEqual(restoreProviderStart, -1, "restorePurchases provider callback was not found");

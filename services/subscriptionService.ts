@@ -8,6 +8,7 @@ import { apiRequest } from "@/services/apiClient";
 import { authService } from "@/services/authService";
 import { purchaseService } from "@/services/purchaseService";
 import { scanService } from "@/services/scanService";
+import { resolveFreeUnlockDisplayCounter } from "@/lib/freeUnlockBalance";
 import { wait } from "@/lib/utils";
 import type { VehicleLookupDescriptor } from "@/services/vehicleService";
 import { FreeUnlockReason, SubscriptionActionResult, SubscriptionProduct, SubscriptionStatus, SubscriptionVerifyPayload, UserPlan } from "@/types";
@@ -492,15 +493,21 @@ function dedupeUnlockIds(ids: string[]) {
   return Array.from(new Set(ids.filter((id) => typeof id === "string" && id.length > 0).map((id) => normalizeEstimatedUnlockId(id))));
 }
 
-function mergeUnlockStates(limit: number, backendIds: string[], localState: FreeUnlockState) {
+export function mergeUnlockStates(
+  limit: number,
+  backendIds: string[],
+  localState: FreeUnlockState,
+  backendFreeUnlocksUsed?: number | null,
+) {
   const normalizedLimit = normalizeFreeUnlockCounter({ total: limit }).limit;
   const estimatedIds = localState.unlockedVehicleIds.filter((id) => isEstimatedUnlockId(id) || isEstimatedSoftUnlockId(id));
   const unlockedVehicleIds = dedupeUnlockIds([...backendIds, ...estimatedIds]);
-  const uniqueBackendIds = Array.from(new Set(backendIds.filter((id) => typeof id === "string" && id.length > 0)));
-  const localUsed = normalizeFreeUnlockCounter({
-    used: typeof localState.localUsed === "number" ? localState.localUsed : localState.used,
-  }).used;
-  const used = Math.min(normalizedLimit, uniqueBackendIds.length + localUsed);
+  const counter = resolveFreeUnlockDisplayCounter({
+    total: normalizedLimit,
+    backendFreeUnlocksUsed,
+    localUsed: typeof localState.localUsed === "number" ? localState.localUsed : localState.used,
+  });
+  const used = counter.used;
   return {
     used,
     remaining: Math.max(0, normalizedLimit - used),
@@ -699,18 +706,20 @@ export const subscriptionService = {
       if (__DEV__) {
         console.log("[subscription] unlock status skipped (no auth token)");
       }
-      const remaining = Math.max(0, FREE_UNLOCKS_LIMIT - localState.used);
+      const counter = resolveFreeUnlockDisplayCounter({
+        localUsed: localState.localUsed ?? localState.used,
+      });
       logFreeUnlockCounterState("local_no_auth", {
-        used: localState.localUsed ?? localState.used,
-        remaining,
-        limit: FREE_UNLOCKS_LIMIT,
+        used: counter.used,
+        remaining: counter.remaining,
+        limit: counter.limit,
         unlockedVehicleIds: localState.unlockedVehicleIds,
       });
       return {
-        used: localState.localUsed ?? localState.used,
-        remaining,
+        used: counter.used,
+        remaining: counter.remaining,
         unlockedVehicleIds: localState.unlockedVehicleIds,
-        limit: FREE_UNLOCKS_LIMIT,
+        limit: counter.limit,
       };
     }
     try {
@@ -721,7 +730,12 @@ export const subscriptionService = {
         path: "/api/unlocks/status",
       });
       scanService.updateCachedUnlockStatus?.(status);
-      const merged = mergeUnlockStates(status.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT, status.unlockedVehicleIds ?? [], localState);
+      const merged = mergeUnlockStates(
+        status.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT,
+        status.unlockedVehicleIds ?? [],
+        localState,
+        status.freeUnlocksUsed,
+      );
       logFreeUnlockCounterState("backend_status", merged);
       return {
         used: merged.used,
@@ -733,7 +747,12 @@ export const subscriptionService = {
     } catch {
       const cached = scanService.getCachedUnlockStatus?.();
       if (cached && typeof cached.freeUnlocksTotal === "number" && typeof cached.unlockCreditsRemaining === "number") {
-        const merged = mergeUnlockStates(cached.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT, cached.unlockedVehicleIds ?? [], localState);
+        const merged = mergeUnlockStates(
+          cached.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT,
+          cached.unlockedVehicleIds ?? [],
+          localState,
+          cached.freeUnlocksUsed,
+        );
         logFreeUnlockCounterState("scan_cache_fallback", merged);
         return {
           used: merged.used,
@@ -743,18 +762,20 @@ export const subscriptionService = {
           unlockCredits: Math.max(0, cached.unlockCreditsRemaining),
         };
       }
-      const remaining = Math.max(0, FREE_UNLOCKS_LIMIT - localState.used);
+      const counter = resolveFreeUnlockDisplayCounter({
+        localUsed: localState.localUsed ?? localState.used,
+      });
       logFreeUnlockCounterState("local_fallback", {
-        used: localState.localUsed ?? localState.used,
-        remaining,
-        limit: FREE_UNLOCKS_LIMIT,
+        used: counter.used,
+        remaining: counter.remaining,
+        limit: counter.limit,
         unlockedVehicleIds: localState.unlockedVehicleIds,
       });
       return {
-        used: localState.localUsed ?? localState.used,
-        remaining,
+        used: counter.used,
+        remaining: counter.remaining,
         unlockedVehicleIds: localState.unlockedVehicleIds,
-        limit: FREE_UNLOCKS_LIMIT,
+        limit: counter.limit,
         unlockCredits: 0,
       };
     }
@@ -772,12 +793,15 @@ export const subscriptionService = {
       const unlockState = await loadFreeUnlockStateForUser(localUserId);
       const candidateIds = dedupeUnlockIds([vehicleId, ...linkedVehicleIds]);
       const alreadyUnlocked = candidateIds.some((id) => unlockState.unlockedVehicleIds.includes(id));
+      const currentCounter = resolveFreeUnlockDisplayCounter({
+        localUsed: unlockState.localUsed ?? unlockState.used,
+      });
       if (alreadyUnlocked) {
         return {
           ok: true,
           state: unlockState,
-          remaining: Math.max(0, FREE_UNLOCKS_LIMIT - unlockState.used),
-          limit: FREE_UNLOCKS_LIMIT,
+          remaining: currentCounter.remaining,
+          limit: currentCounter.limit,
           unlockCredits: 0,
           alreadyUnlocked: true,
           usedUnlock: false,
@@ -788,7 +812,7 @@ export const subscriptionService = {
         };
       }
 
-      const localUsed = unlockState.localUsed ?? unlockState.used;
+      const localUsed = currentCounter.used;
       if (localUsed >= FREE_UNLOCKS_LIMIT) {
         return {
           ok: false,
@@ -810,18 +834,21 @@ export const subscriptionService = {
         localUsed: localUsed + 1,
         unlockedVehicleIds: dedupeUnlockIds([...unlockState.unlockedVehicleIds, ...candidateIds]),
       };
+      const nextCounter = resolveFreeUnlockDisplayCounter({
+        localUsed: nextState.localUsed,
+      });
       await saveFreeUnlockState(localUserId, nextState);
       logFreeUnlockCounterState("local_unlock_consumed", {
-        used: nextState.used,
-        remaining: Math.max(0, FREE_UNLOCKS_LIMIT - nextState.used),
-        limit: FREE_UNLOCKS_LIMIT,
+        used: nextCounter.used,
+        remaining: nextCounter.remaining,
+        limit: nextCounter.limit,
         unlockedVehicleIds: nextState.unlockedVehicleIds,
       });
       return {
         ok: true,
         state: nextState,
-        remaining: Math.max(0, FREE_UNLOCKS_LIMIT - nextState.used),
-        limit: FREE_UNLOCKS_LIMIT,
+        remaining: nextCounter.remaining,
+        limit: nextCounter.limit,
         unlockCredits: 0,
         alreadyUnlocked: false,
         usedUnlock: true,
