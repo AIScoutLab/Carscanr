@@ -5505,7 +5505,7 @@ export default function VehicleDetailScreen() {
             <Text style={styles.unlockStatusTitle}>{unlockStatusTitle}</Text>
             <Text style={styles.unlockStatusBody}>{unlockStatusBody}</Text>
           </View>
-          {garageSource === "1" || reopenedSource === "1" ? <Text style={styles.unlockStatusMeta}>Saved</Text> : null}
+          {garageSource === "1" || garageSaved ? <Text style={styles.unlockStatusMeta}>Saved</Text> : null}
         </View>
         <View style={styles.garageActionBlock}>
           <Pressable
