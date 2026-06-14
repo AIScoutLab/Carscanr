@@ -292,7 +292,7 @@ test("subscription purchases and restore request backend RevenueCat sync before 
   assert.match(serviceSource, /getBackendSubscriptionStatusOverrides\(backendRecord, purchase\.snapshot\)/);
   assert.match(serviceSource, /getBackendSubscriptionStatusOverrides\(backendRecord, restore\.snapshot\)/);
   assert.match(serviceSource, /backendRecord && isProPlan\(backendRecord\.plan\) && backendRecord\.status === "active"/);
-  assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(\s*usage,\s*purchase\.snapshot,\s*\{\s*allowPendingSync: true,\s*syncFailedReason: getRevenueCatSyncFailureReason\(backendRecord\),\s*\}/);
+  assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(\s*latestUsage,\s*purchase\.snapshot,\s*\{\s*allowPendingSync: true,\s*syncFailedReason: getRevenueCatSyncFailureReason\(backendRecord\),\s*\}/);
   assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(\s*usage,\s*restore\.snapshot,\s*\{\s*allowPendingSync: true,\s*syncFailedReason: getRevenueCatSyncFailureReason\(backendRecord\),\s*\}/);
 });
 

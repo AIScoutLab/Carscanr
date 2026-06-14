@@ -82,6 +82,9 @@ const FREE_UNLOCK_STORAGE_KEY = "carscanr.freeUnlocks.v1";
 const ESTIMATED_UNLOCK_PREFIX = "estimate:";
 const ESTIMATED_SOFT_UNLOCK_PREFIX = "estimate-soft:";
 const ESTIMATED_UNLOCK_YEAR_SNAP_MAX_DRIFT = 1;
+const POST_PURCHASE_BACKEND_SYNC_DELAYS_MS = [0, 1000, 2000, 3500, 5000] as const;
+const POST_PURCHASE_SYNC_PENDING_MESSAGE =
+  "Purchase completed. Pro access is still syncing. Try refreshing or restarting the app.";
 
 function normalizeUnlockPart(value: string | number | null | undefined, fallback: string) {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -760,6 +763,30 @@ async function syncRevenueCatActiveSubscriptionToBackend(
   return revenueCatBackendSyncInFlight;
 }
 
+async function pollBackendSubscriptionStatusAfterPurchase(snapshot: Awaited<ReturnType<typeof purchaseService.getPurchaseSnapshot>>) {
+  let latestUsage: SubscriptionStatus | null = null;
+  for (const delayMs of POST_PURCHASE_BACKEND_SYNC_DELAYS_MS) {
+    if (delayMs > 0) {
+      await wait(delayMs);
+    }
+    latestUsage = await scanService.getUsage().catch((error) => {
+      console.log("[subscription] POST_PURCHASE_BACKEND_STATUS_REFRESH_FAILED", {
+        delayMs,
+        message: error instanceof Error ? error.message : "Unknown backend status refresh failure",
+      });
+      return latestUsage ?? status;
+    });
+    if (isProPlan(latestUsage.plan)) {
+      return mergeUsageStatus(latestUsage, getRevenueCatSubscriptionSyncOverrides(latestUsage, snapshot));
+    }
+    console.log("[subscription] POST_PURCHASE_BACKEND_STATUS_PENDING", {
+      delayMs,
+      plan: latestUsage.plan,
+    });
+  }
+  return null;
+}
+
 function getSubscriptionErrorDiagnostics(error: unknown) {
   const candidate = error as
     | {
@@ -1216,26 +1243,55 @@ export const subscriptionService = {
           purchase.snapshot.activeProductId ?? purchasedProductId ?? "unknown",
         ),
       });
-      status =
-        backendRecord && isProPlan(backendRecord.plan) && backendRecord.status === "active"
-          ? mergeUsageStatus(usage, getBackendSubscriptionStatusOverrides(backendRecord, purchase.snapshot))
-          : mergeUsageStatus(
-              usage,
-              getRevenueCatSubscriptionSyncOverrides(usage, purchase.snapshot, {
-                allowPendingSync: true,
-                syncFailedReason: getRevenueCatSyncFailureReason(backendRecord),
-              }),
-            );
+      if (backendRecord && isProPlan(backendRecord.plan) && backendRecord.status === "active") {
+        status = mergeUsageStatus(usage, getBackendSubscriptionStatusOverrides(backendRecord, purchase.snapshot));
+        console.log("[subscription] PURCHASE_ATTEMPT_SUCCESS", {
+          outcome: "verified",
+          productId: purchase.snapshot.activeProductId,
+          backendSynced: true,
+        });
+        return {
+          outcome: "verified",
+          purchaseKind: purchasedOptionKind ?? "other",
+          status,
+          message: "Pro purchase completed successfully.",
+        };
+      }
+
+      const confirmedStatus = await pollBackendSubscriptionStatusAfterPurchase(purchase.snapshot);
+      if (confirmedStatus) {
+        status = confirmedStatus;
+        console.log("[subscription] PURCHASE_ATTEMPT_SUCCESS", {
+          outcome: "verified",
+          productId: purchase.snapshot.activeProductId,
+          backendSynced: true,
+        });
+        return {
+          outcome: "verified",
+          purchaseKind: purchasedOptionKind ?? "other",
+          status,
+          message: "Pro purchase completed successfully.",
+        };
+      }
+
+      const latestUsage = await scanService.getUsage().catch(() => usage);
+      status = mergeUsageStatus(
+        latestUsage,
+        getRevenueCatSubscriptionSyncOverrides(latestUsage, purchase.snapshot, {
+          allowPendingSync: true,
+          syncFailedReason: getRevenueCatSyncFailureReason(backendRecord),
+        }),
+      );
       console.log("[subscription] PURCHASE_ATTEMPT_SUCCESS", {
         outcome: "verified",
         productId: purchase.snapshot.activeProductId,
-        backendSynced: Boolean(backendRecord && isProPlan(backendRecord.plan) && backendRecord.status === "active"),
+        backendSynced: false,
       });
       return {
         outcome: "verified",
         purchaseKind: purchasedOptionKind ?? "other",
         status,
-        message: purchase.message,
+        message: POST_PURCHASE_SYNC_PENDING_MESSAGE,
       };
     }
     console.log("[subscription] PURCHASE_ATTEMPT_FAILURE", { stage: purchase.outcome, message: purchase.message });

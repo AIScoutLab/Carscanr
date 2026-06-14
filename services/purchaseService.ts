@@ -595,6 +595,12 @@ export const purchaseService = {
       targetPackageIdentifier: targetPackage.identifier,
       targetProductIdentifier: targetPackage.product.identifier,
     });
+    await Purchases.invalidateCustomerInfoCache().catch((error) => {
+      logRevenueCatDiagnostics("REVENUECAT_CUSTOMER_INFO_CACHE_INVALIDATE_FAILED", {
+        context: "post_purchase",
+        error: getErrorDiagnostics(error),
+      });
+    });
     return {
       snapshot: await this.getPurchaseSnapshot(),
       outcome: "verified" as const,

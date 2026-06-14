@@ -210,7 +210,7 @@ export default function PaywallScreen() {
       const result = await purchasePro(getPurchaseOptionKey(selectedProduct));
       console.log("[paywall] purchase result", { outcome: result.outcome, purchaseKind: result.purchaseKind ?? null, provider: result.status.provider, plan: result.status.plan });
       if (result.purchaseKind === "unlock_pack") {
-        router.replace("/unlocks-added");
+        router.replace("/unlocks-added" as never);
         return;
       }
       if (result.status.provider === "backend" && result.status.isActive === true && isProPlan(result.status.plan)) {

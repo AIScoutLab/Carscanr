@@ -79,10 +79,24 @@ test("unlock pack purchase routes to unlock success instead of Pro activated", (
   const paywallSource = fs.readFileSync(path.join(process.cwd(), "app/paywall.tsx"), "utf8");
   const unlockSuccessSource = fs.readFileSync(path.join(process.cwd(), "app/unlocks-added.tsx"), "utf8");
 
-  assert.match(paywallSource, /result\.purchaseKind === "unlock_pack"[\s\S]*router\.replace\("\/unlocks-added"\)/);
+  assert.match(paywallSource, /result\.purchaseKind === "unlock_pack"[\s\S]*router\.replace\("\/unlocks-added"(?: as never)?\)/);
   assert.match(paywallSource, /result\.status\.provider === "backend"[\s\S]*router\.replace\("\/pro-activated"\)/);
   assert.match(paywallSource, /result\.purchaseKind === "annual" \|\| result\.purchaseKind === "monthly"[\s\S]*router\.replace\("\/\(tabs\)\/profile"\)/);
   assert.match(unlockSuccessSource, /5 unlocks added/);
   assert.match(unlockSuccessSource, /Your account now has/);
   assert.doesNotMatch(unlockSuccessSource, /Pro activated|Unlimited scans/);
+});
+
+test("subscription purchase waits for backend confirmation before leaving pending sync", () => {
+  const purchaseSource = fs.readFileSync(path.join(process.cwd(), "services/purchaseService.ts"), "utf8");
+  const subscriptionSource = fs.readFileSync(path.join(process.cwd(), "services/subscriptionService.ts"), "utf8");
+
+  assert.match(purchaseSource, /Purchases\.invalidateCustomerInfoCache\(\)/);
+  assert.match(subscriptionSource, /POST_PURCHASE_BACKEND_SYNC_DELAYS_MS = \[0, 1000, 2000, 3500, 5000\]/);
+  assert.match(subscriptionSource, /syncRevenueCatActiveSubscriptionToBackend/);
+  assert.match(subscriptionSource, /pollBackendSubscriptionStatusAfterPurchase/);
+  assert.match(subscriptionSource, /path: "\/api\/subscription\/verify"/);
+  assert.match(subscriptionSource, /revenueCatIdentity/);
+  assert.match(subscriptionSource, /backendSynced: true/);
+  assert.match(subscriptionSource, /Purchase completed\. Pro access is still syncing\. Try refreshing or restarting the app\./);
 });
