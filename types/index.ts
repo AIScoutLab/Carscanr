@@ -268,6 +268,14 @@ export type SubscriptionVerifyPayload = {
   productId: string;
   receiptData: string;
   accessToken?: string;
+  revenueCatIdentity?: {
+    currentAppUserId?: string | null;
+    originalAppUserId?: string | null;
+    aliases?: string[];
+    activeEntitlementIds?: string[];
+    activeProductIds?: string[];
+    activeSubscriptionIds?: string[];
+  };
 };
 
 export type SubscriptionActionResult = {

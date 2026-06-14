@@ -23,6 +23,8 @@ type BackendSubscriptionRecord = {
   verifiedAt: string;
 };
 
+type RevenueCatIdentityPayload = NonNullable<SubscriptionVerifyPayload["revenueCatIdentity"]>;
+
 type BackendUnlockStatus = {
   freeUnlocksTotal: number;
   freeUnlocksUsed: number;
@@ -79,6 +81,9 @@ const FREE_UNLOCK_STORAGE_KEY = "carscanr.freeUnlocks.v1";
 const ESTIMATED_UNLOCK_PREFIX = "estimate:";
 const ESTIMATED_SOFT_UNLOCK_PREFIX = "estimate-soft:";
 const ESTIMATED_UNLOCK_YEAR_SNAP_MAX_DRIFT = 1;
+const POST_PURCHASE_BACKEND_SYNC_DELAYS_MS = [0, 1000, 2000, 3500, 5000] as const;
+const POST_PURCHASE_SYNC_PENDING_MESSAGE =
+  "Purchase completed. Pro access is still syncing. Try refreshing or restarting the app.";
 
 function normalizeUnlockPart(value: string | number | null | undefined, fallback: string) {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -633,6 +638,103 @@ function buildRevenueCatReceiptData(customerInfo: unknown, productId: string) {
   return `revenuecat:${info.originalAppUserId ?? "unknown"}:${productId}:${info.requestDate ?? new Date().toISOString()}`;
 }
 
+function buildRevenueCatIdentityPayload(customerInfo: unknown, productId: string): RevenueCatIdentityPayload {
+  const info = customerInfo as
+    | {
+        originalAppUserId?: string;
+        activeSubscriptions?: string[];
+        allPurchasedProductIdentifiers?: string[];
+        entitlements?: {
+          active?: Record<string, { productIdentifier?: string | null }>;
+        };
+      }
+    | null
+    | undefined;
+  const activeEntitlements = info?.entitlements?.active ?? {};
+  const activeProductIds = new Set<string>();
+  for (const entitlement of Object.values(activeEntitlements)) {
+    if (entitlement?.productIdentifier) {
+      activeProductIds.add(entitlement.productIdentifier);
+    }
+  }
+  for (const activeSubscription of info?.activeSubscriptions ?? []) {
+    activeProductIds.add(activeSubscription);
+  }
+  if (productId) {
+    activeProductIds.add(productId);
+  }
+
+  return {
+    originalAppUserId: info?.originalAppUserId ?? null,
+    activeEntitlementIds: Object.keys(activeEntitlements),
+    activeProductIds: Array.from(activeProductIds),
+    activeSubscriptionIds: info?.activeSubscriptions ?? [],
+  };
+}
+
+function mergeBackendSubscriptionRecord(record: BackendSubscriptionRecord, snapshot: Awaited<ReturnType<typeof purchaseService.getPurchaseSnapshot>>): SubscriptionStatus {
+  const backendStatus = mergeUsageStatus(status, {
+    plan: record.plan,
+    provider: "backend",
+    productId: record.productId,
+    isActive: isProPlan(record.plan) && record.status === "active",
+    willAutoRenew: isProPlan(record.plan) && record.status === "active",
+    lastVerifiedAt: record.verifiedAt,
+    renewalLabel: formatRenewalLabel(record.plan, record.expiresAt),
+  });
+  return mergeUsageStatus(backendStatus, getRevenueCatSubscriptionSyncOverrides(backendStatus, snapshot));
+}
+
+async function verifySubscriptionPurchaseWithBackend(input: {
+  productId: string;
+  customerInfo: unknown;
+  snapshot: Awaited<ReturnType<typeof purchaseService.getPurchaseSnapshot>>;
+}) {
+  const currentUser = await authService.getCurrentUser();
+  const revenueCatIdentity = buildRevenueCatIdentityPayload(input.customerInfo, input.productId);
+  const record = await apiRequest<BackendSubscriptionRecord>({
+    path: "/api/subscription/verify",
+    method: "POST",
+    body: {
+      platform: "ios",
+      productId: input.productId,
+      receiptData: buildRevenueCatReceiptData(input.customerInfo, input.productId),
+      revenueCatIdentity: {
+        ...revenueCatIdentity,
+        currentAppUserId: currentUser?.id ?? null,
+      },
+    },
+  });
+  if (isProPlan(record.plan) && record.status === "active") {
+    return mergeBackendSubscriptionRecord(record, input.snapshot);
+  }
+  return null;
+}
+
+async function pollBackendSubscriptionStatusAfterPurchase(snapshot: Awaited<ReturnType<typeof purchaseService.getPurchaseSnapshot>>) {
+  let latestUsage: SubscriptionStatus | null = null;
+  for (const delayMs of POST_PURCHASE_BACKEND_SYNC_DELAYS_MS) {
+    if (delayMs > 0) {
+      await wait(delayMs);
+    }
+    latestUsage = await scanService.getUsage().catch((error) => {
+      console.log("[subscription] POST_PURCHASE_BACKEND_STATUS_REFRESH_FAILED", {
+        delayMs,
+        message: error instanceof Error ? error.message : "Unknown backend status refresh failure",
+      });
+      return latestUsage ?? status;
+    });
+    if (isProPlan(latestUsage.plan)) {
+      return mergeUsageStatus(latestUsage, getRevenueCatSubscriptionSyncOverrides(latestUsage, snapshot));
+    }
+    console.log("[subscription] POST_PURCHASE_BACKEND_STATUS_PENDING", {
+      delayMs,
+      plan: latestUsage.plan,
+    });
+  }
+  return null;
+}
+
 function getSubscriptionErrorDiagnostics(error: unknown) {
   const candidate = error as
     | {
@@ -1082,17 +1184,47 @@ export const subscriptionService = {
       purchase.snapshot.activeEntitlement?.isActive &&
       isSubscriptionPurchaseOptionKind(purchasedOptionKind)
     ) {
+      let confirmedStatus: SubscriptionStatus | null = null;
+      if (purchasedProductId) {
+        confirmedStatus = await verifySubscriptionPurchaseWithBackend({
+          productId: purchasedProductId,
+          customerInfo: "customerInfo" in purchase ? purchase.customerInfo : null,
+          snapshot: purchase.snapshot,
+        }).catch((error) => {
+          console.log("[subscription] POST_PURCHASE_BACKEND_VERIFY_PENDING", {
+            productId: purchasedProductId,
+            message: error instanceof Error ? error.message : "Unknown post-purchase backend verify failure",
+          });
+          return null;
+        });
+      }
+      confirmedStatus = confirmedStatus ?? (await pollBackendSubscriptionStatusAfterPurchase(purchase.snapshot));
+      if (confirmedStatus) {
+        status = confirmedStatus;
+        console.log("[subscription] PURCHASE_ATTEMPT_SUCCESS", {
+          outcome: "verified",
+          productId: purchase.snapshot.activeProductId,
+          backendConfirmed: true,
+        });
+        return {
+          outcome: "verified",
+          purchaseKind: purchasedOptionKind ?? "other",
+          status,
+          message: "Pro purchase completed successfully.",
+        };
+      }
       const usage = await scanService.getUsage().catch(() => status);
       status = mergeUsageStatus(usage, getRevenueCatSubscriptionSyncOverrides(usage, purchase.snapshot, { allowPendingSync: true }));
       console.log("[subscription] PURCHASE_ATTEMPT_SUCCESS", {
         outcome: "verified",
         productId: purchase.snapshot.activeProductId,
+        backendConfirmed: false,
       });
       return {
         outcome: "verified",
         purchaseKind: purchasedOptionKind ?? "other",
         status,
-        message: purchase.message,
+        message: POST_PURCHASE_SYNC_PENDING_MESSAGE,
       };
     }
     console.log("[subscription] PURCHASE_ATTEMPT_FAILURE", { stage: purchase.outcome, message: purchase.message });
@@ -1211,6 +1343,7 @@ export const subscriptionService = {
         platform: payload.platform,
         productId: payload.productId,
         receiptData: payload.receiptData,
+        revenueCatIdentity: payload.revenueCatIdentity,
       },
       headers: payload.accessToken ? { Authorization: `Bearer ${payload.accessToken}` } : undefined,
     });
