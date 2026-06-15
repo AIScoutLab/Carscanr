@@ -51,6 +51,8 @@ const BACKEND_WAKE_TIMEOUT_MS = 45000;
 const IDENTIFY_TIMEOUT_MS = 60000;
 const IDENTIFY_TIMEOUT_MS_AFTER_SLOW_WAKE = 90000;
 const OFFLINE_SCAN_CACHE_KEY = "offline_scan_result_cache_v1";
+const RECENT_SCAN_STORAGE_PREFIX = "carscanr.recentScans.v1";
+const MAX_RECENT_SCANS = 6;
 
 type IdentifyStageLogger = (stage: string, payload?: unknown) => void;
 type BackendHealthResponse = {
@@ -116,6 +118,11 @@ type BackendScanResponse = {
 };
 
 type StoredOfflineScanCache = Record<string, ScanResult>;
+type RecentScanStorageContext = {
+  currentStorageKey: string;
+  guestStorageKey: string;
+  mirrorStorageKey: string;
+};
 
 type BackendScanMeta = {
   provider?: string;
@@ -201,6 +208,75 @@ function emitRecentScansChanged() {
 
 function getRecentScanDisplayName(scan: ScanResult) {
   return `${scan.identifiedVehicle.year} ${scan.identifiedVehicle.make} ${scan.identifiedVehicle.model} ${scan.identifiedVehicle.trim ?? ""}`.trim();
+}
+
+function normalizeStoredRecentScans(input: unknown): ScanResult[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  return input.filter((scan): scan is ScanResult => {
+    return Boolean(
+      scan &&
+      typeof scan === "object" &&
+      typeof (scan as ScanResult).id === "string" &&
+      (scan as ScanResult).identifiedVehicle &&
+      typeof (scan as ScanResult).identifiedVehicle === "object",
+    );
+  }).slice(0, MAX_RECENT_SCANS);
+}
+
+async function resolveRecentScanStorageContext(): Promise<RecentScanStorageContext> {
+  const user = await authService.getCurrentUser().catch(() => null);
+  const guestId = user ? null : await guestSessionService.getGuestId();
+  const guestStorageKey = `${RECENT_SCAN_STORAGE_PREFIX}:guest:${guestId ?? "anonymous"}`;
+  const currentStorageKey = user?.id ? `${RECENT_SCAN_STORAGE_PREFIX}:user:${user.id}` : guestStorageKey;
+  const context = {
+    currentStorageKey,
+    guestStorageKey,
+    mirrorStorageKey: currentStorageKey,
+  };
+  mutableRecentScansDiagnostics.currentStorageKey = context.currentStorageKey;
+  mutableRecentScansDiagnostics.guestStorageKey = context.guestStorageKey;
+  mutableRecentScansDiagnostics.mirrorStorageKey = context.mirrorStorageKey;
+  return context;
+}
+
+async function loadPersistedRecentScans() {
+  const context = await resolveRecentScanStorageContext();
+  mutableRecentScansDiagnostics.lastLoadedAt = new Date().toISOString();
+  mutableRecentScansDiagnostics.lastLoadError = null;
+  try {
+    const storedCurrent = await AsyncStorage.getItem(context.currentStorageKey);
+    const currentScans = normalizeStoredRecentScans(storedCurrent ? JSON.parse(storedCurrent) : []);
+    mutableRecentScans = currentScans;
+    mutableRecentScansDiagnostics.lastLoadedCount = mutableRecentScans.length;
+    mutableRecentScansDiagnostics.lastMigratedFromKeys = [];
+    return mutableRecentScans;
+  } catch (error) {
+    mutableRecentScansDiagnostics.lastLoadError = error instanceof Error ? error.message : "Unknown recent scans load error";
+    mutableRecentScansDiagnostics.lastLoadedCount = mutableRecentScans.length;
+    return mutableRecentScans;
+  }
+}
+
+async function persistRecentScans(scans: ScanResult[]) {
+  const context = await resolveRecentScanStorageContext();
+  const serialized = JSON.stringify(scans.slice(0, MAX_RECENT_SCANS));
+  await AsyncStorage.setItem(context.currentStorageKey, serialized);
+}
+
+async function saveRecentScan(scan: ScanResult) {
+  mutableRecentScans = [scan, ...mutableRecentScans.filter((entry) => entry.id !== scan.id)].slice(0, MAX_RECENT_SCANS);
+  mutableRecentScansDiagnostics.lastSavedAt = new Date().toISOString();
+  mutableRecentScansDiagnostics.lastSavedCount = mutableRecentScans.length;
+  mutableRecentScansDiagnostics.lastSavedLabel = getRecentScanDisplayName(scan);
+  mutableRecentScansDiagnostics.lastSaveError = null;
+  try {
+    await persistRecentScans(mutableRecentScans);
+  } catch (error) {
+    mutableRecentScansDiagnostics.lastSaveError = error instanceof Error ? error.message : "Unknown recent scans save error";
+  }
+  emitRecentScansChanged();
 }
 
 function createInMemorySampleResult(sampleId: string): ScanResult {
@@ -450,8 +526,12 @@ async function clearOfflineScanCache() {
 
 export const scanService = {
   async getRecentScans(options?: { forceRefresh?: boolean }): Promise<ScanResult[]> {
-    mutableRecentScansDiagnostics.lastLoadedAt = new Date().toISOString();
-    mutableRecentScansDiagnostics.lastLoadedCount = mutableRecentScans.length;
+    if (options?.forceRefresh || mutableRecentScans.length === 0) {
+      await loadPersistedRecentScans();
+    } else {
+      mutableRecentScansDiagnostics.lastLoadedAt = new Date().toISOString();
+      mutableRecentScansDiagnostics.lastLoadedCount = mutableRecentScans.length;
+    }
     return mutableRecentScans;
   },
 
@@ -519,11 +599,7 @@ export const scanService = {
 
   async createSampleResult(sampleId: string): Promise<ScanResult> {
     const result = createInMemorySampleResult(sampleId);
-    mutableRecentScans = [result, ...mutableRecentScans.filter((entry) => entry.id !== result.id)].slice(0, 6);
-    mutableRecentScansDiagnostics.lastSavedAt = new Date().toISOString();
-    mutableRecentScansDiagnostics.lastSavedCount = mutableRecentScans.length;
-    mutableRecentScansDiagnostics.lastSavedLabel = getRecentScanDisplayName(result);
-    emitRecentScansChanged();
+    await saveRecentScan(result);
     return result;
   },
 
@@ -603,8 +679,7 @@ export const scanService = {
           quickResult: true,
           quickResultSource: "local_scan_cache" as const,
         };
-        mutableRecentScans = [quickCached, ...mutableRecentScans.filter((entry) => entry.id !== quickCached.id)].slice(0, 6);
-        emitRecentScansChanged();
+        await saveRecentScan(quickCached);
         return quickCached;
       }
     }
@@ -799,11 +874,7 @@ export const scanService = {
       cache[imageFingerprint] = finalResult;
       await writeOfflineScanCache(cache);
     }
-    mutableRecentScans = [finalResult, ...mutableRecentScans.filter((entry) => entry.id !== finalResult.id)].slice(0, 6);
-    mutableRecentScansDiagnostics.lastSavedAt = new Date().toISOString();
-    mutableRecentScansDiagnostics.lastSavedCount = mutableRecentScans.length;
-    mutableRecentScansDiagnostics.lastSavedLabel = getRecentScanDisplayName(finalResult);
-    emitRecentScansChanged();
+    await saveRecentScan(finalResult);
     mutableUsage = await scanService.getUsage();
     return finalResult;
   },
@@ -838,11 +909,7 @@ export const scanService = {
     }
 
     const result = mapScanResponse(response.data, imageUri, usage, response.meta ?? null);
-    mutableRecentScans = [result, ...mutableRecentScans.filter((entry) => entry.id !== result.id)].slice(0, 6);
-    mutableRecentScansDiagnostics.lastSavedAt = new Date().toISOString();
-    mutableRecentScansDiagnostics.lastSavedCount = mutableRecentScans.length;
-    mutableRecentScansDiagnostics.lastSavedLabel = getRecentScanDisplayName(result);
-    emitRecentScansChanged();
+    await saveRecentScan(result);
     mutableUsage = await scanService.getUsage();
     return { result, entitlement: response.meta?.premium ?? null };
   },
