@@ -1204,7 +1204,7 @@ function PremiumListingsSection({
   const providerAuthFailed = debugMeta?.fallbackReason === "provider_auth_failed";
   const noListingsReason =
     providerAuthFailed
-      ? "MarketCheck rejected the backend credentials before listings could be searched."
+      ? "Live listings could not be loaded right now. Try refreshing again in a moment."
       : debugMeta?.fallbackReason === "provider_error"
       ? "Live listings could not be loaded. Check the market settings and try refreshing."
       : debugMeta?.rawCount === 0 || debugMeta?.mode === "none"
@@ -1214,12 +1214,12 @@ function PremiumListingsSection({
           : "No nearby live listings found for this exact match.";
   const noListingsContext =
     providerAuthFailed
-      ? "This is a provider authentication problem, not a nearby inventory shortage."
+      ? "This looks temporary. Your saved vehicle details and market settings are unchanged."
       : debugMeta?.sourceLabel && debugMeta.sourceLabel !== "Live listings could not be loaded"
       ? debugMeta.sourceLabel
       : "If a market value is shown, it may be based on available comps, cached data, or modeled fallback rather than visible nearby listings.";
   const noListingsTitle = providerAuthFailed
-    ? "Provider authentication failed"
+    ? "Live listings could not be loaded"
     : debugMeta?.fallbackReason === "provider_error"
       ? "Live listings could not be loaded"
       : "No nearby live listings found";
@@ -1229,9 +1229,6 @@ function PremiumListingsSection({
       <View style={styles.tabIntroCompact}>
         <Text style={styles.listingsKicker}>Similar Listings</Text>
         <View style={styles.listingsHeaderBadges}>
-          <View style={styles.listingsVersionBadge}>
-            <Text style={styles.listingsVersionText}>Listings UI v935c1bc</Text>
-          </View>
           <View style={styles.premiumBadge}>
             <Text style={styles.premiumBadgeText}>{locked ? "Locked" : displayListings.length > 0 ? `${displayListings.length} comps` : loading ? "Loading" : "None found"}</Text>
           </View>
@@ -3158,10 +3155,7 @@ export default function VehicleDetailScreen() {
         }
         if (errorCode === "MARKETCHECK_AUTH_FAILED" || errorCode === "MARKETCHECK_ACCESS_DENIED") {
           setListingsDebugMeta({
-            sourceLabel:
-              errorCode === "MARKETCHECK_AUTH_FAILED"
-                ? "MarketCheck rejected backend credentials"
-                : "MarketCheck inventory access denied",
+            sourceLabel: "Live listings could not be loaded",
             rawCount: 0,
             believableCount: 0,
             mode: "none",
@@ -6994,19 +6988,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
     flexShrink: 1,
-  },
-  listingsVersionBadge: {
-    borderRadius: Radius.pill,
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    backgroundColor: "rgba(216, 163, 107, 0.10)",
-    borderWidth: 1,
-    borderColor: "rgba(216, 163, 107, 0.20)",
-  },
-  listingsVersionText: {
-    ...Typography.caption,
-    color: "#E7B97F",
-    fontWeight: "800",
   },
   lockedPreviewStack: {
     gap: 10,

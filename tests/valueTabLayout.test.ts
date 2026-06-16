@@ -45,7 +45,6 @@ test("listings refresh hydrates value state from cached listings", () => {
   assert.match(screenSource, /rendererCount: visibleListings\.length/);
   assert.match(screenSource, /displayListings\.slice\(0, INITIAL_VISIBLE_LIVE_LISTINGS\)/);
   assert.match(screenSource, /Show More Listings/);
-  assert.match(screenSource, /Listings UI v935c1bc/);
   assert.match(screenSource, /setShowAllListings\(\(current\) => !current\)/);
   assert.match(screenSource, /staleListingsClearedBeforeRequest: vehicle\.listings\.length/);
   assert.match(screenSource, /setVehicle\(\(current\) => \(current \? \{ \.\.\.current, listings: \[\] \} : current\)\)/);
@@ -99,6 +98,20 @@ test("believable listings replace stale modeled fallback without tab navigation"
   assert.match(screenSource, /applyValuationUpdate\(derivedValue, "listings-cache-sync", \{\s*allowReplacement: true/s);
   assert.match(screenSource, /setVehicle\(\(current\) => \(current \? \{ \.\.\.current, valuation: derivedValue \} : current\)\)/);
   assert.doesNotMatch(screenSource, /VALUE_REFRESH_TRIGGERED_FROM_LISTINGS[\s\S]*\.getValue\(/);
+});
+
+test("listings header keeps user-facing status pills without developer version markers", () => {
+  const screenSource = fs.readFileSync(screenPath, "utf8");
+  const premiumListingsStart = screenSource.indexOf("function PremiumListingsSection");
+  const premiumListingsEnd = screenSource.indexOf("function PremiumListingRow", premiumListingsStart);
+  const premiumListingsBlock = screenSource.slice(premiumListingsStart, premiumListingsEnd);
+
+  assert.notEqual(premiumListingsStart, -1, "PremiumListingsSection was not found");
+  assert.notEqual(premiumListingsEnd, -1, "PremiumListingsSection end was not found");
+  assert.match(premiumListingsBlock, /Similar Listings/);
+  assert.match(premiumListingsBlock, /locked \? "Locked" : displayListings\.length > 0 \? `\$\{displayListings\.length\} comps` : loading \? "Loading" : "None found"/);
+  assert.doesNotMatch(premiumListingsBlock, /Listings UI v[0-9a-f]+|listingsVersionBadge|listingsVersionText/);
+  assert.doesNotMatch(premiumListingsBlock, /MarketCheck|backend credentials|Provider authentication failed/);
 });
 
 test("vehicle detail tabs keep shared vertical spacing around cards and bottom actions", () => {
