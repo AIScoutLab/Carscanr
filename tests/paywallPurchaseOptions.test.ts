@@ -100,3 +100,20 @@ test("subscription purchase waits for backend confirmation before leaving pendin
   assert.match(subscriptionSource, /backendSynced: true/);
   assert.match(subscriptionSource, /Purchase completed\. Pro access is still syncing\. Try refreshing or restarting the app\./);
 });
+
+test("backend sync denial stops indefinite Pro syncing with a clear support message", () => {
+  const subscriptionSource = fs.readFileSync(path.join(process.cwd(), "services/subscriptionService.ts"), "utf8");
+  const message =
+    "Purchase found, but Pro access could not be safely verified. If this is sandbox testing, use a fresh sandbox tester. Otherwise contact support.";
+
+  assert.match(subscriptionSource, /BACKEND_SUBSCRIPTION_SYNC_DENIED_MESSAGE/);
+  assert.match(subscriptionSource, new RegExp(message.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(subscriptionSource, /revenueCatSync\?: \{ status: "granted" \} \| \{ status: "denied"; reason\?: string \| null \}/);
+  assert.match(subscriptionSource, /isBackendSubscriptionSyncDenied/);
+  assert.match(subscriptionSource, /backendRecord && !isBackendSubscriptionRecordActivePro\(backendRecord\)/);
+  assert.match(subscriptionSource, /backendSyncDenied: isBackendSubscriptionSyncDenied\(backendRecord\)/);
+  assert.match(subscriptionSource, /message: BACKEND_SUBSCRIPTION_SYNC_DENIED_MESSAGE/);
+  assert.match(subscriptionSource, /syncRevenueCatActiveSubscriptionToBackend\(restore\.snapshot/);
+  assert.match(subscriptionSource, /source: "restore"/);
+  assert.doesNotMatch(subscriptionSource, /plan:\s*restore\.snapshot\.activeEntitlement\?\.isActive \? "pro"/);
+});

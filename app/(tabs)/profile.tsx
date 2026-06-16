@@ -159,6 +159,7 @@ export default function ProfileScreen() {
     unlockCredits,
     feedbackMessage,
     errorMessage,
+    refreshStatus,
     restorePurchases,
     manageSubscription,
   } = useSubscription();
@@ -167,20 +168,35 @@ export default function ProfileScreen() {
   const [updateDiagnosticMessage, setUpdateDiagnosticMessage] = useState<string | null>(null);
   const accessState = resolveProfileAccessState(status, isLoading);
 
-  const refreshAuthSnapshot = async () => {
+  const refreshAuthSnapshot = useCallback(async () => {
     const [, nextUser] = await Promise.all([supabase.auth.getSession(), authService.getCurrentUser(), authService.getAccessToken()]);
     setUser(nextUser);
-  };
+  }, []);
+
+  const refreshProfileState = useCallback(async () => {
+    await Promise.all([refreshAuthSnapshot(), refreshStatus()]);
+  }, [refreshAuthSnapshot, refreshStatus]);
 
   useEffect(() => {
-    refreshAuthSnapshot().catch(() => undefined);
-  }, []);
+    refreshProfileState().catch(() => undefined);
+  }, [refreshProfileState]);
 
   useFocusEffect(
     useCallback(() => {
-      refreshAuthSnapshot().catch(() => undefined);
-    }, []),
+      refreshProfileState().catch(() => undefined);
+    }, [refreshProfileState]),
   );
+
+  useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
+        refreshProfileState().catch(() => undefined);
+      }
+    });
+    return () => {
+      data.subscription.unsubscribe();
+    };
+  }, [refreshProfileState]);
 
   useEffect(() => {
     console.log("SUBSCRIPTION_STATE_RESOLVED", {

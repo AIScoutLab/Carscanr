@@ -17,13 +17,10 @@ type BackendSubscriptionRecord = {
   userId: string;
   plan: UserPlan;
   status: "active" | "inactive" | "expired";
-  productId: string;
+  productId: string | null;
   expiresAt?: string;
   verifiedAt: string;
-  revenueCatSync?: {
-    status: "granted" | "denied";
-    reason?: string;
-  };
+  revenueCatSync?: { status: "granted" } | { status: "denied"; reason?: string | null };
 };
 
 type BackendUnlockStatus = {
@@ -85,6 +82,8 @@ const ESTIMATED_UNLOCK_YEAR_SNAP_MAX_DRIFT = 1;
 const POST_PURCHASE_BACKEND_SYNC_DELAYS_MS = [0, 1000, 2000, 3500, 5000] as const;
 const POST_PURCHASE_SYNC_PENDING_MESSAGE =
   "Purchase completed. Pro access is still syncing. Try refreshing or restarting the app.";
+const BACKEND_SUBSCRIPTION_SYNC_DENIED_MESSAGE =
+  "Purchase found, but Pro access could not be safely verified. If this is sandbox testing, use a fresh sandbox tester. Otherwise contact support.";
 
 function normalizeUnlockPart(value: string | number | null | undefined, fallback: string) {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -623,10 +622,11 @@ function getRevenueCatSubscriptionSyncOverrides(
 }
 
 function getRevenueCatSyncFailureReason(record: BackendSubscriptionRecord | null) {
-  if (record?.revenueCatSync?.status !== "denied") {
+  const syncState = record?.revenueCatSync;
+  if (syncState?.status !== "denied") {
     return null;
   }
-  return record.revenueCatSync.reason ?? "unknown";
+  return syncState.reason ?? "unknown";
 }
 
 function buildRevenueCatReceiptData(customerInfo: unknown, productId: string) {
@@ -671,6 +671,14 @@ function getBackendSubscriptionStatusOverrides(
         }
       : {}),
   };
+}
+
+function isBackendSubscriptionRecordActivePro(record: BackendSubscriptionRecord | null | undefined) {
+  return Boolean(record && isProPlan(record.plan) && record.status === "active");
+}
+
+function isBackendSubscriptionSyncDenied(record: BackendSubscriptionRecord | null | undefined) {
+  return record?.revenueCatSync?.status === "denied";
 }
 
 async function syncRevenueCatActiveSubscriptionToBackend(
@@ -737,13 +745,14 @@ async function syncRevenueCatActiveSubscriptionToBackend(
     headers: { Authorization: `Bearer ${token}` },
   })
     .then((record) => {
+      const revenueCatSync = record.revenueCatSync;
       console.log("[subscription] REVENUECAT_BACKEND_SYNC_RESULT", {
         source: input.source,
         plan: record.plan,
         status: record.status,
         productId: record.productId,
-        revenueCatSyncStatus: record.revenueCatSync?.status ?? null,
-        revenueCatSyncReason: record.revenueCatSync?.reason ?? null,
+        revenueCatSyncStatus: revenueCatSync?.status ?? null,
+        revenueCatSyncReason: revenueCatSync?.status === "denied" ? (revenueCatSync.reason ?? null) : null,
         backendGrantedPro: isProPlan(record.plan) && record.status === "active",
       });
       return record;
@@ -1243,7 +1252,7 @@ export const subscriptionService = {
           purchase.snapshot.activeProductId ?? purchasedProductId ?? "unknown",
         ),
       });
-      if (backendRecord && isProPlan(backendRecord.plan) && backendRecord.status === "active") {
+      if (backendRecord && isBackendSubscriptionRecordActivePro(backendRecord)) {
         status = mergeUsageStatus(usage, getBackendSubscriptionStatusOverrides(backendRecord, purchase.snapshot));
         console.log("[subscription] PURCHASE_ATTEMPT_SUCCESS", {
           outcome: "verified",
@@ -1255,6 +1264,22 @@ export const subscriptionService = {
           purchaseKind: purchasedOptionKind ?? "other",
           status,
           message: "Pro purchase completed successfully.",
+        };
+      }
+
+      if (backendRecord && !isBackendSubscriptionRecordActivePro(backendRecord)) {
+        status = mergeUsageStatus(usage, getBackendSubscriptionStatusOverrides(backendRecord, purchase.snapshot));
+        console.log("[subscription] PURCHASE_ATTEMPT_SUCCESS", {
+          outcome: "verified",
+          productId: purchase.snapshot.activeProductId,
+          backendConfirmed: false,
+          backendSyncDenied: isBackendSubscriptionSyncDenied(backendRecord),
+        });
+        return {
+          outcome: "verified",
+          purchaseKind: purchasedOptionKind ?? "other",
+          status,
+          message: BACKEND_SUBSCRIPTION_SYNC_DENIED_MESSAGE,
         };
       }
 
@@ -1323,20 +1348,35 @@ export const subscriptionService = {
       const usage = backendRecord
         ? mergeUsageStatus(status, getBackendSubscriptionStatusOverrides(backendRecord, restore.snapshot))
         : status;
-      status =
-        backendRecord && isProPlan(backendRecord.plan) && backendRecord.status === "active"
-          ? mergeUsageStatus(usage, getBackendSubscriptionStatusOverrides(backendRecord, restore.snapshot))
-          : mergeUsageStatus(
-              usage,
-              getRevenueCatSubscriptionSyncOverrides(usage, restore.snapshot, {
-                allowPendingSync: true,
-                syncFailedReason: getRevenueCatSyncFailureReason(backendRecord),
-              }),
-            );
+      if (backendRecord && isBackendSubscriptionRecordActivePro(backendRecord)) {
+        status = mergeUsageStatus(usage, getBackendSubscriptionStatusOverrides(backendRecord, restore.snapshot));
+      } else if (backendRecord) {
+        status = mergeUsageStatus(usage, getBackendSubscriptionStatusOverrides(backendRecord, restore.snapshot));
+        console.log("[subscription] RESTORE_PURCHASES_BACKEND_SYNC_DENIED", {
+          activeRevenueCatEntitlement: true,
+          productId: restore.snapshot.activeProductId,
+          backendPlan: backendRecord.plan,
+          backendStatus: backendRecord.status,
+          backendSyncDenied: isBackendSubscriptionSyncDenied(backendRecord),
+        });
+        return {
+          outcome: "restored",
+          status,
+          message: BACKEND_SUBSCRIPTION_SYNC_DENIED_MESSAGE,
+        };
+      } else {
+        status = mergeUsageStatus(
+          usage,
+          getRevenueCatSubscriptionSyncOverrides(usage, restore.snapshot, {
+            allowPendingSync: true,
+            syncFailedReason: getRevenueCatSyncFailureReason(backendRecord),
+          }),
+        );
+      }
       console.log("[subscription] RESTORE_PURCHASES_SUCCESS", {
         outcome: "restored",
         active: true,
-        backendSynced: Boolean(backendRecord && isProPlan(backendRecord.plan) && backendRecord.status === "active"),
+        backendSynced: Boolean(isBackendSubscriptionRecordActivePro(backendRecord)),
       });
       console.log("ENTITLEMENT_RESTORE_RESULT", {
         outcome: "restored",

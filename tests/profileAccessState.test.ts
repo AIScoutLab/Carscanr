@@ -233,6 +233,17 @@ test("profile subscription card renders upgrade surfaces from access selector on
   assert.doesNotMatch(profileSource, /View Pro Status/);
 });
 
+test("profile refreshes backend subscription status on focus and auth changes", () => {
+  const profileSource = fs.readFileSync(profileSourcePath, "utf8");
+
+  assert.match(profileSource, /refreshStatus,/);
+  assert.match(profileSource, /const refreshProfileState = useCallback\(async \(\) => \{/);
+  assert.match(profileSource, /Promise\.all\(\[refreshAuthSnapshot\(\), refreshStatus\(\)\]\)/);
+  assert.match(profileSource, /useFocusEffect\([\s\S]*refreshProfileState\(\)\.catch/);
+  assert.match(profileSource, /supabase\.auth\.onAuthStateChange\(\(event\) => \{/);
+  assert.match(profileSource, /event === "SIGNED_IN" \|\| event === "SIGNED_OUT" \|\| event === "TOKEN_REFRESHED" \|\| event === "USER_UPDATED"/);
+});
+
 test("profile keeps paid unlock credits visible separately from Pro status", () => {
   const profileSource = fs.readFileSync(profileSourcePath, "utf8");
   const providerSource = fs.readFileSync(path.join(process.cwd(), "features/subscription/SubscriptionProvider.tsx"), "utf8");
