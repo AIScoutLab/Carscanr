@@ -9,6 +9,7 @@ const vehicleServicePath = path.join(process.cwd(), "services/vehicleService.ts"
 const canonicalSpecCompletionPath = path.join(process.cwd(), "lib/canonicalSpecCompletion.ts");
 const offlineCanonicalServicePath = path.join(process.cwd(), "services/offlineCanonicalService.ts");
 const marketCheckProviderPath = path.join(process.cwd(), "backend/src/providers/marketcheck/marketCheckVehicleDataProvider.ts");
+const runtimeDebugStampPath = path.join(process.cwd(), "components/RuntimeDebugStamp.tsx");
 
 test("value results keep the live market button grouped with the card", () => {
   const screenSource = fs.readFileSync(screenPath, "utf8");
@@ -21,6 +22,15 @@ test("value results keep the live market button grouped with the card", () => {
   assert.doesNotMatch(screenSource, /Updating live listings…/);
   assert.match(cardSource, /actionLabel\?: string \| null;/);
   assert.match(cardSource, /<Pressable[\s\S]*actionButton/);
+});
+
+test("value diagnostics are hidden outside dev and QA debug mode", () => {
+  const screenSource = fs.readFileSync(screenPath, "utf8");
+  const runtimeDebugStampSource = fs.readFileSync(runtimeDebugStampPath, "utf8");
+
+  assert.match(screenSource, /<RuntimeDebugStamp[\s\S]*screen="vehicle-value-v4-live-debug"/);
+  assert.match(runtimeDebugStampSource, /const showRuntimeDebugStamp = __DEV__ \|\| mobileEnv\.showQaDebug === "1" \|\| mobileEnv\.showQaDebug\.toLowerCase\(\) === "true"/);
+  assert.match(runtimeDebugStampSource, /if \(!showRuntimeDebugStamp\) \{\s*return null;\s*\}/);
 });
 
 test("listings refresh hydrates value state from cached listings", () => {

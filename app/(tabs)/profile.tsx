@@ -241,7 +241,7 @@ export default function ProfileScreen() {
   const runtimeVersion = mobileBuildInfo.runtimeVersion || "Unavailable";
   const isEmbeddedLaunch = formatDiagnosticValue(mobileBuildInfo.isEmbeddedLaunch);
   const isEmergencyLaunch = formatDiagnosticValue(mobileBuildInfo.isEmergencyLaunch);
-  const showOtaDiagnostics = __DEV__ || mobileEnv.showQaDebug === "1" || mobileEnv.showQaDebug.toLowerCase() === "true";
+  const showDeveloperDiagnostics = __DEV__ || mobileEnv.showQaDebug === "1" || mobileEnv.showQaDebug.toLowerCase() === "true";
   const otaDiagnosticsRows: Array<{ icon: IconName; label: string; value: string }> = [
     { icon: "power-outline", label: "Updates Enabled", value: formatDiagnosticValue(Updates.isEnabled) },
     { icon: "cloud-outline", label: "Raw Current Update ID", value: formatDiagnosticValue(mobileBuildInfo.updateId) },
@@ -477,23 +477,27 @@ export default function ProfileScreen() {
 
           <SectionLabel label="About" />
           <View style={styles.settingsCard}>
-            <InfoRow icon="phone-portrait-outline" label="Native App Version" value={nativeAppVersion} />
-            <View style={styles.separator} />
-            <InfoRow icon="construct-outline" label="Native Build" value={nativeBuildNumber} />
-            <View style={styles.separator} />
-            <InfoRow icon="cube-outline" label="Runtime" value={runtimeVersion} />
-            <View style={styles.separator} />
-            <InfoRow icon="cloud-download-outline" label="Active OTA Update ID" value={activeOtaUpdateId} />
-            <View style={styles.separator} />
-            <InfoRow icon="git-commit-outline" label="Active OTA Commit" value={activeOtaCommit} />
-            <View style={styles.separator} />
-            <InfoRow icon="archive-outline" label="Is Embedded Launch" value={isEmbeddedLaunch} />
-            <View style={styles.separator} />
-            <InfoRow icon="warning-outline" label="Is Emergency Launch" value={isEmergencyLaunch} />
+            <InfoRow icon="information-circle-outline" label="App Version" value={nativeAppVersion} />
           </View>
 
-          {showOtaDiagnostics ? (
+          {showDeveloperDiagnostics ? (
             <>
+              <SectionLabel label="Developer Diagnostics" />
+              <View style={styles.settingsCard}>
+                <InfoRow icon="phone-portrait-outline" label="Native App Version" value={nativeAppVersion} />
+                <View style={styles.separator} />
+                <InfoRow icon="construct-outline" label="Native Build" value={nativeBuildNumber} />
+                <View style={styles.separator} />
+                <InfoRow icon="cube-outline" label="Runtime" value={runtimeVersion} />
+                <View style={styles.separator} />
+                <InfoRow icon="cloud-download-outline" label="Active OTA Update ID" value={activeOtaUpdateId} />
+                <View style={styles.separator} />
+                <InfoRow icon="git-commit-outline" label="Active OTA Commit" value={activeOtaCommit} />
+                <View style={styles.separator} />
+                <InfoRow icon="archive-outline" label="Is Embedded Launch" value={isEmbeddedLaunch} />
+                <View style={styles.separator} />
+                <InfoRow icon="warning-outline" label="Is Emergency Launch" value={isEmergencyLaunch} />
+              </View>
               <SectionLabel label="OTA Diagnostics" />
               <View style={styles.settingsCard}>
                 {otaDiagnosticsRows.map((row, index) => (

@@ -1,6 +1,6 @@
 import * as Updates from "expo-updates";
 import { StyleSheet, Text, View } from "react-native";
-import { mobileBuildInfo } from "@/lib/env";
+import { mobileBuildInfo, mobileEnv } from "@/lib/env";
 
 type RuntimeDebugStampProps = {
   screen: string;
@@ -13,6 +13,11 @@ function shortValue(value: string | null | undefined, fallback = "unknown") {
 }
 
 export function RuntimeDebugStamp({ screen, lines = [] }: RuntimeDebugStampProps) {
+  const showRuntimeDebugStamp = __DEV__ || mobileEnv.showQaDebug === "1" || mobileEnv.showQaDebug.toLowerCase() === "true";
+  if (!showRuntimeDebugStamp) {
+    return null;
+  }
+
   const updateId = typeof Updates.updateId === "string" ? Updates.updateId : "";
   const channel = typeof Updates.channel === "string" ? Updates.channel : "";
 

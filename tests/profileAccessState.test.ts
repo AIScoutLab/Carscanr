@@ -362,13 +362,39 @@ test("profile legal rows use in-app routes and support rows keep mailto actions"
   assert.doesNotMatch(profileSource, /Terms & Privacy|CarScanr Privacy Question|CarScanr Terms and Privacy|support@carscanr\.app/);
 });
 
-test("profile about rows keep native and OTA diagnostics visible in the requested order", () => {
+test("profile hides native and OTA diagnostics from the normal About section", () => {
   const profileSource = fs.readFileSync(profileSourcePath, "utf8");
   const aboutStart = profileSource.indexOf('<SectionLabel label="About" />');
-  const diagnosticsStart = profileSource.indexOf('<SectionLabel label="OTA Diagnostics" />', aboutStart);
+  const developerDiagnosticsStart = profileSource.indexOf('<SectionLabel label="Developer Diagnostics" />', aboutStart);
   const subscriptionManagementStart = profileSource.indexOf('<SectionLabel label="Subscription Management" />', aboutStart);
-  const aboutEnd = diagnosticsStart > -1 ? diagnosticsStart : subscriptionManagementStart;
+  const aboutEnd = developerDiagnosticsStart > -1 ? developerDiagnosticsStart : subscriptionManagementStart;
   const aboutBlock = profileSource.slice(aboutStart, aboutEnd);
+  const technicalLabels = [
+    "Native App Version",
+    "Native Build",
+    "Runtime",
+    "Active OTA Update ID",
+    "Active OTA Commit",
+    "Is Embedded Launch",
+    "Is Emergency Launch",
+  ];
+
+  assert.notEqual(aboutStart, -1, "About section was not found");
+  assert.notEqual(developerDiagnosticsStart, -1, "Developer Diagnostics section was not found");
+  assert.notEqual(aboutEnd, -1, "About section end was not found");
+  assert.match(aboutBlock, /label="App Version"/);
+  for (const label of technicalLabels) {
+    assert.doesNotMatch(aboutBlock, new RegExp(`label="${label}"`), `${label} should not appear in the public About section`);
+  }
+});
+
+test("profile keeps technical diagnostics behind the developer diagnostics gate", () => {
+  const profileSource = fs.readFileSync(profileSourcePath, "utf8");
+  const gateStart = profileSource.indexOf("{showDeveloperDiagnostics ? (");
+  const developerDiagnosticsStart = profileSource.indexOf('<SectionLabel label="Developer Diagnostics" />', gateStart);
+  const otaDiagnosticsStart = profileSource.indexOf('<SectionLabel label="OTA Diagnostics" />', developerDiagnosticsStart);
+  const subscriptionManagementStart = profileSource.indexOf('<SectionLabel label="Subscription Management" />', otaDiagnosticsStart);
+  const diagnosticsBlock = profileSource.slice(gateStart, subscriptionManagementStart);
   const orderedLabels = [
     "Native App Version",
     "Native Build",
@@ -380,14 +406,16 @@ test("profile about rows keep native and OTA diagnostics visible in the requeste
   ];
   let previousIndex = -1;
 
-  assert.notEqual(aboutStart, -1, "About section was not found");
-  assert.notEqual(aboutEnd, -1, "About section end was not found");
+  assert.notEqual(gateStart, -1, "Developer diagnostics gate was not found");
+  assert.notEqual(developerDiagnosticsStart, -1, "Developer Diagnostics section was not found");
+  assert.notEqual(otaDiagnosticsStart, -1, "OTA Diagnostics section was not found");
+  assert.notEqual(subscriptionManagementStart, -1, "Subscription Management section was not found");
+  assert.match(profileSource, /const showDeveloperDiagnostics = __DEV__ \|\| mobileEnv\.showQaDebug === "1" \|\| mobileEnv\.showQaDebug\.toLowerCase\(\) === "true"/);
   for (const label of orderedLabels) {
-    const nextIndex = aboutBlock.indexOf(`label="${label}"`);
-    assert.ok(nextIndex > previousIndex, `${label} should appear after the previous About row`);
+    const nextIndex = diagnosticsBlock.indexOf(`label="${label}"`);
+    assert.ok(nextIndex > previousIndex, `${label} should appear after the previous developer diagnostics row`);
     previousIndex = nextIndex;
   }
-  assert.doesNotMatch(aboutBlock, /label="Embedded Commit"|label="Channel"/);
 });
 
 test("profile separates subscription management from sign out at the bottom", () => {
