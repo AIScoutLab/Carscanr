@@ -126,3 +126,17 @@ test("create account hierarchy prioritizes Apple and demotes sign in and guest a
   assert.match(authSource, /Skip for now\. You can create an account later\./);
   assert.doesNotMatch(authSource, /style=\{\[styles\.authButton, styles\.authButtonPrimary\]\}[\s\S]*?Sign In Instead/);
 });
+
+test("production builds do not enable QA debug UI by default", () => {
+  const easConfig = JSON.parse(fs.readFileSync(path.join(repoRoot, "eas.json"), "utf8")) as {
+    build?: {
+      production?: {
+        env?: Record<string, string>;
+      };
+    };
+  };
+  const productionEnv = easConfig.build?.production?.env ?? {};
+
+  assert.equal(productionEnv.EXPO_PUBLIC_APP_ENV, "production");
+  assert.equal(productionEnv.EXPO_PUBLIC_SHOW_QA_DEBUG, undefined);
+});
