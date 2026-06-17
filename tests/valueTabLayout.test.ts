@@ -29,7 +29,8 @@ test("value diagnostics are hidden outside dev and QA debug mode", () => {
   const runtimeDebugStampSource = fs.readFileSync(runtimeDebugStampPath, "utf8");
 
   assert.match(screenSource, /<RuntimeDebugStamp[\s\S]*screen="vehicle-value-v4-live-debug"/);
-  assert.match(runtimeDebugStampSource, /const showRuntimeDebugStamp = __DEV__ \|\| mobileEnv\.showQaDebug === "1" \|\| mobileEnv\.showQaDebug\.toLowerCase\(\) === "true"/);
+  assert.match(runtimeDebugStampSource, /const showQaDebug = mobileEnv\.showQaDebug === "1" \|\| mobileEnv\.showQaDebug\.toLowerCase\(\) === "true"/);
+  assert.match(runtimeDebugStampSource, /const showRuntimeDebugStamp = __DEV__ \|\| \(mobileEnv\.appEnv !== "production" && showQaDebug\)/);
   assert.match(runtimeDebugStampSource, /if \(!showRuntimeDebugStamp\) \{\s*return null;\s*\}/);
 });
 

@@ -13,7 +13,8 @@ function shortValue(value: string | null | undefined, fallback = "unknown") {
 }
 
 export function RuntimeDebugStamp({ screen, lines = [] }: RuntimeDebugStampProps) {
-  const showRuntimeDebugStamp = __DEV__ || mobileEnv.showQaDebug === "1" || mobileEnv.showQaDebug.toLowerCase() === "true";
+  const showQaDebug = mobileEnv.showQaDebug === "1" || mobileEnv.showQaDebug.toLowerCase() === "true";
+  const showRuntimeDebugStamp = __DEV__ || (mobileEnv.appEnv !== "production" && showQaDebug);
   if (!showRuntimeDebugStamp) {
     return null;
   }

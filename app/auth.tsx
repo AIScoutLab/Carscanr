@@ -5,7 +5,6 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors, Radius, Typography } from "@/constants/theme";
-import { RuntimeDebugStamp } from "@/components/RuntimeDebugStamp";
 import { useSubscription } from "@/hooks/useSubscription";
 import { mobileEnv } from "@/lib/env";
 import { authService } from "@/services/authService";
@@ -316,17 +315,6 @@ export default function AuthScreen() {
               <Text style={[styles.title, isKeyboardVisible && styles.titleKeyboardVisible]}>{screenTitle}</Text>
               {!isKeyboardVisible ? <Text style={styles.subtitle}>{screenSubtitle}</Text> : null}
             </View>
-            {!isKeyboardVisible ? (
-              <RuntimeDebugStamp
-                screen="auth-v4-return"
-                lines={[
-                  `explicitReturnTo ${explicitReturnTo ? explicitReturnTo.slice(0, 72) : "none"}`,
-                  `pendingReturnTo ${pendingReturnTo ? pendingReturnTo.slice(0, 72) : "none"}`,
-                  `mode ${mode}`,
-                ]}
-              />
-            ) : null}
-
             {!isKeyboardVisible ? (
               <TouchableOpacity
                 style={[styles.authButton, styles.primaryAppleButton]}

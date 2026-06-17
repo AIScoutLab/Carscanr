@@ -78,6 +78,11 @@ test("auth return target is consumed and keyboard-safe while preserving paywall 
   assert.match(authSource, /onFocus=\{\(\) => setFocusedField\("email"\)\}/);
   assert.match(authSource, /onFocus=\{\(\) => setFocusedField\("password"\)\}/);
   assert.match(authSource, /!isKeyboardVisible \? \(\s*<TouchableOpacity\s+style=\{styles\.guestOption\}/);
+  assert.doesNotMatch(authSource, /RuntimeDebugStamp/);
+  assert.doesNotMatch(authSource, /auth-v4-return/);
+  assert.doesNotMatch(authSource, /`explicitReturnTo \$\{/);
+  assert.doesNotMatch(authSource, /`pendingReturnTo \$\{/);
+  assert.doesNotMatch(authSource, /`mode \$\{/);
   assert.doesNotMatch(authSource, /scrollToEnd/);
   assert.doesNotMatch(authSource, /scrollTo\(\{ y:/);
   assert.doesNotMatch(authSource, /automaticallyAdjustKeyboardInsets/);

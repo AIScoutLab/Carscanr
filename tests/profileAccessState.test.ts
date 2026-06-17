@@ -421,7 +421,8 @@ test("profile keeps technical diagnostics behind the developer diagnostics gate"
   assert.notEqual(developerDiagnosticsStart, -1, "Developer Diagnostics section was not found");
   assert.notEqual(otaDiagnosticsStart, -1, "OTA Diagnostics section was not found");
   assert.notEqual(subscriptionManagementStart, -1, "Subscription Management section was not found");
-  assert.match(profileSource, /const showDeveloperDiagnostics = __DEV__ \|\| mobileEnv\.showQaDebug === "1" \|\| mobileEnv\.showQaDebug\.toLowerCase\(\) === "true"/);
+  assert.match(profileSource, /const showQaDebug = mobileEnv\.showQaDebug === "1" \|\| mobileEnv\.showQaDebug\.toLowerCase\(\) === "true"/);
+  assert.match(profileSource, /const showDeveloperDiagnostics = __DEV__ \|\| \(mobileEnv\.appEnv !== "production" && showQaDebug\)/);
   for (const label of orderedLabels) {
     const nextIndex = diagnosticsBlock.indexOf(`label="${label}"`);
     assert.ok(nextIndex > previousIndex, `${label} should appear after the previous developer diagnostics row`);

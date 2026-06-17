@@ -257,7 +257,8 @@ export default function ProfileScreen() {
   const runtimeVersion = mobileBuildInfo.runtimeVersion || "Unavailable";
   const isEmbeddedLaunch = formatDiagnosticValue(mobileBuildInfo.isEmbeddedLaunch);
   const isEmergencyLaunch = formatDiagnosticValue(mobileBuildInfo.isEmergencyLaunch);
-  const showDeveloperDiagnostics = __DEV__ || mobileEnv.showQaDebug === "1" || mobileEnv.showQaDebug.toLowerCase() === "true";
+  const showQaDebug = mobileEnv.showQaDebug === "1" || mobileEnv.showQaDebug.toLowerCase() === "true";
+  const showDeveloperDiagnostics = __DEV__ || (mobileEnv.appEnv !== "production" && showQaDebug);
   const otaDiagnosticsRows: Array<{ icon: IconName; label: string; value: string }> = [
     { icon: "power-outline", label: "Updates Enabled", value: formatDiagnosticValue(Updates.isEnabled) },
     { icon: "cloud-outline", label: "Raw Current Update ID", value: formatDiagnosticValue(mobileBuildInfo.updateId) },
