@@ -65,6 +65,7 @@ test("scan display uses backend unlock balance instead of adding vehicle ids to 
   );
 
   const serviceSource = read("services/subscriptionService.ts");
+  assert.match(serviceSource, /resolveFreeUnlockDisplayCounter\(\{/);
   assert.match(serviceSource, /backendFreeUnlocksRemaining/);
   assert.match(serviceSource, /status\.freeUnlocksUsed/);
   assert.match(serviceSource, /status\.freeUnlocksRemaining/);
@@ -87,6 +88,22 @@ test("signed-in scan status prefers backend remaining over exhausted local fallb
   );
 });
 
+test("fresh signed-in backend unlock response with one spend displays two remaining", () => {
+  assert.deepEqual(
+    resolveFreeUnlockDisplayCounter({
+      total: 3,
+      backendFreeUnlocksUsed: 1,
+      backendFreeUnlocksRemaining: 2,
+      localUsed: 2,
+    }),
+    {
+      limit: 3,
+      used: 1,
+      remaining: 2,
+    },
+  );
+});
+
 test("signed-in unlock refresh persists the backend free unlock count as the local fallback", () => {
   const serviceSource = read("services/subscriptionService.ts");
   const backendStatusStart = serviceSource.indexOf('logFreeUnlockCounterState("backend_status"');
@@ -100,6 +117,22 @@ test("signed-in unlock refresh persists the backend free unlock count as the loc
   assert.match(backendUnlockBlock, /used: backendCounter\.used,\s*localUsed: backendCounter\.used,/s);
   assert.match(serviceSource, /freeUnlocksRemaining: status\.freeUnlocksRemaining/);
   assert.doesNotMatch(backendUnlockBlock, /localUsed: existingLocalState\.localUsed/);
+});
+
+test("signed-in backend refresh does not merge guest free unlock depletion into the account counter", () => {
+  const serviceSource = read("services/subscriptionService.ts");
+  const statusStart = serviceSource.indexOf("async getFreeUnlockState()");
+  const statusEnd = serviceSource.indexOf("async useFreeUnlockForVehicle", statusStart);
+  const statusBlock = serviceSource.slice(statusStart, statusEnd);
+  const backendFailureStart = serviceSource.indexOf('console.log("[subscription] BACKEND_UNLOCK_REQUEST_FAILED"');
+  const backendFailureEnd = serviceSource.indexOf("resetStatus()", backendFailureStart);
+  const backendFailureBlock = serviceSource.slice(backendFailureStart, backendFailureEnd);
+
+  assert.notEqual(statusStart, -1, "getFreeUnlockState block was not found");
+  assert.notEqual(backendFailureStart, -1, "backend unlock failure block was not found");
+  assert.match(statusBlock, /token && user\?\.id\s*\?\s*await loadSignedInFreeUnlockFallback\(user\.id\)/s);
+  assert.match(backendFailureBlock, /await loadSignedInFreeUnlockFallback\(user\.id\)/);
+  assert.doesNotMatch(backendFailureBlock, /loadFreeUnlockStateForUser\(user\.id\)/);
 });
 
 test("restore purchases does not reset or rewrite free unlock counters", () => {

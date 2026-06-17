@@ -468,6 +468,10 @@ async function loadFreeUnlockStateForUser(userId: string | null | undefined): Pr
   return mergedState;
 }
 
+async function loadSignedInFreeUnlockFallback(userId: string): Promise<FreeUnlockState> {
+  return loadFreeUnlockState(userId);
+}
+
 async function saveFreeUnlockState(userId: string, state: FreeUnlockState) {
   const key = `${FREE_UNLOCK_STORAGE_KEY}:${userId}`;
   const normalizedState = normalizeUnlockState(state);
@@ -912,7 +916,10 @@ export const subscriptionService = {
     });
     const user = await authService.getCurrentUser();
     const token = await authService.getAccessToken();
-    const localState = await loadFreeUnlockStateForUser(user?.id ?? "guest");
+    const localState =
+      token && user?.id
+        ? await loadSignedInFreeUnlockFallback(user.id)
+        : await loadFreeUnlockStateForUser("guest");
     if (!token) {
       if (__DEV__) {
         console.log("[subscription] unlock status skipped (no auth token)");
@@ -1179,7 +1186,6 @@ export const subscriptionService = {
             ? (error as { code: string }).code
             : null,
       });
-      const unlockState = await loadFreeUnlockStateForUser(user.id);
       const code =
         typeof error === "object" && error && "code" in error && typeof (error as { code?: unknown }).code === "string"
           ? (error as { code: string }).code
@@ -1208,13 +1214,14 @@ export const subscriptionService = {
             : error instanceof Error
               ? error.message
               : "We couldn’t apply your free unlock right now.";
+      const signedInFallbackState = await loadSignedInFreeUnlockFallback(user.id);
       return {
         ok: false,
-        state: unlockState,
-        remaining: Math.max(0, FREE_UNLOCKS_LIMIT - unlockState.used),
+        state: signedInFallbackState,
+        remaining: Math.max(0, FREE_UNLOCKS_LIMIT - signedInFallbackState.used),
         limit: FREE_UNLOCKS_LIMIT,
         unlockCredits: 0,
-        alreadyUnlocked: unlockState.unlockedVehicleIds.includes(vehicleId),
+        alreadyUnlocked: signedInFallbackState.unlockedVehicleIds.includes(vehicleId),
         usedUnlock: false,
         usedUnlockCredit: false,
         resultType: "not_allowed",
