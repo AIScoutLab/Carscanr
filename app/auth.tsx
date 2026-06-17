@@ -221,6 +221,31 @@ export default function AuthScreen() {
     setAuthNotice(null);
   };
 
+  const continueAsGuest = () => {
+    console.log("[tap] auth-continue-as-guest");
+    startupPreferences
+      .setHasSeenOnboarding()
+      .catch(() => undefined)
+      .finally(() => {
+        clearPendingReturnTarget()
+          .catch(() => undefined)
+          .finally(() => {
+            router.replace("/(tabs)/scan");
+          });
+      });
+  };
+
+  const continueWithApple = () => {
+    console.log("[tap] auth-apple-placeholder");
+    Alert.alert("Apple sign-in unavailable", "Apple sign-in is not wired yet. Please use email and password for now.");
+  };
+
+  const isSignUp = mode === "sign-up";
+  const screenTitle = isSignUp ? "Sync your Garage and unlocks" : "Welcome back.";
+  const screenSubtitle = isSignUp
+    ? "Create an account to back up your Garage, scan history, purchases, and unlocks across devices."
+    : "Sign in to sync your Garage, saved scans, purchases, and unlocks across devices.";
+
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "right", "left", "bottom"]}>
       <LinearGradient
@@ -288,16 +313,8 @@ export default function AuthScreen() {
             </View>
 
             <View style={[styles.heroCopy, isKeyboardVisible && styles.heroCopyKeyboardVisible]}>
-              <Text style={[styles.title, isKeyboardVisible && styles.titleKeyboardVisible]}>
-                {mode === "sign-in" ? "Welcome back." : "Create your account."}
-              </Text>
-              {!isKeyboardVisible ? (
-                <Text style={styles.subtitle}>
-                  {mode === "sign-in"
-                    ? "Sign in to sync your Garage, saved scans, and unlocks across devices."
-                    : "Create an account to sync your Garage, history, and unlocks across devices."}
-                </Text>
-              ) : null}
+              <Text style={[styles.title, isKeyboardVisible && styles.titleKeyboardVisible]}>{screenTitle}</Text>
+              {!isKeyboardVisible ? <Text style={styles.subtitle}>{screenSubtitle}</Text> : null}
             </View>
             {!isKeyboardVisible ? (
               <RuntimeDebugStamp
@@ -310,50 +327,31 @@ export default function AuthScreen() {
               />
             ) : null}
 
-            {!isKeyboardVisible ? <View style={styles.guestNoteCard}>
-              <View style={styles.sectionEyebrowRow}>
-                <View style={styles.goldDot} />
-                <Text style={styles.guestNoteTitle}>Account Optional</Text>
-              </View>
-              <Text style={styles.guestNoteBody}>Basic scanning stays free. Accounts sync your Garage, history, and unlocks across devices.</Text>
-              <View style={styles.guestActionRow}>
-                <TouchableOpacity
-                  style={[styles.authButton, styles.authButtonPrimary]}
-                  activeOpacity={0.88}
-                  accessibilityRole="button"
-                  onPress={() => switchMode(mode === "sign-in" ? "sign-up" : "sign-in")}
-                >
-                  <LinearGradient colors={["#D9A46D", "#C8905A"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.buttonFill}>
-                    <Text style={styles.primaryButtonLabel}>
-                      {mode === "sign-in" ? "Create Free Account" : "Sign In Instead"}
-                    </Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.authButton, styles.authButtonSecondary]}
-                  activeOpacity={0.86}
-                  accessibilityRole="button"
-                  onPress={() => {
-                    console.log("[tap] auth-continue-as-guest");
-                    startupPreferences
-                      .setHasSeenOnboarding()
-                      .catch(() => undefined)
-                      .finally(() => {
-                        clearPendingReturnTarget()
-                          .catch(() => undefined)
-                          .finally(() => {
-                            router.replace("/(tabs)/scan");
-                          });
-                      });
-                  }}
-                >
-                  <Text style={styles.secondaryButtonLabel}>Continue as Guest</Text>
-                </TouchableOpacity>
-              </View>
-            </View> : null}
+            {!isKeyboardVisible ? (
+              <TouchableOpacity
+                style={[styles.authButton, styles.primaryAppleButton]}
+                activeOpacity={0.88}
+                accessibilityRole="button"
+                accessibilityLabel="Continue with Apple"
+                onPress={continueWithApple}
+              >
+                <LinearGradient colors={["#E0AE79", "#C8905A"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.buttonFill}>
+                  <Ionicons name="logo-apple" size={19} color="#070707" />
+                  <Text style={styles.primaryButtonLabel}>Continue with Apple</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            ) : null}
 
             <View style={[styles.card, isKeyboardVisible && styles.cardKeyboardVisible]}>
-              <Text style={styles.formLabel}>{mode === "sign-in" ? "Already have an account" : "Create with email"}</Text>
+              {isSignUp ? (
+                <View style={styles.dividerRow} accessibilityRole="text">
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerLabel}>or create with email</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+              ) : (
+                <Text style={styles.formLabel}>Sign in with email</Text>
+              )}
               <View style={styles.inputStack}>
                 <TextInput
                   value={email}
@@ -365,6 +363,8 @@ export default function AuthScreen() {
                   style={[styles.input, focusedField === "email" && styles.inputFocused]}
                   placeholder="Email"
                   placeholderTextColor="#7E8797"
+                  accessibilityLabel="Email"
+                  textContentType="emailAddress"
                   onFocus={() => setFocusedField("email")}
                   onSubmitEditing={() => passwordInputRef.current?.focus()}
                 />
@@ -377,6 +377,8 @@ export default function AuthScreen() {
                   placeholder="Password"
                   placeholderTextColor="#7E8797"
                   returnKeyType="done"
+                  accessibilityLabel="Password"
+                  textContentType={isSignUp ? "newPassword" : "password"}
                   onFocus={() => setFocusedField("password")}
                   onSubmitEditing={() => {
                     void submit();
@@ -408,31 +410,46 @@ export default function AuthScreen() {
                 </View>
               ) : null}
               <TouchableOpacity
-                style={[styles.authButton, styles.authButtonPrimary, isSubmitting && styles.disabledButton]}
+                style={[styles.authButton, isSignUp ? styles.emailSubmitButton : styles.authButtonPrimary, isSubmitting && styles.disabledButton]}
                 activeOpacity={0.88}
                 accessibilityRole="button"
+                accessibilityLabel={isSignUp ? "Create Account" : "Sign In"}
                 onPress={submit}
                 disabled={isSubmitting}
               >
-                <LinearGradient colors={["#D9A46D", "#C8905A"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.buttonFill}>
-                  <Text style={styles.primaryButtonLabel}>{isSubmitting ? "Working..." : mode === "sign-in" ? "Sign In" : "Create Account"}</Text>
-                </LinearGradient>
+                {isSignUp ? (
+                  <Text style={styles.emailSubmitButtonLabel}>{isSubmitting ? "Working..." : "Create Account"}</Text>
+                ) : (
+                  <LinearGradient colors={["#D9A46D", "#C8905A"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.buttonFill}>
+                    <Text style={styles.primaryButtonLabel}>{isSubmitting ? "Working..." : "Sign In"}</Text>
+                  </LinearGradient>
+                )}
               </TouchableOpacity>
-              {!isKeyboardVisible ? (
+              <View style={styles.modeLinkRow}>
+                <Text style={styles.modeLinkCopy}>{isSignUp ? "Already have an account?" : "Need an account?"}</Text>
                 <TouchableOpacity
-                  style={[styles.authButton, styles.appleButton]}
                   activeOpacity={0.86}
-                  accessibilityRole="button"
-                  onPress={() => {
-                    console.log("[tap] auth-apple-placeholder");
-                    Alert.alert("Apple sign-in unavailable", "Apple sign-in is not wired yet. Please use email and password for now.");
-                  }}
+                  accessibilityRole="link"
+                  accessibilityLabel={isSignUp ? "Sign In" : "Create Account"}
+                  onPress={() => switchMode(isSignUp ? "sign-in" : "sign-up")}
                 >
-                  <Ionicons name="logo-apple" size={18} color={Colors.textStrong} />
-                  <Text style={styles.secondaryButtonLabel}>Continue with Apple</Text>
+                  <Text style={styles.modeLinkText}>{isSignUp ? "Sign In" : "Create Account"}</Text>
                 </TouchableOpacity>
-              ) : null}
+              </View>
             </View>
+
+            {!isKeyboardVisible ? (
+              <TouchableOpacity
+                style={styles.guestOption}
+                activeOpacity={0.82}
+                accessibilityRole="button"
+                accessibilityLabel="Continue as Guest"
+                onPress={continueAsGuest}
+              >
+                <Text style={styles.guestOptionText}>Continue as Guest</Text>
+                <Text style={styles.guestOptionHelper}>Skip for now. You can create an account later.</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -523,7 +540,7 @@ const styles = StyleSheet.create({
     ...Typography.largeTitle,
     fontFamily: Platform.select({ ios: "AvenirNext-Bold", default: "sans-serif" }),
     fontWeight: "700",
-    letterSpacing: -0.45,
+    letterSpacing: 0,
     color: Colors.text,
     lineHeight: 41,
     paddingTop: 2,
@@ -537,43 +554,9 @@ const styles = StyleSheet.create({
     color: "#AEB5C2",
     lineHeight: 22,
   },
-  guestNoteCard: {
-    backgroundColor: "rgba(21,21,23,0.88)",
-    borderRadius: 18,
-    padding: 18,
-    gap: 14,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.10)",
-    overflow: "hidden",
-  },
-  sectionEyebrowRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  goldDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 999,
-    backgroundColor: "#D8A46F",
-  },
-  guestNoteTitle: {
-    ...Typography.caption,
-    color: "#E7BD8A",
-    fontWeight: "700",
-    letterSpacing: 0.8,
-  },
-  guestNoteBody: {
-    ...Typography.body,
-    color: "#B9BFCA",
-    lineHeight: 21,
-  },
-  guestActionRow: {
-    gap: 10,
-  },
   authButton: {
     minHeight: 50,
-    borderRadius: 13,
+    borderRadius: 8,
     overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
@@ -586,25 +569,22 @@ const styles = StyleSheet.create({
     shadowRadius: 22,
     elevation: 4,
   },
-  authButtonSecondary: {
-    backgroundColor: "rgba(26,26,28,0.92)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
-  },
-  appleButton: {
-    backgroundColor: "rgba(12,12,13,0.96)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.14)",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
+  primaryAppleButton: {
+    minHeight: 54,
+    backgroundColor: "#C8905A",
+    shadowColor: "#C8905A",
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.24,
+    shadowRadius: 24,
+    elevation: 5,
   },
   buttonFill: {
     minHeight: 50,
     width: "100%",
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: 9,
     paddingHorizontal: 18,
   },
   primaryButtonLabel: {
@@ -613,18 +593,12 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontWeight: "800",
   },
-  secondaryButtonLabel: {
-    ...Typography.bodyStrong,
-    color: Colors.textStrong,
-    textAlign: "center",
-    fontWeight: "700",
-  },
   disabledButton: {
     opacity: 0.65,
   },
   card: {
     backgroundColor: "rgba(20,20,22,0.88)",
-    borderRadius: 18,
+    borderRadius: 8,
     padding: 18,
     gap: 13,
     borderWidth: 1,
@@ -641,6 +615,52 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     textTransform: "uppercase",
   },
+  dividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.10)",
+  },
+  dividerLabel: {
+    ...Typography.caption,
+    color: "#9EA6B4",
+    fontWeight: "700",
+    letterSpacing: 0,
+  },
+  emailSubmitButton: {
+    backgroundColor: "rgba(26,26,28,0.94)",
+    borderWidth: 1,
+    borderColor: "rgba(216,164,111,0.42)",
+  },
+  emailSubmitButtonLabel: {
+    ...Typography.bodyStrong,
+    color: "#F0C38E",
+    textAlign: "center",
+    fontWeight: "800",
+  },
+  modeLinkRow: {
+    minHeight: 28,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 6,
+    flexWrap: "wrap",
+  },
+  modeLinkCopy: {
+    ...Typography.caption,
+    color: "#AEB5C2",
+    letterSpacing: 0,
+  },
+  modeLinkText: {
+    ...Typography.caption,
+    color: "#E5B87E",
+    fontWeight: "800",
+    letterSpacing: 0,
+  },
   inputStack: {
     gap: 10,
   },
@@ -654,6 +674,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.12)",
     ...Typography.body,
+  },
+  guestOption: {
+    minHeight: 58,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 3,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  guestOptionText: {
+    ...Typography.bodyStrong,
+    color: "#D2D7E0",
+    textAlign: "center",
+    fontWeight: "700",
+  },
+  guestOptionHelper: {
+    ...Typography.caption,
+    color: "#838C9B",
+    textAlign: "center",
+    letterSpacing: 0,
   },
   inputFocused: {
     borderColor: "rgba(216,164,111,0.72)",

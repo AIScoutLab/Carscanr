@@ -77,7 +77,7 @@ test("auth return target is consumed and keyboard-safe while preserving paywall 
   assert.match(authSource, /styles\.cardKeyboardVisible/);
   assert.match(authSource, /onFocus=\{\(\) => setFocusedField\("email"\)\}/);
   assert.match(authSource, /onFocus=\{\(\) => setFocusedField\("password"\)\}/);
-  assert.match(authSource, /!isKeyboardVisible \? <View style=\{styles\.guestNoteCard\}>/);
+  assert.match(authSource, /!isKeyboardVisible \? \(\s*<TouchableOpacity\s+style=\{styles\.guestOption\}/);
   assert.doesNotMatch(authSource, /scrollToEnd/);
   assert.doesNotMatch(authSource, /scrollTo\(\{ y:/);
   assert.doesNotMatch(authSource, /automaticallyAdjustKeyboardInsets/);
@@ -88,12 +88,36 @@ test("auth return target is consumed and keyboard-safe while preserving paywall 
 test("create account mode uses the same compact keyboard-safe form without auto-scroll", () => {
   const authSource = fs.readFileSync(path.join(repoRoot, "app/auth.tsx"), "utf8");
 
-  assert.match(authSource, /mode === "sign-in" \? "Welcome back\." : "Create your account\."/);
-  assert.match(authSource, /mode === "sign-in" \? "Sign In" : "Create Account"/);
-  assert.match(authSource, /mode === "sign-in" \? "Already have an account" : "Create with email"/);
+  assert.match(authSource, /const screenTitle = isSignUp \? "Sync your Garage and unlocks" : "Welcome back\."/);
+  assert.match(authSource, /Create an account to back up your Garage, scan history, purchases, and unlocks across devices\./);
+  assert.match(authSource, /accessibilityLabel=\{isSignUp \? "Create Account" : "Sign In"\}/);
+  assert.match(authSource, /<Text style=\{styles\.dividerLabel\}>or create with email<\/Text>/);
   assert.match(authSource, /contentInnerKeyboardVisible/);
   assert.match(authSource, /titleKeyboardVisible/);
   assert.match(authSource, /cardKeyboardVisible/);
+  assert.doesNotMatch(authSource, /Account Optional/);
+  assert.doesNotMatch(authSource, /Sign In Instead/);
   assert.doesNotMatch(authSource, /scrollFormIntoView/);
   assert.doesNotMatch(authSource, /formTop/);
+});
+
+test("create account hierarchy prioritizes Apple and demotes sign in and guest actions", () => {
+  const authSource = fs.readFileSync(path.join(repoRoot, "app/auth.tsx"), "utf8");
+
+  const titleIndex = authSource.indexOf("Sync your Garage and unlocks");
+  const appleIndex = authSource.indexOf("Continue with Apple");
+  const dividerIndex = authSource.indexOf("or create with email");
+  const createIndex = authSource.indexOf("Create Account");
+  const signInPromptIndex = authSource.indexOf("Already have an account?");
+  const guestIndex = authSource.indexOf("Continue as Guest");
+
+  assert.ok(titleIndex > -1, "create account title must be present");
+  assert.ok(appleIndex > titleIndex, "Apple CTA should follow the value-focused header");
+  assert.ok(dividerIndex > appleIndex, "email creation should be secondary to Apple");
+  assert.ok(createIndex > dividerIndex, "Create Account should stay in the email section");
+  assert.ok(signInPromptIndex > createIndex, "Sign In should be a text link below account creation");
+  assert.ok(guestIndex > signInPromptIndex, "guest mode should be visually last");
+  assert.match(authSource, /accessibilityRole="link"[\s\S]*?<Text style=\{styles\.modeLinkText\}>\{isSignUp \? "Sign In" : "Create Account"\}<\/Text>/);
+  assert.match(authSource, /Skip for now\. You can create an account later\./);
+  assert.doesNotMatch(authSource, /style=\{\[styles\.authButton, styles\.authButtonPrimary\]\}[\s\S]*?Sign In Instead/);
 });
