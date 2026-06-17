@@ -42,6 +42,45 @@ test("free unlock counters clamp impossible persisted states back into the canon
   });
 });
 
+test("guest free unlock display transitions one spend at a time", () => {
+  const remainingBySpend = [0, 1, 2, 3].map((localUsed) =>
+    normalizeFreeUnlockCounter({ used: localUsed }).remaining,
+  );
+
+  assert.deepEqual(remainingBySpend, [3, 2, 1, 0]);
+});
+
+test("scan display uses backend unlock balance instead of adding vehicle ids to local usage", () => {
+  assert.deepEqual(
+    normalizeFreeUnlockCounter({ used: 1 }),
+    {
+      limit: 3,
+      used: 1,
+      remaining: 2,
+    },
+  );
+
+  const serviceSource = read("services/subscriptionService.ts");
+  assert.match(serviceSource, /backendFreeUnlocksUsed/);
+  assert.match(serviceSource, /status\.freeUnlocksUsed/);
+  assert.match(serviceSource, /cached\.freeUnlocksUsed/);
+  assert.doesNotMatch(serviceSource, /uniqueBackendIds\.length \+ localUsed/);
+});
+
+test("signed-in unlock refresh persists the backend free unlock count as the local fallback", () => {
+  const serviceSource = read("services/subscriptionService.ts");
+  const backendStatusStart = serviceSource.indexOf('logFreeUnlockCounterState("backend_status"');
+  const backendStatusBlock = serviceSource.slice(Math.max(0, backendStatusStart - 420), backendStatusStart);
+  const backendUnlockStart = serviceSource.indexOf('logFreeUnlockCounterState("backend_unlock_status"');
+  const backendUnlockBlock = serviceSource.slice(Math.max(0, backendUnlockStart - 420), backendUnlockStart);
+
+  assert.notEqual(backendStatusStart, -1, "backend status refresh block was not found");
+  assert.notEqual(backendUnlockStart, -1, "backend unlock status block was not found");
+  assert.match(backendStatusBlock, /await saveFreeUnlockState\(user\.id, \{\s*used: merged\.used,\s*localUsed: merged\.used,/s);
+  assert.match(backendUnlockBlock, /used: status\.freeUnlocksUsed,\s*localUsed: status\.freeUnlocksUsed,/s);
+  assert.doesNotMatch(backendUnlockBlock, /localUsed: existingLocalState\.localUsed/);
+});
+
 test("restore purchases does not reset or rewrite free unlock counters", () => {
   const providerSource = read("features/subscription/SubscriptionProvider.tsx");
   const serviceSource = read("services/subscriptionService.ts");

@@ -498,15 +498,28 @@ function dedupeUnlockIds(ids: string[]) {
   return Array.from(new Set(ids.filter((id) => typeof id === "string" && id.length > 0).map((id) => normalizeEstimatedUnlockId(id))));
 }
 
-function mergeUnlockStates(limit: number, backendIds: string[], localState: FreeUnlockState) {
+function mergeUnlockStates(
+  limit: number,
+  backendIds: string[],
+  localState: FreeUnlockState,
+  backendFreeUnlocksUsed?: number | null,
+) {
   const normalizedLimit = normalizeFreeUnlockCounter({ total: limit }).limit;
   const estimatedIds = localState.unlockedVehicleIds.filter((id) => isEstimatedUnlockId(id) || isEstimatedSoftUnlockId(id));
   const unlockedVehicleIds = dedupeUnlockIds([...backendIds, ...estimatedIds]);
-  const uniqueBackendIds = Array.from(new Set(backendIds.filter((id) => typeof id === "string" && id.length > 0)));
-  const localUsed = normalizeFreeUnlockCounter({
+  const backendUsed =
+    typeof backendFreeUnlocksUsed === "number" && Number.isFinite(backendFreeUnlocksUsed)
+      ? backendFreeUnlocksUsed
+      : null;
+  const localCounter = normalizeFreeUnlockCounter({
+    total: normalizedLimit,
     used: typeof localState.localUsed === "number" ? localState.localUsed : localState.used,
-  }).used;
-  const used = Math.min(normalizedLimit, uniqueBackendIds.length + localUsed);
+  });
+  const counter = normalizeFreeUnlockCounter({
+    total: normalizedLimit,
+    used: backendUsed ?? localCounter.used,
+  });
+  const used = counter.used;
   return {
     used,
     remaining: Math.max(0, normalizedLimit - used),
@@ -909,7 +922,17 @@ export const subscriptionService = {
         path: "/api/unlocks/status",
       });
       scanService.updateCachedUnlockStatus?.(status);
-      const merged = mergeUnlockStates(status.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT, status.unlockedVehicleIds ?? [], localState);
+      const merged = mergeUnlockStates(
+        status.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT,
+        status.unlockedVehicleIds ?? [],
+        localState,
+        status.freeUnlocksUsed,
+      );
+      await saveFreeUnlockState(user.id, {
+        used: merged.used,
+        localUsed: merged.used,
+        unlockedVehicleIds: merged.unlockedVehicleIds,
+      });
       logFreeUnlockCounterState("backend_status", merged);
       return {
         used: merged.used,
@@ -921,7 +944,12 @@ export const subscriptionService = {
     } catch {
       const cached = scanService.getCachedUnlockStatus?.();
       if (cached && typeof cached.freeUnlocksTotal === "number" && typeof cached.unlockCreditsRemaining === "number") {
-        const merged = mergeUnlockStates(cached.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT, cached.unlockedVehicleIds ?? [], localState);
+        const merged = mergeUnlockStates(
+          cached.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT,
+          cached.unlockedVehicleIds ?? [],
+          localState,
+          cached.freeUnlocksUsed,
+        );
         logFreeUnlockCounterState("scan_cache_fallback", merged);
         return {
           used: merged.used,
@@ -931,18 +959,20 @@ export const subscriptionService = {
           unlockCredits: Math.max(0, cached.unlockCreditsRemaining),
         };
       }
-      const remaining = Math.max(0, FREE_UNLOCKS_LIMIT - localState.used);
-      logFreeUnlockCounterState("local_fallback", {
+      const counter = normalizeFreeUnlockCounter({
         used: localState.localUsed ?? localState.used,
-        remaining,
-        limit: FREE_UNLOCKS_LIMIT,
+      });
+      logFreeUnlockCounterState("local_fallback", {
+        used: counter.used,
+        remaining: counter.remaining,
+        limit: counter.limit,
         unlockedVehicleIds: localState.unlockedVehicleIds,
       });
       return {
-        used: localState.localUsed ?? localState.used,
-        remaining,
+        used: counter.used,
+        remaining: counter.remaining,
         unlockedVehicleIds: localState.unlockedVehicleIds,
-        limit: FREE_UNLOCKS_LIMIT,
+        limit: counter.limit,
         unlockCredits: 0,
       };
     }
@@ -1062,10 +1092,9 @@ export const subscriptionService = {
           });
         }
       }
-      const existingLocalState = await loadFreeUnlockStateForUser(user.id);
       const unlockState = {
         used: status.freeUnlocksUsed,
-        localUsed: existingLocalState.localUsed ?? existingLocalState.used,
+        localUsed: status.freeUnlocksUsed,
         unlockedVehicleIds: dedupeUnlockIds([...(status.unlockedVehicleIds ?? []), vehicleId, ...linkedVehicleIds]),
       };
       await saveFreeUnlockState(user.id, unlockState);

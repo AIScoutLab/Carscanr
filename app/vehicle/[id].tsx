@@ -3210,11 +3210,14 @@ export default function VehicleDetailScreen() {
   const marketValueActionDisabled = valuationLoading || isUnlocking || (!marketUnlockPrimaryId && !hasFullAccess);
   const marketListingsActionDisabled = listingsRefreshLoading || isUnlocking || (!marketUnlockPrimaryId && !hasFullAccess);
   const loadVehicleMarketSections = useCallback(() => {
-    requestExplicitLiveValue();
     if (canRequestLiveListings) {
       requestExplicitLiveListings();
+      return;
     }
-  }, [canRequestLiveListings, requestExplicitLiveListings, requestExplicitLiveValue]);
+    if (canRequestLiveValue) {
+      requestExplicitLiveValue();
+    }
+  }, [canRequestLiveListings, canRequestLiveValue, requestExplicitLiveListings, requestExplicitLiveValue]);
 
   const ensureAuthenticatedForLiveMarket = useCallback(async () => {
     const token = await authService.getAccessToken();

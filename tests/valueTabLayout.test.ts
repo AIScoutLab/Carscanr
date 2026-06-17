@@ -70,6 +70,19 @@ test("listings refresh hydrates value state from cached listings", () => {
   assert.match(screenSource, /providerCall: false/);
 });
 
+test("combined Value and Listings action does not start duplicate live provider flows", () => {
+  const screenSource = fs.readFileSync(screenPath, "utf8");
+  const loadMarketSectionsStart = screenSource.indexOf("const loadVehicleMarketSections = useCallback");
+  const loadMarketSectionsEnd = screenSource.indexOf("const ensureAuthenticatedForLiveMarket", loadMarketSectionsStart);
+  const loadMarketSectionsBlock = screenSource.slice(loadMarketSectionsStart, loadMarketSectionsEnd);
+
+  assert.notEqual(loadMarketSectionsStart, -1, "loadVehicleMarketSections callback was not found");
+  assert.notEqual(loadMarketSectionsEnd, -1, "loadVehicleMarketSections callback end was not found");
+  assert.match(loadMarketSectionsBlock, /if \(canRequestLiveListings\) \{\s*requestExplicitLiveListings\(\);\s*return;\s*\}/s);
+  assert.match(loadMarketSectionsBlock, /if \(canRequestLiveValue\) \{\s*requestExplicitLiveValue\(\);\s*\}/s);
+  assert.doesNotMatch(loadMarketSectionsBlock, /requestExplicitLiveValue\(\);\s*if \(canRequestLiveListings\)/);
+});
+
 test("explicit live listings can collect broader comps without flooding the UI", () => {
   const backendServiceSource = fs.readFileSync(path.join(process.cwd(), "backend/src/services/vehicleService.ts"), "utf8");
   const marketCheckSource = fs.readFileSync(marketCheckProviderPath, "utf8");
