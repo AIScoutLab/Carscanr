@@ -4,6 +4,7 @@ import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { applyPlanOverride } from "@/features/subscription/planOverride";
 import { getPurchaseOptionKind, getPurchaseOptionKindFromProductMetadata, isSubscriptionPurchaseOptionKind } from "@/lib/purchaseOptions";
 import { isProPlan } from "@/lib/subscription";
+import { resolveFreeUnlockDisplayCounter } from "@/lib/freeUnlockBalance";
 import { apiRequest } from "@/services/apiClient";
 import { authService } from "@/services/authService";
 import { purchaseService } from "@/services/purchaseService";
@@ -383,6 +384,18 @@ type FreeUnlockState = {
   unlockedVehicleIds: string[];
 };
 
+function normalizeBackendUnlockCounter(input: {
+  freeUnlocksTotal?: number | null;
+  freeUnlocksUsed?: number | null;
+  freeUnlocksRemaining?: number | null;
+}) {
+  return resolveFreeUnlockDisplayCounter({
+    total: input.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT,
+    backendFreeUnlocksUsed: input.freeUnlocksUsed,
+    backendFreeUnlocksRemaining: input.freeUnlocksRemaining,
+  });
+}
+
 function normalizeUnlockState(input: unknown): FreeUnlockState {
   if (!input || typeof input !== "object") {
     return { used: 0, localUsed: 0, unlockedVehicleIds: [] };
@@ -503,26 +516,30 @@ function mergeUnlockStates(
   backendIds: string[],
   localState: FreeUnlockState,
   backendFreeUnlocksUsed?: number | null,
+  backendFreeUnlocksRemaining?: number | null,
 ) {
   const normalizedLimit = normalizeFreeUnlockCounter({ total: limit }).limit;
   const estimatedIds = localState.unlockedVehicleIds.filter((id) => isEstimatedUnlockId(id) || isEstimatedSoftUnlockId(id));
   const unlockedVehicleIds = dedupeUnlockIds([...backendIds, ...estimatedIds]);
-  const backendUsed =
-    typeof backendFreeUnlocksUsed === "number" && Number.isFinite(backendFreeUnlocksUsed)
-      ? backendFreeUnlocksUsed
-      : null;
-  const localCounter = normalizeFreeUnlockCounter({
+  const localCounter = resolveFreeUnlockDisplayCounter({
     total: normalizedLimit,
-    used: typeof localState.localUsed === "number" ? localState.localUsed : localState.used,
+    localUsed: typeof localState.localUsed === "number" ? localState.localUsed : localState.used,
   });
-  const counter = normalizeFreeUnlockCounter({
-    total: normalizedLimit,
-    used: backendUsed ?? localCounter.used,
-  });
+  const hasBackendCounter =
+    (typeof backendFreeUnlocksRemaining === "number" && Number.isFinite(backendFreeUnlocksRemaining)) ||
+    (typeof backendFreeUnlocksUsed === "number" && Number.isFinite(backendFreeUnlocksUsed));
+  const backendCounter = hasBackendCounter
+    ? normalizeBackendUnlockCounter({
+        freeUnlocksTotal: normalizedLimit,
+        freeUnlocksUsed: backendFreeUnlocksUsed,
+        freeUnlocksRemaining: backendFreeUnlocksRemaining,
+      })
+    : null;
+  const counter = backendCounter ?? localCounter;
   const used = counter.used;
   return {
     used,
-    remaining: Math.max(0, normalizedLimit - used),
+    remaining: counter.remaining,
     unlockedVehicleIds,
     limit: normalizedLimit,
   };
@@ -927,6 +944,7 @@ export const subscriptionService = {
         status.unlockedVehicleIds ?? [],
         localState,
         status.freeUnlocksUsed,
+        status.freeUnlocksRemaining,
       );
       await saveFreeUnlockState(user.id, {
         used: merged.used,
@@ -949,6 +967,7 @@ export const subscriptionService = {
           cached.unlockedVehicleIds ?? [],
           localState,
           cached.freeUnlocksUsed,
+          cached.freeUnlocksRemaining,
         );
         logFreeUnlockCounterState("scan_cache_fallback", merged);
         return {
@@ -959,8 +978,8 @@ export const subscriptionService = {
           unlockCredits: Math.max(0, cached.unlockCreditsRemaining),
         };
       }
-      const counter = normalizeFreeUnlockCounter({
-        used: localState.localUsed ?? localState.used,
+      const counter = resolveFreeUnlockDisplayCounter({
+        localUsed: localState.localUsed ?? localState.used,
       });
       logFreeUnlockCounterState("local_fallback", {
         used: counter.used,
@@ -1092,9 +1111,14 @@ export const subscriptionService = {
           });
         }
       }
+      const backendCounter = normalizeBackendUnlockCounter({
+        freeUnlocksTotal: status.freeUnlocksTotal,
+        freeUnlocksUsed: status.freeUnlocksUsed,
+        freeUnlocksRemaining: status.freeUnlocksRemaining,
+      });
       const unlockState = {
-        used: status.freeUnlocksUsed,
-        localUsed: status.freeUnlocksUsed,
+        used: backendCounter.used,
+        localUsed: backendCounter.used,
         unlockedVehicleIds: dedupeUnlockIds([...(status.unlockedVehicleIds ?? []), vehicleId, ...linkedVehicleIds]),
       };
       await saveFreeUnlockState(user.id, unlockState);
@@ -1104,8 +1128,8 @@ export const subscriptionService = {
       });
       logFreeUnlockCounterState("backend_unlock_status", {
         used: unlockState.used,
-        remaining: status.freeUnlocksRemaining ?? Math.max(0, status.freeUnlocksTotal - status.freeUnlocksUsed),
-        limit: status.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT,
+        remaining: backendCounter.remaining,
+        limit: backendCounter.limit,
         unlockedVehicleIds: unlockState.unlockedVehicleIds,
       });
       console.log("[subscription] BACKEND_UNLOCK_RESULT", {
@@ -1115,18 +1139,17 @@ export const subscriptionService = {
         alreadyUnlocked: response.entitlement.alreadyUnlocked,
         usedUnlock: response.entitlement.usedUnlock,
         usedUnlockCredit: Boolean(response.entitlement.usedUnlockCredit),
-        freeUnlocksRemaining: status.freeUnlocksRemaining ?? Math.max(0, status.freeUnlocksTotal - status.freeUnlocksUsed),
+        freeUnlocksRemaining: backendCounter.remaining,
         unlockCreditsRemaining: Math.max(0, status.unlockCreditsRemaining ?? 0),
         totalUnlocksAvailable:
           status.totalUnlocksAvailable ??
-          (status.freeUnlocksRemaining ?? Math.max(0, status.freeUnlocksTotal - status.freeUnlocksUsed)) +
-            Math.max(0, status.unlockCreditsRemaining ?? 0),
+          backendCounter.remaining + Math.max(0, status.unlockCreditsRemaining ?? 0),
       });
       return {
         ok: response.entitlement.allowed,
         state: unlockState,
-        remaining: status.freeUnlocksRemaining ?? Math.max(0, status.freeUnlocksTotal - status.freeUnlocksUsed),
-        limit: status.freeUnlocksTotal ?? FREE_UNLOCKS_LIMIT,
+        remaining: backendCounter.remaining,
+        limit: backendCounter.limit,
         unlockCredits: Math.max(0, status.unlockCreditsRemaining ?? 0),
         alreadyUnlocked: response.entitlement.alreadyUnlocked,
         usedUnlock: response.entitlement.usedUnlock,
