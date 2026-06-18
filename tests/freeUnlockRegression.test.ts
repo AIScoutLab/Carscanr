@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { FREE_PRO_UNLOCKS_TOTAL, normalizeFreeUnlockCounter } from "@/constants/product";
 import { resolveFreeUnlockDisplayCounter } from "@/lib/freeUnlockBalance";
+import { formatCompactUnlockBalanceSummary } from "@/lib/unlockCreditDisplay";
 import { FREE_PRO_UNLOCKS_TOTAL as BACKEND_FREE_PRO_UNLOCKS_TOTAL } from "../backend/src/config/product";
 
 const repoRoot = path.resolve(__dirname, "..");
@@ -104,6 +105,29 @@ test("fresh signed-in backend unlock response with one spend displays two remain
   );
 });
 
+test("signed-in scan display uses backend remaining instead of depleted guest fallback", () => {
+  const counter = resolveFreeUnlockDisplayCounter({
+    total: 3,
+    backendFreeUnlocksUsed: 1,
+    backendFreeUnlocksRemaining: 2,
+    localUsed: 2,
+  });
+
+  assert.deepEqual(counter, {
+    limit: 3,
+    used: 1,
+    remaining: 2,
+  });
+  assert.equal(
+    formatCompactUnlockBalanceSummary({
+      freeUnlocksRemaining: counter.remaining,
+      freeUnlocksTotal: counter.limit,
+      unlockCreditsRemaining: 0,
+    }),
+    "Free: 2 of 3 remaining • Purchased: 0 of 5 remaining",
+  );
+});
+
 test("free unlock action is synchronously guarded against duplicate backend use calls", () => {
   const providerSource = read("features/subscription/SubscriptionProvider.tsx");
   const callbackStart = providerSource.indexOf("const useFreeUnlockForVehicle = useCallback");
@@ -138,6 +162,9 @@ test("signed-in unlock refresh persists the backend free unlock count as the loc
 
 test("signed-in backend refresh does not merge guest free unlock depletion into the account counter", () => {
   const serviceSource = read("services/subscriptionService.ts");
+  const loaderStart = serviceSource.indexOf("async function loadFreeUnlockStateForUser");
+  const loaderEnd = serviceSource.indexOf("async function loadSignedInFreeUnlockFallback", loaderStart);
+  const loaderBlock = serviceSource.slice(loaderStart, loaderEnd);
   const statusStart = serviceSource.indexOf("async getFreeUnlockState()");
   const statusEnd = serviceSource.indexOf("async useFreeUnlockForVehicle", statusStart);
   const statusBlock = serviceSource.slice(statusStart, statusEnd);
@@ -145,8 +172,14 @@ test("signed-in backend refresh does not merge guest free unlock depletion into 
   const backendFailureEnd = serviceSource.indexOf("resetStatus()", backendFailureStart);
   const backendFailureBlock = serviceSource.slice(backendFailureStart, backendFailureEnd);
 
+  assert.notEqual(loaderStart, -1, "loadFreeUnlockStateForUser block was not found");
   assert.notEqual(statusStart, -1, "getFreeUnlockState block was not found");
   assert.notEqual(backendFailureStart, -1, "backend unlock failure block was not found");
+  assert.match(loaderBlock, /if \(!userId \|\| userId === "guest"\) \{\s*return loadFreeUnlockState\("guest"\);\s*\}/s);
+  assert.match(loaderBlock, /return loadFreeUnlockState\(userId\);/);
+  assert.doesNotMatch(loaderBlock, /Promise\.all\(\[loadFreeUnlockState\(userId\), loadFreeUnlockState\("guest"\)\]\)/);
+  assert.doesNotMatch(loaderBlock, /Math\.max\(userState/);
+  assert.doesNotMatch(loaderBlock, /GUEST_UNLOCK_STATE_MIGRATED/);
   assert.match(statusBlock, /token && user\?\.id\s*\?\s*await loadSignedInFreeUnlockFallback\(user\.id\)/s);
   assert.match(backendFailureBlock, /await loadSignedInFreeUnlockFallback\(user\.id\)/);
   assert.doesNotMatch(backendFailureBlock, /loadFreeUnlockStateForUser\(user\.id\)/);

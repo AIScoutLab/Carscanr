@@ -444,28 +444,7 @@ async function loadFreeUnlockStateForUser(userId: string | null | undefined): Pr
     return loadFreeUnlockState("guest");
   }
 
-  const [userState, guestState] = await Promise.all([loadFreeUnlockState(userId), loadFreeUnlockState("guest")]);
-  const mergedState = {
-    used: Math.max(userState.localUsed ?? userState.used, guestState.localUsed ?? guestState.used),
-    localUsed: Math.max(userState.localUsed ?? userState.used, guestState.localUsed ?? guestState.used),
-    unlockedVehicleIds: dedupeUnlockIds([...userState.unlockedVehicleIds, ...guestState.unlockedVehicleIds]),
-  };
-
-  if (
-    mergedState.localUsed !== (userState.localUsed ?? userState.used) ||
-    mergedState.unlockedVehicleIds.length !== userState.unlockedVehicleIds.length
-  ) {
-    await saveFreeUnlockState(userId, mergedState);
-    if (__DEV__) {
-      console.log("[subscription] GUEST_UNLOCK_STATE_MIGRATED", {
-        userId,
-        localUsed: mergedState.localUsed,
-        unlockedVehicleCount: mergedState.unlockedVehicleIds.length,
-      });
-    }
-  }
-
-  return mergedState;
+  return loadFreeUnlockState(userId);
 }
 
 async function loadSignedInFreeUnlockFallback(userId: string): Promise<FreeUnlockState> {
