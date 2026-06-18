@@ -104,6 +104,23 @@ test("fresh signed-in backend unlock response with one spend displays two remain
   );
 });
 
+test("free unlock action is synchronously guarded against duplicate backend use calls", () => {
+  const providerSource = read("features/subscription/SubscriptionProvider.tsx");
+  const callbackStart = providerSource.indexOf("const useFreeUnlockForVehicle = useCallback");
+  const callbackEnd = providerSource.indexOf("const isVehicleUnlocked", callbackStart);
+  const callbackBlock = providerSource.slice(callbackStart, callbackEnd);
+
+  assert.notEqual(callbackStart, -1, "useFreeUnlockForVehicle callback was not found");
+  assert.match(providerSource, /const unlockRequestInFlightRef = useRef\(false\)/);
+  assert.match(callbackBlock, /unlockRequestInFlightRef\.current \|\| isUnlocking/);
+  assert.ok(
+    callbackBlock.indexOf("unlockRequestInFlightRef.current = true") <
+      callbackBlock.indexOf("subscriptionService.useFreeUnlockForVehicle"),
+    "provider must set the synchronous in-flight guard before calling the backend unlock service",
+  );
+  assert.match(callbackBlock, /finally \{\s*unlockRequestInFlightRef\.current = false;\s*setIsUnlocking\(false\);/s);
+});
+
 test("signed-in unlock refresh persists the backend free unlock count as the local fallback", () => {
   const serviceSource = read("services/subscriptionService.ts");
   const backendStatusStart = serviceSource.indexOf('logFreeUnlockCounterState("backend_status"');

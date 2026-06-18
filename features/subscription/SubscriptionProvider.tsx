@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { defaultSubscriptionStatus } from "@/constants/seedData";
 import { FREE_PRO_UNLOCKS_TOTAL } from "@/constants/product";
@@ -62,6 +62,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const [unlockedVehicleIds, setUnlockedVehicleIds] = useState<string[]>([]);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const unlockRequestInFlightRef = useRef(false);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -158,7 +159,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const cancelPro = manageSubscription;
 
   const useFreeUnlockForVehicle = useCallback<SubscriptionContextValue["useFreeUnlockForVehicle"]>(async (vehicleId, linkedVehicleIds = [], lookup = null) => {
-    if (isUnlocking) {
+    if (unlockRequestInFlightRef.current || isUnlocking) {
       return {
         ok: false,
         message: "Unlock already in progress.",
@@ -185,6 +186,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
       };
     }
     try {
+      unlockRequestInFlightRef.current = true;
       setIsUnlocking(true);
       setErrorMessage(null);
       const result = await subscriptionService.useFreeUnlockForVehicle(vehicleId, linkedVehicleIds, lookup);
@@ -243,6 +245,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         resultType: "not_allowed",
       };
     } finally {
+      unlockRequestInFlightRef.current = false;
       setIsUnlocking(false);
     }
   }, [freeUnlocksLimit, freeUnlocksRemaining, isUnlocking]);
