@@ -862,8 +862,8 @@ export const subscriptionService = {
           status = mergeUsageStatus(
             usage,
             getRevenueCatSubscriptionSyncOverrides(usage, purchaseSnapshot, {
-              allowPendingSync: true,
-              syncFailedReason: getRevenueCatSyncFailureReason(backendRecord),
+              allowPendingSync: false,
+              syncFailedReason: getRevenueCatSyncFailureReason(backendRecord) ?? POST_PURCHASE_BACKEND_CONFIRMATION_TIMEOUT_REASON,
             }),
           );
         }

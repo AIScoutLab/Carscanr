@@ -331,7 +331,7 @@ test("backend RevenueCat identity mismatch remains non-Pro and avoids permanent 
   assert.equal(renderedText(resolved).includes("different purchase identity"), true);
 });
 
-test("RevenueCat active with backend free triggers one backend sync attempt on status refresh", () => {
+test("RevenueCat active with backend free triggers one backend sync attempt and does not leave status refresh pending", () => {
   const serviceSource = fs.readFileSync(path.join(process.cwd(), "services/subscriptionService.ts"), "utf8");
 
   assert.match(serviceSource, /lastRevenueCatBackendSyncAttemptKey/);
@@ -339,7 +339,8 @@ test("RevenueCat active with backend free triggers one backend sync attempt on s
   assert.match(serviceSource, /source: "status_refresh"/);
   assert.match(serviceSource, /lastRevenueCatBackendSyncAttemptKey === attemptKey/);
   assert.match(serviceSource, /!isProPlan\(usage\.plan\) && purchaseSnapshot\.activeEntitlement\?\.isActive && purchaseSnapshot\.activeProductId/);
-  assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(\s*usage,\s*purchaseSnapshot,\s*\{\s*allowPendingSync: true,\s*syncFailedReason: getRevenueCatSyncFailureReason\(backendRecord\),\s*\}/);
+  assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(\s*usage,\s*purchaseSnapshot,\s*\{\s*allowPendingSync: false,\s*syncFailedReason: getRevenueCatSyncFailureReason\(backendRecord\) \?\? POST_PURCHASE_BACKEND_CONFIRMATION_TIMEOUT_REASON,\s*\}/);
+  assert.doesNotMatch(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(\s*usage,\s*purchaseSnapshot,\s*\{\s*allowPendingSync: true/);
 });
 
 test("foregrounding the app refreshes subscription status for entitlement repair", () => {
