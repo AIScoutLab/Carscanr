@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { AppError } from "../errors/appError.js";
-import { buildMarketAccessVehicleKey, buildUnlockKey, buildVehicleKey } from "../lib/cacheKeys.js";
+import { buildMarketAccessVehicleKey, buildUnlockKey, buildVehicleKey, isCompatibleVehicleUnlockKey } from "../lib/cacheKeys.js";
 import { resolveStoredVehicleRecordById } from "../lib/canonicalVehicleCatalog.js";
 import { sendSuccess } from "../lib/http.js";
 import { logger } from "../lib/logger.js";
@@ -76,23 +76,6 @@ function readOptionalBoolean(queryValue: unknown): boolean | undefined {
     return false;
   }
   return undefined;
-}
-
-function isCompatibleVehicleUnlockKey(input: { candidateKey: string; existingKey: string }) {
-  const candidateParts = input.candidateKey.split(":");
-  const existingParts = input.existingKey.split(":");
-  if (candidateParts.length !== 6 || existingParts.length !== 6) {
-    return false;
-  }
-  if (candidateParts[0] !== "vehicle" || existingParts[0] !== "vehicle") {
-    return false;
-  }
-  return (
-    candidateParts[1] === existingParts[1] &&
-    candidateParts[2] === existingParts[2] &&
-    candidateParts[3] === existingParts[3] &&
-    candidateParts[5] === existingParts[5]
-  );
 }
 
 export class VehicleController {

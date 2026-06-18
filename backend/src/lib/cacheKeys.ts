@@ -94,6 +94,23 @@ export function buildUnlockKey(input: {
   return { key: null, type: "unknown" };
 }
 
+export function isCompatibleVehicleUnlockKey(input: { candidateKey: string; existingKey: string }) {
+  const candidateParts = input.candidateKey.split(":");
+  const existingParts = input.existingKey.split(":");
+  if (candidateParts.length !== 6 || existingParts.length !== 6) {
+    return false;
+  }
+  if (candidateParts[0] !== "vehicle" || existingParts[0] !== "vehicle") {
+    return false;
+  }
+  return (
+    candidateParts[1] === existingParts[1] &&
+    candidateParts[2] === existingParts[2] &&
+    candidateParts[3] === existingParts[3] &&
+    candidateParts[5] === existingParts[5]
+  );
+}
+
 export function buildImageKey(imageBytes: Buffer) {
   return crypto.createHash("sha256").update(imageBytes).digest("hex");
 }

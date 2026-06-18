@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { AppError } from "../errors/appError.js";
-import { buildMarketAccessVehicleKey, buildUnlockKey, buildVehicleKey } from "../lib/cacheKeys.js";
+import { buildMarketAccessVehicleKey, buildUnlockKey, buildVehicleKey, isCompatibleVehicleUnlockKey } from "../lib/cacheKeys.js";
 import { resolveStoredVehicleRecordById } from "../lib/canonicalVehicleCatalog.js";
 import { logger } from "../lib/logger.js";
 import { repositories } from "../lib/repositoryRegistry.js";
@@ -45,6 +45,40 @@ export class UnlockService {
     } catch {
       return null;
     }
+  }
+
+  private async findExistingVehicleUnlock(userId: string, unlockKey: string) {
+    const exactUnlock = await repositories.vehicleUnlocks.findByUserAndKey(userId, unlockKey);
+    if (exactUnlock) {
+      return exactUnlock;
+    }
+    const userUnlocks = await repositories.vehicleUnlocks.listByUser(userId);
+    return (
+      userUnlocks.find(
+        (unlock) =>
+          unlock.unlockType === "vehicle" &&
+          isCompatibleVehicleUnlockKey({
+            candidateKey: unlockKey,
+            existingKey: unlock.unlockKey,
+          }),
+      ) ?? null
+    );
+  }
+
+  private async buildAlreadyUnlockedResult(userId: string): Promise<UnlockEntitlementResult> {
+    const status = await this.getStatus(userId);
+    return {
+      isPro: false,
+      alreadyUnlocked: true,
+      usedUnlock: false,
+      usedUnlockCredit: false,
+      remainingUnlocks: status.freeUnlocksRemaining,
+      freeUnlocksRemaining: status.freeUnlocksRemaining,
+      unlockCreditsRemaining: status.unlockCreditsRemaining,
+      allowed: true,
+      reason: "already_unlocked",
+      resultType: "already_unlocked",
+    };
   }
 
   async getStatus(userId: string) {
@@ -134,6 +168,26 @@ export class UnlockService {
         reason: "unlock_not_requested",
         resultType: "not_allowed",
       };
+    }
+
+    const existingUnlock = await this.findExistingVehicleUnlock(input.userId, unlockKeyResult.key);
+    if (existingUnlock) {
+      const status = await this.getStatus(input.userId);
+      logger.info(
+        {
+          label: "UNLOCK_ALREADY_GRANTED_COMPATIBLE",
+          userId: input.userId,
+          vehicleId: input.vehicle.id,
+          vehicleKey,
+          displayVehicleKey,
+          unlockKey: unlockKeyResult.key,
+          matchedUnlockKey: existingUnlock.unlockKey,
+          freeUnlocksRemaining: status.freeUnlocksRemaining,
+          unlockCreditsRemaining: status.unlockCreditsRemaining,
+        },
+        "UNLOCK_ALREADY_GRANTED_COMPATIBLE",
+      );
+      return this.buildAlreadyUnlockedResult(input.userId);
     }
 
     const payloadEvaluation = await this.vehicleService.evaluateUnlockPayloadForVehicle(input.vehicle);
@@ -366,6 +420,27 @@ export class UnlockService {
       },
       "UNLOCK_DESCRIPTOR_GRANT_ATTEMPT",
     );
+
+    const existingUnlock = await this.findExistingVehicleUnlock(input.userId, unlockKeyResult.key);
+    if (existingUnlock) {
+      const status = await this.getStatus(input.userId);
+      logger.info(
+        {
+          label: "UNLOCK_ALREADY_GRANTED_COMPATIBLE",
+          userId: input.userId,
+          vehicleKey,
+          displayVehicleKey,
+          unlockKey: unlockKeyResult.key,
+          matchedUnlockKey: existingUnlock.unlockKey,
+          sourceVehicleId: input.vehicleId ?? null,
+          scanId: input.scanId ?? null,
+          freeUnlocksRemaining: status.freeUnlocksRemaining,
+          unlockCreditsRemaining: status.unlockCreditsRemaining,
+        },
+        "UNLOCK_ALREADY_GRANTED_COMPATIBLE",
+      );
+      return this.buildAlreadyUnlockedResult(input.userId);
+    }
 
     const result = await repositories.vehicleUnlocks.grantUnlock({
       userId: input.userId,
