@@ -81,10 +81,9 @@ const ESTIMATED_UNLOCK_PREFIX = "estimate:";
 const ESTIMATED_SOFT_UNLOCK_PREFIX = "estimate-soft:";
 const ESTIMATED_UNLOCK_YEAR_SNAP_MAX_DRIFT = 1;
 const POST_PURCHASE_BACKEND_SYNC_DELAYS_MS = [0, 1000, 2000, 3500, 5000] as const;
-const POST_PURCHASE_SYNC_PENDING_MESSAGE =
-  "Purchase completed. Pro access is still syncing. Try refreshing or restarting the app.";
 const BACKEND_SUBSCRIPTION_SYNC_DENIED_MESSAGE =
   "Purchase found, but Pro access could not be safely verified. If this is sandbox testing, use a fresh sandbox tester. Otherwise contact support.";
+const POST_PURCHASE_BACKEND_CONFIRMATION_TIMEOUT_REASON = "backend_confirmation_timeout";
 
 function normalizeUnlockPart(value: string | number | null | undefined, fallback: string) {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -1341,20 +1340,21 @@ export const subscriptionService = {
       status = mergeUsageStatus(
         latestUsage,
         getRevenueCatSubscriptionSyncOverrides(latestUsage, purchase.snapshot, {
-          allowPendingSync: true,
-          syncFailedReason: getRevenueCatSyncFailureReason(backendRecord),
+          allowPendingSync: false,
+          syncFailedReason: getRevenueCatSyncFailureReason(backendRecord) ?? POST_PURCHASE_BACKEND_CONFIRMATION_TIMEOUT_REASON,
         }),
       );
       console.log("[subscription] PURCHASE_ATTEMPT_SUCCESS", {
         outcome: "verified",
         productId: purchase.snapshot.activeProductId,
         backendSynced: false,
+        backendConfirmationTimedOut: true,
       });
       return {
         outcome: "verified",
         purchaseKind: purchasedOptionKind ?? "other",
         status,
-        message: POST_PURCHASE_SYNC_PENDING_MESSAGE,
+        message: BACKEND_SUBSCRIPTION_SYNC_DENIED_MESSAGE,
       };
     }
     console.log("[subscription] PURCHASE_ATTEMPT_FAILURE", { stage: purchase.outcome, message: purchase.message });

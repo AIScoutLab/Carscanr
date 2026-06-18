@@ -98,7 +98,9 @@ test("subscription purchase waits for backend confirmation before leaving pendin
   assert.match(subscriptionSource, /path: "\/api\/subscription\/verify"/);
   assert.match(subscriptionSource, /revenueCatIdentity/);
   assert.match(subscriptionSource, /backendSynced: true/);
-  assert.match(subscriptionSource, /Purchase completed\. Pro access is still syncing\. Try refreshing or restarting the app\./);
+  assert.match(subscriptionSource, /POST_PURCHASE_BACKEND_CONFIRMATION_TIMEOUT_REASON/);
+  assert.match(subscriptionSource, /backendConfirmationTimedOut: true/);
+  assert.doesNotMatch(subscriptionSource, /message: POST_PURCHASE_SYNC_PENDING_MESSAGE/);
 });
 
 test("backend sync denial stops indefinite Pro syncing with a clear support message", () => {

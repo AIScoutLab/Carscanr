@@ -303,7 +303,9 @@ test("subscription purchases and restore request backend RevenueCat sync before 
   assert.match(serviceSource, /getBackendSubscriptionStatusOverrides\(backendRecord, purchase\.snapshot\)/);
   assert.match(serviceSource, /getBackendSubscriptionStatusOverrides\(backendRecord, restore\.snapshot\)/);
   assert.match(serviceSource, /backendRecord && isProPlan\(backendRecord\.plan\) && backendRecord\.status === "active"/);
-  assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(\s*latestUsage,\s*purchase\.snapshot,\s*\{\s*allowPendingSync: true,\s*syncFailedReason: getRevenueCatSyncFailureReason\(backendRecord\),\s*\}/);
+  assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(\s*latestUsage,\s*purchase\.snapshot,\s*\{\s*allowPendingSync: false,\s*syncFailedReason: getRevenueCatSyncFailureReason\(backendRecord\) \?\? POST_PURCHASE_BACKEND_CONFIRMATION_TIMEOUT_REASON,\s*\}/);
+  assert.match(serviceSource, /backendConfirmationTimedOut: true/);
+  assert.match(serviceSource, /message: BACKEND_SUBSCRIPTION_SYNC_DENIED_MESSAGE/);
   assert.match(serviceSource, /getRevenueCatSubscriptionSyncOverrides\(\s*usage,\s*restore\.snapshot,\s*\{\s*allowPendingSync: true,\s*syncFailedReason: getRevenueCatSyncFailureReason\(backendRecord\),\s*\}/);
 });
 
