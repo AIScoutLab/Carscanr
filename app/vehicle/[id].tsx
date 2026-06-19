@@ -2193,9 +2193,7 @@ export default function VehicleDetailScreen() {
     yearLabel,
   ]);
   const feedbackUnlockMessage = feedbackMessage?.toLowerCase() ?? "";
-  const unlockStatusTitle = !hasFullAccess
-    ? "Preview details"
-    : feedbackUnlockMessage.includes("purchased unlock")
+  const unlockStatusTitle = feedbackUnlockMessage.includes("purchased unlock")
       ? "Purchased unlock applied"
       : feedbackUnlockMessage.includes("already unlocked")
         ? "Already unlocked"
@@ -2204,9 +2202,7 @@ export default function VehicleDetailScreen() {
           : feedbackUnlockMessage.includes("free unlock")
             ? "Free unlock applied"
             : "Value & Listings unlocked";
-  const unlockStatusBody = hasFullAccess
-    ? "This vehicle is now fully unlocked"
-    : "Live market value and listings are available on the Value tab.";
+  const unlockStatusBody = "This vehicle is now fully unlocked";
   const applyValuationUpdate = useCallback(
     (
       next: ValuationResult,
@@ -5492,16 +5488,18 @@ export default function VehicleDetailScreen() {
           </View>
         ) : null}
         <View style={styles.heroActionRow}>
-          <View style={styles.unlockStatusCard}>
-            <View style={styles.unlockStatusIcon}>
-              <Ionicons name={hasFullAccess ? "flash" : "lock-closed"} size={17} color="#E7B97F" />
+          {hasFullAccess ? (
+            <View style={styles.unlockStatusCard}>
+              <View style={styles.unlockStatusIcon}>
+                <Ionicons name="flash" size={17} color="#E7B97F" />
+              </View>
+              <View style={styles.unlockStatusCopy}>
+                <Text style={styles.unlockStatusTitle}>{unlockStatusTitle}</Text>
+                <Text style={styles.unlockStatusBody}>{unlockStatusBody}</Text>
+              </View>
+              {garageSource === "1" || garageSaved ? <Text style={styles.unlockStatusMeta}>Saved</Text> : null}
             </View>
-            <View style={styles.unlockStatusCopy}>
-              <Text style={styles.unlockStatusTitle}>{unlockStatusTitle}</Text>
-              <Text style={styles.unlockStatusBody}>{unlockStatusBody}</Text>
-            </View>
-            {garageSource === "1" || garageSaved ? <Text style={styles.unlockStatusMeta}>Saved</Text> : null}
-          </View>
+          ) : null}
           <Pressable
             style={[styles.garageActionButton, garageSaved && styles.garageActionButtonSaved, garageBusy && styles.garageActionButtonBusy]}
             onPress={handleGarageAction}
@@ -5773,6 +5771,31 @@ export default function VehicleDetailScreen() {
           {isLocked ? (
             <>
               <ReferenceValueCard vehicle={vehicle} />
+              {!isSampleDetail ? (
+                <View style={styles.lockedMarketAreaCard}>
+                  <View style={styles.premiumSectionTitleRow}>
+                    <Ionicons name="location-outline" size={17} color="#E7B97F" />
+                    <Text style={styles.premiumSectionTitle}>Market Area</Text>
+                  </View>
+                  <Text style={styles.lockedMarketAreaBody}>Used to localize market value and listings.</Text>
+                  <View style={styles.lockedZipField}>
+                    <Text style={styles.inputLabel}>ZIP Code</Text>
+                    <TextInput
+                      style={[styles.input, styles.inputCompact]}
+                      value={zipCode}
+                      onChangeText={handleZipCodeChange}
+                      autoCapitalize="characters"
+                      keyboardType="number-pad"
+                      maxLength={5}
+                      inputAccessoryViewID={marketInputAccessoryViewID}
+                      returnKeyType="done"
+                      onSubmitEditing={() => Keyboard.dismiss()}
+                      placeholder="ZIP"
+                      placeholderTextColor="rgba(214, 205, 194, 0.48)"
+                    />
+                  </View>
+                </View>
+              ) : null}
               <LockedValueListingsCard
                 loading={isUnlocking}
                 onPress={handleVehicleMarketBundleAction}
@@ -6370,6 +6393,7 @@ const styles = StyleSheet.create({
     gap: 7,
   },
   garageActionButton: {
+    flex: 1,
     minHeight: 48,
     borderRadius: 15,
     paddingHorizontal: 14,
@@ -6706,6 +6730,21 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(14, 14, 14, 0.72)",
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.08)",
+  },
+  lockedMarketAreaCard: {
+    gap: 12,
+    padding: 16,
+    borderRadius: 18,
+    backgroundColor: "rgba(15, 15, 16, 0.86)",
+    borderWidth: 0,
+  },
+  lockedMarketAreaBody: {
+    ...Typography.caption,
+    color: "#AEB3BE",
+    lineHeight: 18,
+  },
+  lockedZipField: {
+    gap: 7,
   },
   premiumSectionHeader: {
     flexDirection: "row",
