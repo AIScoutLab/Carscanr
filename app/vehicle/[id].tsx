@@ -1113,17 +1113,14 @@ function ReferenceValueCard({ vehicle, compact = false }: { vehicle: VehicleReco
 }
 
 function LockedValueListingsCard({
-  vehicle,
   loading,
   disabled,
   onPress,
 }: {
-  vehicle: VehicleRecord;
   loading: boolean;
   disabled: boolean;
   onPress: () => void;
 }) {
-  const referenceValue = vehicle.specs.msrp && vehicle.specs.msrp > 0 ? formatCurrency(vehicle.specs.msrp) : null;
   return (
     <Pressable
       style={[styles.lockedValueCard, disabled && styles.lockedValueCardDisabled]}
@@ -1137,19 +1134,18 @@ function LockedValueListingsCard({
           <Ionicons name="lock-closed-outline" size={18} color="#E7B97F" />
         </View>
         <View style={styles.lockedValueCopy}>
-          <Text style={styles.lockedValueTitle}>Value & Listings locked</Text>
-          <Text style={styles.lockedValueBody}>Unlock once to load live market value and nearby listings.</Text>
+          <Text style={styles.lockedValueTitle}>Unlock Value & Listings</Text>
+          <Text style={styles.lockedValueBody}>Access live pricing context for this vehicle.</Text>
         </View>
       </View>
-      {referenceValue ? (
-        <View style={styles.lockedReferenceStrip}>
-          <View>
-            <Text style={styles.lockedReferenceLabel}>Reference Value</Text>
-            <Text style={styles.lockedReferenceBody}>Based on local canonical data</Text>
+      <View style={styles.lockedValueAccessList}>
+        {["Live Market Value", "Comparable Listings", "Collector Insights"].map((item) => (
+          <View key={item} style={styles.lockedValueAccessRow}>
+            <Ionicons name="checkmark-circle" size={16} color="#E7B97F" />
+            <Text style={styles.lockedValueAccessText}>{item}</Text>
           </View>
-          <Text style={styles.lockedReferenceValue}>{referenceValue}</Text>
-        </View>
-      ) : null}
+        ))}
+      </View>
       <View style={styles.lockedValueCta}>
         {loading ? <ActivityIndicator color="#0B0907" /> : <Text style={styles.lockedValueCtaText}>Unlock Value & Listings</Text>}
         {!loading ? <Ionicons name="chevron-forward" size={17} color="#0B0907" /> : null}
@@ -1792,6 +1788,7 @@ export default function VehicleDetailScreen() {
   const [estimateSupport, setEstimateSupport] = useState<EstimateSupport | null>(null);
   const [horsepowerSupport, setHorsepowerSupport] = useState<HorsepowerSupport | null>(null);
   const [heroPreviewOpen, setHeroPreviewOpen] = useState(false);
+  const [vehicleNotesExpanded, setVehicleNotesExpanded] = useState(false);
   const [garageActionState, setGarageActionState] = useState<"idle" | "checking" | "saving" | "saved" | "removing">("checking");
   const [savedGarageItemId, setSavedGarageItemId] = useState<string | null>(null);
   const [garageActionMessage, setGarageActionMessage] = useState<string | null>(null);
@@ -1978,13 +1975,13 @@ export default function VehicleDetailScreen() {
   const garageRemoving = garageActionState === "removing";
   const garageBusy = garageChecking || garageSaving || garageRemoving;
   const garageActionLabel = garageSaved
-    ? "✓ In Garage"
+    ? "Added to Garage"
     : garageRemoving
-      ? "Removing from Garage"
+      ? "Removing..."
       : garageSaving
-        ? "Adding to Garage"
+        ? "Saving..."
         : garageChecking
-          ? "Checking Garage"
+          ? "Checking..."
           : "+ Add to Garage";
   const findMatchingGarageItem = useCallback(
     (items: GarageItem[]) => {
@@ -2197,7 +2194,7 @@ export default function VehicleDetailScreen() {
   ]);
   const feedbackUnlockMessage = feedbackMessage?.toLowerCase() ?? "";
   const unlockStatusTitle = !hasFullAccess
-    ? "Value & Listings locked"
+    ? "Preview details"
     : feedbackUnlockMessage.includes("purchased unlock")
       ? "Purchased unlock applied"
       : feedbackUnlockMessage.includes("already unlocked")
@@ -2209,7 +2206,7 @@ export default function VehicleDetailScreen() {
             : "Value & Listings unlocked";
   const unlockStatusBody = hasFullAccess
     ? "This vehicle is now fully unlocked"
-    : "Unlock once to load live market value and nearby listings.";
+    : "Live market value and listings are available on the Value tab.";
   const applyValuationUpdate = useCallback(
     (
       next: ValuationResult,
@@ -5494,17 +5491,17 @@ export default function VehicleDetailScreen() {
             ))}
           </View>
         ) : null}
-        <View style={styles.unlockStatusCard}>
-          <View style={styles.unlockStatusIcon}>
-            <Ionicons name={hasFullAccess ? "flash" : "lock-closed"} size={17} color="#E7B97F" />
+        <View style={styles.heroActionRow}>
+          <View style={styles.unlockStatusCard}>
+            <View style={styles.unlockStatusIcon}>
+              <Ionicons name={hasFullAccess ? "flash" : "lock-closed"} size={17} color="#E7B97F" />
+            </View>
+            <View style={styles.unlockStatusCopy}>
+              <Text style={styles.unlockStatusTitle}>{unlockStatusTitle}</Text>
+              <Text style={styles.unlockStatusBody}>{unlockStatusBody}</Text>
+            </View>
+            {garageSource === "1" || garageSaved ? <Text style={styles.unlockStatusMeta}>Saved</Text> : null}
           </View>
-          <View style={styles.unlockStatusCopy}>
-            <Text style={styles.unlockStatusTitle}>{unlockStatusTitle}</Text>
-            <Text style={styles.unlockStatusBody}>{unlockStatusBody}</Text>
-          </View>
-          {garageSource === "1" || garageSaved ? <Text style={styles.unlockStatusMeta}>Saved</Text> : null}
-        </View>
-        <View style={styles.garageActionBlock}>
           <Pressable
             style={[styles.garageActionButton, garageSaved && styles.garageActionButtonSaved, garageBusy && styles.garageActionButtonBusy]}
             onPress={handleGarageAction}
@@ -5520,6 +5517,8 @@ export default function VehicleDetailScreen() {
             />
             <Text style={[styles.garageActionText, garageSaved && styles.garageActionTextSaved]}>{garageActionLabel}</Text>
           </Pressable>
+        </View>
+        <View style={styles.garageActionBlock}>
           {garageActionMessage ? <Text style={styles.garageActionMessage}>{garageActionMessage}</Text> : null}
           {garageActionError ? <Text style={styles.garageActionError}>{garageActionError}</Text> : null}
         </View>
@@ -5531,12 +5530,10 @@ export default function VehicleDetailScreen() {
         <>
           <View style={styles.tabIntro}>
             <Text style={styles.tabIntroTitle}>Details</Text>
-            <Text style={styles.tabIntroSubtitle}>Identity, canonical specs, and ownership context.</Text>
-            {vehicleDescription.description ? <Text style={styles.tabIntroBody}>{vehicleDescription.description}</Text> : null}
+            <Text style={styles.tabIntroSubtitle}>Core identity and powertrain specs.</Text>
           </View>
           <View style={styles.detailGroupStack}>
-            <ReferenceValueCard vehicle={vehicle} compact />
-            <InfoGroupCard title="Identity" icon="finger-print-outline">
+            <InfoGroupCard title="Vehicle Specs" icon="speedometer-outline">
               <DetailRow
                 label="Year"
                 value={
@@ -5547,29 +5544,27 @@ export default function VehicleDetailScreen() {
               />
               <DetailRow label="Make" value={finalDisplayIdentity.make || vehicle.make} />
               <DetailRow label="Model" value={finalDisplayIdentity.model || vehicle.model} />
-              {!trustedResult ? (
-                <DetailRow label={isEstimateMode ? "Trim" : "Trim"} value={resolvedDisplayTrim || "Unavailable"} />
-              ) : null}
-              <DetailRow label="Body style" value={resolvedDisplayBodyStyle || "Vehicle"} />
+              <DetailRow label="Body Style" value={resolvedDisplayBodyStyle || "Vehicle"} />
+              <DetailRow label="Engine" value={vehicle.specs.engine} />
+              <DetailRow label={horsepowerSupport?.label ?? "Horsepower"} value={horsepowerSupport?.value ?? formatHorsepowerLabel(vehicle.specs.horsepower)} />
+              <DetailRow label="Transmission" value={vehicle.specs.transmission} />
+              <DetailRow label="Drivetrain" value={vehicle.specs.drivetrain} />
             </InfoGroupCard>
-            <InfoGroupCard title="Performance" icon="speedometer-outline">
-              <SpecGrid
-                items={[
-                  { label: "Engine", value: vehicle.specs.engine },
-                  { label: horsepowerSupport?.label ?? "Horsepower", value: horsepowerSupport?.value ?? formatHorsepowerLabel(vehicle.specs.horsepower) },
-                  { label: "MPG / Range", value: vehicle.specs.mpgOrRange },
-                ]}
-              />
-            </InfoGroupCard>
-            <InfoGroupCard title="Drivetrain" icon="git-branch-outline">
-              <SpecGrid
-                items={[
-                  { label: "Drivetrain", value: vehicle.specs.drivetrain },
-                  { label: "Transmission", value: vehicle.specs.transmission },
-                  { label: "Body style", value: resolvedDisplayBodyStyle || "Vehicle" },
-                ]}
-              />
-            </InfoGroupCard>
+            {vehicleDescription.description ? (
+              <Pressable
+                style={styles.vehicleNotesToggle}
+                onPress={() => setVehicleNotesExpanded((expanded) => !expanded)}
+                accessibilityRole="button"
+                accessibilityLabel="Vehicle Notes"
+                accessibilityState={{ expanded: vehicleNotesExpanded }}
+              >
+                <View style={styles.vehicleNotesHeader}>
+                  <Text style={styles.vehicleNotesTitle}>Vehicle Notes</Text>
+                  <Ionicons name={vehicleNotesExpanded ? "chevron-up" : "chevron-down"} size={18} color="#E7B97F" />
+                </View>
+                {vehicleNotesExpanded ? <Text style={styles.vehicleNotesBody}>{vehicleDescription.description}</Text> : null}
+              </Pressable>
+            ) : null}
           </View>
           {horsepowerSupport && !horsepowerSupport.exact ? (
             <Text style={styles.specSupportNoteQuiet}>Horsepower is matched from local canonical family data because exact trim power can vary.</Text>
@@ -5703,7 +5698,7 @@ export default function VehicleDetailScreen() {
               `trace ${formatDebugRoute(liveMarketRuntimeDebug.marketCheckTrace, 82)}`,
             ]}
           />
-          {!isSampleDetail ? (
+          {!isSampleDetail && !isLocked ? (
             <View style={styles.marketSettingsCard}>
               <View style={styles.premiumSectionHeader}>
                 <View style={styles.premiumSectionTitleRow}>
@@ -5777,8 +5772,8 @@ export default function VehicleDetailScreen() {
           ) : null}
           {isLocked ? (
             <>
+              <ReferenceValueCard vehicle={vehicle} />
               <LockedValueListingsCard
-                vehicle={vehicle}
                 loading={isUnlocking}
                 onPress={handleVehicleMarketBundleAction}
                 disabled={marketValueActionDisabled || marketListingsActionDisabled}
@@ -5984,23 +5979,15 @@ export default function VehicleDetailScreen() {
           )}
         </View>
       ) : null}
-      <View style={styles.bottomActionStack}>
-        {isLocked ? (
-          <>
-            <PremiumDetailButton
-              label="Scan Another Vehicle"
-              onPress={() => router.push("/(tabs)/scan")}
-            />
-            <PremiumDetailButton label="View Pro Features" secondary onPress={() => router.push("/paywall")} />
-          </>
-        ) : (
+      {!isLocked ? (
+        <View style={styles.bottomActionStack}>
           <PremiumDetailButton
             label="Scan Another Vehicle"
             secondary={isTrustedUnlockedEstimate}
             onPress={() => router.push("/(tabs)/scan")}
           />
-        )}
-      </View>
+        </View>
+      ) : null}
       </Animated.View>
       <Modal visible={heroPreviewOpen} transparent animationType="fade" onRequestClose={() => setHeroPreviewOpen(false)}>
         <Pressable style={styles.heroModalBackdrop} onPress={() => setHeroPreviewOpen(false)}>
@@ -6336,15 +6323,21 @@ const styles = StyleSheet.create({
   },
   contentStack: { gap: 18 },
   contentInset: { paddingHorizontal: 17, paddingTop: 16 },
+  heroActionRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 10,
+  },
   unlockStatusCard: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-    padding: 15,
-    borderRadius: 18,
-    backgroundColor: "rgba(31, 24, 19, 0.84)",
-    borderWidth: 1,
-    borderColor: "rgba(216, 163, 107, 0.26)",
+    gap: 10,
+    paddingHorizontal: 13,
+    paddingVertical: 12,
+    borderRadius: 16,
+    backgroundColor: "rgba(31, 24, 19, 0.64)",
+    borderWidth: 0,
   },
   unlockStatusIcon: {
     width: 28,
@@ -6377,14 +6370,14 @@ const styles = StyleSheet.create({
     gap: 7,
   },
   garageActionButton: {
-    minHeight: 52,
-    borderRadius: 16,
-    paddingHorizontal: 17,
+    minHeight: 48,
+    borderRadius: 15,
+    paddingHorizontal: 14,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 9,
-    backgroundColor: "rgba(31, 24, 19, 0.72)",
+    gap: 7,
+    backgroundColor: "rgba(216, 163, 107, 0.12)",
     borderWidth: 1,
     borderColor: "rgba(216, 163, 107, 0.32)",
   },
@@ -6396,7 +6389,7 @@ const styles = StyleSheet.create({
     opacity: 0.72,
   },
   garageActionText: {
-    ...Typography.bodyStrong,
+    ...Typography.caption,
     color: "#F5F3EE",
     fontWeight: "900",
   },
@@ -6564,15 +6557,14 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255, 255, 255, 0.09)",
   },
   detailGroupStack: {
-    gap: 13,
+    gap: 10,
   },
   infoGroupCard: {
-    gap: 13,
-    padding: 16,
-    borderRadius: 22,
-    backgroundColor: "rgba(15, 15, 16, 0.94)",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.09)",
+    gap: 11,
+    padding: 17,
+    borderRadius: 18,
+    backgroundColor: "rgba(15, 15, 16, 0.86)",
+    borderWidth: 0,
   },
   infoGroupHeader: {
     flexDirection: "row",
@@ -6594,7 +6586,7 @@ const styles = StyleSheet.create({
     color: "#F5F3EE",
   },
   infoGroupBody: {
-    gap: 10,
+    gap: 0,
   },
   sectionCard: {
     padding: 20,
@@ -6666,15 +6658,35 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
-    gap: 16,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(255, 255, 255, 0.07)",
-    paddingTop: 11,
+    gap: 18,
+    paddingVertical: 8,
   },
   rowLabel: { ...Typography.caption, color: "#8F96A3", textTransform: "uppercase", letterSpacing: 1 },
   rowValue: { ...Typography.bodyStrong, color: "#F5F3EE", flexShrink: 1, textAlign: "right" },
   specSupportNote: { ...Typography.caption, color: "#8F96A3", marginTop: -4, marginBottom: 4 },
   specSupportNoteQuiet: { ...Typography.caption, color: "#8F96A3", marginTop: 6, opacity: 0.88, lineHeight: 18 },
+  vehicleNotesToggle: {
+    gap: 9,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    borderRadius: 16,
+    backgroundColor: "rgba(255, 255, 255, 0.045)",
+  },
+  vehicleNotesHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  vehicleNotesTitle: {
+    ...Typography.bodyStrong,
+    color: "#F5F3EE",
+  },
+  vehicleNotesBody: {
+    ...Typography.body,
+    color: "#B5BAC4",
+    lineHeight: 22,
+  },
   inputGroup: { gap: 8 },
   inputLabel: { ...Typography.caption, color: "#8F96A3", textTransform: "uppercase", letterSpacing: 0.7 },
   input: {
@@ -6861,12 +6873,11 @@ const styles = StyleSheet.create({
     color: "#8F96A3",
   },
   referenceValueCard: {
-    gap: 10,
+    gap: 9,
     padding: 18,
-    borderRadius: 22,
-    backgroundColor: "rgba(28, 21, 17, 0.92)",
-    borderWidth: 1,
-    borderColor: "rgba(216, 163, 107, 0.24)",
+    borderRadius: 18,
+    backgroundColor: "rgba(28, 21, 17, 0.9)",
+    borderWidth: 0,
   },
   referenceValueCardCompact: {
     marginTop: 6,
@@ -6888,16 +6899,11 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   lockedValueCard: {
-    gap: 16,
+    gap: 15,
     padding: 18,
-    borderRadius: 24,
-    backgroundColor: "rgba(28, 21, 17, 0.94)",
-    borderWidth: 1,
-    borderColor: "rgba(216, 163, 107, 0.28)",
-    shadowColor: "#D8A36B",
-    shadowOpacity: 0.08,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 10 },
+    borderRadius: 18,
+    backgroundColor: "rgba(15, 15, 16, 0.9)",
+    borderWidth: 0,
   },
   lockedValueCardDisabled: {
     opacity: 0.62,
@@ -6929,6 +6935,18 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: "#B8BEC8",
     lineHeight: 22,
+  },
+  lockedValueAccessList: {
+    gap: 9,
+  },
+  lockedValueAccessRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+  },
+  lockedValueAccessText: {
+    ...Typography.body,
+    color: "#E7E1D7",
   },
   lockedReferenceStrip: {
     flexDirection: "row",
