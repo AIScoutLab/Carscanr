@@ -457,6 +457,16 @@ test("profile separates subscription management from sign out at the bottom", ()
   assert.doesNotMatch(profileSource, /Cancel Pro|Cancelling Pro|Cancel Subscription/);
 });
 
+test("profile exposes in-app account deletion with Apple subscription guidance", () => {
+  const profileSource = fs.readFileSync(profileSourcePath, "utf8");
+
+  assert.match(profileSource, /accountService[\s\S]*\.deleteAccount\(\)/);
+  assert.match(profileSource, /label=\{isDeletingAccount \? "Deleting Account\.\.\." : "Delete Account"\}/);
+  assert.match(profileSource, /This deletes your CarScanr account and removes associated app data where applicable, including Garage and scan history\./);
+  assert.match(profileSource, /Active Apple subscriptions must be managed or canceled through Apple\/App Store settings\./);
+  assert.match(profileSource, /router\.replace\(\"\/\(tabs\)\/scan"/);
+});
+
 test("subscription management opens RevenueCat native management instead of backend cancel", () => {
   const profileSource = fs.readFileSync(profileSourcePath, "utf8");
   const providerSource = fs.readFileSync(path.join(process.cwd(), "features/subscription/SubscriptionProvider.tsx"), "utf8");

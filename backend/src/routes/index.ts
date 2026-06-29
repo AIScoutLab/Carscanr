@@ -1,6 +1,7 @@
 import express from "express";
 import multer from "multer";
 import { env } from "../config/env.js";
+import { AccountController } from "../controllers/accountController.js";
 import { GarageController } from "../controllers/garageController.js";
 import { HeartbeatController } from "../controllers/heartbeatController.js";
 import { ScanController } from "../controllers/scanController.js";
@@ -23,6 +24,7 @@ import {
   vehicleValueQuerySchema,
 } from "../types/api.js";
 import { GarageService } from "../services/garageService.js";
+import { AccountService } from "../services/accountService.js";
 import { ScanService } from "../services/scanService.js";
 import { SubscriptionService } from "../services/subscriptionService.js";
 import { UnlockService } from "../services/unlockService.js";
@@ -38,6 +40,7 @@ const usageService = new UsageService();
 const subscriptionService = new SubscriptionService();
 const unlockService = new UnlockService();
 const heartbeatController = new HeartbeatController();
+const accountController = new AccountController(new AccountService());
 const scanController = new ScanController(new ScanService(usageService));
 const vehicleController = new VehicleController(new VehicleService());
 const garageController = new GarageController(new GarageService());
@@ -65,6 +68,7 @@ export function buildApiRouter() {
   router.get("/vehicle/listings", validate(vehicleListingsQuerySchema, "query"), asyncHandler(vehicleController.getListings));
 
   router.use(authMiddleware);
+  router.delete("/account", asyncHandler(accountController.deleteAccount));
   router.post(
     "/scan/premium",
     rateLimit({ windowMs: 60 * 1000, max: env.SCAN_RATE_LIMIT_PER_MIN, keyPrefix: "scan-premium" }),

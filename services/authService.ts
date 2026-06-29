@@ -298,13 +298,18 @@ export const authService = {
 
   async signOut(): Promise<void> {
     ensureAuthListener();
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      throw normalizeAuthError(error, "Unable to sign out.");
+    let signOutError: unknown = null;
+    try {
+      const { error } = await supabase.auth.signOut();
+      signOutError = error;
+    } finally {
+      currentSession = null;
+      hasLoadedInitialSession = true;
+      await resetClientAuthState();
     }
-    currentSession = null;
-    hasLoadedInitialSession = true;
-    await resetClientAuthState();
+    if (signOutError) {
+      throw normalizeAuthError(signOutError, "Unable to sign out.");
+    }
   },
 
   async getAccessToken(): Promise<string | null> {

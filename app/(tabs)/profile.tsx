@@ -13,6 +13,7 @@ import { mobileBuildInfo, mobileEnv } from "@/lib/env";
 import { resolveProfileAccessState } from "@/lib/subscription";
 import { formatFreeUnlockBalance, formatPurchasedUnlockBalance } from "@/lib/unlockCreditDisplay";
 import { supabase } from "@/lib/supabase";
+import { accountService } from "@/services/accountService";
 import { authService } from "@/services/authService";
 import { AuthUser } from "@/types";
 
@@ -166,6 +167,8 @@ export default function ProfileScreen() {
   const [user, setUser] = useState<AuthUser | null>(authService.getCurrentUserSync());
   const [isCheckingForUpdate, setIsCheckingForUpdate] = useState(false);
   const [updateDiagnosticMessage, setUpdateDiagnosticMessage] = useState<string | null>(null);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [accountDeletionMessage, setAccountDeletionMessage] = useState<string | null>(null);
   const accessState = resolveProfileAccessState(status, isLoading);
 
   const refreshAuthSnapshot = useCallback(async () => {
@@ -301,6 +304,46 @@ export default function ProfileScreen() {
       })
       .catch(() => undefined);
   }, []);
+
+  const handleDeleteAccount = useCallback(() => {
+    if (isDeletingAccount) return;
+    console.log("[tap] profile-delete-account");
+    Alert.alert(
+      "Delete Account?",
+      "This deletes your CarScanr account and removes associated app data where applicable, including Garage and scan history. Active Apple subscriptions must be managed or canceled through Apple/App Store settings.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete Account",
+          style: "destructive",
+          onPress: () => {
+            setIsDeletingAccount(true);
+            setAccountDeletionMessage(null);
+            accountService
+              .deleteAccount()
+              .then(() => {
+                setUser(null);
+                setAccountDeletionMessage("Your CarScanr account has been deleted.");
+                Alert.alert("Account Deleted", "Your CarScanr account has been deleted.", [
+                  {
+                    text: "OK",
+                    onPress: () => {
+                      router.replace("/(tabs)/scan" as never);
+                    },
+                  },
+                ]);
+              })
+              .catch(() => {
+                setAccountDeletionMessage("We could not delete your account right now. Please try again or contact support.");
+              })
+              .finally(() => {
+                setIsDeletingAccount(false);
+              });
+          },
+        },
+      ],
+    );
+  }, [isDeletingAccount]);
 
   const handleManualUpdateCheck = useCallback(async () => {
     if (isCheckingForUpdate) return;
@@ -465,6 +508,12 @@ export default function ProfileScreen() {
             </View>
           ) : null}
 
+          {accountDeletionMessage ? (
+            <View style={styles.messageCard}>
+              <Text style={styles.messageText}>{accountDeletionMessage}</Text>
+            </View>
+          ) : null}
+
           <SectionLabel label="Account" />
           <View style={styles.settingsCard}>
             <SettingsRow icon="refresh-outline" label={isRestoring ? "Restoring Purchases..." : "Restore Purchases"} onPress={handleRestorePurchases} disabled={isRestoring} />
@@ -472,6 +521,8 @@ export default function ProfileScreen() {
               <>
                 <View style={styles.separator} />
                 <SettingsRow icon="log-out-outline" label="Sign Out" onPress={handleSignOut} />
+                <View style={styles.separator} />
+                <SettingsRow icon="trash-outline" label={isDeletingAccount ? "Deleting Account..." : "Delete Account"} onPress={handleDeleteAccount} disabled={isDeletingAccount} danger />
               </>
             ) : null}
           </View>
@@ -590,12 +641,12 @@ function SectionLabel({ label }: { label: string }) {
   return <Text style={styles.sectionLabel}>{label}</Text>;
 }
 
-function SettingsRow({ icon, label, onPress, disabled = false }: { icon: IconName; label: string; onPress: () => void; disabled?: boolean }) {
+function SettingsRow({ icon, label, onPress, disabled = false, danger = false }: { icon: IconName; label: string; onPress: () => void; disabled?: boolean; danger?: boolean }) {
   return (
     <TouchableOpacity activeOpacity={0.78} accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.settingsRow, disabled && styles.disabledRow]}>
       <View style={styles.settingsRowLeft}>
-        <Ionicons name={icon} size={18} color={profileColors.goldLight} />
-        <Text style={styles.settingsRowText}>{label}</Text>
+        <Ionicons name={icon} size={18} color={danger ? profileColors.danger : profileColors.goldLight} />
+        <Text style={[styles.settingsRowText, danger && styles.dangerText]}>{label}</Text>
       </View>
       <Ionicons name="chevron-forward" size={17} color={profileColors.textMuted} />
     </TouchableOpacity>
@@ -1066,6 +1117,9 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0,
     color: profileColors.text,
+  },
+  dangerText: {
+    color: profileColors.danger,
   },
   infoRow: {
     minHeight: 50,
