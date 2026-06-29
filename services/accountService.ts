@@ -10,7 +10,7 @@ export type AccountDeletionResult = {
 export const accountService = {
   async deleteAccount(): Promise<AccountDeletionResult> {
     const result = await apiRequest<AccountDeletionResult>({
-      path: "/account",
+      path: "/api/account",
       method: "DELETE",
       timeoutMs: 20000,
     });
