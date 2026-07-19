@@ -25,6 +25,7 @@ import { buildVehicleDetailRouteFromScanResult } from "@/lib/scanResultNavigatio
 import { SCAN_LOADING_STAGES, getScanLoadingStageState } from "@/lib/scanLoadingStages";
 import { supabase } from "@/lib/supabase";
 import { ApiRequestError } from "@/services/apiClient";
+import { analyticsService, normalizeErrorCategory } from "@/services/analyticsService";
 import { authService } from "@/services/authService";
 import { scanService } from "@/services/scanService";
 import { ScanResult } from "@/types";
@@ -98,6 +99,12 @@ export default function ScanScreen() {
 
   const syncRecentScansState = useCallback((scans: ScanResult[]) => {
     setRecentScans(scans);
+  }, []);
+
+  useEffect(() => {
+    analyticsService.trackOnce("camera_screen_viewed:scan-tab", "camera_screen_viewed", {
+      route: "/(tabs)/scan",
+    });
   }, []);
 
   const resetTransientScanState = useCallback(() => {
@@ -416,6 +423,9 @@ export default function ScanScreen() {
         mimeType: selection.mimeType,
         fileSize: selection.fileSize,
       }, flowId);
+      analyticsService.track("photo_selected", {
+        scan_source: source,
+      });
       setRetryImageUri(selection.cachedUri);
       setRetrySource(source);
       setScanError(null);
@@ -474,6 +484,13 @@ export default function ScanScreen() {
         clearPendingIdentifyTimer();
         setDebugStatus("Identify succeeded");
         recordStage("identify succeeded", { scanId: result.id, candidateCount: result.candidates.length }, flowId);
+        if (source === "sample") {
+          analyticsService.track("identify_succeeded", {
+            scan_source: "sample",
+            request_stage: "sample_bypass",
+            result_source: "sample",
+          });
+        }
         setRecentScans((current) => [result, ...current.filter((entry) => entry.id !== result.id)].slice(0, 6));
         setIsBusy(false);
         routeToResult(result);
@@ -496,6 +513,11 @@ export default function ScanScreen() {
           source,
           code: error instanceof ApiRequestError ? error.code : undefined,
           message,
+        });
+        analyticsService.track("identify_failed", {
+          scan_source: source,
+          request_stage: "identify_flow",
+          error_category: normalizeErrorCategory(error),
         });
         failScan(message, flowId);
       }
@@ -571,6 +593,9 @@ export default function ScanScreen() {
   const beginScan = async (source: "camera" | "library") => {
     console.log("[SCAN_ENTRY]", { file: "app/(tabs)/scan.tsx", action: source, imageUri: null, forceFreshRequest: true });
     console.log("[tap] begin-scan", { source, freeUnlocksRemaining });
+    analyticsService.track("scan_started", {
+      scan_source: source,
+    });
     if (source === "library") {
       scanService.beginNewScanFlow({ source: "library", route: "/(tabs)/scan" });
       setScanError(null);
@@ -590,6 +615,9 @@ export default function ScanScreen() {
     try {
       console.log("[SCAN_ENTRY]", { file: "app/(tabs)/scan.tsx", action: "sample", imageUri: sampleId, forceFreshRequest: true });
       console.log("[tap] begin-sample-scan", { sampleId, freeUnlocksRemaining });
+      analyticsService.track("scan_started", {
+        scan_source: "sample",
+      });
       scanService.beginNewScanFlow({ source: "sample", route: "/(tabs)/scan" });
       flowId = startFlow(`sample:${sampleId}`);
       setLoadingSampleId(sampleId);

@@ -6,6 +6,7 @@ import { applyPlanOverride } from "@/features/subscription/planOverride";
 import { findSampleScanPhoto, getSampleVehicleRouteId } from "@/features/scan/samplePhotos";
 import { getApiBaseUrlOrThrow } from "@/lib/env";
 import { isProPlan } from "@/lib/subscription";
+import { analyticsService, normalizeErrorCategory } from "@/services/analyticsService";
 import { authService } from "@/services/authService";
 import { guestSessionService } from "@/services/guestSessionService";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
@@ -32,6 +33,7 @@ let mutableUnlockStatus: {
   unlockedVehicleIds: [] as string[],
 };
 let usageRequestInFlight: Promise<SubscriptionStatus> | null = null;
+let currentScanFlowSource: "camera" | "library" | "sample" | "unknown" = "unknown";
 let mutableRecentScansDiagnostics = {
   currentStorageKey: "in_memory_recent_scans",
   guestStorageKey: "in_memory_recent_scans",
@@ -593,6 +595,7 @@ export const scanService = {
   },
 
   beginNewScanFlow(input: { source: "camera" | "library" | "sample"; route: string; imageUri?: string | null }) {
+    currentScanFlowSource = input.source;
     console.log("[SCAN_ENTRY]", { file: input.route, action: input.source, imageUri: input.imageUri ?? null, forceFreshRequest: true });
     void clearOfflineScanCache();
   },
@@ -756,6 +759,10 @@ export const scanService = {
     options?.onStage?.("request url", { url: identifyUrl });
     options?.onStage?.("request timeout", { timeoutMs: identifyTimeoutMs, source: "identify-fetch-only" });
     options?.onStage?.("identify request start", { url: identifyUrl, timeoutMs: identifyTimeoutMs, startedAt: identifyStartedAtIso });
+    analyticsService.track("identify_request_sent", {
+      scan_source: currentScanFlowSource,
+      request_stage: "identify_request",
+    });
     console.log("[scan-service] IDENTIFY_REQUEST_START", {
       url: identifyUrl,
       timeoutMs: identifyTimeoutMs,
@@ -772,6 +779,11 @@ export const scanService = {
         timeoutMs: identifyTimeoutMs,
       });
     } catch (error) {
+      analyticsService.track("identify_failed", {
+        scan_source: currentScanFlowSource,
+        request_stage: "identify_request",
+        error_category: normalizeErrorCategory(error),
+      });
       console.log("[scan-service] IDENTIFY_REQUEST_FAILURE", {
         message: error instanceof Error ? error.message : "Unknown identify request error",
         code: error instanceof ApiRequestError ? error.code : undefined,
@@ -797,6 +809,11 @@ export const scanService = {
       provider: response.meta?.provider,
       scanRuntimeVersion: response.meta?.scanRuntimeVersion,
       elapsedMs: Date.now() - identifyStartedAt,
+    });
+    analyticsService.track("identify_succeeded", {
+      scan_source: currentScanFlowSource,
+      request_stage: "identify_request",
+      result_source: response.meta?.provider ? "provider" : "backend",
     });
 
     if (response.meta?.provider) {

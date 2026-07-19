@@ -10,6 +10,7 @@ import { FREE_PRO_UNLOCKS_TOTAL } from "@/constants/product";
 import { cardStyles } from "@/design/patterns";
 import { shadow } from "@/design/tokens";
 import { useSubscription } from "@/hooks/useSubscription";
+import { analyticsService } from "@/services/analyticsService";
 import { getPurchaseAvailabilityMessage, isProPlan } from "@/lib/subscription";
 import {
   getPaywallAuthHref,
@@ -115,6 +116,13 @@ export default function PaywallScreen() {
   const freeUnlockSummary = getFreeUnlockSummary(freeUnlocksRemaining, freeUnlocksLimit);
 
   useEffect(() => {
+    analyticsService.trackOnce("paywall_viewed", "paywall_viewed", {
+      has_pro: hasPro,
+      purchase_availability_state: purchaseAvailabilityState,
+    });
+  }, [hasPro, purchaseAvailabilityState]);
+
+  useEffect(() => {
     if (!availableProducts.length) {
       setSelectedProductKey(null);
       return;
@@ -210,10 +218,21 @@ export default function PaywallScreen() {
       const result = await purchasePro(getPurchaseOptionKey(selectedProduct));
       console.log("[paywall] purchase result", { outcome: result.outcome, purchaseKind: result.purchaseKind ?? null, provider: result.status.provider, plan: result.status.plan });
       if (result.purchaseKind === "unlock_pack") {
+        analyticsService.track("unlock_pack_purchased", {
+          product_kind: "unlock_pack",
+          provider: result.status.provider ?? null,
+          backend_confirmed: true,
+        });
         router.replace("/unlocks-added" as never);
         return;
       }
       if (result.status.provider === "backend" && result.status.isActive === true && isProPlan(result.status.plan)) {
+        analyticsService.track("subscription_started", {
+          purchase_kind: result.purchaseKind ?? "other",
+          plan: result.status.plan ?? null,
+          provider: "backend",
+          backend_confirmed: true,
+        });
         router.replace("/pro-activated");
         return;
       }

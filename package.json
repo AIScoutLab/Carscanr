@@ -33,12 +33,14 @@
     "expo-status-bar": "~2.2.3",
     "expo-updates": "~0.28.18",
     "expo-web-browser": "~14.2.0",
+    "posthog-react-native": "^4.57.0",
     "react": "19.0.0",
     "react-native": "0.79.6",
     "react-native-gesture-handler": "~2.24.0",
     "react-native-purchases": "^10.0.1",
     "react-native-safe-area-context": "5.4.0",
-    "react-native-screens": "~4.11.1"
+    "react-native-screens": "~4.11.1",
+    "react-native-svg": "15.11.2"
   },
   "devDependencies": {
     "@types/react": "~19.0.10",

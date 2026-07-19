@@ -20,6 +20,7 @@ import { isProPlan } from "@/lib/subscription";
 import { formatUnlockBalanceSummary, formatUnlockResultBody } from "@/lib/unlockCreditDisplay";
 import { isValidMarketAreaZip } from "@/lib/marketAreaZip";
 import { garageService } from "@/services/garageService";
+import { analyticsService } from "@/services/analyticsService";
 import { marketAreaZipService } from "@/services/marketAreaZipService";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { scanService } from "@/services/scanService";
@@ -1770,6 +1771,15 @@ export default function ScanResultScreen() {
   }, [scanId]);
 
   useEffect(() => {
+    if (!normalized) {
+      return;
+    }
+    analyticsService.trackOnce(`results_viewed:${normalized.id}`, "results_viewed", {
+      result_source: normalized.source ?? "scan_result",
+    });
+  }, [normalized]);
+
+  useEffect(() => {
     if (!__DEV__ || !normalized) {
       return;
     }
@@ -2499,6 +2509,10 @@ export default function ScanResultScreen() {
       setSavedGarageItemId(savedItem.id);
       setGarageSaveState("saved");
       setGarageSaveMessage("Added to Garage");
+      analyticsService.track("garage_vehicle_saved", {
+        garage_source_type: savedItem.sourceType ?? "estimate",
+        result_source: bestMatch.source ?? normalized?.source ?? "scan_result",
+      });
       console.log("[scan-result] GARAGE_SAVE_LOCAL_SUCCESS", {
         scanId: normalized?.id ?? null,
         unlockId: garageUnlockId,

@@ -26,6 +26,7 @@ import { buildSpecialtyVehicleOverview, isSpecialtyExoticMake } from "@/lib/spec
 import { buildVehicleDescription } from "@/lib/vehicleDescription";
 import { MarketAreaZipSource, isValidMarketAreaZip, normalizeMarketAreaZip } from "@/lib/marketAreaZip";
 import { garageService } from "@/services/garageService";
+import { analyticsService } from "@/services/analyticsService";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { marketAreaZipService } from "@/services/marketAreaZipService";
 import { scanService } from "@/services/scanService";
@@ -1807,6 +1808,15 @@ export default function VehicleDetailScreen() {
   const heroTranslate = useRef(new Animated.Value(12)).current;
   const contentOpacity = useRef(new Animated.Value(0)).current;
   const contentTranslate = useRef(new Animated.Value(16)).current;
+
+  useEffect(() => {
+    if (!vehicle) {
+      return;
+    }
+    analyticsService.trackOnce(`results_viewed:vehicle:${id}:${typeof scanId === "string" ? scanId : ""}`, "results_viewed", {
+      result_source: typeof routeSource === "string" && routeSource.length > 0 ? routeSource : resultSource ?? "vehicle_detail",
+    });
+  }, [id, resultSource, routeSource, scanId, vehicle]);
   const {
     status: usage,
     freeUnlocksRemaining,
@@ -2084,6 +2094,10 @@ export default function VehicleDetailScreen() {
       setSavedGarageItemId(savedItem.id);
       setGarageActionState("saved");
       setGarageActionMessage("Added to Garage");
+      analyticsService.track("garage_vehicle_saved", {
+        garage_source_type: savedItem.sourceType ?? (canUseSyncedCatalogGarage ? "catalog" : "estimate"),
+        result_source: typeof resultSource === "string" ? resultSource : isEstimateMode ? "estimate" : "vehicle_detail",
+      });
       console.log("[vehicle-detail] GARAGE_SAVE_SUCCESS", {
         routeId: id,
         vehicleId: vehicle.id,
