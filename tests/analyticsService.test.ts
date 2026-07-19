@@ -1,12 +1,24 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 import { analyticsEvents, analyticsService, analyticsTestUtils, bucketCount, normalizeErrorCategory } from "@/services/analyticsService";
+
+const repoRoot = path.resolve(__dirname, "..");
 
 test("analytics event catalog uses only snake_case names", () => {
   assert.equal(analyticsEvents.length, new Set(analyticsEvents).size);
   analyticsEvents.forEach((eventName) => {
     assert.match(eventName, /^[a-z][a-z0-9_]*$/);
   });
+});
+
+test("EAS build profiles do not embed PostHog project configuration", () => {
+  const easConfig = fs.readFileSync(path.join(repoRoot, "eas.json"), "utf8");
+  assert.doesNotMatch(easConfig, /EXPO_PUBLIC_POSTHOG_KEY/);
+  assert.doesNotMatch(easConfig, /EXPO_PUBLIC_POSTHOG_HOST/);
+  assert.doesNotMatch(easConfig, /EXPO_PUBLIC_POSTHOG_ENABLED/);
+  assert.doesNotMatch(easConfig, /phc_[A-Za-z0-9]+/);
 });
 
 test("analytics sanitizer keeps documented safe properties and drops sensitive payloads", () => {
