@@ -13,6 +13,7 @@ import { SILHOUETTE_IMAGES } from "@/constants/vehicleImages";
 import { cardStyles } from "@/design/patterns";
 import { findSampleScanPhoto } from "@/features/scan/samplePhotos";
 import { useSubscription } from "@/hooks/useSubscription";
+import { posthog } from "@/lib/posthog";
 import { buildVehicleDescription } from "@/lib/vehicleDescription";
 import { parseHorsepower } from "@/lib/vehicleData";
 import { generateVehicleInsight } from "@/lib/vehicleInsights";
@@ -2189,6 +2190,13 @@ export default function ScanResultScreen() {
     if (!(await ensureMarketZipAvailableForScanUnlock("primary-result-cta"))) {
       return;
     }
+    posthog.capture("vehicle_unlock_started", {
+      scan_id: normalized?.id ?? null,
+      make: bestMatch.make ?? null,
+      model: bestMatch.model ?? null,
+      source: "primary-result-cta",
+      unlock_credits_available: totalUnlocksAvailable,
+    });
     const confirmed = await confirmVehicleMarketUnlockSpend();
     if (!confirmed) {
       return;
@@ -2499,6 +2507,13 @@ export default function ScanResultScreen() {
       setSavedGarageItemId(savedItem.id);
       setGarageSaveState("saved");
       setGarageSaveMessage("Added to Garage");
+      posthog.capture("vehicle_saved_to_garage", {
+        scan_id: normalized?.id ?? null,
+        make: titleMake,
+        model: bestMatch.model ?? null,
+        year: bestMatch.year ?? bestMatch.groundedExactYear ?? null,
+        confidence: bestMatch.confidence ?? null,
+      });
       console.log("[scan-result] GARAGE_SAVE_LOCAL_SUCCESS", {
         scanId: normalized?.id ?? null,
         unlockId: garageUnlockId,

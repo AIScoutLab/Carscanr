@@ -10,6 +10,7 @@ import { FREE_PRO_UNLOCKS_TOTAL } from "@/constants/product";
 import { cardStyles } from "@/design/patterns";
 import { shadow } from "@/design/tokens";
 import { useSubscription } from "@/hooks/useSubscription";
+import { posthog } from "@/lib/posthog";
 import { getPurchaseAvailabilityMessage, isProPlan } from "@/lib/subscription";
 import {
   getPaywallAuthHref,
@@ -115,6 +116,13 @@ export default function PaywallScreen() {
   const freeUnlockSummary = getFreeUnlockSummary(freeUnlocksRemaining, freeUnlocksLimit);
 
   useEffect(() => {
+    posthog.capture("paywall_viewed", {
+      has_pro: hasPro,
+      purchase_availability_state: purchaseAvailabilityState,
+    });
+  }, []);
+
+  useEffect(() => {
     if (!availableProducts.length) {
       setSelectedProductKey(null);
       return;
@@ -207,8 +215,21 @@ export default function PaywallScreen() {
         packageIdentifier: selectedProduct.packageIdentifier ?? null,
         optionKind: getPurchaseOptionKind(selectedProduct),
       });
+      posthog.capture("purchase_started", {
+        product_id: selectedProduct.productId,
+        option_kind: getPurchaseOptionKind(selectedProduct),
+      });
       const result = await purchasePro(getPurchaseOptionKey(selectedProduct));
       console.log("[paywall] purchase result", { outcome: result.outcome, purchaseKind: result.purchaseKind ?? null, provider: result.status.provider, plan: result.status.plan });
+      if (result.purchaseKind) {
+        posthog.capture("purchase_completed", {
+          product_id: selectedProduct.productId,
+          option_kind: getPurchaseOptionKind(selectedProduct),
+          purchase_kind: result.purchaseKind,
+          provider: result.status.provider ?? null,
+          plan: result.status.plan ?? null,
+        });
+      }
       if (result.purchaseKind === "unlock_pack") {
         router.replace("/unlocks-added" as never);
         return;
@@ -237,6 +258,10 @@ export default function PaywallScreen() {
         plan: result.status.plan,
       });
       if (result.outcome === "restored" && isProPlan(result.status.plan)) {
+        posthog.capture("purchase_restored", {
+          provider: result.status.provider ?? null,
+          plan: result.status.plan ?? null,
+        });
         router.replace("/pro-activated");
       }
     } catch {

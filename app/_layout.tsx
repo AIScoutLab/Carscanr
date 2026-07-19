@@ -1,12 +1,14 @@
 import "react-native-gesture-handler";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { router, Stack, useGlobalSearchParams, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { Linking, StyleSheet, Text, View } from "react-native";
+import { PostHogProvider } from "posthog-react-native";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Colors, Typography } from "@/constants/theme";
 import { SubscriptionProvider } from "@/features/subscription/SubscriptionProvider";
 import { assertMobileStartupConfig, getMobileEnvDiagnostics, getMobileStartupConfigError, mobileBuildInfo, requiredExpoPublicEnvKeys } from "@/lib/env";
+import { posthog } from "@/lib/posthog";
 import { supabase } from "@/lib/supabase";
 import { marketAreaZipService } from "@/services/marketAreaZipService";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
@@ -39,6 +41,14 @@ export default function RootLayout() {
   const [startupError, setStartupError] = useState<string | null>(null);
   const pathname = usePathname();
   const params = useGlobalSearchParams();
+  const previousPathnameRef = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (previousPathnameRef.current !== pathname) {
+      posthog.screen(pathname, { previous_screen: previousPathnameRef.current ?? null });
+      previousPathnameRef.current = pathname;
+    }
+  }, [pathname]);
 
   useEffect(() => {
     const diagnostics = getMobileEnvDiagnostics();
@@ -183,22 +193,31 @@ export default function RootLayout() {
       fallbackTitle="App error"
       fallbackMessage="The app hit an unexpected rendering issue. Review the console logs and the detail message below."
     >
-      <SubscriptionProvider>
-        <StatusBar style="light" />
-        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.background } }}>
-          <Stack.Screen name="index" />
-          <Stack.Screen name="onboarding" />
-          <Stack.Screen name="auth" />
-          <Stack.Screen name="reset-password" />
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="scan/camera" />
-          <Stack.Screen name="scan/result" />
-          <Stack.Screen name="vehicle/[id]" />
-          <Stack.Screen name="legal/privacy-policy" />
-          <Stack.Screen name="legal/terms-of-service" />
-          <Stack.Screen name="paywall" options={{ presentation: "modal" }} />
-        </Stack>
-      </SubscriptionProvider>
+      <PostHogProvider
+        client={posthog}
+        autocapture={{
+          captureScreens: false,
+          captureTouches: true,
+          propsToCapture: ["testID"],
+        }}
+      >
+        <SubscriptionProvider>
+          <StatusBar style="light" />
+          <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.background } }}>
+            <Stack.Screen name="index" />
+            <Stack.Screen name="onboarding" />
+            <Stack.Screen name="auth" />
+            <Stack.Screen name="reset-password" />
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="scan/camera" />
+            <Stack.Screen name="scan/result" />
+            <Stack.Screen name="vehicle/[id]" />
+            <Stack.Screen name="legal/privacy-policy" />
+            <Stack.Screen name="legal/terms-of-service" />
+            <Stack.Screen name="paywall" options={{ presentation: "modal" }} />
+          </Stack>
+        </SubscriptionProvider>
+      </PostHogProvider>
     </ErrorBoundary>
   );
 }

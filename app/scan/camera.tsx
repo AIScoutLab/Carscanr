@@ -12,6 +12,7 @@ import { authService } from "@/services/authService";
 import { scanService } from "@/services/scanService";
 import { buildSelectedScanPhotoFromUri, getCameraPermissionState, getFileInfoForScan, optimizeScanImage, requestCameraPermission, type SelectedScanPhoto } from "@/features/scan/useScanActions";
 import { Colors, Radius, Typography } from "@/constants/theme";
+import { posthog } from "@/lib/posthog";
 import { buildVehicleDetailRouteFromScanResult } from "@/lib/scanResultNavigation";
 
 const PERMISSION_PROMPT_TIMEOUT_MS = 10000;
@@ -267,6 +268,14 @@ export default function ScanCameraScreen() {
       clearWaitingIdentifyTimeout();
       setStatus("Identify succeeded");
       appendStage("identify succeeded", { scanId: result.id, imageUri: result.imageUri }, flowId);
+      posthog.capture("vehicle_scanned", {
+        scan_id: result.id ?? null,
+        make: result.identifiedVehicle?.make ?? null,
+        model: result.identifiedVehicle?.model ?? null,
+        year: result.identifiedVehicle?.year ?? null,
+        confidence: result.confidenceScore ?? result.identifiedVehicle?.confidence ?? null,
+        source: result.source != null ? (result.source as string) : null,
+      });
       setIsBusy(false);
       setStatus("Opening result");
       appendStage("navigation to result start", { scanId: result.id }, flowId);
@@ -288,6 +297,10 @@ export default function ScanCameraScreen() {
       console.log("[scan-camera] SCAN_BLOCKED_REASON", {
         code: error instanceof ApiRequestError ? error.code : undefined,
         message,
+      });
+      posthog.capture("scan_failed", {
+        error_code: error instanceof ApiRequestError ? (error.code ?? null) : null,
+        error_message: message,
       });
       fail(message, flowId);
     }

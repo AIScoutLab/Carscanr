@@ -12,6 +12,7 @@ import { Radius, Typography } from "@/constants/theme";
 import { startupPreferences } from "@/services/startupPreferences";
 import { sampleScanPhotos } from "@/features/scan/samplePhotos";
 import { mobileBuildInfo } from "@/lib/env";
+import { posthog } from "@/lib/posthog";
 
 function CameraVisual() {
   const sample = sampleScanPhotos[1] ?? sampleScanPhotos[0];
@@ -215,6 +216,7 @@ export default function OnboardingScreen() {
         gitCommit: mobileBuildInfo.gitCommit || "unknown",
       });
       await startupPreferences.markOnboardingComplete();
+      posthog.capture("onboarding_completed", { event: event, step_count: ONBOARDING_STEPS.length });
       router.replace(target as never);
     } catch (error) {
       console.error("[onboarding] failed to persist onboarding state", error);

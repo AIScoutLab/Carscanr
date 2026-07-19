@@ -52,6 +52,8 @@ const config: ExpoConfig = {
     typedRoutes: true,
   },
   extra: {
+    posthogProjectToken: process.env.POSTHOG_PROJECT_TOKEN || "",
+    posthogHost: process.env.POSTHOG_HOST || "https://us.i.posthog.com",
     appEnv,
     buildInfo: {
       gitCommit,
