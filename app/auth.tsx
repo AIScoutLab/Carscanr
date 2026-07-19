@@ -7,7 +7,6 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { Colors, Radius, Typography } from "@/constants/theme";
 import { useSubscription } from "@/hooks/useSubscription";
 import { mobileEnv } from "@/lib/env";
-import { posthog } from "@/lib/posthog";
 import { authService } from "@/services/authService";
 import { startupPreferences } from "@/services/startupPreferences";
 
@@ -163,11 +162,6 @@ export default function AuthScreen() {
       if (mode === "sign-in") {
         await authService.signIn(normalizedEmail, normalizedPassword);
         console.log("[auth] submit success", { mode });
-        const signedInUser = await authService.getCurrentUser();
-        if (signedInUser?.id) {
-          posthog.identify(signedInUser.id, { $set: { app_env: mobileEnv.appEnv } });
-        }
-        posthog.capture("user_signed_in");
         await refreshStatus();
         await navigateAfterAuthSuccess();
         return;
@@ -182,14 +176,6 @@ export default function AuthScreen() {
       }
 
       console.log("[auth] submit success", { mode });
-      const signedUpUser = await authService.getCurrentUser();
-      if (signedUpUser?.id) {
-        posthog.identify(signedUpUser.id, {
-          $set: { app_env: mobileEnv.appEnv },
-          $set_once: { first_signup_date: new Date().toISOString() },
-        });
-      }
-      posthog.capture("user_signed_up");
       await refreshStatus();
       await navigateAfterAuthSuccess();
     } catch (error) {
@@ -236,7 +222,6 @@ export default function AuthScreen() {
 
   const continueAsGuest = () => {
     console.log("[tap] auth-continue-as-guest");
-    posthog.capture("guest_session_started");
     startupPreferences
       .setHasSeenOnboarding()
       .catch(() => undefined)

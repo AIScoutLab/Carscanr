@@ -52,8 +52,9 @@ const config: ExpoConfig = {
     typedRoutes: true,
   },
   extra: {
-    posthogProjectToken: process.env.POSTHOG_PROJECT_TOKEN || "",
-    posthogHost: process.env.POSTHOG_HOST || "https://us.i.posthog.com",
+    posthogProjectKey: process.env.EXPO_PUBLIC_POSTHOG_KEY || process.env.POSTHOG_PROJECT_TOKEN || "",
+    posthogHost: process.env.EXPO_PUBLIC_POSTHOG_HOST || process.env.POSTHOG_HOST || "https://us.i.posthog.com",
+    posthogEnabled: process.env.EXPO_PUBLIC_POSTHOG_ENABLED || "true",
     appEnv,
     buildInfo: {
       gitCommit,
@@ -69,6 +70,9 @@ const config: ExpoConfig = {
       revenueCatIosApiKey: process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY || "",
       revenueCatEntitlementId: process.env.EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID || "",
       showQaDebug: process.env.EXPO_PUBLIC_SHOW_QA_DEBUG || "",
+      posthogProjectKey: process.env.EXPO_PUBLIC_POSTHOG_KEY || process.env.POSTHOG_PROJECT_TOKEN || "",
+      posthogHost: process.env.EXPO_PUBLIC_POSTHOG_HOST || process.env.POSTHOG_HOST || "https://us.i.posthog.com",
+      posthogEnabled: process.env.EXPO_PUBLIC_POSTHOG_ENABLED || "true",
     },
     eas: {
       projectId: easProjectId,

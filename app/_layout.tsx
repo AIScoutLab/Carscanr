@@ -1,5 +1,5 @@
 import "react-native-gesture-handler";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { router, Stack, useGlobalSearchParams, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { Linking, StyleSheet, Text, View } from "react-native";
@@ -7,9 +7,10 @@ import { PostHogProvider } from "posthog-react-native";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Colors, Typography } from "@/constants/theme";
 import { SubscriptionProvider } from "@/features/subscription/SubscriptionProvider";
-import { assertMobileStartupConfig, getMobileEnvDiagnostics, getMobileStartupConfigError, mobileBuildInfo, requiredExpoPublicEnvKeys } from "@/lib/env";
-import { posthog } from "@/lib/posthog";
+import { assertMobileStartupConfig, getMobileEnvDiagnostics, getMobileStartupConfigError, mobileBuildInfo, mobileEnv, requiredExpoPublicEnvKeys } from "@/lib/env";
+import { posthog, posthogAnalyticsEnabled } from "@/lib/posthog";
 import { supabase } from "@/lib/supabase";
+import { analyticsService } from "@/services/analyticsService";
 import { marketAreaZipService } from "@/services/marketAreaZipService";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { startupPreferences } from "@/services/startupPreferences";
@@ -41,13 +42,13 @@ export default function RootLayout() {
   const [startupError, setStartupError] = useState<string | null>(null);
   const pathname = usePathname();
   const params = useGlobalSearchParams();
-  const previousPathnameRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
-    if (previousPathnameRef.current !== pathname) {
-      posthog.screen(pathname, { previous_screen: previousPathnameRef.current ?? null });
-      previousPathnameRef.current = pathname;
-    }
+    analyticsService.setClient(posthog, { enabled: posthogAnalyticsEnabled });
+    analyticsService.trackOnce("app_opened:runtime", "app_opened", {
+      app_env: mobileEnv.appEnv,
+      route: pathname || "/",
+    });
   }, [pathname]);
 
   useEffect(() => {
@@ -197,7 +198,7 @@ export default function RootLayout() {
         client={posthog}
         autocapture={{
           captureScreens: false,
-          captureTouches: true,
+          captureTouches: false,
           propsToCapture: ["testID"],
         }}
       >

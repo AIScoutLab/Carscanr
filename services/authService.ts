@@ -1,6 +1,7 @@
 import { Session, User } from "@supabase/supabase-js";
 import { getSupabaseMobileConfigError, supabase } from "@/lib/supabase";
 import { mobileEnv } from "@/lib/env";
+import { analyticsService } from "@/services/analyticsService";
 import { AuthSignUpResult, AuthUser } from "@/types";
 
 type AuthSession = {
@@ -120,6 +121,12 @@ function ensureAuthListener() {
     if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "USER_UPDATED") {
       void resetClientAuthState();
     }
+    if ((event === "SIGNED_IN" || event === "USER_UPDATED") && currentSession?.user.id) {
+      analyticsService.identifyUser(currentSession.user.id, { app_env: mobileEnv.appEnv });
+    }
+    if (event === "SIGNED_OUT") {
+      analyticsService.resetIdentity();
+    }
   });
 }
 
@@ -147,6 +154,9 @@ async function loadSession() {
 
   currentSession = mapSession(data.session);
   hasLoadedInitialSession = true;
+  if (currentSession?.user.id) {
+    analyticsService.identifyUser(currentSession.user.id, { app_env: mobileEnv.appEnv });
+  }
   if (__DEV__) {
     console.log(`[auth] session restored=${currentSession ? "yes" : "no"}`);
   }
@@ -208,6 +218,8 @@ export const authService = {
     currentSession = session;
     hasLoadedInitialSession = true;
     await resetClientAuthState();
+    analyticsService.identifyUser(session.user.id, { app_env: mobileEnv.appEnv, auth_method: "email" });
+    analyticsService.track("login_completed", { auth_method: "email" });
     return session.user;
   },
 
@@ -239,6 +251,7 @@ export const authService = {
 
     const session = mapSession(data.session);
     if (!session) {
+      analyticsService.track("account_created", { auth_method: "email", confirmation_required: true });
       return {
         outcome: "confirmation_required",
         user: data.user ? mapSupabaseUser(data.user) : null,
@@ -249,6 +262,8 @@ export const authService = {
     currentSession = session;
     hasLoadedInitialSession = true;
     await resetClientAuthState();
+    analyticsService.identifyUser(session.user.id, { app_env: mobileEnv.appEnv, auth_method: "email" });
+    analyticsService.track("account_created", { auth_method: "email", confirmation_required: false });
     return {
       outcome: "signed_in",
       user: session.user,
@@ -306,6 +321,7 @@ export const authService = {
       currentSession = null;
       hasLoadedInitialSession = true;
       await resetClientAuthState();
+      analyticsService.resetIdentity();
     }
     if (signOutError) {
       throw normalizeAuthError(signOutError, "Unable to sign out.");

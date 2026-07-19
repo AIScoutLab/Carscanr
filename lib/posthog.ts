@@ -2,21 +2,33 @@ import PostHog from "posthog-react-native";
 import Constants from "expo-constants";
 
 const extra = Constants.expoConfig?.extra as
-  | { posthogProjectToken?: string; posthogHost?: string }
+  | {
+      posthogProjectKey?: string;
+      posthogProjectToken?: string;
+      posthogHost?: string;
+      posthogEnabled?: string;
+      publicEnv?: {
+        posthogProjectKey?: string;
+        posthogHost?: string;
+        posthogEnabled?: string;
+      };
+    }
   | undefined;
 
-const projectToken = extra?.posthogProjectToken;
-const host = extra?.posthogHost || "https://us.i.posthog.com";
-const isConfigured = Boolean(projectToken && projectToken.length > 0);
+const projectKey = extra?.publicEnv?.posthogProjectKey || extra?.posthogProjectKey || extra?.posthogProjectToken || "";
+const host = extra?.publicEnv?.posthogHost || extra?.posthogHost || "https://us.i.posthog.com";
+const enabledValue = (extra?.publicEnv?.posthogEnabled || extra?.posthogEnabled || "true").toLowerCase();
+const isEnabled = enabledValue !== "0" && enabledValue !== "false";
+const isConfigured = Boolean(projectKey && projectKey.length > 0 && isEnabled);
 
 if (__DEV__ && !isConfigured) {
-  console.warn("[posthog] project token not configured — analytics disabled");
+  console.warn("[posthog] project key not configured or analytics disabled");
 }
 
-export const posthog = new PostHog(projectToken || "placeholder_key", {
+export const posthog = new PostHog(projectKey || "placeholder_key", {
   host,
   disabled: !isConfigured,
-  captureAppLifecycleEvents: true,
+  captureAppLifecycleEvents: false,
   flushAt: 20,
   flushInterval: 10000,
 });
@@ -24,3 +36,5 @@ export const posthog = new PostHog(projectToken || "placeholder_key", {
 if (__DEV__) {
   posthog.debug();
 }
+
+export const posthogAnalyticsEnabled = isConfigured;

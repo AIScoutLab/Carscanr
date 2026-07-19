@@ -10,7 +10,7 @@ import { FREE_PRO_UNLOCKS_TOTAL } from "@/constants/product";
 import { cardStyles } from "@/design/patterns";
 import { shadow } from "@/design/tokens";
 import { useSubscription } from "@/hooks/useSubscription";
-import { posthog } from "@/lib/posthog";
+import { analyticsService } from "@/services/analyticsService";
 import { getPurchaseAvailabilityMessage, isProPlan } from "@/lib/subscription";
 import {
   getPaywallAuthHref,
@@ -116,11 +116,11 @@ export default function PaywallScreen() {
   const freeUnlockSummary = getFreeUnlockSummary(freeUnlocksRemaining, freeUnlocksLimit);
 
   useEffect(() => {
-    posthog.capture("paywall_viewed", {
+    analyticsService.trackOnce("paywall_viewed", "paywall_viewed", {
       has_pro: hasPro,
       purchase_availability_state: purchaseAvailabilityState,
     });
-  }, []);
+  }, [hasPro, purchaseAvailabilityState]);
 
   useEffect(() => {
     if (!availableProducts.length) {
@@ -215,26 +215,24 @@ export default function PaywallScreen() {
         packageIdentifier: selectedProduct.packageIdentifier ?? null,
         optionKind: getPurchaseOptionKind(selectedProduct),
       });
-      posthog.capture("purchase_started", {
-        product_id: selectedProduct.productId,
-        option_kind: getPurchaseOptionKind(selectedProduct),
-      });
       const result = await purchasePro(getPurchaseOptionKey(selectedProduct));
       console.log("[paywall] purchase result", { outcome: result.outcome, purchaseKind: result.purchaseKind ?? null, provider: result.status.provider, plan: result.status.plan });
-      if (result.purchaseKind) {
-        posthog.capture("purchase_completed", {
-          product_id: selectedProduct.productId,
-          option_kind: getPurchaseOptionKind(selectedProduct),
-          purchase_kind: result.purchaseKind,
-          provider: result.status.provider ?? null,
-          plan: result.status.plan ?? null,
-        });
-      }
       if (result.purchaseKind === "unlock_pack") {
+        analyticsService.track("unlock_pack_purchased", {
+          product_kind: "unlock_pack",
+          provider: result.status.provider ?? null,
+          backend_confirmed: true,
+        });
         router.replace("/unlocks-added" as never);
         return;
       }
       if (result.status.provider === "backend" && result.status.isActive === true && isProPlan(result.status.plan)) {
+        analyticsService.track("subscription_started", {
+          purchase_kind: result.purchaseKind ?? "other",
+          plan: result.status.plan ?? null,
+          provider: "backend",
+          backend_confirmed: true,
+        });
         router.replace("/pro-activated");
         return;
       }
@@ -258,10 +256,6 @@ export default function PaywallScreen() {
         plan: result.status.plan,
       });
       if (result.outcome === "restored" && isProPlan(result.status.plan)) {
-        posthog.capture("purchase_restored", {
-          provider: result.status.provider ?? null,
-          plan: result.status.plan ?? null,
-        });
         router.replace("/pro-activated");
       }
     } catch {

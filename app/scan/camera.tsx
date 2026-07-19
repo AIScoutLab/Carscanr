@@ -8,11 +8,11 @@ import { getNextScanLoadingFactIndex, getRandomScanLoadingFactIndex, SCAN_LOADIN
 import { SCAN_LOADING_STAGES, getScanLoadingStageState } from "@/lib/scanLoadingStages";
 import { supabase } from "@/lib/supabase";
 import { ApiRequestError } from "@/services/apiClient";
+import { analyticsService } from "@/services/analyticsService";
 import { authService } from "@/services/authService";
 import { scanService } from "@/services/scanService";
 import { buildSelectedScanPhotoFromUri, getCameraPermissionState, getFileInfoForScan, optimizeScanImage, requestCameraPermission, type SelectedScanPhoto } from "@/features/scan/useScanActions";
 import { Colors, Radius, Typography } from "@/constants/theme";
-import { posthog } from "@/lib/posthog";
 import { buildVehicleDetailRouteFromScanResult } from "@/lib/scanResultNavigation";
 
 const PERMISSION_PROMPT_TIMEOUT_MS = 10000;
@@ -109,6 +109,12 @@ export default function ScanCameraScreen() {
   const { status: usage, freeUnlocksRemaining, freeUnlocksUsed } = useSubscription();
 
   const isFlowActive = useCallback((flowId: number) => activeFlowIdRef.current === flowId, []);
+
+  useEffect(() => {
+    analyticsService.trackOnce("camera_screen_viewed:camera-route", "camera_screen_viewed", {
+      route: "/scan/camera",
+    });
+  }, []);
 
   const clearCameraReadyTimeout = useCallback(() => {
     if (cameraReadyTimeoutRef.current) {
@@ -220,6 +226,9 @@ export default function ScanCameraScreen() {
       width: selection.width,
       height: selection.height,
     }, flowId);
+    analyticsService.track("photo_selected", {
+      scan_source: "camera",
+    });
 
     try {
       setStatus("Optimizing image");
@@ -268,14 +277,6 @@ export default function ScanCameraScreen() {
       clearWaitingIdentifyTimeout();
       setStatus("Identify succeeded");
       appendStage("identify succeeded", { scanId: result.id, imageUri: result.imageUri }, flowId);
-      posthog.capture("vehicle_scanned", {
-        scan_id: result.id ?? null,
-        make: result.identifiedVehicle?.make ?? null,
-        model: result.identifiedVehicle?.model ?? null,
-        year: result.identifiedVehicle?.year ?? null,
-        confidence: result.confidenceScore ?? result.identifiedVehicle?.confidence ?? null,
-        source: result.source != null ? (result.source as string) : null,
-      });
       setIsBusy(false);
       setStatus("Opening result");
       appendStage("navigation to result start", { scanId: result.id }, flowId);
@@ -298,10 +299,6 @@ export default function ScanCameraScreen() {
         code: error instanceof ApiRequestError ? error.code : undefined,
         message,
       });
-      posthog.capture("scan_failed", {
-        error_code: error instanceof ApiRequestError ? (error.code ?? null) : null,
-        error_message: message,
-      });
       fail(message, flowId);
     }
   }, [appendStage, armWaitingIdentifyTimeout, clearWaitingIdentifyTimeout, fail, isFlowActive]);
@@ -319,6 +316,9 @@ export default function ScanCameraScreen() {
     });
 
     const flowId = startFlow("camera-capture");
+    analyticsService.track("scan_started", {
+      scan_source: "camera",
+    });
     setIsBusy(true);
     setStatus("Opening camera");
     appendStage("capture start", undefined, flowId);
@@ -346,6 +346,9 @@ export default function ScanCameraScreen() {
       const captured = picture as CameraCapturedPicture;
       setCapturedPreviewUri(captured.uri);
       setStatus("Capture complete");
+      analyticsService.track("photo_captured", {
+        scan_source: "camera",
+      });
       appendStage("capture complete", {
         uri: captured.uri,
         width: captured.width,
@@ -460,6 +463,10 @@ export default function ScanCameraScreen() {
     setCapturedPreviewUri(null);
     setStatus("Requesting camera permission");
     appendStage("permission request start", undefined, flowId);
+    analyticsService.track("camera_permission_requested", {
+      scan_source: "camera",
+      permission_state: "requested",
+    });
 
     try {
       const current = await getCameraPermissionState();
@@ -475,6 +482,10 @@ export default function ScanCameraScreen() {
       }
       appendStage("permission request end", permission, flowId);
       setPermissionReady(permission.granted);
+      analyticsService.track(permission.granted ? "camera_permission_granted" : "camera_permission_denied", {
+        scan_source: "camera",
+        permission_state: permission.granted ? "granted" : "denied",
+      });
 
       if (!permission.granted) {
         fail("Camera access is disabled. Enable it in Settings to continue.", flowId);

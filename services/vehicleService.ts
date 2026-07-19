@@ -13,6 +13,7 @@ import {
 } from "@/constants/vehicleImages";
 import { findSampleScanPhoto, getSampleVehicleRouteId, isSampleVehicleRouteId } from "@/features/scan/samplePhotos";
 import { apiRequest, apiRequestEnvelope } from "@/services/apiClient";
+import { analyticsService, bucketCount, normalizeErrorCategory } from "@/services/analyticsService";
 import { offlineCanonicalService } from "@/services/offlineCanonicalService";
 import { MarketAreaZipSource } from "@/lib/marketAreaZip";
 import { ListingResult, ValuationResult, VehicleRecord, VehicleSearchQuery } from "@/types";
@@ -1164,10 +1165,28 @@ export const vehicleService = {
       authRequired,
       path,
     });
+    if (authRequired) {
+      analyticsService.track("marketcheck_request_sent", {
+        market_request_type: "value",
+        source_screen: options?.sourceScreen ?? null,
+        action: options?.action ?? null,
+        allow_live: options?.allowLive ?? null,
+        force_live: options?.forceLive ?? null,
+        zip_source: options?.zipSource ?? null,
+      });
+    }
     const response = await apiRequestEnvelope<BackendValuation>({
       path,
       authRequired,
     }).catch((error) => {
+      if (authRequired) {
+        analyticsService.track("marketcheck_request_failed", {
+          market_request_type: "value",
+          source_screen: options?.sourceScreen ?? null,
+          action: options?.action ?? null,
+          error_category: normalizeErrorCategory(error),
+        });
+      }
       console.error("[vehicle-service] VALUE_REQUEST_FAILED", {
         vehicleLookup,
         zip,
@@ -1192,6 +1211,16 @@ export const vehicleService = {
       unavailableReason: response.data?.unavailableReason ?? response.data?.reason ?? null,
     });
     const mapped = mapValuation(response.data);
+    if (authRequired) {
+      analyticsService.track("marketcheck_request_succeeded", {
+        market_request_type: "value",
+        source_screen: options?.sourceScreen ?? null,
+        action: options?.action ?? null,
+        valuation_status: mapped.status,
+        valuation_source: mapped.valuationSource ?? mapped.modelType ?? null,
+        listing_count_bucket: bucketCount(mapped.compCount ?? mapped.listingCount ?? null),
+      });
+    }
     console.log("[vehicle-service] VALUE_RESPONSE_RECEIVED", {
       vehicleLookup,
       condition,
@@ -1247,10 +1276,28 @@ export const vehicleService = {
       authRequired,
       path,
     });
+    if (authRequired) {
+      analyticsService.track("marketcheck_request_sent", {
+        market_request_type: "listings",
+        source_screen: options?.sourceScreen ?? null,
+        action: options?.action ?? null,
+        allow_live: options?.allowLive ?? null,
+        force_live: options?.forceLive ?? null,
+        zip_source: options?.zipSource ?? null,
+      });
+    }
     const response = await apiRequestEnvelope<BackendListing[], ListingsDebugMeta>({
       path,
       authRequired,
     }).catch((error) => {
+      if (authRequired) {
+        analyticsService.track("marketcheck_request_failed", {
+          market_request_type: "listings",
+          source_screen: options?.sourceScreen ?? null,
+          action: options?.action ?? null,
+          error_category: normalizeErrorCategory(error),
+        });
+      }
       console.error("[vehicle-service] LISTINGS_REQUEST_FAILED", {
         vehicleLookup,
         zip,
@@ -1264,6 +1311,15 @@ export const vehicleService = {
       throw error;
     });
     const listings = response.data;
+    if (authRequired) {
+      analyticsService.track("marketcheck_request_succeeded", {
+        market_request_type: "listings",
+        source_screen: options?.sourceScreen ?? null,
+        action: options?.action ?? null,
+        listing_count_bucket: bucketCount(response.meta?.believableCount ?? listings.length),
+        result_status: listings.length > 0 ? "listings_returned" : "no_listings",
+      });
+    }
     console.log("[vehicle-service] LISTINGS_RESPONSE_RECEIVED", {
       vehicleLookup,
       zip,

@@ -12,7 +12,7 @@ import { Radius, Typography } from "@/constants/theme";
 import { startupPreferences } from "@/services/startupPreferences";
 import { sampleScanPhotos } from "@/features/scan/samplePhotos";
 import { mobileBuildInfo } from "@/lib/env";
-import { posthog } from "@/lib/posthog";
+import { analyticsService } from "@/services/analyticsService";
 
 function CameraVisual() {
   const sample = sampleScanPhotos[1] ?? sampleScanPhotos[0];
@@ -197,6 +197,9 @@ export default function OnboardingScreen() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    analyticsService.trackOnce("onboarding_started", "onboarding_started", {
+      step_count: ONBOARDING_STEPS.length,
+    });
     console.log("[onboarding] ONBOARDING_RENDERED_BLACK_GOLD_V4_DETERMINISTIC", {
       stepCount: ONBOARDING_STEPS.length,
       gitCommit: mobileBuildInfo.gitCommit || "unknown",
@@ -216,7 +219,10 @@ export default function OnboardingScreen() {
         gitCommit: mobileBuildInfo.gitCommit || "unknown",
       });
       await startupPreferences.markOnboardingComplete();
-      posthog.capture("onboarding_completed", { event: event, step_count: ONBOARDING_STEPS.length });
+      analyticsService.track("onboarding_completed", {
+        completion_type: event,
+        step_count: ONBOARDING_STEPS.length,
+      });
       router.replace(target as never);
     } catch (error) {
       console.error("[onboarding] failed to persist onboarding state", error);
